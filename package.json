@@ -1,6 +1,6 @@
 {
   "name": "wealthflow",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "WealthFlow Elite Financial System — Sri Lankan personal finance management with AI advisor, smart notifications, and 3D cash flow visualization.",
   "type": "module",
   "private": true,
