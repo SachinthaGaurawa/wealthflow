@@ -1,23 +1,13 @@
 {
-  "name": "wealthflow",
-  "version": "6.1.0",
-  "description": "WealthFlow Elite Financial System — Sri Lankan personal finance management with AI advisor, smart notifications, and 3D cash flow visualization.",
-  "type": "module",
-  "private": true,
-  "engines": {
-    "node": ">=18"
+  "dependencies": {
+    "next": "latest",
+    "zod": "latest",
+    "firebase-admin": "latest"
   },
-  "scripts": {
-    "dev": "vercel dev",
-    "deploy": "vercel --prod"
-  },
-  "keywords": [
-    "finance",
-    "personal-finance",
-    "wealth-management",
-    "ai-advisor",
-    "pwa",
-    "sri-lanka"
-  ],
-  "license": "UNLICENSED"
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/next": "latest"
+  }
 }
