@@ -8251,7 +8251,10 @@ YOUR PERSONALITY & CRITICAL RULES:
             <div style="margin-top:14px;border-top:1px dashed var(--border2);padding-top:12px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                     <div style="font-size:12px;font-weight:700;color:var(--text2);">📅 Monthly Installments</div>
-                    <button class="btn btn-ghost btn-sm" onclick="openLoanInstallmentsModal('${l.id}')">📋 View All ${months.length} Months</button>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-ghost btn-sm" onclick="openLoanHistoryModal('${l.id}')">📜 Paid History</button>
+                        <button class="btn btn-ghost btn-sm" onclick="openLoanInstallmentsModal('${l.id}')">📋 View All ${months.length} Months</button>
+                    </div>
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:6px;">
                     ${upcomingMonths.slice(0, 6).map(m => {
@@ -8272,12 +8275,11 @@ YOUR PERSONALITY & CRITICAL RULES:
             }).join('');
         }
 
-        // Modal showing all installments for a loan
+        // Modal showing all installments for a loan (Amortization Table)
         function openLoanInstallmentsModal(loanId) {
             const l = DB.get('loans').find(x => x.id === loanId);
             if (!l) return;
-            const months = _loanInstallmentMonths(l);
-            const payments = l.payments || [];
+            const proj = loanProjectedSchedule(l);
             const todayKey = new Date().toISOString().slice(0, 7);
 
             let modal = document.getElementById('mdLoanInstallments');
@@ -8288,28 +8290,95 @@ YOUR PERSONALITY & CRITICAL RULES:
                 document.body.appendChild(modal);
             }
             modal.innerHTML = `
-                <div class="md" style="max-width:520px;max-height:90vh;overflow-y:auto;">
-                    <div class="md-hdr">
-                        <div class="md-title">📅 ${l.name} — All Installments</div>
+                <div class="md" style="max-width:640px;max-height:90vh;display:flex;flex-direction:column;padding:0;">
+                    <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
+                        <div class="md-title">📅 ${l.name} — Amortization Table</div>
                         <button class="md-x" onclick="closeModal('mdLoanInstallments')">✕</button>
                     </div>
-                    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">
-                        Tap any month to record / change a payment. Paying more than scheduled reduces principal and total interest.
+                    <div style="padding:12px 20px; font-size:12px; color:var(--text3); border-bottom:1px solid var(--border); flex-shrink:0; background:var(--bg2);">
+                        Live projection based on your actual payments. Tap any month to record or change a payment.
                     </div>
-                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;">
-                        ${months.map(m => {
-                            const pay = payments.find(p => p.month === m.key);
-                            const isPaid = pay && pay.paid;
-                            const isCurrent = m.key === todayKey;
-                            return `<button class="loan-month-btn ${isPaid ? 'lmb-paid' : 'lmb-due'} ${isCurrent ? 'lmb-current' : ''}"
-                                style="text-align:left;padding:10px 12px;flex:none;"
-                                onclick="toggleLoanInstallment('${l.id}','${m.key}'); setTimeout(() => openLoanInstallmentsModal('${l.id}'), 300);">
-                                <div style="display:flex;justify-content:space-between;align-items:center;">
-                                    <span><b>${m.label}</b> ${isCurrent ? '<span style="font-size:9px;color:var(--accent);">·CURRENT</span>' : ''}</span>
-                                    <span style="font-size:18px;">${isPaid ? '✅' : '⏰'}</span>
+                    <div style="flex:1; overflow-y:auto; padding:0 20px;">
+                        <table style="width:100%; border-collapse:collapse; font-size:12px; text-align:left;">
+                            <thead style="position:sticky; top:0; background:var(--card); z-index:2; box-shadow:0 1px 0 var(--border2);">
+                                <tr style="color:var(--text3);">
+                                    <th style="padding:12px 4px; font-weight:600;">Month</th>
+                                    <th style="padding:12px 4px; text-align:right; font-weight:600;">Payment</th>
+                                    <th style="padding:12px 4px; text-align:right; font-weight:600;">Principal</th>
+                                    <th style="padding:12px 4px; text-align:right; font-weight:600;">Interest</th>
+                                    <th style="padding:12px 4px; text-align:right; font-weight:600;">Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${proj.schedule.map(m => {
+                                    const principalPaid = m.paid ? Math.max(0, m.amount - m.interest) : Math.max(0, l.monthly - m.interest);
+                                    const amtStr = m.paid ? fmt(m.amount) : fmt(l.monthly);
+                                    const isCurrent = m.month === todayKey;
+                                    const bg = m.paid ? 'rgba(16,185,129,0.05)' : isCurrent ? 'rgba(212,175,55,0.05)' : 'transparent';
+                                    
+                                    return \`<tr style="border-bottom:1px solid var(--border); background:\${bg}; cursor:pointer; transition:background 0.2s;" 
+                                        onclick="toggleLoanInstallment('\${l.id}','\${m.month}'); setTimeout(() => openLoanInstallmentsModal('\${l.id}'), 300);"
+                                        onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background='\${bg}'">
+                                        <td style="padding:12px 4px;">
+                                            <div><b style="\${m.paid ? 'color:var(--green);' : ''}">\${m.label}</b> \${isCurrent ? '<span style="color:var(--accent);font-size:9px;background:rgba(212,175,55,0.1);padding:2px 4px;border-radius:4px;margin-left:4px;">CURRENT</span>' : ''}</div>
+                                            \${m.paid ? '<div style="font-size:10px;color:var(--green);margin-top:2px;">✅ Paid</div>' : ''}
+                                        </td>
+                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono);">
+                                            <div>\${amtStr}</div>
+                                            \${m.isOver ? \`<div style="font-size:10px;color:var(--green);margin-top:2px;">+\${fmt(m.amount - l.monthly)} extra</div>\` : ''}
+                                            \${m.isPartial ? \`<div style="font-size:10px;color:var(--red);margin-top:2px;">\${fmt(m.amount - l.monthly)} short</div>\` : ''}
+                                        </td>
+                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono); color:var(--text2);">\${fmt(principalPaid)}</td>
+                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono); color:var(--accent);">\${fmt(m.interest)}</td>
+                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono); font-weight:700; color:var(--red);">\${fmt(m.balance)}</td>
+                                    </tr>\`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            modal.style.display = 'flex';
+        }
+
+        function openLoanHistoryModal(loanId) {
+            const l = DB.get('loans').find(x => x.id === loanId);
+            if (!l) return;
+            const payments = (l.payments || []).filter(p => p.paid).sort((a, b) => b.month.localeCompare(a.month));
+
+            let modal = document.getElementById('mdLoanHistory');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'mdLoanHistory';
+                modal.className = 'mo';
+                document.body.appendChild(modal);
+            }
+            modal.innerHTML = `
+                <div class="md md-sm" style="max-height:85vh; display:flex; flex-direction:column; padding:0;">
+                    <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
+                        <div class="md-title">📜 Paid History — ${l.name}</div>
+                        <button class="md-x" onclick="closeModal('mdLoanHistory')">✕</button>
+                    </div>
+                    <div style="flex:1; overflow-y:auto; padding:16px 20px;">
+                        ${payments.length === 0 ? '<div style="text-align:center; color:var(--text3); padding:30px 0;">No payments recorded yet.</div>' : 
+                        payments.map(p => {
+                            const diff = p.amount - l.monthly;
+                            const d = new Date(p.paidAt || Date.now());
+                            return \`<div style="padding:14px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; margin-bottom:10px;">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                                    <div style="font-weight:700; color:var(--text);">\${p.month} Installment</div>
+                                    <div style="font-family:var(--mono); font-weight:700; color:var(--green);">\${fmt(p.amount)}</div>
                                 </div>
-                                ${isPaid ? `<div style="font-size:11px;color:var(--text3);margin-top:4px;">${fmt(pay.amount)} ${pay.amount > l.monthly + 1 ? '<span style="color:var(--green);">(+' + fmt(pay.amount - l.monthly) + ')</span>' : pay.amount < l.monthly - 1 ? '<span style="color:var(--red);">(' + fmt(pay.amount - l.monthly) + ')</span>' : ''}</div>` : `<div style="font-size:11px;color:var(--text3);margin-top:4px;">Scheduled: ${fmt(l.monthly)}</div>`}
-                            </button>`;
+                                <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text3);">
+                                    <div>Recorded: \${fmtDatePretty(d.toISOString().slice(0,10))}</div>
+                                    <div>
+                                        \${diff > 1 ? \`<span style="color:var(--green);">+\${fmt(diff)} extra</span>\` : ''}
+                                        \${diff < -1 ? \`<span style="color:var(--red);">\${fmt(diff)} short</span>\` : ''}
+                                        \${Math.abs(diff) <= 1 ? 'Scheduled amount' : ''}
+                                    </div>
+                                </div>
+                                \${p.notes ? \`<div style="margin-top:8px; padding:6px 10px; background:var(--card); border-radius:6px; font-size:11px; color:var(--text2); border-left:2px solid var(--accent);">\${p.notes}</div>\` : ''}
+                            </div>\`;
                         }).join('')}
                     </div>
                 </div>
