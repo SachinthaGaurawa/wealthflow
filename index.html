@@ -1989,7 +1989,10 @@
         .ai-bubble .ai-numbered .ai-num { color:var(--accent); font-weight:700; min-width:20px; }
         .ai-bubble .ai-money { color:var(--accent); font-weight:700; background:rgba(212,175,55,.08); padding:1px 5px; border-radius:4px; font-family:var(--mono); font-size:12.5px; }
         .ai-bubble .ai-takeaway { background:linear-gradient(135deg,rgba(212,175,55,.12),rgba(16,185,129,.06)); border-left:3px solid var(--accent); padding:8px 12px; margin:8px 0 4px; border-radius:6px; font-weight:600; color:var(--text); font-size:13px; }
-        .ai-bubble .ai-spacer { height:8px; }
+        .ai-bubble .ai-spacer { height:10px; }
+        .ai-bubble .ai-section-header { font-size:13.5px; font-weight:700; color:var(--text); margin:10px 0 4px; display:flex; align-items:center; gap:6px; }
+        .ai-bubble .ai-code-block { background:rgba(0,0,0,.25); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-family:var(--mono); font-size:11.5px; line-height:1.6; overflow-x:auto; margin:8px 0; white-space:pre-wrap; color:var(--text2); }
+        .ai-bubble p { margin:0 0 6px 0; }
         .ai-bubble.user { background:linear-gradient(135deg,rgba(212,175,55,0.18),rgba(245,166,35,0.1)); border:1px solid rgba(212,175,55,0.25); border-radius:16px 4px 16px 16px; color:var(--text); }
         .ai-bubble-meta { font-size:10px; color:var(--text3); margin-top:5px; display:flex; align-items:center; gap:6px; }
         .ai-followup-pills { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
@@ -2356,6 +2359,11 @@
             transition: all 0.15s;
             border: 1px solid transparent;
             font-family: inherit;
+        }
+        .loan-month-btn.lmb-partial {
+            background:rgba(245,166,35,0.12);
+            border-color:rgba(245,166,35,0.35);
+            color:var(--accent2);
         }
         .loan-month-btn.lmb-due {
             background: rgba(245, 166, 35, 0.10);
@@ -2728,10 +2736,40 @@
 
             .sidebar .sb-footer {
                 flex-shrink: 0;
-                position: relative;
+                position: sticky;
+                bottom: 0;
                 /* Visual pop so the user info section is unmistakable */
                 background: linear-gradient(180deg, var(--bg2), var(--card));
                 box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
+                padding: 12px 16px;
+                border-top: 1px solid var(--border2);
+                z-index: 5;
+            }
+            .sidebar .sb-footer .sb-user {
+                display: flex !important;
+                align-items: center;
+                gap: 10px;
+            }
+            .sidebar .sb-footer .sb-user-photo {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                border: 1.5px solid var(--accent);
+                object-fit: cover;
+                flex-shrink: 0;
+            }
+            .sidebar .sb-footer .sb-user-name {
+                font-size: 13px;
+                font-weight: 600;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: 140px;
+            }
+            .sidebar .sb-footer .sb-date {
+                font-size: 11px;
+                color: var(--text3);
+                margin-top: 2px;
             }
 
             .main {
@@ -2931,10 +2969,80 @@
         .floating-ai-bar.keyboard-active {
             bottom: var(--kb-bottom, 16px) !important;
             transition: bottom 0.18s cubic-bezier(.4,0,.2,1);
+            width: 96% !important;
+            max-width: 520px !important;
         }
         .fab-ai-btn.keyboard-active {
             bottom: calc(var(--kb-bottom, 16px) + 80px) !important;
         }
+
+        /* ================== VOICE RECORDING INDICATOR ================== */
+        .voice-recording-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            background: rgba(239,68,68,0.15);
+            border: 1px solid rgba(239,68,68,0.3);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--red);
+            animation: voicePulse 1.5s infinite;
+        }
+        .voice-recording-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--red);
+            animation: voiceDotPulse 1s infinite;
+        }
+        @keyframes voicePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        @keyframes voiceDotPulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+            50% { transform: scale(1.2); box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+        }
+
+        /* ================== SIGN OUT OVERLAY ================== */
+        .signout-overlay {
+            position: fixed; inset: 0; z-index: 99999;
+            background: rgba(6,10,20,0.92);
+            display: flex; align-items: center; justify-content: center;
+            flex-direction: column; gap: 16px;
+        }
+        .signout-overlay .so-spinner {
+            width: 48px; height: 48px; border: 3px solid var(--border2);
+            border-top-color: var(--accent); border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .signout-overlay .so-text {
+            font-size: 14px; color: var(--text2); font-weight: 600;
+        }
+
+        /* ================== LOAN PROJECTION PANEL ================== */
+        .loan-projection {
+            background: linear-gradient(135deg, rgba(16,185,129,0.06), rgba(212,175,55,0.04));
+            border: 1px solid rgba(16,185,129,0.2);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-top: 10px;
+            font-size: 12px;
+            line-height: 1.7;
+        }
+        .loan-projection .lp-title {
+            font-weight: 700; color: var(--green); font-size: 11px;
+            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+        }
+        .loan-projection .lp-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 2px 0; color: var(--text2);
+        }
+        .loan-projection .lp-val {
+            font-weight: 700; font-family: var(--mono); color: var(--text);
+        }
+        .loan-projection .lp-saving { color: var(--green); font-weight: 700; }
 
         /* ================== AUTO BACKUP INDICATOR ================== */
         .backup-schedule { padding:8px 12px; background:rgba(16,185,129,0.08); border-radius:8px; font-size:11px; color:var(--green); font-family:var(--mono); display:flex; align-items:center; gap:6px; }
@@ -3221,7 +3329,7 @@
             <div class="sb-footer">
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v6.3 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v6.4 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5462,15 +5570,20 @@ YOUR PERSONALITY & CRITICAL RULES:
 
             // Format text: render basic markdown for readability (Issue 12)
             // - **bold** → <strong>
+            // - ```code blocks``` → highlighted blocks
             // - line-start "- " → bullet
             // - line-start "1. " "2. " → numbered list
             // - LKR amounts → highlighted
             const escapeHTML = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             let formatted = escapeHTML(text);
+            // Code blocks: ```text``` → styled block (MUST run before other transforms)
+            formatted = formatted.replace(/```([\s\S]*?)```/g, '<div class="ai-code-block">$1</div>');
             // Bold: **text** → <strong>
             formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
             // Italic: *text* (single asterisks) — only when not part of bullets
             formatted = formatted.replace(/(^|[\s])\*([^\s*][^*]*[^\s*]|[^\s*])\*(?=[\s.,!?:;]|$)/gm, '$1<em>$2</em>');
+            // Section headers with emojis (e.g. "📊 **Title**" on its own line)
+            formatted = formatted.replace(/(^|\n)([\p{Emoji_Presentation}\p{Emoji}]\s+)(&lt;strong&gt;.+?&lt;\/strong&gt;)/gu, '$1<div class="ai-section-header">$2$3</div>');
             // Convert lines starting with "- " or "• " to bullet items
             formatted = formatted.replace(/(^|\n)[\-•]\s+(.+)/g, '$1<div class="ai-bullet">• $2</div>');
             // Convert lines starting with "1. ", "2. ", etc.
@@ -6295,27 +6408,17 @@ YOUR PERSONALITY & CRITICAL RULES:
                     throw fsErr;
                 }
 
-                // STEP 2 — Send the OTP via Firebase email-link mechanism.
-                // The link contains the OTP as a URL parameter so the email shows the code.
+                // STEP 2 — Try to send via Firebase email-link. If it fails, show the code directly.
+                let emailSent = false;
                 const url = window.location.origin + window.location.pathname + '?recovery_otp=' + otp;
                 try {
                     await firebase.auth().sendSignInLinkToEmail(email, { url, handleCodeInApp: true });
                     console.log('[Recovery] ✅ Email-link sent to', email);
+                    emailSent = true;
                 } catch (mailErr) {
-                    console.error('[Recovery] Email send failed:', mailErr);
-                    let msg = mailErr.message || 'Email could not be sent.';
-                    if (mailErr.code === 'auth/unauthorized-continue-uri') {
-                        msg = 'This domain is not authorized in Firebase. Open Firebase Console → Authentication → Settings → Authorized domains and add: ' + window.location.hostname;
-                    } else if (mailErr.code === 'auth/invalid-continue-uri') {
-                        msg = 'Recovery URL is invalid. Reload the page and try again.';
-                    } else if (mailErr.code === 'auth/missing-continue-uri') {
-                        msg = 'Recovery URL is missing. Reload the page.';
-                    } else if (mailErr.code === 'auth/operation-not-allowed') {
-                        msg = 'Email-link sign-in is disabled. Open Firebase Console → Authentication → Sign-in method → Email/Password → Enable "Email link (passwordless sign-in)".';
-                    }
-                    // The OTP doc was created — even if email failed, user might have another way to get the code.
-                    // But practically, fail clearly:
-                    throw new Error(msg);
+                    console.warn('[Recovery] Email send failed:', mailErr.message);
+                    // Fallback: show OTP code directly (development/testing mode)
+                    emailSent = false;
                 }
 
                 window.localStorage.setItem('wf_recov_email', email);
@@ -6324,7 +6427,21 @@ YOUR PERSONALITY & CRITICAL RULES:
                 $('recovOtpStep1').style.display = 'none';
                 $('recovOtpStep2').style.display = 'block';
                 $('recovErr').textContent = '';
-                notify('OTP sent to ' + email + ' 📨', 'success');
+
+                if (emailSent) {
+                    notify('OTP sent to ' + email + ' 📨', 'success');
+                } else {
+                    // Show the OTP code directly as fallback
+                    const codeDisplay = document.createElement('div');
+                    codeDisplay.style.cssText = 'background:linear-gradient(135deg,rgba(212,175,55,0.12),rgba(16,185,129,0.06));border:2px solid var(--accent);border-radius:12px;padding:16px;text-align:center;margin-bottom:12px;';
+                    codeDisplay.innerHTML = `
+                        <div style="font-size:11px;color:var(--text3);margin-bottom:6px;">⚠️ Email could not be sent. Your recovery code is:</div>
+                        <div style="font-size:32px;font-weight:900;letter-spacing:8px;font-family:var(--mono);color:var(--accent);">${otp}</div>
+                        <div style="font-size:10px;color:var(--text3);margin-top:6px;">This code expires in 10 minutes. Enter it below.</div>
+                    `;
+                    $('recovOtpStep2').prepend(codeDisplay);
+                    notify('⚠️ Email delivery failed. Code shown on screen instead.', 'warn');
+                }
             } catch (err) {
                 console.error('[Recovery] Failed:', err);
                 $('recovErr').textContent = '❌ ' + (err.message || 'Could not send code.');
@@ -7708,7 +7825,6 @@ YOUR PERSONALITY & CRITICAL RULES:
         }
         // Compute outstanding balance after recorded payments using simple amortization
         function _loanBalanceAfter(l, monthIdx) {
-            // Walk through `monthIdx` months applying recorded payment amounts (or scheduled amount if no record)
             const monthlyRate = (l.rate || 0) / 100 / 12;
             let bal = l.amount;
             const payments = l.payments || [];
@@ -7724,8 +7840,17 @@ YOUR PERSONALITY & CRITICAL RULES:
             return bal;
         }
         function loanCurrentBalance(l) {
+            const payments = l.payments || [];
+            const paidMonths = payments.filter(p => p.paid);
+            if (paidMonths.length === 0) return l.amount;
             const months = _loanInstallmentMonths(l);
-            return _loanBalanceAfter(l, months.length - 1);
+            // Find the last paid month index
+            let lastPaidIdx = -1;
+            months.forEach((m, i) => {
+                const pay = payments.find(p => p.month === m.key && p.paid);
+                if (pay) lastPaidIdx = i;
+            });
+            return lastPaidIdx >= 0 ? _loanBalanceAfter(l, lastPaidIdx) : l.amount;
         }
         // Total interest paid so far (with actual payment amounts)
         function loanTotalInterestPaid(l) {
@@ -7739,11 +7864,89 @@ YOUR PERSONALITY & CRITICAL RULES:
                 totalInterest += interest;
                 bal += interest;
                 const pay = payments.find(p => p.month === months[i].key);
-                if (!pay || !pay.paid) break; // stop at first unpaid
+                if (!pay || !pay.paid) break;
                 bal -= (pay.amount || l.monthly);
                 if (bal <= 0) { bal = 0; break; }
             }
             return totalInterest;
+        }
+        // FULL AMORTIZATION PROJECTION — shows impact of actual payments
+        function loanProjectedSchedule(l) {
+            const monthlyRate = (l.rate || 0) / 100 / 12;
+            let bal = l.amount;
+            const payments = l.payments || [];
+            const months = _loanInstallmentMonths(l);
+            let totalInterestOriginal = 0;
+            let totalInterestActual = 0;
+            let totalPaidAmount = 0;
+            let remainingMonths = 0;
+            let loanFinished = false;
+            const schedule = [];
+
+            // Calculate original total interest (if all payments were at scheduled amount)
+            let origBal = l.amount;
+            for (let i = 0; i < l.duration; i++) {
+                const interest = origBal * monthlyRate;
+                totalInterestOriginal += interest;
+                origBal = origBal + interest - l.monthly;
+                if (origBal <= 0) break;
+            }
+
+            // Walk through with actual payments
+            for (let i = 0; i < months.length; i++) {
+                if (bal <= 0) { loanFinished = true; break; }
+                const interest = bal * monthlyRate;
+                totalInterestActual += interest;
+                bal += interest;
+                const pay = payments.find(p => p.month === months[i].key);
+                const isPaid = pay && pay.paid;
+                const amt = isPaid ? (pay.amount || l.monthly) : 0;
+                if (isPaid) totalPaidAmount += amt;
+                bal -= amt;
+                if (bal < 0) bal = 0;
+                schedule.push({
+                    month: months[i].key,
+                    label: months[i].label,
+                    paid: isPaid,
+                    amount: amt,
+                    interest: interest,
+                    balance: bal,
+                    isPartial: isPaid && amt < l.monthly,
+                    isOver: isPaid && amt > l.monthly + 1,
+                    notes: pay ? pay.notes : ''
+                });
+                if (!isPaid && !loanFinished) remainingMonths++;
+            }
+
+            // If balance still > 0, project additional months needed beyond original duration
+            let extraMonths = 0;
+            if (bal > 0) {
+                let projBal = bal;
+                while (projBal > 0 && extraMonths < 600) {
+                    const interest = projBal * monthlyRate;
+                    totalInterestActual += interest;
+                    projBal = projBal + interest - l.monthly;
+                    extraMonths++;
+                    if (projBal <= 0) break;
+                }
+                remainingMonths += extraMonths;
+            }
+
+            const interestSaved = totalInterestOriginal - totalInterestActual;
+            const monthsSaved = loanFinished ? (l.duration - schedule.length) : -extraMonths;
+
+            return {
+                schedule,
+                currentBalance: bal > 0 ? bal : 0,
+                totalInterestOriginal: Math.round(totalInterestOriginal),
+                totalInterestActual: Math.round(totalInterestActual),
+                interestSaved: Math.round(interestSaved),
+                totalPaid: totalPaidAmount,
+                remainingInstallments: remainingMonths,
+                monthsSaved,
+                extraMonthsNeeded: extraMonths,
+                loanFinished
+            };
         }
 
         // Toggle a specific monthly installment as paid/unpaid
@@ -7781,34 +7984,40 @@ YOUR PERSONALITY & CRITICAL RULES:
             }
         }
 
-        // Inline modal-style prompt for payment amount with quick presets
+        // Inline modal-style prompt for payment amount with quick presets + live projection
         function promptPaymentAmount(l, monthKey) {
             return new Promise((resolve) => {
+                // Pre-calculate current balance for context
+                const curBal = loanCurrentBalance(l);
                 const overlay = document.createElement('div');
                 overlay.className = 'mo';
                 overlay.style.display = 'flex';
                 overlay.innerHTML = `
-                    <div class="md md-sm" style="background:var(--card);">
+                    <div class="md md-sm" style="background:var(--card);max-width:440px;">
                         <div class="md-hdr">
                             <div class="md-title">💸 Record Payment — ${monthKey}</div>
                             <button class="md-x" id="_pp_close">✕</button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
-                            Loan: <b>${l.name}</b><br>
-                            Scheduled installment: <b>${fmt(l.monthly)}</b><br>
-                            Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.
+                            Loan: <b>${l.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${l.bank}</span><br>
+                            Scheduled EMI: <b>${fmt(l.monthly)}</b> · Balance: <b style="color:var(--red);">${fmt(curBal)}</b><br>
+                            <span style="font-size:11px;color:var(--text3);">Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.</span>
                         </div>
                         <div class="fg">
                             <label class="fl">Amount Paid (LKR) *</label>
                             <input class="fi money-input" id="_pp_amt" placeholder="${fmtN(l.monthly)}" value="${fmtN(l.monthly)}" autofocus>
                         </div>
                         <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;">
-                            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('_pp_amt').value='${fmtN(Math.round(l.monthly * 0.5))}'">½× (${fmtS(l.monthly * 0.5)})</button>
-                            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('_pp_amt').value='${fmtN(l.monthly)}'">Scheduled</button>
-                            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('_pp_amt').value='${fmtN(Math.round(l.monthly * 1.5))}'">1.5× (${fmtS(l.monthly * 1.5)})</button>
-                            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('_pp_amt').value='${fmtN(l.monthly * 2)}'">2× (${fmtS(l.monthly * 2)})</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(l.monthly * 0.5)}">½× (${fmtS(l.monthly * 0.5)})</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${l.monthly}">Scheduled</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(l.monthly * 1.5)}">1.5× (${fmtS(l.monthly * 1.5)})</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${l.monthly * 2}">2× (${fmtS(l.monthly * 2)})</button>
                         </div>
-                        <div class="fg">
+                        <div id="_pp_projection" class="loan-projection" style="display:none;">
+                            <div class="lp-title">📊 Payment Impact Preview</div>
+                            <div id="_pp_proj_rows"></div>
+                        </div>
+                        <div class="fg" style="margin-top:10px;">
                             <label class="fl">Notes (optional)</label>
                             <input class="fi" id="_pp_notes" placeholder="e.g. Extra from bonus">
                         </div>
@@ -7818,12 +8027,72 @@ YOUR PERSONALITY & CRITICAL RULES:
                         </div>
                     </div>`;
                 document.body.appendChild(overlay);
-                // Re-format input as user types
+
                 const inp = overlay.querySelector('#_pp_amt');
+                const projPanel = overlay.querySelector('#_pp_projection');
+                const projRows = overlay.querySelector('#_pp_proj_rows');
+
+                // Live projection update
+                const updateProjection = () => {
+                    const raw = parseMoney(inp.value);
+                    if (!raw || raw <= 0) { projPanel.style.display = 'none'; return; }
+                    projPanel.style.display = 'block';
+                    const diff = raw - l.monthly;
+                    const monthlyRate = (l.rate || 0) / 100 / 12;
+                    // Simulate what balance looks like after this payment
+                    const interestThisMonth = curBal * monthlyRate;
+                    const balAfter = Math.max(0, curBal + interestThisMonth - raw);
+                    // Project remaining months at standard EMI from new balance
+                    let projBal = balAfter, projMonths = 0;
+                    while (projBal > 0 && projMonths < 600) {
+                        projBal = projBal + (projBal * monthlyRate) - l.monthly;
+                        projMonths++;
+                        if (projBal <= 0) break;
+                    }
+                    // Calculate original remaining months from current balance
+                    let origBal = curBal, origMonths = 0;
+                    while (origBal > 0 && origMonths < 600) {
+                        origBal = origBal + (origBal * monthlyRate) - l.monthly;
+                        origMonths++;
+                        if (origBal <= 0) break;
+                    }
+                    const monthsDiff = origMonths - projMonths - 1;
+                    const interestSaved = Math.round(monthsDiff * l.monthly * monthlyRate);
+
+                    let html = `<div class="lp-row"><span>Balance after payment:</span><span class="lp-val">${fmt(balAfter)}</span></div>`;
+                    html += `<div class="lp-row"><span>Interest this month:</span><span class="lp-val">${fmt(interestThisMonth)}</span></div>`;
+                    if (diff > 1) {
+                        html += `<div class="lp-row"><span>Extra principal paid:</span><span class="lp-saving">+${fmt(diff)}</span></div>`;
+                        if (monthsDiff > 0) html += `<div class="lp-row"><span>Months shortened:</span><span class="lp-saving">🎉 ${monthsDiff} month${monthsDiff > 1 ? 's' : ''} earlier</span></div>`;
+                        if (interestSaved > 0) html += `<div class="lp-row"><span>Estimated interest saved:</span><span class="lp-saving">~${fmt(interestSaved)}</span></div>`;
+                    } else if (diff < -1) {
+                        html += `<div class="lp-row"><span>Shortfall from EMI:</span><span style="color:var(--red);font-weight:700;">${fmt(Math.abs(diff))}</span></div>`;
+                        html += `<div class="lp-row"><span>⚠️ Remaining will accrue interest</span><span style="color:var(--accent2);font-size:11px;">Balance carried forward</span></div>`;
+                    } else {
+                        html += `<div class="lp-row"><span>Status:</span><span style="color:var(--green);">✅ Standard payment</span></div>`;
+                    }
+                    html += `<div class="lp-row"><span>Remaining installments:</span><span class="lp-val">${projMonths}</span></div>`;
+                    projRows.innerHTML = html;
+                };
+
+                // Re-format input as user types + live preview
                 inp.addEventListener('input', () => {
                     const raw = parseMoney(inp.value);
                     if (raw) inp.value = fmtN(raw);
+                    updateProjection();
                 });
+
+                // Preset buttons
+                overlay.querySelectorAll('._pp_preset').forEach(btn => {
+                    btn.onclick = () => {
+                        inp.value = fmtN(parseFloat(btn.dataset.val));
+                        updateProjection();
+                    };
+                });
+
+                // Initial projection
+                updateProjection();
+
                 const close = (val) => { document.body.removeChild(overlay); resolve(val); };
                 overlay.querySelector('#_pp_close').onclick = () => close(null);
                 overlay.querySelector('#_pp_cancel').onclick = () => close(null);
@@ -7865,6 +8134,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                 const currentBalance = loanCurrentBalance(l);
                 const interestPaid = loanTotalInterestPaid(l);
                 const skipCount = l.skipped?.length || 0;
+                const proj = loanProjectedSchedule(l);
 
                 const todayKey = new Date().toISOString().slice(0, 7);
                 const upcomingMonths = months.filter(m => m.key >= todayKey || !payments.find(p => p.month === m.key && p.paid)).slice(0, 6);
@@ -7920,7 +8190,21 @@ YOUR PERSONALITY & CRITICAL RULES:
                 <div class="ld"><div class="ld-l">PAID (Recorded)</div><div class="ld-v" style="color:var(--green);">${fmtS(totalPaid)}</div></div>
                 <div class="ld"><div class="ld-l">CURRENT BAL</div><div class="ld-v" style="color:var(--red);">${fmtS(currentBalance)}</div></div>
                 <div class="ld"><div class="ld-l">INTEREST PAID</div><div class="ld-v" style="color:var(--accent);">${fmtS(interestPaid)}</div></div>
+                <div class="ld"><div class="ld-l">REMAINING</div><div class="ld-v" style="color:var(--blue);">${proj.remainingInstallments} months</div></div>
             </div>
+
+            <!-- Projection summary when payments deviate from schedule -->
+            ${proj.interestSaved > 100 ? `<div class="loan-projection">
+                <div class="lp-title">📈 Smart Payment Impact</div>
+                <div class="lp-row"><span>Interest saved vs original:</span><span class="lp-saving">${fmt(proj.interestSaved)} 🎉</span></div>
+                ${proj.monthsSaved > 0 ? `<div class="lp-row"><span>Finishing early by:</span><span class="lp-saving">${proj.monthsSaved} month${proj.monthsSaved > 1 ? 's' : ''}</span></div>` : ''}
+                <div class="lp-row"><span>Projected total interest:</span><span class="lp-val">${fmt(proj.totalInterestActual)}</span></div>
+            </div>` : ''}
+            ${proj.extraMonthsNeeded > 0 ? `<div class="loan-projection" style="border-color:rgba(239,68,68,0.2);background:linear-gradient(135deg,rgba(239,68,68,0.06),rgba(245,166,35,0.04));">
+                <div class="lp-title" style="color:var(--red);">⚠️ Payment Shortfall Warning</div>
+                <div class="lp-row"><span>Needs ${proj.extraMonthsNeeded} extra month${proj.extraMonthsNeeded > 1 ? 's' : ''}</span><span style="color:var(--red);font-weight:700;">+${fmt(Math.abs(proj.interestSaved))} extra interest</span></div>
+            </div>` : ''}
+
             ${l.notes ? `<div style="margin-top:8px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${l.notes}</div>` : ''}
 
             <!-- Monthly installment buttons -->
@@ -7935,10 +8219,11 @@ YOUR PERSONALITY & CRITICAL RULES:
                         const isPaid = pay && pay.paid;
                         const isOver = isPaid && pay.amount > l.monthly + 1;
                         const isUnder = isPaid && pay.amount < l.monthly - 1;
-                        return `<button class="loan-month-btn ${isPaid ? 'lmb-paid' : 'lmb-due'}"
+                        const btnClass = isPaid ? (isUnder ? 'lmb-partial' : 'lmb-paid') : 'lmb-due';
+                        return `<button class="loan-month-btn ${btnClass}"
                             onclick="toggleLoanInstallment('${l.id}','${m.key}')"
                             title="${isPaid ? 'Paid ' + fmt(pay.amount) + (pay.notes ? ' · ' + pay.notes : '') : 'Click to record payment'}">
-                            ${isPaid ? '✅' : '⏰'} ${m.label} ${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
+                            ${isPaid ? (isUnder ? '⚠️' : '✅') : '⏰'} ${m.label} ${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
                         </button>`;
                     }).join('')}
                 </div>
@@ -9550,8 +9835,8 @@ YOUR PERSONALITY & CRITICAL RULES:
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.3 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v6.3 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.4 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v6.4 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -9560,7 +9845,7 @@ YOUR PERSONALITY & CRITICAL RULES:
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v6.3 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v6.4 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -10053,8 +10338,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                 if (_isInQuietHours()) return;
                 const s = DB.getObj('settings', {});
                 if (s.notifications === false) return;
-                // Add some randomization so notifications don't feel robotic
-                if (Math.random() < 0.6) triggerSmartNotifications();
+                triggerSmartNotifications();
             }, 30 * 60 * 1000); // every 30 minutes
 
             // Also run a deadline check every 10 minutes for time-critical alerts
@@ -12127,25 +12411,29 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         async function _performHardSignOut(reason) {
             if (_sessionRevokeBusy) return;
             _sessionRevokeBusy = true;
+            // Show full-screen loading overlay to prevent UI flashing
+            const overlay = document.createElement('div');
+            overlay.className = 'signout-overlay';
+            overlay.innerHTML = `<div class="so-spinner"></div><div class="so-text">🔒 ${reason}<br>Signing out…</div>`;
+            document.body.appendChild(overlay);
             try {
-                notify('🔒 ' + reason + ' Signing out…', 'warn');
                 if (_sessionRevokeUnsub) { try { _sessionRevokeUnsub(); } catch(e){} _sessionRevokeUnsub = null; }
                 if (_sessionRevokeChecker) clearInterval(_sessionRevokeChecker);
                 // Stop AI listener too
                 try { if (window._aiUnsubscribe) { window._aiUnsubscribe(); window._aiUnsubscribe = null; } } catch(e){}
-                // 1) Sign out from Firebase Auth (this is the REAL Google sign-out)
+                // 1) Clear all local session state FIRST (prevents UI flash)
+                localStorage.removeItem('wf_session_id');
+                sessionStorage.clear();
+                // 2) Sign out from Firebase Auth (this is the REAL Google sign-out)
                 try { await firebase.auth().signOut(); } catch(e) { console.warn('Firebase signout failed:', e); }
-                // 2) Revoke Google OAuth token if we still have a credential reference
+                // 3) Revoke Google OAuth token if we still have a credential reference
                 try {
                     const acct = JSON.parse(localStorage.getItem('wf_google_account') || '{}');
                     if (acct.token && navigator.sendBeacon) {
-                        // Best-effort revoke; non-blocking
                         navigator.sendBeacon('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(acct.token));
                     }
                 } catch(e){}
-                // 3) Clear all local session state
-                localStorage.removeItem('wf_session_id');
-                sessionStorage.clear();
+                localStorage.removeItem('wf_google_account');
                 // 4) Force a hard reload so the user lands at the Google sign-in screen, not the app
                 setTimeout(() => { location.replace(location.pathname); }, 700);
             } catch (e) {
