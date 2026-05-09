@@ -2860,6 +2860,16 @@
             transform: translateY(0);
         }
 
+        /* Repayment Method radio cards (Add/Edit Loan modal) */
+        .loan-method-opt input[type="radio"]:checked + .loan-method-card {
+            border-color: var(--accent);
+            background: linear-gradient(135deg, rgba(212, 175, 55, 0.10), rgba(212, 175, 55, 0.02));
+            box-shadow: 0 0 0 1px var(--accent) inset;
+        }
+        .loan-method-card:hover {
+            border-color: var(--accent2);
+        }
+
         @keyframes loanPayCtaPulse {
 
             0%,
@@ -5382,6 +5392,30 @@
                         placeholder="60" oninput="calcLoanM()"></div>
                 <div class="fg"><label class="fl">Override Monthly Payment</label><input class="fi money-input"
                         id="l_monthly" placeholder="Auto-calculated"></div>
+            </div>
+            <!-- Repayment Method selector -->
+            <div class="fg">
+                <label class="fl">Repayment Method *</label>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <label class="loan-method-opt" style="cursor:pointer;">
+                        <input type="radio" name="l_method" id="l_method_emi" value="emi" checked
+                            onchange="calcLoanM()" style="display:none;">
+                        <div class="loan-method-card" data-for="l_method_emi"
+                            style="padding:12px;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);transition:all 0.2s;">
+                            <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;">📊 EMI <span style="font-size:9px;color:var(--text3);font-weight:400;">(Equal)</span></div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:3px;line-height:1.4;">Fixed monthly payment for the whole term. Standard bank loan.</div>
+                        </div>
+                    </label>
+                    <label class="loan-method-opt" style="cursor:pointer;">
+                        <input type="radio" name="l_method" id="l_method_reducing" value="reducing"
+                            onchange="calcLoanM()" style="display:none;">
+                        <div class="loan-method-card" data-for="l_method_reducing"
+                            style="padding:12px;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);transition:all 0.2s;">
+                            <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;">📉 Reducing <span style="font-size:9px;color:var(--text3);font-weight:400;">(Floating)</span></div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:3px;line-height:1.4;">Payment drops each month as principal reduces. Auto-adjusts to over/underpayments.</div>
+                        </div>
+                    </label>
+                </div>
             </div>
             <div class="fcalc" id="l_calc"></div>
             <div class="fr">
@@ -9011,9 +9045,28 @@ YOUR PERSONALITY & CRITICAL RULES:
 
         function calcLoanM() {
             const amt = parseMoney($('l_amount').value), rate = parseFloat($('l_rate').value) || 0, dur = parseInt($('l_dur').value) || 0;
+            const methodEl = document.querySelector('input[name="l_method"]:checked');
+            const method = methodEl ? methodEl.value : 'emi';
             if (amt > 0 && dur > 0) {
-                let m = rate === 0 ? amt / dur : amt * (rate / 100 / 12) * Math.pow(1 + rate / 100 / 12, dur) / (Math.pow(1 + rate / 100 / 12, dur) - 1);
-                $('l_calc').textContent = `→ Monthly: LKR ${fmtN(m)} | Total: LKR ${fmtN(m * dur)} | Interest: LKR ${fmtN(m * dur - amt)}`;
+                if (method === 'reducing') {
+                    // Reducing balance: payment varies — show first month (highest) and last month (lowest)
+                    const monthlyRate = rate / 100 / 12;
+                    const principalPerMonth = amt / dur;
+                    const firstMonthPayment = principalPerMonth + amt * monthlyRate;
+                    const lastMonthPayment = principalPerMonth + principalPerMonth * monthlyRate;
+                    // Total interest for reducing balance = sum of (balance × rate) over months
+                    let totalInt = 0, b = amt;
+                    for (let i = 0; i < dur; i++) {
+                        const intThis = b * monthlyRate;
+                        totalInt += intThis;
+                        b -= principalPerMonth;
+                        if (b < 0) b = 0;
+                    }
+                    $('l_calc').innerHTML = `→ <b>1st month:</b> LKR ${fmtN(firstMonthPayment)} · <b>Last month:</b> LKR ${fmtN(lastMonthPayment)}<br>→ Total: LKR ${fmtN(amt + totalInt)} | Interest: LKR ${fmtN(totalInt)} <span style="color:var(--text3);">(reducing-balance method — payment drops each month)</span>`;
+                } else {
+                    let m = rate === 0 ? amt / dur : amt * (rate / 100 / 12) * Math.pow(1 + rate / 100 / 12, dur) / (Math.pow(1 + rate / 100 / 12, dur) - 1);
+                    $('l_calc').innerHTML = `→ Monthly: LKR ${fmtN(m)} | Total: LKR ${fmtN(m * dur)} | Interest: LKR ${fmtN(m * dur - amt)} <span style="color:var(--text3);">(EMI — fixed for the whole term)</span>`;
+                }
             } else $('l_calc').textContent = '';
         }
 
@@ -9247,11 +9300,37 @@ YOUR PERSONALITY & CRITICAL RULES:
         function saveLoan() {
             const name = $('l_name').value.trim(), bank = $('l_bank').value, amount = parseMoney($('l_amount').value), rate = parseFloat($('l_rate').value) || 0, dur = parseInt($('l_dur').value) || 0, start = $('l_start').value;
             if (!name || !bank || !amount || !dur || !start) { notify('Please fill required fields', 'error'); return; }
-            const calc = calcEMI(amount, rate, dur);
-            const monthly = parseMoney($('l_monthly').value) || Math.round(calc);
-            const rec = { id: editMode || uid(), name, bank, amount, rate, duration: dur, monthly, start, purpose: $('l_purpose').value, notes: $('l_notes').value, skipped: [] };
+            const methodEl = document.querySelector('input[name="l_method"]:checked');
+            const paymentMethod = methodEl && methodEl.value === 'reducing' ? 'reducing' : 'emi';
+            // For EMI: l.monthly is the fixed payment. For Reducing: l.monthly is the FIRST month's
+            // payment (the highest), useful as a reference value; actual amounts are computed live
+            // by _scheduledPaymentFor / loanProjectedSchedule.
+            let monthly;
+            const override = parseMoney($('l_monthly').value);
+            if (paymentMethod === 'reducing') {
+                const monthlyRate = rate / 100 / 12;
+                const principalPerMonth = amount / dur;
+                const firstMonth = principalPerMonth + amount * monthlyRate;
+                monthly = override || Math.round(firstMonth);
+            } else {
+                const calc = calcEMI(amount, rate, dur);
+                monthly = override || Math.round(calc);
+            }
+            const rec = {
+                id: editMode || uid(), name, bank, amount, rate, duration: dur, monthly, start,
+                paymentMethod,
+                purpose: $('l_purpose').value, notes: $('l_notes').value, skipped: []
+            };
             const arr = DB.get('loans');
-            if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { rec.skipped = arr[i].skipped || []; arr[i] = rec; } } else arr.push(rec);
+            if (editMode) {
+                const i = arr.findIndex(x => x.id === editMode);
+                if (i > -1) {
+                    // Preserve recorded payments + skipped months when editing the loan profile
+                    rec.skipped = arr[i].skipped || [];
+                    rec.payments = arr[i].payments || [];
+                    arr[i] = rec;
+                }
+            } else arr.push(rec);
             DB.set('loans', arr);
             closeModal('mdLoan'); clearLoanForm(); renderLoans(); renderDash();
             notify(editMode ? 'Loan updated!' : 'Loan added!');
@@ -9259,15 +9338,27 @@ YOUR PERSONALITY & CRITICAL RULES:
         function clearLoanForm() {
             ['l_name', 'l_amount', 'l_rate', 'l_dur', 'l_monthly', 'l_start', 'l_purpose', 'l_notes'].forEach(id => $(id).value = '');
             $('l_bank').value = ''; $('l_calc').textContent = ''; $('mdLoanTitle').textContent = 'Add Bank Loan';
+            // Default method back to EMI on a clean form
+            const emiRadio = $('l_method_emi'); if (emiRadio) emiRadio.checked = true;
+            const redRadio = $('l_method_reducing'); if (redRadio) redRadio.checked = false;
         }
         function editLoan(id) {
             const l = DB.get('loans').find(x => x.id === id); if (!l) return;
             editMode = id; $('mdLoanTitle').textContent = 'Edit Loan';
             $('l_name').value = l.name; $('l_bank').value = l.bank; $('l_amount').value = fmtN(l.amount);
             $('l_rate').value = l.rate; $('l_dur').value = l.duration;
-            // Only pre-fill override if user had manually overridden (check vs auto-calc)
-            const autoEMI = calcEMI(l.amount, l.rate, l.duration);
-            $('l_monthly').value = (Math.abs(l.monthly - Math.round(autoEMI)) > 1) ? fmtN(l.monthly) : '';
+            // Restore the saved method (default 'emi' for legacy records without the field)
+            const savedMethod = _loanMethod(l);
+            if ($('l_method_emi'))      $('l_method_emi').checked      = savedMethod === 'emi';
+            if ($('l_method_reducing')) $('l_method_reducing').checked = savedMethod === 'reducing';
+            // Only pre-fill override if user had manually overridden (check vs auto-calc for the saved method)
+            let autoCalc;
+            if (savedMethod === 'reducing') {
+                autoCalc = (l.amount / l.duration) + l.amount * (l.rate / 100 / 12);
+            } else {
+                autoCalc = calcEMI(l.amount, l.rate, l.duration);
+            }
+            $('l_monthly').value = (Math.abs(l.monthly - Math.round(autoCalc)) > 1) ? fmtN(l.monthly) : '';
             $('l_start').value = l.start; $('l_purpose').value = l.purpose || ''; $('l_notes').value = l.notes || '';
             calcLoanM(); openModal('mdLoan');
         }
@@ -9296,7 +9387,17 @@ YOUR PERSONALITY & CRITICAL RULES:
             let multiplier = 1;
             if (item.skipped && item.skipped.includes(prevYm)) multiplier = 2;
             if (item.skipped && item.skipped.includes(ym)) multiplier = 0;
-            return item.monthly * multiplier;
+            // Method-aware base amount. For reducing-balance loans the monthly varies, so we
+            // compute the projected scheduled amount for THIS specific month rather than using
+            // the static l.monthly. (For EMI loans the result is the same.)
+            let base;
+            if (_loanMethod(item) === 'reducing') {
+                const balBefore = _loanBalanceBeforeMonth(item, ym);
+                base = _scheduledPaymentFor(item, balBefore);
+            } else {
+                base = item.monthly;
+            }
+            return base * multiplier;
         }
         function loanEndDate(l) {
             const d = new Date(l.start + 'T00:00:00'); d.setMonth(d.getMonth() + l.duration); return d;
@@ -9363,14 +9464,18 @@ YOUR PERSONALITY & CRITICAL RULES:
             if (idx <= 0) return l.amount;
 
             const monthlyRate = (l.rate || 0) / 100 / 12;
+            const isReducing = _loanMethod(l) === 'reducing';
+            const principalPerMonth = isReducing ? l.amount / l.duration : null;
             let bal = l.amount;
             const payments = l.payments || [];
             for (let i = 0; i < idx; i++) {
-                const interest = bal * monthlyRate;
+                const balAtStart = bal;
+                const interest = balAtStart * monthlyRate;
                 bal += interest;
                 const pay = payments.find(p => p.month === months[i].key);
-                // For unpaid months: assume scheduled EMI (matches what the projection table shows)
-                const amt = pay && pay.paid ? (pay.amount || l.monthly) : l.monthly;
+                // Method-specific scheduled amount for this month (varies for reducing balance)
+                const scheduled = isReducing ? (principalPerMonth + interest) : l.monthly;
+                const amt = pay && pay.paid ? (pay.amount || scheduled) : scheduled;
                 bal -= Math.min(amt, bal);
                 if (bal < 0) bal = 0;
             }
@@ -9407,45 +9512,56 @@ YOUR PERSONALITY & CRITICAL RULES:
             const monthsArr = _loanInstallmentMonths(l);
             const payments = l.payments || [];
             const todayKey = new Date().toISOString().slice(0, 7);
+            const isReducing = _loanMethod(l) === 'reducing';
+            const principalPerMonth = isReducing ? l.amount / l.duration : null;
 
-            // ---- Pass 1: Original (planned) totals — assumes every month paid at exactly l.monthly
+            // ---- Pass 1: Original (planned) totals — assumes every month paid at the scheduled
+            //              amount for the chosen method. For EMI this is l.monthly each month;
+            //              for Reducing it varies (principal/n + balance × rate).
             let totalInterestOriginal = 0;
             let origBal = l.amount;
             for (let i = 0; i < l.duration; i++) {
                 const interest = origBal * monthlyRate;
                 totalInterestOriginal += interest;
-                origBal = origBal + interest - l.monthly;
+                const scheduled = isReducing ? (principalPerMonth + interest) : l.monthly;
+                origBal = origBal + interest - scheduled;
                 if (origBal <= 0) break;
             }
 
-            // ---- Pass 2: Actual schedule using recorded payments + projection of unpaid months at EMI
+            // ---- Pass 2: Actual schedule using recorded payments + projection of unpaid months
+            //              at the method-specific scheduled amount.
             let bal = l.amount;
             let totalInterestActual = 0;
-            let totalPaidAmount = 0;     // sum of amounts user has actually recorded
-            let totalProjectedAmount = 0;// sum of projected future payments
+            let totalPaidAmount = 0;
+            let totalProjectedAmount = 0;
             let remainingPayments = 0;
             let actualMonthsToFinish = 0;
             const schedule = [];
 
             for (let i = 0; i < monthsArr.length; i++) {
                 if (bal <= 0.5) break; // already paid off
-                const interest = bal * monthlyRate;
+                const balAtStart = bal;
+                const interest = balAtStart * monthlyRate;
                 totalInterestActual += interest;
                 bal += interest;
+
+                // Method-specific scheduled amount for THIS month
+                const scheduledForThisMonth = isReducing ? (principalPerMonth + interest) : l.monthly;
 
                 const pay = payments.find(p => p.month === monthsArr[i].key);
                 const isPaid = pay && pay.paid;
 
-                // For unpaid months, project payment at scheduled EMI (this is what the user
-                // intends to happen — anything else would distort the amortization table).
-                const desiredAmt = isPaid ? (pay.amount || l.monthly) : l.monthly;
-                // Cap at remaining balance so we never "overpay" beyond zero
+                const desiredAmt = isPaid ? (pay.amount || scheduledForThisMonth) : scheduledForThisMonth;
                 const actualAmt = Math.min(desiredAmt, bal);
                 bal -= actualAmt;
                 if (bal < 0) bal = 0;
 
                 if (isPaid) totalPaidAmount += actualAmt;
                 else { remainingPayments++; totalProjectedAmount += actualAmt; }
+
+                // For over/under flags we compare against THIS month's scheduled amount, which
+                // for reducing-balance loans is different every month.
+                const diffVsScheduled = isPaid ? (pay.amount - scheduledForThisMonth) : 0;
 
                 schedule.push({
                     month: monthsArr[i].key,
@@ -9454,20 +9570,20 @@ YOUR PERSONALITY & CRITICAL RULES:
                     isProjected: !isPaid,
                     isExtension: false,
                     amount: actualAmt,
-                    scheduledAmount: l.monthly,
+                    scheduledAmount: scheduledForThisMonth,
                     interest: interest,
                     principalPaid: Math.max(0, actualAmt - interest),
                     balance: bal,
-                    isPartial: isPaid && pay.amount < l.monthly - 1,
-                    isOver: isPaid && pay.amount > l.monthly + 1,
-                    diff: isPaid ? (pay.amount - l.monthly) : 0,
+                    isPartial: isPaid && pay.amount < scheduledForThisMonth - 1,
+                    isOver: isPaid && pay.amount > scheduledForThisMonth + 1,
+                    diff: diffVsScheduled,
                     notes: pay ? pay.notes : '',
                     isCurrent: monthsArr[i].key === todayKey
                 });
                 actualMonthsToFinish++;
             }
 
-            // ---- Pass 3: Extension months (when underpayments stretch beyond original term)
+            // ---- Pass 3: Extension months for either method (loan stretched beyond original term)
             let extraMonths = 0;
             if (bal > 0.5) {
                 const startDate = new Date(l.start + 'T00:00:00');
@@ -9475,10 +9591,12 @@ YOUR PERSONALITY & CRITICAL RULES:
                     const i = monthsArr.length + extraMonths;
                     const d = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
                     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-                    const interest = bal * monthlyRate;
+                    const balAtStart = bal;
+                    const interest = balAtStart * monthlyRate;
                     totalInterestActual += interest;
                     bal += interest;
-                    const desiredAmt = l.monthly;
+                    const scheduledForThisMonth = isReducing ? (principalPerMonth + interest) : l.monthly;
+                    const desiredAmt = scheduledForThisMonth;
                     const actualAmt = Math.min(desiredAmt, bal);
                     bal -= actualAmt;
                     if (bal < 0) bal = 0;
@@ -9490,7 +9608,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                         isProjected: true,
                         isExtension: true,
                         amount: actualAmt,
-                        scheduledAmount: l.monthly,
+                        scheduledAmount: scheduledForThisMonth,
                         interest: interest,
                         principalPaid: Math.max(0, actualAmt - interest),
                         balance: bal,
@@ -9566,37 +9684,98 @@ YOUR PERSONALITY & CRITICAL RULES:
             }
         }
 
-        // Inline modal-style prompt for payment amount with quick presets + live projection
-        function promptPaymentAmount(l, monthKey) {
+        // ===================================================================================
+        // PAYMENT-METHOD AWARENESS
+        // ===================================================================================
+        // Each loan has a `paymentMethod` field:
+        //   - 'emi'      — Equal Monthly Installment. Fixed monthly payment for the whole term.
+        //                  This is the classic bank loan behavior (e.g. car loans, mortgages).
+        //   - 'reducing' — Floating / Reducing Balance method. Each month's payment =
+        //                  (principal / duration) + (current_balance × monthly_rate)
+        //                  → payment NATURALLY decreases as the principal is paid down.
+        //                  → no recalculation needed when paying differently — the next
+        //                    month auto-adjusts based on the new balance.
+        //
+        // Loans saved before this feature default to 'emi' (backwards-compatible).
+        function _loanMethod(l) { return l.paymentMethod === 'reducing' ? 'reducing' : 'emi'; }
+
+        // Scheduled payment for a specific month given the balance AT THE START OF THAT MONTH
+        // (i.e. before this month's interest is added). Used for projecting unpaid months.
+        function _scheduledPaymentFor(l, balanceAtStartOfMonth) {
+            const monthlyRate = (l.rate || 0) / 100 / 12;
+            if (_loanMethod(l) === 'reducing') {
+                const principalPerMonth = l.amount / l.duration;
+                const interest = balanceAtStartOfMonth * monthlyRate;
+                return principalPerMonth + interest;
+            }
+            return l.monthly; // EMI: fixed
+        }
+
+        // What the user will be billed for the NEXT unpaid installment, given today's state.
+        // For EMI: always l.monthly. For reducing: live-computed from current balance.
+        // This is what the loan card and dashboard stats should display as "this month".
+        function loanNextScheduledPayment(l) {
+            const todayKey = new Date().toISOString().slice(0, 7);
+            const months = _loanInstallmentMonths(l);
+            const payments = l.payments || [];
+            const nextMonth = months.find(m =>
+                m.key >= todayKey && !payments.find(p => p.month === m.key && p.paid));
+            if (!nextMonth) return l.monthly;
+            const balBefore = _loanBalanceBeforeMonth(l, nextMonth.key);
+            return _scheduledPaymentFor(l, balBefore);
+        }
+
+        // Inline modal-style prompt for payment amount with quick presets + live projection.
+        // OPTIONS:
+        //   defaultAmount  — pre-fill the input with this amount (used when editing an
+        //                    already-recorded payment — protects user from data loss on Cancel)
+        //   defaultNotes   — pre-fill the notes field
+        //   isEdit         — true when called from the "Edit Amount" flow; tweaks the title
+        function promptPaymentAmount(l, monthKey, opts) {
+            opts = opts || {};
             return new Promise((resolve) => {
-                // Pre-calculate balance JUST BEFORE this month's installment (so projection is accurate)
-                const curBal = _loanBalanceBeforeMonth(l, monthKey);
+                // Balance JUST BEFORE this month's installment (correct for ANY month in the schedule).
+                // For "edit" mode we exclude the existing payment so the projection reflects what
+                // the new amount will do — i.e. ignore the row being edited when recomputing.
+                const lForBalance = opts.isEdit
+                    ? { ...l, payments: (l.payments || []).filter(p => p.month !== monthKey) }
+                    : l;
+                const curBal = _loanBalanceBeforeMonth(lForBalance, monthKey);
+                // What's "scheduled" for THIS specific month (varies for reducing-balance loans)
+                const scheduledForMonth = _scheduledPaymentFor(l, curBal);
+                const isReducing = _loanMethod(l) === 'reducing';
+
                 const overlay = document.createElement('div');
                 overlay.className = 'mo';
-                // ROOT FIX — modals need the `.open` CSS class to become visible (CSS opacity/pointer-events).
-                // Previously style.display='flex' did nothing because .mo is already display:flex but invisible.
+                // ROOT FIX — modals need the `.open` CSS class to become visible.
                 document.body.appendChild(overlay);
                 requestAnimationFrame(() => overlay.classList.add('open'));
+                const titleText = opts.isEdit ? '✏️ Edit Payment' : '💸 Record Payment';
+                const seedAmount = opts.defaultAmount != null ? opts.defaultAmount : scheduledForMonth;
+                const seedNotes = opts.defaultNotes || '';
                 overlay.innerHTML = `
                     <div class="md md-sm" style="background:var(--card);max-width:440px;">
                         <div class="md-hdr">
-                            <div class="md-title">💸 Record Payment — ${monthKey}</div>
+                            <div class="md-title">${titleText} — ${monthKey}</div>
                             <button class="md-x" id="_pp_close">✕</button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
                             Loan: <b>${l.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${l.bank}</span><br>
-                            Scheduled EMI: <b>${fmt(l.monthly)}</b> · Balance: <b style="color:var(--red);">${fmt(curBal)}</b><br>
-                            <span style="font-size:11px;color:var(--text3);">Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.</span>
+                            Method: <b>${isReducing ? 'Reducing Balance (floating)' : 'EMI (fixed)'}</b> · Rate: <b>${l.rate}% p.a.</b><br>
+                            Scheduled this month: <b>${fmt(scheduledForMonth)}</b> · Balance: <b style="color:var(--red);">${fmt(curBal)}</b><br>
+                            <span style="font-size:11px;color:var(--text3);">${isReducing
+                                ? 'Each month auto-adjusts based on remaining balance — overpaying drops every future installment.'
+                                : 'Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.'}</span>
                         </div>
                         <div class="fg">
                             <label class="fl">Amount Paid (LKR) *</label>
-                            <input class="fi money-input" id="_pp_amt" placeholder="${fmtN(l.monthly)}" value="${fmtN(l.monthly)}" autofocus>
+                            <input class="fi money-input" id="_pp_amt" placeholder="${fmtN(scheduledForMonth)}" value="${fmtN(seedAmount)}" autofocus>
                         </div>
                         <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;">
-                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(l.monthly * 0.5)}">½× (${fmtS(l.monthly * 0.5)})</button>
-                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${l.monthly}">Scheduled</button>
-                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(l.monthly * 1.5)}">1.5× (${fmtS(l.monthly * 1.5)})</button>
-                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${l.monthly * 2}">2× (${fmtS(l.monthly * 2)})</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 0.5)}">½× (${fmtS(scheduledForMonth * 0.5)})</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth)}">Scheduled</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 1.5)}">1.5× (${fmtS(scheduledForMonth * 1.5)})</button>
+                            <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 2)}">2× (${fmtS(scheduledForMonth * 2)})</button>
                         </div>
                         <div id="_pp_projection" class="loan-projection" style="display:none;">
                             <div class="lp-title">📊 Payment Impact Preview</div>
@@ -9608,62 +9787,81 @@ YOUR PERSONALITY & CRITICAL RULES:
                         </div>
                         <div class="md-ftr">
                             <button class="btn btn-ghost" id="_pp_cancel">Cancel</button>
-                            <button class="btn btn-success" id="_pp_save">✓ Record Payment</button>
+                            <button class="btn btn-success" id="_pp_save">${opts.isEdit ? '✓ Save Changes' : '✓ Record Payment'}</button>
                         </div>
                     </div>`;
-                document.body.appendChild(overlay);
 
                 const inp = overlay.querySelector('#_pp_amt');
                 const projPanel = overlay.querySelector('#_pp_projection');
                 const projRows = overlay.querySelector('#_pp_proj_rows');
+                // Prefill notes if editing
+                if (seedNotes) overlay.querySelector('#_pp_notes').value = seedNotes;
 
-                // Live projection update
+                // Live projection update — method-aware. For EMI we show months-saved and
+                // interest-saved relative to the original schedule. For reducing-balance we
+                // show what the NEXT month's payment will be after this one is recorded.
                 const updateProjection = () => {
                     const raw = parseMoney(inp.value);
                     if (!raw || raw <= 0) { projPanel.style.display = 'none'; return; }
                     projPanel.style.display = 'block';
-                    const diff = raw - l.monthly;
+                    const diff = raw - scheduledForMonth;
                     const monthlyRate = (l.rate || 0) / 100 / 12;
-                    // Simulate what balance looks like after this payment
                     const interestThisMonth = curBal * monthlyRate;
                     const balAfter = Math.max(0, curBal + interestThisMonth - raw);
-                    // Project remaining months at standard EMI from new balance
-                    let projBal = balAfter, projMonths = 0;
-                    while (projBal > 0 && projMonths < 600) {
-                        projBal = projBal + (projBal * monthlyRate) - l.monthly;
-                        projMonths++;
-                        if (projBal <= 0) break;
-                    }
-                    // Calculate original remaining months from current balance
-                    let origBal = curBal, origMonths = 0;
-                    while (origBal > 0 && origMonths < 600) {
-                        origBal = origBal + (origBal * monthlyRate) - l.monthly;
-                        origMonths++;
-                        if (origBal <= 0) break;
-                    }
-                    const monthsDiff = origMonths - projMonths - 1;
-                    const interestSaved = Math.round(monthsDiff * l.monthly * monthlyRate);
 
-                    let html = `<div class="lp-row"><span>Balance after payment:</span><span class="lp-val">${fmt(balAfter)}</span></div>`;
+                    let html = `<div class="lp-row"><span>Balance after this payment:</span><span class="lp-val">${fmt(balAfter)}</span></div>`;
                     html += `<div class="lp-row"><span>Interest this month:</span><span class="lp-val">${fmt(interestThisMonth)}</span></div>`;
-                    if (diff > 1) {
-                        html += `<div class="lp-row"><span>Extra principal paid:</span><span class="lp-saving">+${fmt(diff)}</span></div>`;
-                        if (monthsDiff > 0) html += `<div class="lp-row"><span>Months shortened:</span><span class="lp-saving">🎉 ${monthsDiff} month${monthsDiff > 1 ? 's' : ''} earlier</span></div>`;
-                        if (interestSaved > 0) html += `<div class="lp-row"><span>Estimated interest saved:</span><span class="lp-saving">~${fmt(interestSaved)}</span></div>`;
-                    } else if (diff < -1) {
-                        html += `<div class="lp-row"><span>Shortfall from EMI:</span><span style="color:var(--red);font-weight:700;">${fmt(Math.abs(diff))}</span></div>`;
-                        html += `<div class="lp-row"><span>⚠️ Remaining will accrue interest</span><span style="color:var(--accent2);font-size:11px;">Balance carried forward</span></div>`;
+
+                    if (isReducing) {
+                        // For reducing-balance: show what NEXT month's payment will be
+                        const principalPerMonth = l.amount / l.duration;
+                        const nextMonthInterest = balAfter * monthlyRate;
+                        const nextMonthPayment = principalPerMonth + nextMonthInterest;
+                        html += `<div class="lp-row"><span>Next month's installment:</span><span class="lp-val" style="color:var(--accent);font-weight:700;">${fmt(nextMonthPayment)}</span></div>`;
+                        if (diff > 1) html += `<div class="lp-row"><span>Extra paid this month:</span><span class="lp-saving">+${fmt(diff)} → drops every future installment</span></div>`;
+                        else if (diff < -1) html += `<div class="lp-row"><span>Shortfall:</span><span style="color:var(--red);font-weight:700;">${fmt(Math.abs(diff))} (raises future installments)</span></div>`;
+                        // Project remaining months at floating method
+                        let projBal = balAfter, projMonths = 0;
+                        while (projBal > 0 && projMonths < 600) {
+                            const i = projBal * monthlyRate;
+                            const pmt = principalPerMonth + i;
+                            projBal = projBal + i - Math.min(pmt, projBal + i);
+                            projMonths++;
+                            if (projBal <= 0.5) break;
+                        }
+                        html += `<div class="lp-row"><span>Remaining installments:</span><span class="lp-val">${projMonths}</span></div>`;
                     } else {
-                        html += `<div class="lp-row"><span>Status:</span><span style="color:var(--green);">✅ Standard payment</span></div>`;
+                        // EMI: show months saved / shortened relative to original
+                        let projBal = balAfter, projMonths = 0;
+                        while (projBal > 0 && projMonths < 600) {
+                            projBal = projBal + (projBal * monthlyRate) - l.monthly;
+                            projMonths++;
+                            if (projBal <= 0) break;
+                        }
+                        let origBal = curBal, origMonths = 0;
+                        while (origBal > 0 && origMonths < 600) {
+                            origBal = origBal + (origBal * monthlyRate) - l.monthly;
+                            origMonths++;
+                            if (origBal <= 0) break;
+                        }
+                        const monthsDiff = origMonths - projMonths - 1;
+                        const interestSaved = Math.round(monthsDiff * l.monthly * monthlyRate);
+                        if (diff > 1) {
+                            html += `<div class="lp-row"><span>Extra principal paid:</span><span class="lp-saving">+${fmt(diff)}</span></div>`;
+                            if (monthsDiff > 0) html += `<div class="lp-row"><span>Months shortened:</span><span class="lp-saving">🎉 ${monthsDiff} month${monthsDiff > 1 ? 's' : ''} earlier</span></div>`;
+                            if (interestSaved > 0) html += `<div class="lp-row"><span>Estimated interest saved:</span><span class="lp-saving">~${fmt(interestSaved)}</span></div>`;
+                        } else if (diff < -1) {
+                            html += `<div class="lp-row"><span>Shortfall from EMI:</span><span style="color:var(--red);font-weight:700;">${fmt(Math.abs(diff))}</span></div>`;
+                            html += `<div class="lp-row"><span>⚠️ Remaining will accrue interest</span><span style="color:var(--accent2);font-size:11px;">Balance carried forward</span></div>`;
+                        } else {
+                            html += `<div class="lp-row"><span>Status:</span><span style="color:var(--green);">✅ Standard payment</span></div>`;
+                        }
+                        html += `<div class="lp-row"><span>Remaining installments:</span><span class="lp-val">${projMonths}</span></div>`;
                     }
-                    html += `<div class="lp-row"><span>Remaining installments:</span><span class="lp-val">${projMonths}</span></div>`;
                     projRows.innerHTML = html;
                 };
 
                 // Re-format input as user types + live preview.
-                // FIX: previously this called fmtN() on every keystroke, which forces ".00" decimals
-                // and resets caret to end — making it nearly impossible to type multi-digit amounts.
-                // Now we use the shared caret-friendly money handler and run the projection on input.
                 _attachMoneyHandlers(inp);
                 inp.addEventListener('input', updateProjection);
 
@@ -9690,7 +9888,6 @@ YOUR PERSONALITY & CRITICAL RULES:
                     if (!amt || amt <= 0) { notify('Enter a valid amount', 'error'); return; }
                     close({ amount: amt, notes: overlay.querySelector('#_pp_notes').value.trim() });
                 };
-                // Backdrop click to dismiss (matches normal modal UX)
                 overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
                 setTimeout(() => inp.focus(), 250);
             });
@@ -9730,12 +9927,24 @@ YOUR PERSONALITY & CRITICAL RULES:
                 const todayKey = new Date().toISOString().slice(0, 7);
                 const upcomingMonths = months.filter(m => m.key >= todayKey || !payments.find(p => p.month === m.key && p.paid)).slice(0, 6);
                 const recentPaid = months.filter(m => payments.find(p => p.month === m.key && p.paid)).slice(-3);
+                const cardMethod = _loanMethod(l);
+                const isReducingCard = cardMethod === 'reducing';
+                // For reducing-balance loans the monthly amount changes every month —
+                // show the upcoming installment (live-computed) so the displayed value
+                // actually matches what the user will be billed.
+                const displayMonthly = isReducingCard ? loanNextScheduledPayment(l) : l.monthly;
+                const methodBadge = isReducingCard
+                    ? '<span class="badge bg-b" title="Floating / Reducing Balance — payment varies each month based on remaining balance × rate" style="font-size:9px;">📉 Reducing</span>'
+                    : '<span class="badge bg-gr" title="Equal Monthly Installment — fixed payment for the whole term" style="font-size:9px;">📊 EMI</span>';
+                const monthlyHint = isReducingCard
+                    ? `<div style="font-size:10px;color:var(--text3);font-weight:400;line-height:1;">next month (varies)</div>`
+                    : '';
 
                 return `<div class="loan-card">
             <div class="loan-top">
-                <div><div class="loan-name">${l.name}</div><div class="loan-bank">🏦 ${l.bank}${l.purpose ? ' · ' + l.purpose : ''}</div></div>
+                <div><div class="loan-name">${l.name}</div><div class="loan-bank">🏦 ${l.bank}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
-                    <div style="text-align:right;"><div class="loan-monthly">${fmt(l.monthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div><div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
+                    <div style="text-align:right;"><div class="loan-monthly">${fmt(displayMonthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div>${monthlyHint}<div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
                     <div class="act-btns"><button class="ib e" onclick="editLoan('${l.id}')">✏️</button><button class="ib d" onclick="deleteLoan('${l.id}')">🗑️</button></div>
                 </div>
             </div>
@@ -9748,14 +9957,17 @@ YOUR PERSONALITY & CRITICAL RULES:
                         const thisMonthScheduled = months.find(m => m.key === todayMonthKey);
                         if (!thisMonthScheduled) return '';
                         const thisPay = (l.payments || []).find(p => p.month === todayMonthKey);
+                        // Method-aware scheduled amount for THIS specific month
+                        const balBeforeThis = _loanBalanceBeforeMonth(l, todayMonthKey);
+                        const scheduledThisMonth = _scheduledPaymentFor(l, balBeforeThis);
                         if (thisPay && thisPay.paid) {
-                            const diff = (thisPay.amount || 0) - l.monthly;
+                            const diff = (thisPay.amount || 0) - scheduledThisMonth;
                             return `<div style="background:linear-gradient(135deg,rgba(16,185,129,0.12),rgba(16,185,129,0.04));border:1px solid var(--green);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;">
                         <div style="font-size:24px;">✅</div>
                         <div style="flex:1;font-size:12.5px;line-height:1.5;">
                             <div style="font-weight:700;color:var(--green);">${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment Paid</div>
                             <div style="color:var(--text2);font-size:11px;">
-                                Paid <b>${fmt(thisPay.amount || l.monthly)}</b>
+                                Paid <b>${fmt(thisPay.amount || scheduledThisMonth)}</b>
                                 ${diff > 1 ? `<span style="color:var(--green);">(+${fmt(diff)} extra → reduces total interest)</span>` : ''}
                                 ${diff < -1 ? `<span style="color:var(--red);">(${fmt(diff)} short → balance carried forward)</span>` : ''}
                             </div>
@@ -9767,7 +9979,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                     <span style="font-size:20px;">💰</span>
                     <div style="flex:1;text-align:left;">
                         <div style="font-size:13px;font-weight:700;">Pay ${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment</div>
-                        <div style="font-size:11px;opacity:.85;font-weight:500;">Scheduled: ${fmt(l.monthly)} · Tap to record (any amount)</div>
+                        <div style="font-size:11px;opacity:.85;font-weight:500;">Scheduled: ${fmt(scheduledThisMonth)} · Tap to record (any amount)</div>
                     </div>
                     <span style="font-size:18px;">→</span>
                 </button>`;
@@ -10097,14 +10309,44 @@ YOUR PERSONALITY & CRITICAL RULES:
             };
             overlay.querySelector('#_vli_edit').onclick = async () => {
                 close();
-                // Unmark first (silently), then re-prompt for new amount
-                const arr = DB.get('loans');
-                const ln = arr.find(x => x.id === loanId);
-                if (ln && ln.payments) {
-                    const idx = ln.payments.findIndex(p => p.month === monthKey);
-                    if (idx > -1) { ln.payments[idx].paid = false; DB.set('loans', arr); }
+                // FIX — previously we set `paid = false` BEFORE opening the prompt, so that
+                // toggleLoanInstallment would treat it as new and re-prompt. Side-effect: if
+                // the user clicked Cancel in the prompt, the original payment was already gone.
+                //
+                // New behavior: do NOT touch state until the user confirms. Open the prompt
+                // pre-filled with the existing amount/notes; if they Cancel, nothing changes.
+                const ans = await promptPaymentAmount(l, monthKey, {
+                    isEdit: true,
+                    defaultAmount: pay.amount,
+                    defaultNotes: pay.notes || ''
+                });
+                if (ans !== null) {
+                    // User saved — update the existing payment in place
+                    const arr = DB.get('loans');
+                    const ln = arr.find(x => x.id === loanId);
+                    if (ln && ln.payments) {
+                        const idx = ln.payments.findIndex(p => p.month === monthKey);
+                        if (idx > -1) {
+                            ln.payments[idx] = {
+                                ...ln.payments[idx],
+                                amount: ans.amount,
+                                notes: ans.notes,
+                                editedAt: Date.now()
+                            };
+                            DB.set('loans', arr);
+                        }
+                    }
+                    renderLoans();
+                    renderDash();
+                    const newDiff = ans.amount - l.monthly;
+                    if (Math.abs(newDiff) > 1) {
+                        notify(`✓ ${monthKey} updated to ${fmt(ans.amount)} (${newDiff > 0 ? '+' : ''}${fmt(newDiff)} vs scheduled)`, 'success');
+                    } else {
+                        notify(`✓ ${monthKey} payment updated`, 'success');
+                    }
                 }
-                await toggleLoanInstallment(loanId, monthKey);
+                // Whether saved or cancelled, refresh the amortization modal if it's open so
+                // the user sees the current state (or unchanged state, as appropriate).
                 if (document.getElementById('mdLoanInstallments')?.classList.contains('open')) openLoanInstallmentsModal(loanId);
             };
         }
