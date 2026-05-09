@@ -6735,182 +6735,175 @@ YOUR PERSONALITY & CRITICAL RULES:
             }
 
             try {
-                const challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
-                const binaryString = atob(bio.rawId);
-                const rawId = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) { rawId[i] = binaryString.charCodeAt(i); }
-
-                const publicKey = {
-                    challenge: challenge,
-                    rpId: window.location.hostname,
-                    allowCredentials: [{
-                        type: "public-key",
-                        id: rawId,
-                        transports: ["internal", "hybrid", "ble", "nfc", "usb"]
-                    }],
-                    userVerification: "required",
-                    timeout: 120000
-                };
-
-                await navigator.credentials.get({ publicKey });
-                $('loginErr').textContent = '';
-                triggerHaptic('success');
-                resetAutoLockTimer();
-                launchApp();
-            } catch (err) {
-                console.error("Biometric Login Error:", err);
-                if (err.name === 'NotAllowedError') {
-                    notify('Biometric verification cancelled. Use your PIN instead.', 'warn');
-                } else {
-                    notify('Biometric failed: ' + err.message + '. Please use PIN.', 'warn');
-                }
-            }
-        }
-
-        // ==================== SETTINGS & MISC ====================
-        window.onload = async function () {
+                const challenge = new Uint8Array(32); cryp        window.onload = async function () {
+            let pInt;
             const splashText = $('spStatus');
             const fillEl = $('spFill');
-            let w = 0;
+            try {
+                let w = 0;
 
-            const pInt = setInterval(() => {
-                w += (Math.random() * 5);
-                if (w > 90) w = 90;
-                if (fillEl) fillEl.style.width = w + '%';
-            }, 100);
+                pInt = setInterval(() => {
+                    w += (Math.random() * 5);
+                    if (w > 90) w = 90;
+                    if (fillEl) fillEl.style.width = w + '%';
+                }, 100);
 
-            splashText.textContent = "Securing connection...";
-            await sleep(300);
+                if (splashText) splashText.textContent = "Securing connection...";
+                await sleep(300);
 
-            populateBankSelects();
-            initAuthUI();
-            initMoneyInputs();
+                // Bulletproof init sequences
+                try { populateBankSelects(); } catch (e) { console.error("[BOOT] populateBankSelects failed", e); }
+                try { initAuthUI(); } catch (e) { console.error("[BOOT] initAuthUI failed", e); }
+                try { initMoneyInputs(); } catch (e) { console.error("[BOOT] initMoneyInputs failed", e); }
 
-            const curY = new Date().getFullYear();
-            ['dashYear', 'mpYear', 'expPdfYear'].forEach(id => {
-                const el = $(id); if (!el) return;
-                for (let y = curY - 2; y <= curY + 4; y++) {
-                    const o = document.createElement('option'); o.value = y; o.textContent = y;
-                    if (y === curY) o.selected = true; el.appendChild(o);
-                }
-            });
-            if ($('expPdfMonth')) $('expPdfMonth').value = new Date().getMonth();
-            ['i_day', 'ot_date', 'sav_date', 'bf_date', 'bs_date', 'chq_issue', 'chq_release'].forEach(id => { const el = $(id); if (el) el.value = today(); });
-            ['e_month'].forEach(id => { const el = $(id); if (el) el.value = today().substr(0, 7); });
+                try {
+                    const curY = new Date().getFullYear();
+                    ['dashYear', 'mpYear', 'expPdfYear'].forEach(id => {
+                        const el = $(id); if (!el) return;
+                        for (let y = curY - 2; y <= curY + 4; y++) {
+                            const o = document.createElement('option'); o.value = y; o.textContent = y;
+                            if (y === curY) o.selected = true; el.appendChild(o);
+                        }
+                    });
+                    if ($('expPdfMonth')) $('expPdfMonth').value = new Date().getMonth();
+                    ['i_day', 'ot_date', 'sav_date', 'bf_date', 'bs_date', 'chq_issue', 'chq_release'].forEach(id => { const el = $(id); if (el) el.value = today(); });
+                    ['e_month'].forEach(id => { const el = $(id); if (el) el.value = today().substr(0, 7); });
+                } catch (e) { console.error("[BOOT] Date DOM init failed", e); }
 
-            firebase.auth().onAuthStateChanged(async (user) => {
-                if (user) {
-                    currentUser = user;
-                    userDocRef = db.collection('users').doc(user.uid);
-                    splashText.textContent = "Syncing with cloud...";
-                    console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
+                try { setupOnlineStatus(); } catch (e) { console.error("[BOOT] setupOnlineStatus failed", e); }
+                try { updateDateTime(); } catch (e) { console.error("[BOOT] updateDateTime failed", e); }
+                setInterval(() => { try { updateDateTime(); } catch(e){} }, 60000);
 
-                    try {
-                        // CRITICAL: Force server fetch to always get latest data
-                        // This prevents stale cache from showing old data on new devices
-                        let doc;
+                if (typeof firebase !== 'undefined' && firebase.auth) {
+                    firebase.auth().onAuthStateChanged(async (user) => {
                         try {
-                            doc = await userDocRef.get({ source: 'server' });
-                            console.log('[SYNC] ✅ Got data from SERVER');
-                        } catch (serverErr) {
-                            console.warn('[SYNC] ⚠️ Server unreachable, using cache:', serverErr.message);
-                            doc = await userDocRef.get(); // Falls back to cache
-                        }
+                            if (user) {
+                                currentUser = user;
+                                userDocRef = db.collection('users').doc(user.uid);
+                                if (splashText) splashText.textContent = "Syncing with cloud...";
+                                console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
 
-                        if (doc.exists) {
-                            const cloudData = doc.data();
-                            Object.keys(cloudData).forEach(key => {
-                                // Skip Firestore metadata fields
-                                if (key === '_lastModified' || key === '_lastModifiedBy') return;
-                                appData[key] = cloudData[key];
-                                localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                            });
-                            console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud');
-                        } else {
-                            // First time — create cloud document
-                            console.log('[SYNC] 📝 Creating new cloud profile');
-                            await userDocRef.set(Object.assign({}, appData, {
-                                _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                                _lastModifiedBy: user.uid
-                            }));
-                        }
-
-                        clearInterval(pInt);
-                        if (fillEl) fillEl.style.width = '100%';
-                        splashText.textContent = "Decrypting vault...";
-                        await sleep(300);
-
-                        isInitialised = true;
-                        lastSyncTime = Date.now();
-                        finishBoot();
-
-                        // Real-time listener for cross-device sync
-                        userDocRef.onSnapshot((snap) => {
-                            if (!snap.exists || !isInitialised) return;
-
-                            // Update sync status based on metadata
-                            const source = snap.metadata.fromCache ? 'cache' : 'server';
-                            const hasPending = snap.metadata.hasPendingWrites;
-
-                            if (hasPending) {
-                                setSyncStatus('syncing');
-                            } else {
-                                setSyncStatus(navigator.onLine ? 'online' : 'offline');
-                            }
-
-                            // Only process SERVER updates (not our own writes echoing back)
-                            if (!hasPending && source === 'server') {
-                                console.log('[SYNC] 📥 Received cloud update from server');
-                                isSyncingFromCloud = true;
-                                const cloudData = snap.data();
-                                let changed = false;
-
-                                // Check if PIN was changed on another device
-                                const newAuth = cloudData.auth;
-                                const currentAuth = appData.auth;
-                                if (newAuth && currentAuth && newAuth._pinChangedAt &&
-                                    newAuth._pinChangedAt !== currentAuth._pinChangedAt &&
-                                    newAuth.pin !== currentAuth.pin) {
-                                    // PIN was changed on another device — force logout
-                                    console.log('[SYNC] 🔒 PIN changed on another device — forcing logout');
-                                    isSyncingFromCloud = false;
-                                    // Update local data with new PIN first
-                                    appData.auth = newAuth;
-                                    localStorage.setItem('wf2_auth', JSON.stringify(newAuth));
-                                    // Force back to login screen
-                                    if ($('app').classList.contains('show')) {
-                                        $('app').classList.remove('show');
-                                        $('authScreen').classList.add('show');
-                                        pinMode = 'login';
-                                        showAuthView('authLogin');
-                                        notify('PIN changed from another device. Please re-login with the new PIN.', 'warn');
+                                try {
+                                    let doc;
+                                    try {
+                                        doc = await userDocRef.get({ source: 'server' });
+                                    } catch (serverErr) {
+                                        console.warn('[SYNC] ⚠️ Server unreachable, using cache:', serverErr.message);
+                                        doc = await userDocRef.get(); // Falls back to cache
                                     }
-                                    return;
+
+                                    if (doc && doc.exists) {
+                                        const cloudData = doc.data();
+                                        Object.keys(cloudData).forEach(key => {
+                                            if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                            appData[key] = cloudData[key];
+                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
+                                        });
+                                    } else {
+                                        await userDocRef.set(Object.assign({}, appData, {
+                                            _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
+                                            _lastModifiedBy: user.uid
+                                        }));
+                                    }
+                                } catch (syncErr) {
+                                    console.error("[SYNC] ❌ Cloud Error. Using local cache:", syncErr);
+                                    if (splashText) splashText.textContent = "Working offline...";
+                                    await sleep(600);
+                                    Object.keys(appData).forEach(k => {
+                                        try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                                    });
+                                } finally {
+                                    if (pInt) clearInterval(pInt);
+                                    if (fillEl) fillEl.style.width = '100%';
+                                    if (splashText) splashText.textContent = "Decrypting vault...";
+                                    await sleep(300);
+                                    isInitialised = true;
+                                    lastSyncTime = Date.now();
+                                    finishBoot();
                                 }
 
-                                Object.keys(cloudData).forEach(key => {
-                                    if (key === '_lastModified' || key === '_lastModifiedBy') return;
-                                    // Check if data actually changed to avoid unnecessary re-renders
-                                    const newVal = JSON.stringify(cloudData[key]);
-                                    const oldVal = JSON.stringify(appData[key]);
-                                    if (newVal !== oldVal) {
-                                        appData[key] = cloudData[key];
-                                        localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                                        changed = true;
-                                    }
-                                });
-                                isSyncingFromCloud = false;
-                                lastSyncTime = Date.now();
+                                try {
+                                    userDocRef.onSnapshot((snap) => {
+                                        if (!snap || !snap.exists || !isInitialised) return;
+                                        const source = snap.metadata.fromCache ? 'cache' : 'server';
+                                        const hasPending = snap.metadata.hasPendingWrites;
+                                        if (hasPending) {
+                                            setSyncStatus('syncing');
+                                        } else {
+                                            setSyncStatus(navigator.onLine ? 'online' : 'offline');
+                                        }
+                                        if (!hasPending && source === 'server') {
+                                            isSyncingFromCloud = true;
+                                            const cloudData = snap.data();
+                                            let changed = false;
+                                            const newAuth = cloudData.auth;
+                                            const currentAuth = appData.auth;
+                                            if (newAuth && currentAuth && newAuth._pinChangedAt && newAuth._pinChangedAt !== currentAuth._pinChangedAt && newAuth.pin !== currentAuth.pin) {
+                                                isSyncingFromCloud = false;
+                                                appData.auth = newAuth;
+                                                localStorage.setItem('wf2_auth', JSON.stringify(newAuth));
+                                                if ($('app') && $('app').classList.contains('show')) {
+                                                    $('app').classList.remove('show');
+                                                    $('authScreen').classList.add('show');
+                                                    pinMode = 'login';
+                                                    showAuthView('authLogin');
+                                                    notify('PIN changed from another device. Please re-login with the new PIN.', 'warn');
+                                                }
+                                                return;
+                                            }
+                                            Object.keys(cloudData).forEach(key => {
+                                                if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                                const newVal = JSON.stringify(cloudData[key]);
+                                                const oldVal = JSON.stringify(appData[key]);
+                                                if (newVal !== oldVal) {
+                                                    appData[key] = cloudData[key];
+                                                    localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
+                                                    changed = true;
+                                                }
+                                            });
+                                            isSyncingFromCloud = false;
+                                            lastSyncTime = Date.now();
+                                            if (changed && $('app') && $('app').classList.contains('show')) {
+                                                const active = document.querySelector('.page.active');
+                                                if (active) renderPage(active.id.replace('page-', ''));
+                                                updateCCOTBadge();
+                                                updateChequeBadge();
+                                            }
+                                        }
+                                    });
+                                } catch (e) { console.error("[BOOT] Snapshot listener failed", e); }
 
-                                if (changed) {
-                                    console.log('[SYNC] 🔄 Data changed — re-rendering UI');
-                                    // Re-render even if on auth screen (data is stored for when they unlock)
-                                    if ($('app').classList.contains('show')) {
-                                        const active = document.querySelector('.page.active');
-                                        if (active) renderPage(active.id.replace('page-', ''));
-                                        updateCCOTBadge();
-                                        updateChequeBadge();
-                                    }
+                            } else {
+                                if (pInt) clearInterval(pInt);
+                                if (fillEl) fillEl.style.width = '100%';
+                                if (splashText) splashText.textContent = "Authentication Required";
+                                setTimeout(() => {
+                                    if ($('splash')) $('splash').classList.add('hide');
+                                    if ($('authScreen')) $('authScreen').classList.add('show');
+                                    showAuthView('authGoogle');
+                                }, 600);
+                            }
+                        } catch (authErr) {
+                            console.error("[BOOT] Fatal error in onAuthStateChanged", authErr);
+                            if (pInt) clearInterval(pInt);
+                            if (fillEl) fillEl.style.width = '100%';
+                            finishBoot(); // Force entry
+                        }
+                    });
+                } else {
+                    console.error("[BOOT] Firebase Auth not available or offline");
+                    if (pInt) clearInterval(pInt);
+                    if (fillEl) fillEl.style.width = '100%';
+                    finishBoot(); // Force entry
+                }
+
+            } catch (fatalErr) {
+                console.error("[BOOT] 🚨 Critical Boot Failure:", fatalErr);
+                if (pInt) clearInterval(pInt);
+                if (fillEl) fillEl.style.width = '100%';
+                finishBoot(); // Always force entry
+            }
+        };
                                 }
                             }
                         });
@@ -6947,61 +6940,88 @@ YOUR PERSONALITY & CRITICAL RULES:
         };
 
         function finishBoot() {
-            const auth = DB.getObj('auth');
-            $('spStatus').textContent = "Ready.";
-            setTimeout(() => {
-                $('splash').classList.add('hide');
-                setTimeout(() => { if ($('splash')) $('splash').style.display = 'none'; }, 600);
+            try {
+                // Ensure initialization state is set if not already done by normal flow
+                isInitialised = true;
 
-                initTheme();
-                setupBackupReminder();
+                const auth = DB.getObj('auth');
+                if ($('spStatus')) $('spStatus').textContent = "Ready.";
+                
+                // Bulletproof Splash Screen Hider
+                const forceHideSplash = () => {
+                    try {
+                        const splashEl = $('splash');
+                        if (splashEl) {
+                            splashEl.classList.add('hide');
+                            setTimeout(() => { if ($('splash')) $('splash').style.display = 'none'; }, 600);
+                        }
+                    } catch(e) { console.error("[BOOT] Failed to hide splash", e); }
+                };
 
-                // Update sidebar with Google user info
-                if (currentUser) {
-                    const displayName = currentUser.displayName || 'WealthFlow User';
-                    const email = currentUser.email || '';
-                    const photoURL = currentUser.photoURL || '';
-                    if ($('sbUser')) {
-                        // ISSUE 7 FIX — Render avatar (Google photo or initial) + name
-                        const initial = (displayName.charAt(0) || '👤').toUpperCase();
-                        const avatarHtml = photoURL
-                            ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
-                            : `<span class="sb-user-initial">${initial}</span>`;
-                        $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
+                setTimeout(() => {
+                    forceHideSplash();
+
+                    try { initTheme(); } catch (e) { console.error("[BOOT] initTheme failed", e); }
+                    try { setupBackupReminder(); } catch (e) { console.error("[BOOT] setupBackupReminder failed", e); }
+
+                    // Update sidebar with Google user info
+                    try {
+                        if (currentUser) {
+                            const displayName = currentUser.displayName || 'WealthFlow User';
+                            const photoURL = currentUser.photoURL || '';
+                            if ($('sbUser')) {
+                                const initial = (displayName.charAt(0) || '👤').toUpperCase();
+                                const avatarHtml = photoURL
+                                    ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
+                                    : `<span class="sb-user-initial">${initial}</span>`;
+                                $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
+                            }
+                            if ($('authLoginSub')) $('authLoginSub').textContent = displayName + ' · Enter your 6-digit PIN';
+                        }
+                        try { updateDateTime(); } catch(e){}
+                    } catch (e) { console.error("[BOOT] Sidebar update failed", e); }
+
+                    // Show biometric button only if registered on THIS device
+                    try {
+                        const deviceBio = getDeviceBiometric();
+                        if (deviceBio && deviceBio.rawId && window.PublicKeyCredential) {
+                            const bioBtn = $('biometricBtn');
+                            if (bioBtn) bioBtn.style.display = '';
+                        }
+                    } catch (e) { console.error("[BOOT] Biometric check failed", e); }
+
+                    if ($('authScreen')) $('authScreen').classList.add('show');
+
+                    if (window._inRecoveryMode === true) {
+                        pinMode = 'newpin';
+                        pinTemp = '';
+                        if ($('newPinSub')) $('newPinSub').textContent = '🔓 Email verified. Set a NEW 6-digit PIN to recover access.';
+                        try { showAuthView('authNewPin'); } catch(e){}
+                        try { notify('✅ Email verified — please set a new PIN', 'success'); } catch(e){}
+                        return;
                     }
-                    if ($('authLoginSub')) $('authLoginSub').textContent = displayName + ' · Enter your 6-digit PIN';
-                }
-                // Trigger immediate update of the sidebar time
-                updateDateTime();
 
-                // Show biometric button only if registered on THIS device
-                const deviceBio = getDeviceBiometric();
-                if (deviceBio && deviceBio.rawId && window.PublicKeyCredential) {
-                    const bioBtn = $('biometricBtn');
-                    if (bioBtn) bioBtn.style.display = '';
-                }
-
-                $('authScreen').classList.add('show');
-
-                // ISSUE 4 FIX — If user just clicked the magic recovery link, jump straight
-                // to the new-PIN screen (the email link IS the verification, no PIN needed).
-                if (window._inRecoveryMode === true) {
-                    pinMode = 'newpin';
-                    pinTemp = '';
-                    if ($('newPinSub')) $('newPinSub').textContent = '🔓 Email verified. Set a NEW 6-digit PIN to recover access.';
-                    showAuthView('authNewPin');
-                    notify('✅ Email verified — please set a new PIN', 'success');
-                    return;
-                }
-
-                if (!auth.pin) {
-                    pinMode = 'setup';
-                    showAuthView('authSetup');
-                } else {
+                    if (!auth.pin) {
+                        pinMode = 'setup';
+                        try { showAuthView('authSetup'); } catch(e){}
+                    } else {
+                        pinMode = 'login';
+                        try { showAuthView('authLogin'); } catch(e){}
+                    }
+                }, 400);
+            } catch (finishErr) {
+                console.error("[BOOT] FATAL in finishBoot, executing fallback", finishErr);
+                // Absolute fallback
+                try {
+                    if ($('splash')) {
+                        $('splash').style.display = 'none';
+                        $('splash').classList.add('hide');
+                    }
+                    if ($('authScreen')) $('authScreen').classList.add('show');
                     pinMode = 'login';
                     showAuthView('authLogin');
-                }
-            }, 400);
+                } catch(e) {}
+            }
         }
 
         function launchApp() {
