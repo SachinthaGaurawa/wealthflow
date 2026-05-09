@@ -9140,7 +9140,8 @@ YOUR PERSONALITY & CRITICAL RULES:
                 while (projBal > 0 && extraMonths < 600) {
                     const interest = projBal * monthlyRate;
                     totalInterestActual += interest;
-                    projBal = projBal + interest - l.monthly;
+                    const effectivePayment = Math.max(l.monthly || 0, interest + 1);
+                    projBal = projBal + interest - effectivePayment;
                     extraMonths++;
                     if (projBal <= 0) break;
                 }
@@ -9261,14 +9262,18 @@ YOUR PERSONALITY & CRITICAL RULES:
                     // Project remaining months at standard EMI from new balance
                     let projBal = balAfter, projMonths = 0;
                     while (projBal > 0 && projMonths < 600) {
-                        projBal = projBal + (projBal * monthlyRate) - l.monthly;
+                        const interest = projBal * monthlyRate;
+                        const effectivePayment = Math.max(l.monthly || 0, interest + 1);
+                        projBal = projBal + interest - effectivePayment;
                         projMonths++;
                         if (projBal <= 0) break;
                     }
                     // Calculate original remaining months from current balance
                     let origBal = curBal, origMonths = 0;
                     while (origBal > 0 && origMonths < 600) {
-                        origBal = origBal + (origBal * monthlyRate) - l.monthly;
+                        const interest = origBal * monthlyRate;
+                        const effectivePayment = Math.max(l.monthly || 0, interest + 1);
+                        origBal = origBal + interest - effectivePayment;
                         origMonths++;
                         if (origBal <= 0) break;
                     }
@@ -10355,7 +10360,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                         }
 
                         const catMap = {};
-                        DB.get('expenses').filter(e => e.month.startsWith(year)).forEach(e => { catMap[e.cat] = (catMap[e.cat] || 0) + e.amount; });
+                        DB.get('expenses').filter(e => e.month && e.month.startsWith(year)).forEach(e => { catMap[e.cat] = (catMap[e.cat] || 0) + e.amount; });
                         const pCtx = $('dashPie');
                         if (dashPieInst) dashPieInst.destroy();
                         if (pCtx) {
