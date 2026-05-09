@@ -1,5 +1,5 @@
-// ==================== WealthFlow AI Engine v6.1 ====================
-// Triple-engine AI with automatic failover.
+// ==================== WealthFlow AI Engine v6.3 ====================
+// Triple-engine AI with automatic failover (Gemini · DeepSeek · Groq).
 // IMPORTANT: All API keys MUST be configured as Vercel Environment Variables.
 // We do NOT keep hardcoded fallbacks — they are a security liability.
 //   - WealthFlow_API_Key  (Gemini)
