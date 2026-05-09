@@ -698,21 +698,64 @@
         }
 
         .sb-footer {
-            padding: 12px 16px;
+            padding: 14px 16px;
             border-top: 1px solid var(--border);
+            background: var(--bg2);
+            flex-shrink: 0;
+            /* ISSUE 7 FIX — Stays anchored at the very bottom of the sidebar (mobile + desktop)
+               Above .sb-nav `flex:1` already pushes this down; we just guarantee it never collapses. */
+            min-height: 76px;
+            /* Respect iOS safe area on devices with home indicator */
+            padding-bottom: max(14px, env(safe-area-inset-bottom));
         }
 
         .sb-user {
             font-size: 13px;
-            font-weight: 600;
+            font-weight: 700;
             color: var(--text);
-            margin-bottom: 2px;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .sb-user-photo {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1.5px solid var(--accent);
+            flex-shrink: 0;
+        }
+
+        .sb-user-initial {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: #000;
+            font-size: 12px;
+            font-weight: 800;
+            flex-shrink: 0;
+        }
+
+        .sb-user-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+            flex: 1;
         }
 
         .sb-date {
             font-size: 11px;
             color: var(--accent);
             font-family: var(--mono);
+            letter-spacing: 0.2px;
         }
 
         .sb-ver {
@@ -742,62 +785,6 @@
             top: 0;
             z-index: 50;
             gap: 10px;
-        }
-
-        /* ISSUE 7 FIX — Mobile/Tablet user-info strip below the topbar */
-        .mobile-user-bar {
-            display: none;
-            background: linear-gradient(135deg, rgba(212,175,55,0.06), rgba(245,166,35,0.03));
-            border-bottom: 1px solid var(--border);
-            padding: 10px 16px;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            position: sticky;
-            top: 56px;
-            z-index: 49;
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-        }
-        .mub-left { display:flex; align-items:center; gap:10px; min-width:0; flex:1; }
-        .mub-avatar {
-            width: 34px; height: 34px; border-radius: 50%;
-            background: linear-gradient(135deg, var(--accent), var(--accent2));
-            display: flex; align-items: center; justify-content: center;
-            font-size: 16px; color: #000; font-weight: 800;
-            flex-shrink: 0; border: 2px solid var(--accent);
-            box-shadow: 0 0 12px rgba(212,175,55,0.25);
-            overflow: hidden;
-        }
-        .mub-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-        .mub-info { min-width: 0; flex: 1; }
-        .mub-name {
-            font-size: 13px; font-weight: 700; color: var(--text);
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            line-height: 1.2;
-        }
-        .mub-time {
-            font-size: 10.5px; color: var(--accent);
-            font-family: var(--mono); margin-top: 2px;
-            letter-spacing: 0.3px;
-        }
-        .mub-greeting {
-            font-size: 10.5px; color: var(--text3);
-            font-weight: 500; letter-spacing: 0.4px; text-transform: uppercase;
-        }
-        .mub-right {
-            display:flex; flex-direction:column; align-items:flex-end;
-            gap:2px; flex-shrink:0;
-        }
-        @media (max-width: 900px) {
-            .mobile-user-bar { display: flex; }
-        }
-        @media (max-width: 540px) {
-            .mobile-user-bar { padding: 8px 12px; top: 50px; }
-            .mub-avatar { width: 32px; height: 32px; font-size: 14px; }
-            .mub-name { font-size: 12.5px; }
-            .mub-time { font-size: 10px; }
-            .mub-greeting { font-size: 9.5px; }
         }
 
         .tb-left {
@@ -2391,6 +2378,35 @@
             box-shadow: 0 0 0 2px var(--accent);
         }
 
+        /* ISSUE 1 FIX — Prominent "Pay This Month" CTA button on each loan */
+        .loan-pay-cta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: #000;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 700;
+            box-shadow: 0 4px 16px rgba(212,175,55,0.28);
+            transition: transform .18s, box-shadow .18s;
+            animation: loanPayCtaPulse 2.4s ease-in-out infinite;
+        }
+        .loan-pay-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 22px rgba(212,175,55,0.4);
+        }
+        .loan-pay-cta:active { transform: translateY(0); }
+        @keyframes loanPayCtaPulse {
+            0%,100% { box-shadow: 0 4px 16px rgba(212,175,55,0.28); }
+            50%     { box-shadow: 0 4px 22px rgba(212,175,55,0.55); }
+        }
+
         .ld {
             margin-right: 16px;
             margin-bottom: 8px;
@@ -2689,16 +2705,33 @@
         @media(max-width:900px) {
             .sidebar {
                 transform: translateX(-100%);
-                /* Issue 1 — Make whole sidebar scrollable on mobile */
+                /* ISSUE 7 FIX — Make whole sidebar a flex column with scrollable nav and pinned footer */
                 height: 100vh;
                 max-height: 100vh;
-                overflow-y: auto;
-                -webkit-overflow-scrolling: touch;
-                overscroll-behavior: contain;
+                /* The sidebar itself does NOT scroll — only its `.sb-nav` middle does */
+                overflow: hidden;
+                display: flex !important;
+                flex-direction: column;
             }
 
             .sidebar.open {
                 transform: translateX(0);
+            }
+
+            /* Inside mobile sidebar: nav scrolls, footer is always pinned visible at the bottom */
+            .sidebar .sb-nav {
+                flex: 1 1 auto;
+                overflow-y: auto;
+                min-height: 0; /* required for flex children to shrink properly */
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .sidebar .sb-footer {
+                flex-shrink: 0;
+                position: relative;
+                /* Visual pop so the user info section is unmistakable */
+                background: linear-gradient(180deg, var(--bg2), var(--card));
+                box-shadow: 0 -4px 12px rgba(0,0,0,0.25);
             }
 
             .main {
@@ -3186,9 +3219,9 @@
                         class="nav-icon">🚪</span> Sign Out</div>
             </nav>
             <div class="sb-footer">
-                <div class="sb-user" id="sbUser">👤 WealthFlow User</div>
+                <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v6.2 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v6.3 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -3220,21 +3253,6 @@
                     <div class="month-badge" id="curMonthBadge">-</div>
                 </div>
             </header>
-
-            <!-- ISSUE 7 FIX — Mobile/Tablet user info strip -->
-            <div class="mobile-user-bar" id="mobileUserBar">
-                <div class="mub-left">
-                    <div class="mub-avatar" id="mubAvatar">👤</div>
-                    <div class="mub-info">
-                        <div class="mub-name" id="mubName">WealthFlow User</div>
-                        <div class="mub-time" id="mubTime">—</div>
-                    </div>
-                </div>
-                <div class="mub-right">
-                    <div class="mub-greeting" id="mubGreeting">Welcome</div>
-                    <div class="month-badge" id="mubMonthBadge" style="font-size:10px;padding:3px 8px;">—</div>
-                </div>
-            </div>
 
             <div class="content">
                 <div id="offlineBanner">📡 Data is saving securely to local storage. Auto-sync will trigger when
@@ -3626,9 +3644,13 @@
                                     </div>
                                 </div>
                                 <div style="font-size:14px;color:var(--text);line-height:1.7;">
-                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — powered by Gemini, trained to understand <em>your</em> unique financial patterns.<br><br>
-                                    I can help you analyze your spending, plan your savings, review your loans, and give you smart, personalized advice based on your actual data.<br><br>
-                                    <span style="color:var(--text2);">Ask me anything about your finances! 💡</span>
+                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — a triple-engine system (Gemini · DeepSeek · Groq) trained to understand <em>your</em> unique financial patterns.<br><br>
+                                    💡 I can help you analyze your spending, plan your savings, review your loans, and give you smart, personalized advice based on your actual data.<br><br>
+                                    <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text2);margin-top:8px;">
+                                        <span style="background:rgba(212,175,55,0.1);padding:5px 10px;border-radius:14px;border:1px solid rgba(212,175,55,0.25);">🎤 Voice input — speak any language</span>
+                                        <span style="background:rgba(66,133,244,0.1);padding:5px 10px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">🌐 70+ languages — set in Settings</span>
+                                        <span style="background:rgba(16,185,129,0.1);padding:5px 10px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸 Scan receipts</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -4465,11 +4487,37 @@
             });
         }
 
-        function signOutGoogle() {
-            firebase.auth().signOut().then(() => {
+        async function signOutGoogle() {
+            // ISSUE 2 FIX — True full Google sign-out (no silent re-login)
+            try {
+                // Stop any background listeners first
+                try { if (window._aiUnsubscribe) { window._aiUnsubscribe(); window._aiUnsubscribe = null; } } catch(e){}
+                try { if (_sessionRevokeUnsub) { _sessionRevokeUnsub(); _sessionRevokeUnsub = null; } } catch(e){}
+                try { if (_sessionRevokeChecker) { clearInterval(_sessionRevokeChecker); _sessionRevokeChecker = null; } } catch(e){}
+
+                // Sign out from Firebase Auth (this clears the Firebase ID token)
+                await firebase.auth().signOut();
+
+                // Best-effort revoke of the Google OAuth access token
+                try {
+                    const acct = JSON.parse(localStorage.getItem('wf_google_account') || '{}');
+                    if (acct.token && navigator.sendBeacon) {
+                        navigator.sendBeacon('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(acct.token));
+                    }
+                } catch(e){}
+
+                // Clear ALL local state
                 localStorage.clear();
+                sessionStorage.clear();
+
+                // Hard navigate (replace) so back button can't revive the session
+                window.location.replace(window.location.pathname);
+            } catch (err) {
+                console.error('Sign-out failed:', err);
+                localStorage.clear();
+                sessionStorage.clear();
                 window.location.reload();
-            });
+            }
         }
 
         // ==================== STATE MANAGEMENT ====================
@@ -6214,30 +6262,61 @@ YOUR PERSONALITY & CRITICAL RULES:
                 $('recovErr').textContent = 'Please enter a valid email address.';
                 return;
             }
+            // Disable button while sending
+            const btn = document.querySelector('#recovOtpStep1 .auth-btn');
+            const origText = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+
             try {
                 if (typeof firebase === 'undefined' || !firebase.auth) {
-                    $('recovErr').textContent = '❌ Recovery requires online connection.';
-                    return;
+                    throw new Error('Recovery requires online connection.');
+                }
+                if (!firebase.firestore) {
+                    throw new Error('Firestore not initialized — please reload.');
                 }
 
                 const otp = _generateOTP();
                 const otpHash = await sha256(otp + 'wf_otp_salt_2026');
                 const expiresAt = Date.now() + 10 * 60 * 1000; // 10 min
-
-                // Store OTP hash in Firestore so it works cross-device.
-                // The doc id is the email (lowercased) so we can look it up without auth.
-                if (!firebase.firestore) throw new Error('Firestore not initialized');
                 const docId = await sha256(email + 'wf_recov_lookup');
-                await firebase.firestore().collection('recoveryOTPs').doc(docId).set({
-                    otpHash, expiresAt, email, attempts: 0, createdAt: Date.now()
-                });
 
-                // Send the OTP via Firebase's sign-in-link mechanism.
-                // We embed the OTP in the URL so the email contains the code visible.
+                // STEP 1 — Write hashed OTP to Firestore (publicly writable per security rules)
+                console.log('[Recovery] Writing OTP doc:', docId.substring(0, 16));
+                try {
+                    await firebase.firestore().collection('recoveryOTPs').doc(docId).set({
+                        otpHash, expiresAt, email, attempts: 0, createdAt: Date.now()
+                    });
+                    console.log('[Recovery] ✅ OTP doc written');
+                } catch (fsErr) {
+                    console.error('[Recovery] Firestore write failed:', fsErr);
+                    if (fsErr.code === 'permission-denied' || (fsErr.message || '').includes('PERMISSION') || (fsErr.message || '').includes('insufficient')) {
+                        throw new Error('Firestore rules need to be published. Open Firebase Console → Firestore → Rules and paste the contents of firestore.rules, then click "Publish".');
+                    }
+                    throw fsErr;
+                }
+
+                // STEP 2 — Send the OTP via Firebase email-link mechanism.
+                // The link contains the OTP as a URL parameter so the email shows the code.
                 const url = window.location.origin + window.location.pathname + '?recovery_otp=' + otp;
-                await firebase.auth().sendSignInLinkToEmail(email, {
-                    url, handleCodeInApp: true
-                });
+                try {
+                    await firebase.auth().sendSignInLinkToEmail(email, { url, handleCodeInApp: true });
+                    console.log('[Recovery] ✅ Email-link sent to', email);
+                } catch (mailErr) {
+                    console.error('[Recovery] Email send failed:', mailErr);
+                    let msg = mailErr.message || 'Email could not be sent.';
+                    if (mailErr.code === 'auth/unauthorized-continue-uri') {
+                        msg = 'This domain is not authorized in Firebase. Open Firebase Console → Authentication → Settings → Authorized domains and add: ' + window.location.hostname;
+                    } else if (mailErr.code === 'auth/invalid-continue-uri') {
+                        msg = 'Recovery URL is invalid. Reload the page and try again.';
+                    } else if (mailErr.code === 'auth/missing-continue-uri') {
+                        msg = 'Recovery URL is missing. Reload the page.';
+                    } else if (mailErr.code === 'auth/operation-not-allowed') {
+                        msg = 'Email-link sign-in is disabled. Open Firebase Console → Authentication → Sign-in method → Email/Password → Enable "Email link (passwordless sign-in)".';
+                    }
+                    // The OTP doc was created — even if email failed, user might have another way to get the code.
+                    // But practically, fail clearly:
+                    throw new Error(msg);
+                }
 
                 window.localStorage.setItem('wf_recov_email', email);
                 window.localStorage.setItem('wf_last_email', email);
@@ -6247,12 +6326,10 @@ YOUR PERSONALITY & CRITICAL RULES:
                 $('recovErr').textContent = '';
                 notify('OTP sent to ' + email + ' 📨', 'success');
             } catch (err) {
-                console.error('[Recovery] OTP send failed:', err);
-                let msg = err.message || 'Could not send code.';
-                if (msg.includes('insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
-                    msg = '⚠️ Firestore rules need to be published. The admin must paste firestore.rules in Firebase Console → Firestore → Rules. Use Magic Sign-In Link instead for now.';
-                }
-                $('recovErr').textContent = '❌ ' + msg;
+                console.error('[Recovery] Failed:', err);
+                $('recovErr').textContent = '❌ ' + (err.message || 'Could not send code.');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = origText; }
             }
         }
 
@@ -6363,16 +6440,22 @@ YOUR PERSONALITY & CRITICAL RULES:
             }
         }
 
-        // ISSUE 4 FIX — Detect recovery URL synchronously, BEFORE Firebase auth state runs.
+        // ISSUE 9 FIX — Detect recovery URL synchronously, BEFORE Firebase auth state runs.
         // This way `finishBoot()` knows to skip PIN entry and go straight to new-PIN setup.
+        // Also auto-fills the OTP code if present in the URL.
         (function detectRecoveryURLEarly() {
             try {
                 const params = new URLSearchParams(window.location.search);
                 const hasOob = params.has('oobCode') || params.has('mode');
                 const hasRecovery = params.get('recovery') === '1' || params.get('recovery') === 'true';
-                const hasOTP = params.has('recovery_otp');
+                const otpParam = params.get('recovery_otp');
+                const hasOTP = !!otpParam;
                 if (hasOob || hasRecovery || hasOTP) {
                     window._inRecoveryMode = true;
+                    if (hasOTP) {
+                        // Stash the OTP so we can auto-fill it after the recovery UI renders
+                        window._autoFillOTP = otpParam;
+                    }
                     console.log('[RECOVERY] Recovery URL detected at boot — will skip PIN entry');
                 }
             } catch (e) {}
@@ -6778,19 +6861,17 @@ YOUR PERSONALITY & CRITICAL RULES:
                     const displayName = currentUser.displayName || 'WealthFlow User';
                     const email = currentUser.email || '';
                     const photoURL = currentUser.photoURL || '';
-                    if ($('sbUser')) $('sbUser').textContent = '👤 ' + displayName;
-                    if ($('authLoginSub')) $('authLoginSub').textContent = displayName + ' · Enter your 6-digit PIN';
-                    // ISSUE 7 FIX — Mobile/Tablet header user info
-                    if ($('mubName')) $('mubName').textContent = displayName;
-                    if ($('mubAvatar')) {
-                        if (photoURL) {
-                            $('mubAvatar').innerHTML = `<img src="${photoURL}" alt="${displayName}">`;
-                        } else {
-                            $('mubAvatar').textContent = (displayName.charAt(0) || '👤').toUpperCase();
-                        }
+                    if ($('sbUser')) {
+                        // ISSUE 7 FIX — Render avatar (Google photo or initial) + name
+                        const initial = (displayName.charAt(0) || '👤').toUpperCase();
+                        const avatarHtml = photoURL
+                            ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
+                            : `<span class="sb-user-initial">${initial}</span>`;
+                        $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
                     }
+                    if ($('authLoginSub')) $('authLoginSub').textContent = displayName + ' · Enter your 6-digit PIN';
                 }
-                // Trigger immediate update of the mobile time
+                // Trigger immediate update of the sidebar time
                 updateDateTime();
 
                 // Show biometric button only if registered on THIS device
@@ -6837,9 +6918,20 @@ YOUR PERSONALITY & CRITICAL RULES:
             triggerProactiveEngagement();
             scheduleSmartNotifications(); // Smart randomized OS notifications
             startAIMemoryListener(); // ISSUE 10 — sync AI chat across devices
-            // ISSUE 8 — Check actionable reminders at launch + every 30 min
+            // ISSUE 2 FIX — Start the real-time session revoke listener now that we're authenticated
+            _startSessionRevokeWatcher();
+            // ISSUE 4 — Check actionable reminders at launch + every 30 min
             setTimeout(checkActionableReminders, 4000);
             setInterval(checkActionableReminders, 30 * 60 * 1000);
+            // ISSUE 4 FIX — Re-check whenever the app becomes visible / focused
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    setTimeout(checkActionableReminders, 800);
+                }
+            });
+            window.addEventListener('focus', () => {
+                setTimeout(checkActionableReminders, 800);
+            });
             // AI: Request notification permission and schedule AI reminders
             setTimeout(() => {
                 requestAINotificationPermission();
@@ -6891,13 +6983,6 @@ YOUR PERSONALITY & CRITICAL RULES:
             const fullDateStr = now.toLocaleDateString('en-GB', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
             if ($('sbDate')) $('sbDate').textContent = fullDateStr;
             if ($('curMonthBadge')) $('curMonthBadge').textContent = MONTHS[now.getMonth()] + ' ' + now.getFullYear();
-            // ISSUE 7 FIX — Update the mobile user-bar time + greeting
-            if ($('mubTime')) $('mubTime').textContent = fullDateStr;
-            if ($('mubMonthBadge')) $('mubMonthBadge').textContent = MONTHS[now.getMonth()] + ' ' + now.getFullYear();
-            if ($('mubGreeting')) {
-                const h = now.getHours();
-                $('mubGreeting').textContent = h < 12 ? '🌅 Good Morning' : h < 17 ? '☀️ Good Afternoon' : h < 21 ? '🌆 Good Evening' : '🌙 Good Night';
-            }
         }
 
         function setupOnlineStatus() {
@@ -9465,8 +9550,8 @@ YOUR PERSONALITY & CRITICAL RULES:
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v6.2 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.3 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v6.3 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -9475,7 +9560,7 @@ YOUR PERSONALITY & CRITICAL RULES:
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v6.2 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v6.3 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -10013,9 +10098,18 @@ YOUR PERSONALITY & CRITICAL RULES:
         }
 
         // Show one actionable banner at the top of the screen
+        // ISSUE 4 FIX — Enhanced actionable banner with proper queueing + persistence
         function showActionableBanner({ id, title, message, primary = 'Yes', secondary = 'Not Yet', onPrimary, onSecondary, color = 'var(--accent)', icon = '🔔' }) {
             // Avoid duplicate banners
             if (document.getElementById('ab_' + id)) return;
+            // Stack banners — push existing ones up
+            const existing = document.querySelectorAll('.actionable-banner.show');
+            existing.forEach((b, i) => {
+                b.style.top = (16 + (i + 1) * 6) + 'px';
+                b.style.opacity = '0.85';
+                b.style.transform = 'translateX(-50%) translateY(0) scale(' + (1 - (i + 1) * 0.02) + ')';
+            });
+
             const banner = document.createElement('div');
             banner.id = 'ab_' + id;
             banner.className = 'actionable-banner';
@@ -10040,20 +10134,25 @@ YOUR PERSONALITY & CRITICAL RULES:
             };
             document.getElementById('abyes_' + id).onclick = () => {
                 if (onPrimary) onPrimary();
+                triggerHaptic('success');
                 dismiss();
             };
             document.getElementById('abno_' + id).onclick = () => {
                 if (onSecondary) onSecondary();
+                triggerHaptic('light');
                 dismiss();
             };
             document.getElementById('abx_' + id).onclick = dismiss;
 
-            // Auto-dismiss after 60s if untouched
-            setTimeout(() => { if (document.body.contains(banner)) dismiss(); }, 60000);
+            // ISSUE 4 — Don't auto-dismiss, but allow user to dismiss
+            // Banners stay until user acts so they don't miss the prompt
+            // (Removed the 60s auto-dismiss to ensure visibility)
 
             // Try OS-level notification with actions (Android Chrome supports actions)
             _showOSNotification({ id, title, message, primary, secondary });
             triggerHaptic('medium');
+            // Audio chime if sounds are enabled
+            try { playUISound('notification'); } catch(e){}
         }
 
         async function _showOSNotification({ id, title, message, primary, secondary }) {
@@ -11819,7 +11918,17 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             localStorage.setItem('wf_revoked_sessions', JSON.stringify(list));
         }
 
-        // ISSUE 7 FIX — Renders without writing to DB (writes happen separately via heartbeat)
+        // ISSUE 2 FIX — Debounced wrapper for renderSessions to prevent flicker on rapid Firestore updates
+        let _renderSessionsTimer = null;
+        function _renderSessionsDebounced() {
+            if (_renderSessionsTimer) clearTimeout(_renderSessionsTimer);
+            _renderSessionsTimer = setTimeout(() => {
+                renderSessions();
+                _renderSessionsTimer = null;
+            }, 100);
+        }
+
+        // Renders without writing to DB (writes happen separately via heartbeat)
         function renderSessions() {
             const sessionId = localStorage.getItem('wf_session_id') || (() => { const id = uid(); localStorage.setItem('wf_session_id', id); return id; })();
             const revoked = _getRevokedSessions();
@@ -11939,30 +12048,40 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         async function revokeSession(id, isSelf) {
             const ok = await _verifyPinPrompt(isSelf ? 'Sign out this device — confirm with your PIN.' : 'Revoke this remote session — confirm with your PIN.');
             if (!ok) return;
-            _doRevokeSession(id, isSelf);
+            await _doRevokeSession(id, isSelf);
         }
 
-        function _doRevokeSession(id, isSelf) {
+        async function _doRevokeSession(id, isSelf) {
             const myId = localStorage.getItem('wf_session_id');
+
+            // 1) Local state
             const revoked = _getRevokedSessions();
             if (!revoked.includes(id)) revoked.push(id);
             _setRevokedSessions(revoked);
-
-            // Remove from active list immediately and PUSH to cloud
             const sessions = (DB.get('sessions') || []).filter(s => s.id !== id);
             DB.set('sessions', sessions);
             renderSessions();
 
+            // 2) ISSUE 2 FIX — Push to Firestore IMMEDIATELY so the other device receives it
+            //    via the real-time onSnapshot listener (instant revocation, no polling).
+            try {
+                if (currentUser && firebase.firestore && userDocRef) {
+                    await userDocRef.set({
+                        revokedSessions: firebase.firestore.FieldValue.arrayUnion(id),
+                        sessions: sessions,
+                        lastRevokeAt: Date.now()
+                    }, { merge: true });
+                    console.log('[Revoke] Pushed revoke for', id, 'to Firestore');
+                }
+            } catch (e) {
+                console.warn('[Revoke] Firestore push failed:', e);
+            }
+
             if (id === myId || isSelf) {
-                notify('🔒 Signing out this device…', 'warn');
-                setTimeout(async () => {
-                    try { await firebase.auth().signOut(); } catch(e) {}
-                    localStorage.removeItem('wf_session_id');
-                    sessionStorage.clear();
-                    location.reload();
-                }, 600);
+                // Hard-signout this device
+                _performHardSignOut('Signing out this device.');
             } else {
-                notify('✅ Session revoked. The other device will sign out within 5 seconds.', 'success');
+                notify('✅ Session revoked. The other device will sign out instantly.', 'success');
             }
         }
 
@@ -11972,35 +12091,124 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const myId = localStorage.getItem('wf_session_id');
             const sessions = DB.get('sessions') || [];
             const revoked = _getRevokedSessions();
-            sessions.forEach(s => { if (s.id !== myId && !revoked.includes(s.id)) revoked.push(s.id); });
+            const newlyRevoked = [];
+            sessions.forEach(s => {
+                if (s.id !== myId && !revoked.includes(s.id)) {
+                    revoked.push(s.id);
+                    newlyRevoked.push(s.id);
+                }
+            });
             _setRevokedSessions(revoked);
-            DB.set('sessions', sessions.filter(s => s.id === myId));
+            const remaining = sessions.filter(s => s.id === myId);
+            DB.set('sessions', remaining);
             renderSessions();
-            notify('✅ All other sessions revoked. They will sign out within 5 seconds.', 'success');
+
+            // Push to Firestore so all other devices get instant signout
+            try {
+                if (currentUser && firebase.firestore && userDocRef && newlyRevoked.length > 0) {
+                    await userDocRef.set({
+                        revokedSessions: firebase.firestore.FieldValue.arrayUnion(...newlyRevoked),
+                        sessions: remaining,
+                        lastRevokeAt: Date.now()
+                    }, { merge: true });
+                }
+            } catch (e) { console.warn('[Revoke all] Firestore push failed:', e); }
+
+            notify('✅ All other sessions revoked. They will sign out within 1 second.', 'success');
         }
 
-        // ISSUE 7 FIX — Fast heartbeat (5s) + force-signs-out from Firebase Auth
-        // Combined with the real-time Firestore listener, this gives near-instant revocation.
+        // ISSUE 2 FIX — Real-time session revoke watcher.
+        // Uses Firestore onSnapshot for INSTANT cross-device revocation (no polling delay)
+        // PLUS a 3-second local fallback poll for extra safety.
         let _sessionRevokeChecker = null;
+        let _sessionRevokeUnsub = null;
+        let _sessionRevokeBusy = false;
+
+        async function _performHardSignOut(reason) {
+            if (_sessionRevokeBusy) return;
+            _sessionRevokeBusy = true;
+            try {
+                notify('🔒 ' + reason + ' Signing out…', 'warn');
+                if (_sessionRevokeUnsub) { try { _sessionRevokeUnsub(); } catch(e){} _sessionRevokeUnsub = null; }
+                if (_sessionRevokeChecker) clearInterval(_sessionRevokeChecker);
+                // Stop AI listener too
+                try { if (window._aiUnsubscribe) { window._aiUnsubscribe(); window._aiUnsubscribe = null; } } catch(e){}
+                // 1) Sign out from Firebase Auth (this is the REAL Google sign-out)
+                try { await firebase.auth().signOut(); } catch(e) { console.warn('Firebase signout failed:', e); }
+                // 2) Revoke Google OAuth token if we still have a credential reference
+                try {
+                    const acct = JSON.parse(localStorage.getItem('wf_google_account') || '{}');
+                    if (acct.token && navigator.sendBeacon) {
+                        // Best-effort revoke; non-blocking
+                        navigator.sendBeacon('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(acct.token));
+                    }
+                } catch(e){}
+                // 3) Clear all local session state
+                localStorage.removeItem('wf_session_id');
+                sessionStorage.clear();
+                // 4) Force a hard reload so the user lands at the Google sign-in screen, not the app
+                setTimeout(() => { location.replace(location.pathname); }, 700);
+            } catch (e) {
+                console.error('[Revoke] Hard sign-out failed:', e);
+                location.reload();
+            }
+        }
+
         function _startSessionRevokeWatcher() {
+            const myId = localStorage.getItem('wf_session_id');
+            if (!myId) return;
+
+            // ===== A) REAL-TIME Firestore listener (instant revocation) =====
+            try {
+                if (currentUser && firebase.firestore && !_sessionRevokeUnsub) {
+                    _sessionRevokeUnsub = firebase.firestore()
+                        .collection('users').doc(currentUser.uid)
+                        .onSnapshot((snap) => {
+                            try {
+                                if (!snap.exists) return;
+                                const data = snap.data();
+                                const cloudRevoked = (data.revokedSessions || []);
+                                const cloudSessions = (data.sessions || []);
+                                // If MY session is in the revoked list -> sign out NOW
+                                if (cloudRevoked.includes(myId)) {
+                                    _performHardSignOut('This session was revoked from another device.');
+                                    return;
+                                }
+                                // If MY session was removed from the active list -> sign out NOW
+                                if (cloudSessions.length > 0 && !cloudSessions.find(s => s.id === myId)) {
+                                    _performHardSignOut('This session was signed out remotely.');
+                                    return;
+                                }
+                                // Mirror cloud-side revoked list into local
+                                const localRevoked = _getRevokedSessions();
+                                let changed = false;
+                                cloudRevoked.forEach(id => {
+                                    if (!localRevoked.includes(id)) { localRevoked.push(id); changed = true; }
+                                });
+                                if (changed) _setRevokedSessions(localRevoked);
+                                // If we're on the sessions page, refresh the UI (debounced)
+                                if (document.getElementById('page-sessions')?.classList.contains('active')) {
+                                    _renderSessionsDebounced();
+                                }
+                            } catch (e) { console.warn('[Revoke listener]', e); }
+                        }, (err) => {
+                            console.warn('[Revoke listener] error:', err && err.message);
+                        });
+                }
+            } catch (e) { console.warn('[Revoke listener] setup failed:', e); }
+
+            // ===== B) Fallback fast poll (covers offline/listener failures) =====
             if (_sessionRevokeChecker) clearInterval(_sessionRevokeChecker);
             _sessionRevokeChecker = setInterval(async () => {
                 try {
-                    const myId = localStorage.getItem('wf_session_id');
                     if (!myId) return;
                     if (_getRevokedSessions().includes(myId)) {
-                        notify('🔒 This session was revoked from another device. Signing out…', 'warn');
-                        clearInterval(_sessionRevokeChecker);
-                        // Full sign-out: Firebase + local + reload
-                        try { await firebase.auth().signOut(); } catch(e) {}
-                        localStorage.removeItem('wf_session_id');
-                        sessionStorage.clear();
-                        setTimeout(() => location.reload(), 800);
+                        _performHardSignOut('Session revoked locally.');
                     }
                 } catch (e) { /* silent */ }
-            }, 5000);
+            }, 3000);
         }
-        // Start watcher once Firebase auth is ready
+        // Start watcher once Firebase auth is ready (and again whenever user logs in)
         document.addEventListener('DOMContentLoaded', () => setTimeout(_startSessionRevokeWatcher, 2000));
 
         // ==================== DECOY / PANIC MODE ====================
