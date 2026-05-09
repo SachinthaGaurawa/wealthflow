@@ -6145,18 +6145,49 @@
             });
         }
 
-        function initMoneyInputs() {
-            document.querySelectorAll('.money-input').forEach(inp => {
-                inp.addEventListener('input', function () {
-                    let raw = this.value.replace(/[^0-9.]/g, '');
-                    let parts = raw.split('.');
-                    let int = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-                    let dec = parts.length > 1 ? '.' + parts[1].slice(0, 2) : '';
-                    this.value = int + dec;
-                });
-                inp.addEventListener('blur', function () { let raw = parseMoney(this.value); if (raw > 0) this.value = fmtN(raw); });
-                inp.addEventListener('focus', function () { let raw = parseMoney(this.value); if (raw > 0) this.value = String(raw); });
+        // Reusable money-input behavior so dynamically-created dialog inputs (loan/income payment prompts)
+        // get the same caret-friendly typing experience as the static form inputs.
+        // - input handler: lets the user type freely, only adds thousands separators and clamps to 2dp.
+        //                  cursor position is preserved by counting digits-before-caret.
+        // - blur handler:  finalizes formatting to the canonical "1,234.00" form.
+        // - focus handler: shows the raw number for easy editing.
+        function _attachMoneyHandlers(inp) {
+            if (!inp || inp._wfMoneyAttached) return;
+            inp._wfMoneyAttached = true;
+            inp.addEventListener('input', function () {
+                const oldVal = this.value;
+                const oldCaret = this.selectionStart || 0;
+                // Count "tracked" chars (digits + dots) to the left of the caret in the OLD value.
+                // Including the dot in the count means typing "." advances the caret past it as
+                // expected, instead of being snapped back to the digit-count position.
+                // Commas are auto-inserted formatting and intentionally NOT tracked.
+                const trackedBefore = (oldVal.slice(0, oldCaret).match(/[\d.]/g) || []).length;
+                // Strip everything that isn't a digit or a dot, collapse multiple dots to the first one
+                const cleaned = oldVal.replace(/[^0-9.]/g, '');
+                const firstDot = cleaned.indexOf('.');
+                let normalized = firstDot === -1
+                    ? cleaned
+                    : cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+                const parts = normalized.split('.');
+                const int = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                const dec = parts.length > 1 ? '.' + parts[1].slice(0, 2) : '';
+                const newVal = int + dec;
+                // Restore caret to the same digit/dot position (preserves natural typing in the middle)
+                let newCaret = newVal.length;
+                let counted = 0;
+                for (let i = 0; i < newVal.length; i++) {
+                    if (counted >= trackedBefore) { newCaret = i; break; }
+                    if (/[\d.]/.test(newVal[i])) counted++;
+                }
+                this.value = newVal;
+                try { this.setSelectionRange(newCaret, newCaret); } catch (e) { /* not all input types support selection */ }
             });
+            inp.addEventListener('blur', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = fmtN(raw); });
+            inp.addEventListener('focus', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = String(raw); });
+        }
+
+        function initMoneyInputs() {
+            document.querySelectorAll('.money-input').forEach(inp => _attachMoneyHandlers(inp));
 
             document.querySelectorAll('.auth-numpad-only').forEach(inp => {
                 inp.addEventListener('input', function () { this.value = this.value.replace(/[^0-9]/g, ''); });
@@ -9187,10 +9218,8 @@ YOUR PERSONALITY & CRITICAL RULES:
                     </div>`;
 
                 const inp = overlay.querySelector('#_pi_amt');
-                inp.addEventListener('input', () => {
-                    const raw = parseMoney(inp.value);
-                    if (raw) inp.value = fmtN(raw);
-                });
+                // Same fix as the loan prompt — use the shared caret-friendly money handler
+                _attachMoneyHandlers(inp);
 
                 const close = (val) => {
                     overlay.classList.remove('open');
@@ -9323,14 +9352,29 @@ YOUR PERSONALITY & CRITICAL RULES:
             });
             return lastPaidIdx >= 0 ? _loanBalanceAfter(l, lastPaidIdx) : l.amount;
         }
-        // Compute the outstanding balance JUST BEFORE applying the payment for a specific month
-        // (i.e. balance accumulated from start through the previous month, used by the prompt
-        // so the live "balance after payment" preview is correct for ANY month in the schedule)
+        // Compute the outstanding balance JUST BEFORE applying the payment for a specific month.
+        // For months in the past that the user hasn't yet recorded, we PROJECT them at the scheduled
+        // EMI rather than treating them as $0 payments — otherwise the balance preview the user
+        // sees in the payment prompt would balloon by accumulating interest with no offsetting
+        // payment, which would be wrong and confusing.
         function _loanBalanceBeforeMonth(l, monthKey) {
             const months = _loanInstallmentMonths(l);
             const idx = months.findIndex(m => m.key === monthKey);
             if (idx <= 0) return l.amount;
-            return _loanBalanceAfter(l, idx - 1);
+
+            const monthlyRate = (l.rate || 0) / 100 / 12;
+            let bal = l.amount;
+            const payments = l.payments || [];
+            for (let i = 0; i < idx; i++) {
+                const interest = bal * monthlyRate;
+                bal += interest;
+                const pay = payments.find(p => p.month === months[i].key);
+                // For unpaid months: assume scheduled EMI (matches what the projection table shows)
+                const amt = pay && pay.paid ? (pay.amount || l.monthly) : l.monthly;
+                bal -= Math.min(amt, bal);
+                if (bal < 0) bal = 0;
+            }
+            return bal;
         }
         // Total interest paid so far (with actual payment amounts)
         function loanTotalInterestPaid(l) {
@@ -9467,7 +9511,11 @@ YOUR PERSONALITY & CRITICAL RULES:
 
             return {
                 schedule,
-                currentBalance: bal,
+                // Note: this is the FINAL balance after the full projection (extension months
+                // included). For an amortizing loan it converges to ~0. The "balance right now"
+                // for UI purposes should come from loanCurrentBalance(l), not this field.
+                finalBalance: bal,
+                currentBalance: bal,                 // kept for backwards-compat with anything still reading it
                 totalInterestOriginal: Math.round(totalInterestOriginal),
                 totalInterestActual: Math.round(totalInterestActual),
                 interestSaved,                      // positive ⇒ user saved interest, negative ⇒ paying more
@@ -9612,12 +9660,12 @@ YOUR PERSONALITY & CRITICAL RULES:
                     projRows.innerHTML = html;
                 };
 
-                // Re-format input as user types + live preview
-                inp.addEventListener('input', () => {
-                    const raw = parseMoney(inp.value);
-                    if (raw) inp.value = fmtN(raw);
-                    updateProjection();
-                });
+                // Re-format input as user types + live preview.
+                // FIX: previously this called fmtN() on every keystroke, which forces ".00" decimals
+                // and resets caret to end — making it nearly impossible to type multi-digit amounts.
+                // Now we use the shared caret-friendly money handler and run the projection on input.
+                _attachMoneyHandlers(inp);
+                inp.addEventListener('input', updateProjection);
 
                 // Preset buttons
                 overlay.querySelectorAll('._pp_preset').forEach(btn => {
@@ -9712,7 +9760,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                 ${diff < -1 ? `<span style="color:var(--red);">(${fmt(diff)} short → balance carried forward)</span>` : ''}
                             </div>
                         </div>
-                        <button class="btn btn-ghost btn-sm" onclick="toggleLoanInstallment('${l.id}','${todayMonthKey}')" title="Undo payment">↺</button>
+                        <button class="btn btn-ghost btn-sm" onclick="_viewLoanInstallment('${l.id}','${todayMonthKey}')" title="View / edit / undo this payment">⋯</button>
                     </div>`;
                         }
                         return `<button class="loan-pay-cta" onclick="toggleLoanInstallment('${l.id}','${todayMonthKey}')">
@@ -9755,7 +9803,6 @@ YOUR PERSONALITY & CRITICAL RULES:
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                     <div style="font-size:12px;font-weight:700;color:var(--text2);">📅 Monthly Installments</div>
                     <div style="display:flex; gap:8px;">
-                        <button class="btn btn-ghost btn-sm" onclick="openLoanHistoryModal('${l.id}')">📜 Paid History</button>
                         <button class="btn btn-ghost btn-sm" onclick="_openLoanInstallmentsFresh('${l.id}')">📋 View All ${months.length} Months</button>
                     </div>
                 </div>
@@ -9767,8 +9814,8 @@ YOUR PERSONALITY & CRITICAL RULES:
                         const isUnder = isPaid && pay.amount < l.monthly - 1;
                         const btnClass = isPaid ? (isUnder ? 'lmb-partial' : 'lmb-paid') : 'lmb-due';
                         return `<button class="loan-month-btn ${btnClass}"
-                            onclick="toggleLoanInstallment('${l.id}','${m.key}')"
-                            title="${isPaid ? 'Paid ' + fmt(pay.amount) + (pay.notes ? ' · ' + pay.notes : '') : 'Click to record payment'}">
+                            onclick="clickLoanMonthBtn('${l.id}','${m.key}')"
+                            title="${isPaid ? 'Paid ' + fmt(pay.amount) + ' — tap to view / edit / undo' + (pay.notes ? ' · ' + pay.notes : '') : 'Tap to record payment'}">
                             ${isPaid ? (isUnder ? '⚠️' : '✅') : '⏰'} ${m.label} ${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
                         </button>`;
                     }).join('')}
@@ -9784,6 +9831,10 @@ YOUR PERSONALITY & CRITICAL RULES:
             if (!l) return;
             const proj = loanProjectedSchedule(l);
             const todayKey = new Date().toISOString().slice(0, 7);
+            // The "Current Balance" stat shows what the user owes RIGHT NOW (after their last
+            // recorded payment), NOT proj.currentBalance which is the FINAL balance after the
+            // full projection (always ≈0 for an amortizing loan — it would mislead the user).
+            const balanceAsOfToday = loanCurrentBalance(l);
 
             let modal = document.getElementById('mdLoanInstallments');
             if (!modal) {
@@ -9821,7 +9872,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                     <div style="padding:12px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);">
                         <div style="padding:10px;background:var(--card);border-radius:8px;">
                             <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Current Balance</div>
-                            <div style="font-family:var(--mono);font-weight:700;color:var(--red);font-size:14px;margin-top:2px;">${fmt(proj.currentBalance)}</div>
+                            <div style="font-family:var(--mono);font-weight:700;color:var(--red);font-size:14px;margin-top:2px;">${fmt(balanceAsOfToday)}</div>
                         </div>
                         <div style="padding:10px;background:var(--card);border-radius:8px;">
                             <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Total Interest</div>
@@ -9936,11 +9987,37 @@ YOUR PERSONALITY & CRITICAL RULES:
             openLoanInstallmentsModal(loanId);
         }
 
-        // Tap-to-pay from a table row. After the prompt closes (Promise resolves), refresh the modal
-        // so the new payment shows up immediately.
+        // SAFE click handler for the small "📅 Monthly Installments" grid buttons.
+        // Previous behavior — clicking a green/paid month button immediately reverted the payment,
+        // which is dangerous because a single accidental tap erased a recorded installment.
+        // New behavior:
+        //   - tapping an UNPAID month  → open the payment prompt (record amount)
+        //   - tapping a PAID   month  → open the View modal that has explicit View / Edit / Undo buttons,
+        //                                so the user must consciously choose to undo.
+        function clickLoanMonthBtn(loanId, monthKey) {
+            const l = DB.get('loans').find(x => x.id === loanId);
+            if (!l) return;
+            const pay = (l.payments || []).find(p => p.month === monthKey);
+            if (pay && pay.paid) {
+                _viewLoanInstallment(loanId, monthKey);
+            } else {
+                toggleLoanInstallment(loanId, monthKey);
+            }
+        }
+
+        // Tap-to-pay from a table row. SAFE behavior:
+        //   - paid rows  → open the View modal (which has explicit View / Edit / Undo buttons)
+        //   - unpaid rows→ open the payment prompt straight away
+        // After the action completes, refresh the amortization modal so totals stay current.
         async function _payLoanInstallmentFromTable(loanId, monthKey) {
+            const l = DB.get('loans').find(x => x.id === loanId);
+            if (!l) return;
+            const pay = (l.payments || []).find(p => p.month === monthKey);
+            if (pay && pay.paid) {
+                _viewLoanInstallment(loanId, monthKey);
+                return;
+            }
             await toggleLoanInstallment(loanId, monthKey);
-            // Re-render the amortization modal with updated data
             if (document.getElementById('mdLoanInstallments')?.classList.contains('open')) {
                 openLoanInstallmentsModal(loanId);
             }
@@ -9990,7 +10067,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                         ${pay.notes ? `<div style="margin-top:10px;padding:10px;background:var(--bg2);border-radius:8px;border-left:3px solid var(--accent);font-size:12px;color:var(--text2);">📝 ${pay.notes}</div>` : ''}
                     </div>
                     <div class="md-ftr">
-                        <button class="btn btn-ghost" id="_vli_undo">↺ Undo Payment</button>
+                        <button class="btn btn-ghost" id="_vli_undo" style="color:var(--red);border-color:rgba(239,68,68,0.25);">↺ Undo Payment</button>
                         <button class="btn btn-primary" id="_vli_edit">✏️ Edit Amount</button>
                     </div>
                 </div>`;
@@ -10002,14 +10079,25 @@ YOUR PERSONALITY & CRITICAL RULES:
             };
             overlay.querySelector('#_vli_close').onclick = close;
             overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-            overlay.querySelector('#_vli_undo').onclick = async () => {
-                close();
-                await toggleLoanInstallment(loanId, monthKey);
-                if (document.getElementById('mdLoanInstallments')?.classList.contains('open')) openLoanInstallmentsModal(loanId);
+            overlay.querySelector('#_vli_undo').onclick = () => {
+                // Confirm before reverting — recorded payments are valuable, no accidental undos.
+                showConfirm(
+                    '↺',
+                    'Undo this payment?',
+                    'The ' + monthKey + ' installment of ' + fmt(pay.amount) + ' will be marked unpaid. You can record it again any time.',
+                    'btn-danger',
+                    '↺ Yes, Undo',
+                    async () => {
+                        close();
+                        // toggleLoanInstallment auto-detects "currently paid" and reverts in this path
+                        await toggleLoanInstallment(loanId, monthKey);
+                        if (document.getElementById('mdLoanInstallments')?.classList.contains('open')) openLoanInstallmentsModal(loanId);
+                    }
+                );
             };
             overlay.querySelector('#_vli_edit').onclick = async () => {
                 close();
-                // Unmark first, then re-prompt for new amount
+                // Unmark first (silently), then re-prompt for new amount
                 const arr = DB.get('loans');
                 const ln = arr.find(x => x.id === loanId);
                 if (ln && ln.payments) {
@@ -10021,87 +10109,6 @@ YOUR PERSONALITY & CRITICAL RULES:
             };
         }
 
-        function openLoanHistoryModal(loanId) {
-            const l = DB.get('loans').find(x => x.id === loanId);
-            if (!l) return;
-            const payments = (l.payments || []).filter(p => p.paid).sort((a, b) => b.month.localeCompare(a.month));
-
-            let modal = document.getElementById('mdLoanHistory');
-            if (!modal) {
-                modal = document.createElement('div');
-                modal.id = 'mdLoanHistory';
-                modal.className = 'mo';
-                document.body.appendChild(modal);
-            }
-
-            // Aggregate stats
-            const totalPaid = payments.reduce((s, p) => s + (p.amount || 0), 0);
-            const overCount = payments.filter(p => p.amount > l.monthly + 1).length;
-            const underCount = payments.filter(p => p.amount < l.monthly - 1).length;
-            const totalOver = payments.reduce((s, p) => s + Math.max(0, p.amount - l.monthly), 0);
-            const totalUnder = payments.reduce((s, p) => s + Math.max(0, l.monthly - p.amount), 0);
-
-            modal.innerHTML = `
-                <div class="md" style="max-width:560px;max-height:90vh; display:flex; flex-direction:column; padding:0;">
-                    <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
-                        <div class="md-title">📜 Paid History — ${l.name}</div>
-                        <button class="md-x" onclick="closeModal('mdLoanHistory')">✕</button>
-                    </div>
-
-                    ${payments.length > 0 ? `
-                    <!-- Summary strip -->
-                    <div style="padding:12px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);">
-                        <div style="padding:10px;background:var(--card);border-radius:8px;">
-                            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Installments</div>
-                            <div style="font-family:var(--mono);font-weight:700;color:var(--accent);font-size:15px;margin-top:2px;">${payments.length}</div>
-                        </div>
-                        <div style="padding:10px;background:var(--card);border-radius:8px;">
-                            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Total Paid</div>
-                            <div style="font-family:var(--mono);font-weight:700;color:var(--green);font-size:15px;margin-top:2px;">${fmtS(totalPaid)}</div>
-                        </div>
-                        ${overCount > 0 ? `<div style="padding:10px;background:var(--card);border-radius:8px;">
-                            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Extra Paid</div>
-                            <div style="font-family:var(--mono);font-weight:700;color:var(--green);font-size:15px;margin-top:2px;">+${fmtS(totalOver)}</div>
-                            <div style="font-size:10px;color:var(--text3);margin-top:1px;">${overCount} over-payment${overCount>1?'s':''}</div>
-                        </div>` : ''}
-                        ${underCount > 0 ? `<div style="padding:10px;background:var(--card);border-radius:8px;">
-                            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;">Shortfall</div>
-                            <div style="font-family:var(--mono);font-weight:700;color:var(--red);font-size:15px;margin-top:2px;">−${fmtS(totalUnder)}</div>
-                            <div style="font-size:10px;color:var(--text3);margin-top:1px;">${underCount} short payment${underCount>1?'s':''}</div>
-                        </div>` : ''}
-                    </div>` : ''}
-
-                    <div style="flex:1; overflow-y:auto; padding:16px 20px;">
-                        ${payments.length === 0 ? '<div style="text-align:center; color:var(--text3); padding:40px 0;"><div style="font-size:40px;margin-bottom:8px;">📭</div><div>No payments recorded yet.</div><div style="font-size:11px;margin-top:6px;">Tap the Pay button on the loan card to record your first payment.</div></div>' :
-                    payments.map(p => {
-                        const diff = p.amount - l.monthly;
-                        const d = new Date(p.paidAt || Date.now());
-                        const isOver = diff > 1, isUnder = diff < -1;
-                        const accentColor = isOver ? 'var(--green)' : isUnder ? 'var(--red)' : 'var(--accent)';
-                        const accentBg = isOver ? 'rgba(16,185,129,0.06)' : isUnder ? 'rgba(239,68,68,0.06)' : 'var(--bg2)';
-                        let card = '<div style="padding:14px; background:' + accentBg + '; border:1px solid var(--border); border-left:3px solid ' + accentColor + '; border-radius:12px; margin-bottom:10px;">';
-                        card += '<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">';
-                        card += '<div><div style="font-weight:700; color:var(--text); font-size:14px;">' + p.month + ' Installment</div>';
-                        card += '<div style="font-size:11px; color:var(--text3); margin-top:2px;">Recorded ' + fmtDatePretty(d.toISOString().slice(0, 10)) + '</div></div>';
-                        card += '<div style="text-align:right;"><div style="font-family:var(--mono); font-weight:700; color:var(--green); font-size:15px;">' + fmt(p.amount) + '</div>';
-                        if (isOver) card += '<div style="font-size:10px;color:var(--green);">+' + fmt(diff) + ' extra</div>';
-                        else if (isUnder) card += '<div style="font-size:10px;color:var(--red);">' + fmt(diff) + ' short</div>';
-                        else card += '<div style="font-size:10px;color:var(--text3);">scheduled</div>';
-                        card += '</div></div>';
-                        card += (p.notes ? '<div style="margin-top:8px; padding:6px 10px; background:var(--card); border-radius:6px; font-size:11px; color:var(--text2); border-left:2px solid var(--accent);">📝 ' + p.notes + '</div>' : '');
-                        card += '<div style="margin-top:10px; display:flex; gap:6px; justify-content:flex-end;">';
-                        card += '<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:5px 10px;" onclick="_viewLoanInstallment(\'' + l.id + '\',\'' + p.month + '\')">👁 View Details</button>';
-                        card += '</div>';
-                        card += '</div>';
-                        return card;
-                    }).join('')}
-                    </div>
-                </div>
-            `;
-            // ROOT FIX — must use .open class (CSS controls opacity/pointer-events on .mo)
-            requestAnimationFrame(() => modal.classList.add('open'));
-            document.body.style.overflow = 'hidden';
-        }
 
         // ==================== CC INSTALLMENTS ====================
         function saveCCI() {
