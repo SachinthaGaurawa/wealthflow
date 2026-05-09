@@ -3080,6 +3080,84 @@
         <div class="sp-status" id="spStatus">Initializing secure protocol...</div>
     </div>
 
+    <!-- ============================================================ -->
+    <!-- FAILSAFE: Runs IMMEDIATELY, before any external CDN scripts. -->
+    <!-- Guarantees splash dismissal within 8 seconds no matter what. -->
+    <!-- ============================================================ -->
+    <script>
+        (function() {
+            var FAILSAFE_MS = 8000;
+            var _bootCompleted = false;
+
+            // Expose a global flag so the main boot code can cancel the failsafe
+            window.__wfBootCompleted = function() { _bootCompleted = true; };
+
+            function emergencyBoot() {
+                if (_bootCompleted) return; // Normal boot already worked
+                _bootCompleted = true;
+                console.warn('[FAILSAFE] ⚠️ Boot timed out — forcing entry');
+
+                // 1. Hide splash
+                var sp = document.getElementById('splash');
+                if (sp) { sp.classList.add('hide'); setTimeout(function(){ sp.style.display = 'none'; }, 700); }
+
+                // 2. Show auth screen (safest entry point)
+                var auth = document.getElementById('authScreen');
+                if (auth) auth.classList.add('show');
+
+                // 3. If firebase auth loaded, check if user is signed in
+                try {
+                    if (typeof firebase !== 'undefined' && firebase.auth) {
+                        var user = firebase.auth().currentUser;
+                        if (!user) {
+                            // Show Google login
+                            var gv = document.getElementById('authGoogle');
+                            if (gv) gv.style.display = '';
+                        }
+                    } else {
+                        // Firebase never loaded — show Google login view
+                        var gv2 = document.getElementById('authGoogle');
+                        if (gv2) gv2.style.display = '';
+                    }
+                } catch(e) {
+                    console.error('[FAILSAFE] Auth check error:', e);
+                    var gv3 = document.getElementById('authGoogle');
+                    if (gv3) gv3.style.display = '';
+                }
+            }
+
+            // Set the failsafe timer
+            var _failsafeTimer = setTimeout(emergencyBoot, FAILSAFE_MS);
+
+            // Also expose a way to clear it from the main boot code
+            window.__wfClearFailsafe = function() {
+                _bootCompleted = true;
+                clearTimeout(_failsafeTimer);
+            };
+
+            // Catch any uncaught errors during boot and trigger emergency boot
+            window.addEventListener('error', function(e) {
+                if (!_bootCompleted) {
+                    console.error('[FAILSAFE] Uncaught error during boot:', e.message, e.filename, e.lineno);
+                    // Give a short grace period, then force boot
+                    setTimeout(function() {
+                        if (!_bootCompleted) emergencyBoot();
+                    }, 1500);
+                }
+            });
+
+            // Also catch unhandled promise rejections
+            window.addEventListener('unhandledrejection', function(e) {
+                if (!_bootCompleted) {
+                    console.error('[FAILSAFE] Unhandled rejection during boot:', e.reason);
+                    setTimeout(function() {
+                        if (!_bootCompleted) emergencyBoot();
+                    }, 1500);
+                }
+            });
+        })();
+    </script>
+
     <div id="authScreen">
         <div class="auth-bg">
             <div class="auth-orb auth-orb1"></div>
@@ -6769,276 +6847,448 @@ YOUR PERSONALITY & CRITICAL RULES:
 
         // ==================== SETTINGS & MISC ====================
         window.onload = async function () {
+            // ──────────────────────────────────────────────────
+            // BULLETPROOF BOOT SEQUENCE
+            // Every step is wrapped in try-catch so a single
+            // failure can never freeze the splash screen.
+            // ──────────────────────────────────────────────────
             const splashText = $('spStatus');
             const fillEl = $('spFill');
             let w = 0;
+            let pInt = null;
+            let _authCallbackFired = false;
 
-            const pInt = setInterval(() => {
-                w += (Math.random() * 5);
-                if (w > 90) w = 90;
-                if (fillEl) fillEl.style.width = w + '%';
-            }, 100);
+            try {
+                pInt = setInterval(() => {
+                    w += (Math.random() * 5);
+                    if (w > 90) w = 90;
+                    if (fillEl) fillEl.style.width = w + '%';
+                }, 100);
 
-            splashText.textContent = "Securing connection...";
-            await sleep(300);
+                if (splashText) splashText.textContent = "Securing connection...";
+                await sleep(300);
 
-            populateBankSelects();
-            initAuthUI();
-            initMoneyInputs();
+                // ── Step 1: Init UI components (non-critical) ──
+                try { populateBankSelects(); } catch (e) { console.error('[BOOT] populateBankSelects error:', e); }
+                try { initAuthUI(); } catch (e) { console.error('[BOOT] initAuthUI error:', e); }
+                try { initMoneyInputs(); } catch (e) { console.error('[BOOT] initMoneyInputs error:', e); }
 
-            const curY = new Date().getFullYear();
-            ['dashYear', 'mpYear', 'expPdfYear'].forEach(id => {
-                const el = $(id); if (!el) return;
-                for (let y = curY - 2; y <= curY + 4; y++) {
-                    const o = document.createElement('option'); o.value = y; o.textContent = y;
-                    if (y === curY) o.selected = true; el.appendChild(o);
-                }
-            });
-            if ($('expPdfMonth')) $('expPdfMonth').value = new Date().getMonth();
-            ['i_day', 'ot_date', 'sav_date', 'bf_date', 'bs_date', 'chq_issue', 'chq_release'].forEach(id => { const el = $(id); if (el) el.value = today(); });
-            ['e_month'].forEach(id => { const el = $(id); if (el) el.value = today().substr(0, 7); });
-
-            firebase.auth().onAuthStateChanged(async (user) => {
-                if (user) {
-                    currentUser = user;
-                    userDocRef = db.collection('users').doc(user.uid);
-                    splashText.textContent = "Syncing with cloud...";
-                    console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
-
-                    try {
-                        // CRITICAL: Force server fetch to always get latest data
-                        // This prevents stale cache from showing old data on new devices
-                        let doc;
-                        try {
-                            doc = await userDocRef.get({ source: 'server' });
-                            console.log('[SYNC] ✅ Got data from SERVER');
-                        } catch (serverErr) {
-                            console.warn('[SYNC] ⚠️ Server unreachable, using cache:', serverErr.message);
-                            doc = await userDocRef.get(); // Falls back to cache
+                // ── Step 2: Populate date/year dropdowns ──
+                try {
+                    const curY = new Date().getFullYear();
+                    ['dashYear', 'mpYear', 'expPdfYear'].forEach(id => {
+                        const el = $(id); if (!el) return;
+                        for (let y = curY - 2; y <= curY + 4; y++) {
+                            const o = document.createElement('option'); o.value = y; o.textContent = y;
+                            if (y === curY) o.selected = true; el.appendChild(o);
                         }
+                    });
+                    if ($('expPdfMonth')) $('expPdfMonth').value = new Date().getMonth();
+                    ['i_day', 'ot_date', 'sav_date', 'bf_date', 'bs_date', 'chq_issue', 'chq_release'].forEach(id => { const el = $(id); if (el) el.value = today(); });
+                    ['e_month'].forEach(id => { const el = $(id); if (el) el.value = today().substr(0, 7); });
+                } catch (e) { console.error('[BOOT] Date setup error:', e); }
 
-                        if (doc.exists) {
-                            const cloudData = doc.data();
-                            Object.keys(cloudData).forEach(key => {
-                                // Skip Firestore metadata fields
-                                if (key === '_lastModified' || key === '_lastModifiedBy') return;
-                                appData[key] = cloudData[key];
-                                localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                            });
-                            console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud');
-                        } else {
-                            // First time — create cloud document
-                            console.log('[SYNC] 📝 Creating new cloud profile');
-                            await userDocRef.set(Object.assign({}, appData, {
-                                _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                                _lastModifiedBy: user.uid
-                            }));
-                        }
-
+                // ── Step 3: Firebase Auth (the critical path) ──
+                // If Firebase SDK failed to load, skip directly to offline mode
+                if (typeof firebase === 'undefined' || !firebase.auth) {
+                    console.error('[BOOT] ❌ Firebase SDK not loaded — entering offline mode');
+                    _authCallbackFired = true;
+                    clearInterval(pInt);
+                    if (fillEl) fillEl.style.width = '100%';
+                    if (splashText) splashText.textContent = "Working offline...";
+                    await sleep(400);
+                    // Load from localStorage
+                    Object.keys(appData).forEach(k => {
+                        try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                    });
+                    isInitialised = true;
+                    // Signal failsafe: boot completed
+                    if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                    if (window.__wfBootCompleted) window.__wfBootCompleted();
+                    finishBoot();
+                } else {
+                    // Set a 6-second timeout: if onAuthStateChanged never fires, force proceed
+                    const authTimeout = setTimeout(() => {
+                        if (_authCallbackFired) return;
+                        _authCallbackFired = true;
+                        console.warn('[BOOT] ⚠️ Firebase auth timeout — forcing offline boot');
                         clearInterval(pInt);
                         if (fillEl) fillEl.style.width = '100%';
-                        splashText.textContent = "Decrypting vault...";
-                        await sleep(300);
-
-                        isInitialised = true;
-                        lastSyncTime = Date.now();
-                        finishBoot();
-
-                        // Real-time listener for cross-device sync
-                        userDocRef.onSnapshot((snap) => {
-                            if (!snap.exists || !isInitialised) return;
-
-                            // Update sync status based on metadata
-                            const source = snap.metadata.fromCache ? 'cache' : 'server';
-                            const hasPending = snap.metadata.hasPendingWrites;
-
-                            if (hasPending) {
-                                setSyncStatus('syncing');
-                            } else {
-                                setSyncStatus(navigator.onLine ? 'online' : 'offline');
-                            }
-
-                            // Only process SERVER updates (not our own writes echoing back)
-                            if (!hasPending && source === 'server') {
-                                console.log('[SYNC] 📥 Received cloud update from server');
-                                isSyncingFromCloud = true;
-                                const cloudData = snap.data();
-                                let changed = false;
-
-                                // Check if PIN was changed on another device
-                                const newAuth = cloudData.auth;
-                                const currentAuth = appData.auth;
-                                if (newAuth && currentAuth && newAuth._pinChangedAt &&
-                                    newAuth._pinChangedAt !== currentAuth._pinChangedAt &&
-                                    newAuth.pin !== currentAuth.pin) {
-                                    // PIN was changed on another device — force logout
-                                    console.log('[SYNC] 🔒 PIN changed on another device — forcing logout');
-                                    isSyncingFromCloud = false;
-                                    // Update local data with new PIN first
-                                    appData.auth = newAuth;
-                                    localStorage.setItem('wf2_auth', JSON.stringify(newAuth));
-                                    // Force back to login screen
-                                    if ($('app').classList.contains('show')) {
-                                        $('app').classList.remove('show');
-                                        $('authScreen').classList.add('show');
-                                        pinMode = 'login';
-                                        showAuthView('authLogin');
-                                        notify('PIN changed from another device. Please re-login with the new PIN.', 'warn');
-                                    }
-                                    return;
-                                }
-
-                                Object.keys(cloudData).forEach(key => {
-                                    if (key === '_lastModified' || key === '_lastModifiedBy') return;
-                                    // Check if data actually changed to avoid unnecessary re-renders
-                                    const newVal = JSON.stringify(cloudData[key]);
-                                    const oldVal = JSON.stringify(appData[key]);
-                                    if (newVal !== oldVal) {
-                                        appData[key] = cloudData[key];
-                                        localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                                        changed = true;
-                                    }
-                                });
-                                isSyncingFromCloud = false;
-                                lastSyncTime = Date.now();
-
-                                if (changed) {
-                                    console.log('[SYNC] 🔄 Data changed — re-rendering UI');
-                                    // Re-render even if on auth screen (data is stored for when they unlock)
-                                    if ($('app').classList.contains('show')) {
-                                        const active = document.querySelector('.page.active');
-                                        if (active) renderPage(active.id.replace('page-', ''));
-                                        updateCCOTBadge();
-                                        updateChequeBadge();
-                                    }
-                                }
-                            }
-                        });
-
-                    } catch (err) {
-                        console.error("[SYNC] ❌ Cloud Error. Using local cache:", err);
-                        clearInterval(pInt);
-                        if (fillEl) fillEl.style.width = '100%';
-                        splashText.textContent = "Working offline...";
-                        await sleep(600);
+                        if (splashText) splashText.textContent = "Connection timeout...";
+                        // Load from localStorage
                         Object.keys(appData).forEach(k => {
                             try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
                         });
                         isInitialised = true;
+                        // Signal failsafe: boot completed
+                        if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                        if (window.__wfBootCompleted) window.__wfBootCompleted();
+                        finishBoot();
+                    }, 6000);
+
+                    try {
+                        firebase.auth().onAuthStateChanged(async (user) => {
+                            if (_authCallbackFired) return; // Timeout already handled it
+                            _authCallbackFired = true;
+                            clearTimeout(authTimeout);
+
+                            if (user) {
+                                currentUser = user;
+                                userDocRef = db.collection('users').doc(user.uid);
+                                if (splashText) splashText.textContent = "Syncing with cloud...";
+                                console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
+
+                                try {
+                                    // Force server fetch to always get latest data
+                                    let doc;
+                                    try {
+                                        doc = await userDocRef.get({ source: 'server' });
+                                        console.log('[SYNC] ✅ Got data from SERVER');
+                                    } catch (serverErr) {
+                                        console.warn('[SYNC] ⚠️ Server unreachable, using cache:', serverErr.message);
+                                        try {
+                                            doc = await userDocRef.get(); // Falls back to cache
+                                        } catch (cacheErr) {
+                                            console.error('[SYNC] ❌ Cache also failed:', cacheErr.message);
+                                            doc = null;
+                                        }
+                                    }
+
+                                    if (doc && doc.exists) {
+                                        const cloudData = doc.data();
+                                        Object.keys(cloudData).forEach(key => {
+                                            if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                            appData[key] = cloudData[key];
+                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
+                                        });
+                                        console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud');
+                                    } else if (doc && !doc.exists) {
+                                        // First time — create cloud document
+                                        console.log('[SYNC] 📝 Creating new cloud profile');
+                                        try {
+                                            await userDocRef.set(Object.assign({}, appData, {
+                                                _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
+                                                _lastModifiedBy: user.uid
+                                            }));
+                                        } catch (setErr) {
+                                            console.error('[SYNC] Failed to create cloud profile:', setErr);
+                                        }
+                                    } else {
+                                        // doc is null — both server and cache failed, use localStorage
+                                        console.warn('[SYNC] ⚠️ Using localStorage fallback');
+                                        Object.keys(appData).forEach(k => {
+                                            try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                                        });
+                                    }
+
+                                    clearInterval(pInt);
+                                    if (fillEl) fillEl.style.width = '100%';
+                                    if (splashText) splashText.textContent = "Decrypting vault...";
+                                    await sleep(300);
+
+                                    isInitialised = true;
+                                    lastSyncTime = Date.now();
+                                    // Signal failsafe: boot completed
+                                    if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                                    if (window.__wfBootCompleted) window.__wfBootCompleted();
+                                    finishBoot();
+
+                                    // Real-time listener for cross-device sync
+                                    try {
+                                        userDocRef.onSnapshot((snap) => {
+                                            try {
+                                                if (!snap.exists || !isInitialised) return;
+
+                                                const source = snap.metadata.fromCache ? 'cache' : 'server';
+                                                const hasPending = snap.metadata.hasPendingWrites;
+
+                                                if (hasPending) {
+                                                    setSyncStatus('syncing');
+                                                } else {
+                                                    setSyncStatus(navigator.onLine ? 'online' : 'offline');
+                                                }
+
+                                                if (!hasPending && source === 'server') {
+                                                    console.log('[SYNC] 📥 Received cloud update from server');
+                                                    isSyncingFromCloud = true;
+                                                    const cloudData = snap.data();
+                                                    let changed = false;
+
+                                                    // Check if PIN was changed on another device
+                                                    const newAuth = cloudData.auth;
+                                                    const currentAuth = appData.auth;
+                                                    if (newAuth && currentAuth && newAuth._pinChangedAt &&
+                                                        newAuth._pinChangedAt !== currentAuth._pinChangedAt &&
+                                                        newAuth.pin !== currentAuth.pin) {
+                                                        console.log('[SYNC] 🔒 PIN changed on another device — forcing logout');
+                                                        isSyncingFromCloud = false;
+                                                        appData.auth = newAuth;
+                                                        localStorage.setItem('wf2_auth', JSON.stringify(newAuth));
+                                                        if ($('app') && $('app').classList.contains('show')) {
+                                                            $('app').classList.remove('show');
+                                                            $('authScreen').classList.add('show');
+                                                            pinMode = 'login';
+                                                            showAuthView('authLogin');
+                                                            notify('PIN changed from another device. Please re-login with the new PIN.', 'warn');
+                                                        }
+                                                        return;
+                                                    }
+
+                                                    Object.keys(cloudData).forEach(key => {
+                                                        if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                                        const newVal = JSON.stringify(cloudData[key]);
+                                                        const oldVal = JSON.stringify(appData[key]);
+                                                        if (newVal !== oldVal) {
+                                                            appData[key] = cloudData[key];
+                                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
+                                                            changed = true;
+                                                        }
+                                                    });
+                                                    isSyncingFromCloud = false;
+                                                    lastSyncTime = Date.now();
+
+                                                    if (changed) {
+                                                        console.log('[SYNC] 🔄 Data changed — re-rendering UI');
+                                                        if ($('app') && $('app').classList.contains('show')) {
+                                                            const active = document.querySelector('.page.active');
+                                                            if (active) renderPage(active.id.replace('page-', ''));
+                                                            try { updateCCOTBadge(); } catch(e) {}
+                                                            try { updateChequeBadge(); } catch(e) {}
+                                                        }
+                                                    }
+                                                }
+                                            } catch (snapErr) {
+                                                console.error('[SYNC] Snapshot processing error:', snapErr);
+                                            }
+                                        });
+                                    } catch (listenerErr) {
+                                        console.error('[SYNC] Snapshot listener setup error:', listenerErr);
+                                    }
+
+                                } catch (err) {
+                                    console.error("[SYNC] ❌ Cloud Error. Using local cache:", err);
+                                    clearInterval(pInt);
+                                    if (fillEl) fillEl.style.width = '100%';
+                                    if (splashText) splashText.textContent = "Working offline...";
+                                    await sleep(600);
+                                    Object.keys(appData).forEach(k => {
+                                        try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                                    });
+                                    isInitialised = true;
+                                    // Signal failsafe: boot completed
+                                    if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                                    if (window.__wfBootCompleted) window.__wfBootCompleted();
+                                    finishBoot();
+                                }
+                            } else {
+                                // User is signed out
+                                clearInterval(pInt);
+                                if (fillEl) fillEl.style.width = '100%';
+                                if (splashText) splashText.textContent = "Authentication Required";
+
+                                // Signal failsafe: boot completed
+                                if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                                if (window.__wfBootCompleted) window.__wfBootCompleted();
+
+                                setTimeout(() => {
+                                    $('splash').classList.add('hide');
+                                    $('authScreen').classList.add('show');
+                                    showAuthView('authGoogle');
+                                }, 600);
+                            }
+                        });
+                    } catch (authErr) {
+                        // firebase.auth().onAuthStateChanged itself threw an error
+                        console.error('[BOOT] ❌ Firebase auth setup failed:', authErr);
+                        clearTimeout(authTimeout);
+                        _authCallbackFired = true;
+                        clearInterval(pInt);
+                        if (fillEl) fillEl.style.width = '100%';
+                        if (splashText) splashText.textContent = "Working offline...";
+                        await sleep(400);
+                        Object.keys(appData).forEach(k => {
+                            try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                        });
+                        isInitialised = true;
+                        if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                        if (window.__wfBootCompleted) window.__wfBootCompleted();
                         finishBoot();
                     }
-                } else {
-                    // User is signed out
-                    clearInterval(pInt);
-                    if (fillEl) fillEl.style.width = '100%';
-                    splashText.textContent = "Authentication Required";
-
-                    setTimeout(() => {
-                        $('splash').classList.add('hide');
-                        $('authScreen').classList.add('show');
-                        showAuthView('authGoogle'); // Show Google login view
-                    }, 600);
                 }
-            });
 
-            setupOnlineStatus();
-            updateDateTime();
-            setInterval(updateDateTime, 60000);
+                // ── Step 4: Non-critical post-init ──
+                try { setupOnlineStatus(); } catch (e) { console.error('[BOOT] setupOnlineStatus error:', e); }
+                try { updateDateTime(); } catch (e) { console.error('[BOOT] updateDateTime error:', e); }
+                try { setInterval(updateDateTime, 60000); } catch (e) { }
+
+            } catch (fatalErr) {
+                // ── TOTAL CRASH HANDLER ──
+                // If the entire boot sequence threw an unrecoverable error,
+                // force-dismiss splash and show auth screen
+                console.error('[BOOT] ❌ FATAL boot error:', fatalErr);
+                try { clearInterval(pInt); } catch(e) {}
+                if (fillEl) fillEl.style.width = '100%';
+                if (splashText) splashText.textContent = "Recovery mode...";
+
+                // Load whatever we can from localStorage
+                try {
+                    Object.keys(appData).forEach(k => {
+                        try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                    });
+                } catch(e) {}
+
+                isInitialised = true;
+                if (window.__wfClearFailsafe) window.__wfClearFailsafe();
+                if (window.__wfBootCompleted) window.__wfBootCompleted();
+
+                setTimeout(() => {
+                    try {
+                        $('splash').classList.add('hide');
+                        setTimeout(() => { if ($('splash')) $('splash').style.display = 'none'; }, 700);
+                        $('authScreen').classList.add('show');
+                        showAuthView('authGoogle');
+                    } catch(e) {
+                        // Last resort: brute force hide/show
+                        document.getElementById('splash').style.display = 'none';
+                        document.getElementById('authScreen').style.display = 'flex';
+                        document.getElementById('authScreen').classList.add('show');
+                    }
+                }, 500);
+            }
         };
 
         function finishBoot() {
-            const auth = DB.getObj('auth');
-            $('spStatus').textContent = "Ready.";
-            setTimeout(() => {
-                $('splash').classList.add('hide');
-                setTimeout(() => { if ($('splash')) $('splash').style.display = 'none'; }, 600);
+            try {
+                const auth = DB.getObj('auth');
+                if ($('spStatus')) $('spStatus').textContent = "Ready.";
+                setTimeout(() => {
+                    try {
+                        $('splash').classList.add('hide');
+                        setTimeout(() => { if ($('splash')) $('splash').style.display = 'none'; }, 600);
 
-                initTheme();
-                setupBackupReminder();
+                        try { initTheme(); } catch(e) { console.error('[BOOT] initTheme error:', e); }
+                        try { setupBackupReminder(); } catch(e) { console.error('[BOOT] setupBackupReminder error:', e); }
 
-                // Update sidebar with Google user info
-                if (currentUser) {
-                    const displayName = currentUser.displayName || 'WealthFlow User';
-                    const email = currentUser.email || '';
-                    const photoURL = currentUser.photoURL || '';
-                    if ($('sbUser')) {
-                        // ISSUE 7 FIX — Render avatar (Google photo or initial) + name
-                        const initial = (displayName.charAt(0) || '👤').toUpperCase();
-                        const avatarHtml = photoURL
-                            ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
-                            : `<span class="sb-user-initial">${initial}</span>`;
-                        $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
+                        // Update sidebar with Google user info
+                        if (currentUser) {
+                            try {
+                                const displayName = currentUser.displayName || 'WealthFlow User';
+                                const email = currentUser.email || '';
+                                const photoURL = currentUser.photoURL || '';
+                                if ($('sbUser')) {
+                                    const initial = (displayName.charAt(0) || '👤').toUpperCase();
+                                    const avatarHtml = photoURL
+                                        ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
+                                        : `<span class="sb-user-initial">${initial}</span>`;
+                                    $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
+                                }
+                                if ($('authLoginSub')) $('authLoginSub').textContent = displayName + ' · Enter your 6-digit PIN';
+                            } catch(e) { console.error('[BOOT] User info render error:', e); }
+                        }
+                        // Trigger immediate update of the sidebar time
+                        try { updateDateTime(); } catch(e) {}
+
+                        // Show biometric button only if registered on THIS device
+                        try {
+                            const deviceBio = getDeviceBiometric();
+                            if (deviceBio && deviceBio.rawId && window.PublicKeyCredential) {
+                                const bioBtn = $('biometricBtn');
+                                if (bioBtn) bioBtn.style.display = '';
+                            }
+                        } catch(e) { console.error('[BOOT] Biometric check error:', e); }
+
+                        $('authScreen').classList.add('show');
+
+                        // If user just clicked the magic recovery link, jump straight to new-PIN screen
+                        if (window._inRecoveryMode === true) {
+                            pinMode = 'newpin';
+                            pinTemp = '';
+                            if ($('newPinSub')) $('newPinSub').textContent = '🔓 Email verified. Set a NEW 6-digit PIN to recover access.';
+                            showAuthView('authNewPin');
+                            notify('✅ Email verified — please set a new PIN', 'success');
+                            return;
+                        }
+
+                        if (!auth.pin) {
+                            pinMode = 'setup';
+                            showAuthView('authSetup');
+                        } else {
+                            pinMode = 'login';
+                            showAuthView('authLogin');
+                        }
+                    } catch (innerErr) {
+                        console.error('[BOOT] finishBoot inner error:', innerErr);
+                        // Fallback: force show auth screen no matter what
+                        try {
+                            if ($('splash')) { $('splash').classList.add('hide'); $('splash').style.display = 'none'; }
+                            $('authScreen').classList.add('show');
+                            showAuthView('authGoogle');
+                        } catch(e) {
+                            document.getElementById('splash').style.display = 'none';
+                            document.getElementById('authScreen').style.display = 'flex';
+                            document.getElementById('authScreen').classList.add('show');
+                        }
                     }
-                    if ($('authLoginSub')) $('authLoginSub').textContent = displayName + ' · Enter your 6-digit PIN';
-                }
-                // Trigger immediate update of the sidebar time
-                updateDateTime();
-
-                // Show biometric button only if registered on THIS device
-                const deviceBio = getDeviceBiometric();
-                if (deviceBio && deviceBio.rawId && window.PublicKeyCredential) {
-                    const bioBtn = $('biometricBtn');
-                    if (bioBtn) bioBtn.style.display = '';
-                }
-
-                $('authScreen').classList.add('show');
-
-                // ISSUE 4 FIX — If user just clicked the magic recovery link, jump straight
-                // to the new-PIN screen (the email link IS the verification, no PIN needed).
-                if (window._inRecoveryMode === true) {
-                    pinMode = 'newpin';
-                    pinTemp = '';
-                    if ($('newPinSub')) $('newPinSub').textContent = '🔓 Email verified. Set a NEW 6-digit PIN to recover access.';
-                    showAuthView('authNewPin');
-                    notify('✅ Email verified — please set a new PIN', 'success');
-                    return;
-                }
-
-                if (!auth.pin) {
-                    pinMode = 'setup';
-                    showAuthView('authSetup');
-                } else {
-                    pinMode = 'login';
-                    showAuthView('authLogin');
-                }
-            }, 400);
+                }, 400);
+            } catch (outerErr) {
+                console.error('[BOOT] finishBoot fatal error:', outerErr);
+                // Last resort
+                try {
+                    document.getElementById('splash').style.display = 'none';
+                    document.getElementById('authScreen').style.display = 'flex';
+                    document.getElementById('authScreen').classList.add('show');
+                } catch(e) {}
+            }
         }
 
         function launchApp() {
-            $('authScreen').classList.remove('show');
-            $('app').classList.add('show');
-            renderPage('dashboard');
-            // Show floating AI button
-            const fab = $('fabAIBtn');
-            if (fab) fab.classList.add('show');
-            // Schedule auto backup
-            scheduleAutoBackup();
-            updateCCOTBadge();
-            updateChequeBadge();
-            triggerProactiveEngagement();
-            scheduleSmartNotifications(); // Smart randomized OS notifications
-            startAIMemoryListener(); // ISSUE 10 — sync AI chat across devices
-            // ISSUE 2 FIX — Start the real-time session revoke listener now that we're authenticated
-            _startSessionRevokeWatcher();
-            // ISSUE 4 — Check actionable reminders at launch + every 30 min
-            setTimeout(checkActionableReminders, 4000);
-            setInterval(checkActionableReminders, 30 * 60 * 1000);
-            // ISSUE 4 FIX — Re-check whenever the app becomes visible / focused
-            document.addEventListener('visibilitychange', () => {
-                if (!document.hidden) {
-                    setTimeout(checkActionableReminders, 800);
+            try {
+                $('authScreen').classList.remove('show');
+                $('app').classList.add('show');
+                try { renderPage('dashboard'); } catch(e) { console.error('[LAUNCH] renderPage error:', e); }
+                // Show floating AI button
+                try { const fab = $('fabAIBtn'); if (fab) fab.classList.add('show'); } catch(e) {}
+                // Schedule auto backup
+                try { scheduleAutoBackup(); } catch(e) { console.error('[LAUNCH] scheduleAutoBackup error:', e); }
+                try { updateCCOTBadge(); } catch(e) {}
+                try { updateChequeBadge(); } catch(e) {}
+                try { triggerProactiveEngagement(); } catch(e) { console.error('[LAUNCH] triggerProactiveEngagement error:', e); }
+                try { scheduleSmartNotifications(); } catch(e) { console.error('[LAUNCH] scheduleSmartNotifications error:', e); }
+                try { startAIMemoryListener(); } catch(e) { console.error('[LAUNCH] startAIMemoryListener error:', e); }
+                try { _startSessionRevokeWatcher(); } catch(e) { console.error('[LAUNCH] _startSessionRevokeWatcher error:', e); }
+                // Check actionable reminders at launch + every 30 min
+                try { setTimeout(checkActionableReminders, 4000); } catch(e) {}
+                try { setInterval(checkActionableReminders, 30 * 60 * 1000); } catch(e) {}
+                // Re-check whenever the app becomes visible / focused
+                try {
+                    document.addEventListener('visibilitychange', () => {
+                        if (!document.hidden) {
+                            setTimeout(checkActionableReminders, 800);
+                        }
+                    });
+                    window.addEventListener('focus', () => {
+                        setTimeout(checkActionableReminders, 800);
+                    });
+                } catch(e) {}
+                // AI: Request notification permission and schedule AI reminders
+                setTimeout(() => {
+                    try {
+                        requestAINotificationPermission();
+                        const nbAI = $('nb-ai');
+                        if (nbAI) { nbAI.style.display = ''; nbAI.textContent = 'NEW'; }
+                    } catch(e) { console.error('[LAUNCH] AI notification error:', e); }
+                }, 3000);
+            } catch (launchErr) {
+                console.error('[LAUNCH] ❌ Fatal launchApp error:', launchErr);
+                // Even if launch fails, make sure the app is visible
+                try {
+                    $('authScreen').classList.remove('show');
+                    $('app').classList.add('show');
+                } catch(e) {
+                    document.getElementById('authScreen').style.display = 'none';
+                    document.getElementById('app').style.display = 'flex';
                 }
-            });
-            window.addEventListener('focus', () => {
-                setTimeout(checkActionableReminders, 800);
-            });
-            // AI: Request notification permission and schedule AI reminders
-            setTimeout(() => {
-                requestAINotificationPermission();
-                // Show AI nav badge to invite user
-                const nbAI = $('nb-ai');
-                if (nbAI) { nbAI.style.display = ''; nbAI.textContent = 'NEW'; }
-            }, 3000);
+            }
         }
 
         function triggerProactiveEngagement() {
@@ -8316,22 +8566,23 @@ YOUR PERSONALITY & CRITICAL RULES:
                                     const isCurrent = m.month === todayKey;
                                     const bg = m.paid ? 'rgba(16,185,129,0.05)' : isCurrent ? 'rgba(212,175,55,0.05)' : 'transparent';
                                     
-                                    return \`<tr style="border-bottom:1px solid var(--border); background:\${bg}; cursor:pointer; transition:background 0.2s;" 
-                                        onclick="toggleLoanInstallment('\${l.id}','\${m.month}'); setTimeout(() => openLoanInstallmentsModal('\${l.id}'), 300);"
-                                        onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background='\${bg}'">
-                                        <td style="padding:12px 4px;">
-                                            <div><b style="\${m.paid ? 'color:var(--green);' : ''}">\${m.label}</b> \${isCurrent ? '<span style="color:var(--accent);font-size:9px;background:rgba(212,175,55,0.1);padding:2px 4px;border-radius:4px;margin-left:4px;">CURRENT</span>' : ''}</div>
-                                            \${m.paid ? '<div style="font-size:10px;color:var(--green);margin-top:2px;">✅ Paid</div>' : ''}
-                                        </td>
-                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono);">
-                                            <div>\${amtStr}</div>
-                                            \${m.isOver ? \`<div style="font-size:10px;color:var(--green);margin-top:2px;">+\${fmt(m.amount - l.monthly)} extra</div>\` : ''}
-                                            \${m.isPartial ? \`<div style="font-size:10px;color:var(--red);margin-top:2px;">\${fmt(m.amount - l.monthly)} short</div>\` : ''}
-                                        </td>
-                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono); color:var(--text2);">\${fmt(principalPaid)}</td>
-                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono); color:var(--accent);">\${fmt(m.interest)}</td>
-                                        <td style="padding:12px 4px; text-align:right; font-family:var(--mono); font-weight:700; color:var(--red);">\${fmt(m.balance)}</td>
-                                    </tr>\`;
+                                    let row = '<tr style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer; transition:background 0.2s;" ';
+                                    row += 'onclick="toggleLoanInstallment(\'' + l.id + '\',\'' + m.month + '\'); setTimeout(() => openLoanInstallmentsModal(\'' + l.id + '\'), 300);" ';
+                                    row += 'onmouseover="this.style.background=\'var(--bg2)\'" onmouseout="this.style.background=\'' + bg + '\'">';
+                                    row += '<td style="padding:12px 4px;">';
+                                    row += '<div><b style="' + (m.paid ? 'color:var(--green);' : '') + '">' + m.label + '</b> ' + (isCurrent ? '<span style="color:var(--accent);font-size:9px;background:rgba(212,175,55,0.1);padding:2px 4px;border-radius:4px;margin-left:4px;">CURRENT</span>' : '') + '</div>';
+                                    row += (m.paid ? '<div style="font-size:10px;color:var(--green);margin-top:2px;">✅ Paid</div>' : '');
+                                    row += '</td>';
+                                    row += '<td style="padding:12px 4px; text-align:right; font-family:var(--mono);">';
+                                    row += '<div>' + amtStr + '</div>';
+                                    row += (m.isOver ? '<div style="font-size:10px;color:var(--green);margin-top:2px;">+' + fmt(m.amount - l.monthly) + ' extra</div>' : '');
+                                    row += (m.isPartial ? '<div style="font-size:10px;color:var(--red);margin-top:2px;">' + fmt(m.amount - l.monthly) + ' short</div>' : '');
+                                    row += '</td>';
+                                    row += '<td style="padding:12px 4px; text-align:right; font-family:var(--mono); color:var(--text2);">' + fmt(principalPaid) + '</td>';
+                                    row += '<td style="padding:12px 4px; text-align:right; font-family:var(--mono); color:var(--accent);">' + fmt(m.interest) + '</td>';
+                                    row += '<td style="padding:12px 4px; text-align:right; font-family:var(--mono); font-weight:700; color:var(--red);">' + fmt(m.balance) + '</td>';
+                                    row += '</tr>';
+                                    return row;
                                 }).join('')}
                             </tbody>
                         </table>
@@ -8364,21 +8615,22 @@ YOUR PERSONALITY & CRITICAL RULES:
                         payments.map(p => {
                             const diff = p.amount - l.monthly;
                             const d = new Date(p.paidAt || Date.now());
-                            return \`<div style="padding:14px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; margin-bottom:10px;">
-                                <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
-                                    <div style="font-weight:700; color:var(--text);">\${p.month} Installment</div>
-                                    <div style="font-family:var(--mono); font-weight:700; color:var(--green);">\${fmt(p.amount)}</div>
-                                </div>
-                                <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text3);">
-                                    <div>Recorded: \${fmtDatePretty(d.toISOString().slice(0,10))}</div>
-                                    <div>
-                                        \${diff > 1 ? \`<span style="color:var(--green);">+\${fmt(diff)} extra</span>\` : ''}
-                                        \${diff < -1 ? \`<span style="color:var(--red);">\${fmt(diff)} short</span>\` : ''}
-                                        \${Math.abs(diff) <= 1 ? 'Scheduled amount' : ''}
-                                    </div>
-                                </div>
-                                \${p.notes ? \`<div style="margin-top:8px; padding:6px 10px; background:var(--card); border-radius:6px; font-size:11px; color:var(--text2); border-left:2px solid var(--accent);">\${p.notes}</div>\` : ''}
-                            </div>\`;
+                            let card = '<div style="padding:14px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; margin-bottom:10px;">';
+                            card += '<div style="display:flex; justify-content:space-between; margin-bottom:6px;">';
+                            card += '<div style="font-weight:700; color:var(--text);">' + p.month + ' Installment</div>';
+                            card += '<div style="font-family:var(--mono); font-weight:700; color:var(--green);">' + fmt(p.amount) + '</div>';
+                            card += '</div>';
+                            card += '<div style="display:flex; justify-content:space-between; font-size:11px; color:var(--text3);">';
+                            card += '<div>Recorded: ' + fmtDatePretty(d.toISOString().slice(0,10)) + '</div>';
+                            card += '<div>';
+                            card += (diff > 1 ? '<span style="color:var(--green);">+' + fmt(diff) + ' extra</span>' : '');
+                            card += (diff < -1 ? '<span style="color:var(--red);">' + fmt(diff) + ' short</span>' : '');
+                            card += (Math.abs(diff) <= 1 ? 'Scheduled amount' : '');
+                            card += '</div>';
+                            card += '</div>';
+                            card += (p.notes ? '<div style="margin-top:8px; padding:6px 10px; background:var(--card); border-radius:6px; font-size:11px; color:var(--text2); border-left:2px solid var(--accent);">' + p.notes + '</div>' : '');
+                            card += '</div>';
+                            return card;
                         }).join('')}
                     </div>
                 </div>
