@@ -19,5 +19,8 @@
     "pwa",
     "sri-lanka"
   ],
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "nodemailer": "^6.9.13"
+  }
 }
