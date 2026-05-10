@@ -10153,17 +10153,17 @@ YOUR PERSONALITY & CRITICAL RULES:
                         const scheduledThisMonth = _scheduledPaymentFor(l, balBeforeThis);
                         if (thisPay && thisPay.paid) {
                             const diff = (thisPay.amount || 0) - scheduledThisMonth;
-                            return `<div style="background:linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(234, 88, 12, 0.05));border:1px solid rgba(245, 158, 11, 0.5);border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:12px;box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-                        <div style="font-size:26px;">🎉</div>
+                            return `<div style="background:linear-gradient(135deg, #f59e0b, #ea580c);color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px;box-shadow: 0 4px 15px rgba(234, 88, 12, 0.3);">
+                        <div style="font-size:28px;background:rgba(255,255,255,0.2);padding:8px;border-radius:50%;line-height:1;display:flex;align-items:center;justify-content:center;">🎉</div>
                         <div style="flex:1;font-size:13px;line-height:1.5;">
-                            <div style="font-weight:700;color:#ea580c;">${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment Paid</div>
-                            <div style="color:var(--text2);font-size:11.5px;margin-top:2px;">
+                            <div style="font-weight:700;font-size:15px;">${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment Paid</div>
+                            <div style="color:rgba(255,255,255,0.9);font-size:12px;margin-top:2px;">
                                 Paid <b>${fmt(thisPay.amount || scheduledThisMonth)}</b>
-                                ${diff > 1 ? `<span style="color:var(--green);font-weight:600;margin-left:4px;">(+${fmt(diff)} extra → reduces total interest)</span>` : ''}
-                                ${diff < -1 ? `<span style="color:var(--red);font-weight:600;margin-left:4px;">(${fmt(diff)} short → balance carried forward)</span>` : ''}
+                                ${diff > 1 ? `<span style="font-weight:700;margin-left:4px;">(+${fmt(diff)} extra)</span>` : ''}
+                                ${diff < -1 ? `<span style="font-weight:700;color:#ffed4a;margin-left:4px;">(${fmt(diff)} short)</span>` : ''}
                             </div>
                         </div>
-                        <button class="btn btn-ghost btn-sm" style="background:rgba(234, 88, 12, 0.1);color:#ea580c;border:none;" onclick="_viewLoanInstallment('${l.id}','${todayMonthKey}')" title="View / edit / undo this payment">Manage</button>
+                        <button class="btn btn-sm" style="background:#ffffff;color:#ea580c;border:none;font-weight:700;padding:6px 14px;border-radius:8px;" onclick="_viewLoanInstallment('${l.id}','${todayMonthKey}')" title="Manage payment">Manage</button>
                     </div>`;
                         }
                         return `<button class="loan-pay-cta" onclick="toggleLoanInstallment('${l.id}','${todayMonthKey}')">
@@ -10637,6 +10637,10 @@ YOUR PERSONALITY & CRITICAL RULES:
 <meta charset="utf-8">
 <title>Loan Statement — ${esc(l.name)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:title" content="WealthFlow Loan Statement — ${esc(l.name)}">
+<meta property="og:description" content="Secure personal loan account statement for ${esc(l.bank)}.">
+<meta property="og:image" content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
+<meta property="og:type" content="website">
 <style>
 @page { size: A4 portrait; margin: 14mm 12mm; }
 * { box-sizing: border-box; }
@@ -10683,7 +10687,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 <div class="hdr">
     <div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-            <img src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png" alt="WealthFlow Logo" style="height:32px;">
+            <img src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png" alt="WealthFlow Logo" style="height:32px;">
             <h1 style="margin:0;">WealthFlow</h1>
         </div>
         <div class="sub">
@@ -10956,7 +10960,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // Upload statement HTML to Firebase Storage and return a permanent download URL.
-        // Generates and uploads a compressed PDF so that the preview works in WhatsApp/etc.
+        // Uses HTML upload for instant (< 2s) generation. OpenGraph tags provide rich previews.
         async function _firebaseUploadAndGetShareUrl(statementHTML, loanName, onProgress) {
             const setProgress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
 
@@ -10967,35 +10971,24 @@ table.amort tbody tr { page-break-inside: avoid; }
                 throw new Error('You must be signed in to generate a shareable link.');
             }
 
-            const safeName = (loanName || 'Loan').replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
-            
-            // Generate PDF Blob for high-efficiency preview
-            setProgress('Compressing PDF…');
-            let pdfBlob;
-            try {
-                pdfBlob = await _statementHtmlToPdfBlob(statementHTML, loanName);
-            } catch (err) {
-                throw new Error('Failed to compress PDF: ' + err.message);
-            }
-
-            setProgress('Uploading secure document…');
+            setProgress('Generating secure link…');
             const storageRef = firebase.storage().ref();
-            const fileName = `statements/WealthFlow_Loan_${safeName}_${Date.now()}.pdf`;
+            const safeName = (loanName || 'Loan').replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
+            const fileName = `statements/WealthFlow_Loan_${safeName}_${Date.now()}.html`;
             const fileRef = storageRef.child(fileName);
 
+            const htmlBlob = new Blob([statementHTML], { type: 'text/html' });
+
             const downloadURL = await new Promise((resolve, reject) => {
-                const uploadTask = fileRef.put(pdfBlob, { contentType: 'application/pdf' });
+                const uploadTask = fileRef.put(htmlBlob, { contentType: 'text/html', customMetadata: { user: currentUser.uid } });
                 
                 let settled = false;
                 const timeout = setTimeout(() => {
-                    if (!settled) { settled = true; uploadTask.cancel(); reject(new Error('Upload timed out after 30s')); }
-                }, 30000);
+                    if (!settled) { settled = true; uploadTask.cancel(); reject(new Error('Upload timed out after 10s')); }
+                }, 10000);
 
                 uploadTask.on('state_changed', 
-                    (snapshot) => {
-                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                        setProgress(`Uploading... ${Math.round(progress)}%`);
-                    }, 
+                    null, 
                     (error) => {
                         if (settled) return;
                         settled = true; clearTimeout(timeout); reject(error);
@@ -11003,7 +10996,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                     async () => {
                         if (settled) return;
                         settled = true; clearTimeout(timeout);
-                        setProgress('Finalizing link…');
                         try {
                             const url = await uploadTask.snapshot.ref.getDownloadURL();
                             resolve(url);
@@ -11014,7 +11006,6 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             if (!downloadURL) throw new Error('No download URL returned.');
 
-            // Save share history locally
             try {
                 const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
                 hist.unshift({ url: downloadURL, loanName, fileName, createdAt: new Date().toISOString() });
@@ -11266,20 +11257,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (shareBtn) {
                 shareBtn.onclick = async () => {
                     try {
-                        if (pdfBlob && navigator.canShare) {
-                            const file = new File([pdfBlob], 'WealthFlow-Loan-Statement-' + (l.name || 'loan').replace(/[^a-z0-9]+/gi, '-') + '.pdf', { type: 'application/pdf' });
-                            if (navigator.canShare({ files: [file] })) {
-                                await navigator.share({
-                                    title: 'WealthFlow Loan Statement — ' + l.name,
-                                    text: 'Loan statement for ' + l.name + ' (' + l.bank + '). Online copy: ' + url,
-                                    files: [file]
-                                });
-                                return;
-                            }
-                        }
                         await navigator.share({
                             title: 'WealthFlow Loan Statement — ' + l.name,
-                            text: 'Loan statement for ' + l.name + ' (' + l.bank + ')',
+                            text: 'Loan statement for ' + l.name + ' (' + l.bank + '). Online copy: ' + url,
                             url: url
                         });
                     } catch (e) {
@@ -11288,7 +11268,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                 };
             }
         }
-
         async function _shareLoanStatement(win, l) {
             // ── STEP 1: Close the statement window/overlay FIRST ──
             if (win && win !== window) {
