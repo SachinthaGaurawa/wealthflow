@@ -10852,31 +10852,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_ls_share').onclick = () => _shareLoanStatement(frame.contentWindow || window, l);
         }
 
-        // Share helper. Strategy in order of preference:
-        //   1. Web Share API with an attached PDF blob (works on mobile Safari + Chrome)
-        //   2. Web Share API with text/url
-        //   3. Clipboard copy of a text summary (universal fallback)
-        // We do NOT generate hosted URLs — that would require a server. The Share button is
-        // hidden if the platform supports neither path; per your instructions, the URL option
-        // is only kept when it actually works (Web Share with files).
         // ===================================================================================
-        // ADOBE PDF SERVICES — shareable PDF link
+        // LOAN STATEMENT SHARE — Firebase Storage (zero external dependencies)
         // ===================================================================================
-        // The 3-step Adobe flow we use here:
-        //   1. POST  /api/adobe-pdf-share { action:'token' }                  → accessToken
-        //   2. POST  /api/adobe-pdf-share { action:'getAsset', accessToken }  → uploadUri + assetID
-        //   3. PUT   {uploadUri}  ←  PDF bytes (Content-Type: application/pdf) [browser → S3 directly]
-        //   4. POST  /api/adobe-pdf-share { action:'getDownload', accessToken, assetID } → downloadUri
+        // Strategy:
+        //   1. Render the statement HTML → PDF Blob using jsPDF + html2canvas (client-side)
+        //   2. Upload the PDF to Firebase Storage (already configured in this app)
+        //   3. Get a permanent download URL from Firebase Storage
+        //   4. Present the URL to the user with copy / open / Web Share options
         //
-        // The token + getAsset + getDownload calls go through our own Vercel function because
-        // pdf-services.adobe.io blocks browser CORS. The PUT step IS a direct browser→S3 call
-        // (S3 pre-signed URLs allow CORS for unsigned-payload PUT).
-        //
-        // The frontend gracefully degrades: if /api/adobe-pdf-share returns 503 (env vars not set),
-        // we hide the "Get shareable link" option and the Web Share / clipboard paths still work.
+        // Fallback chain when Firebase Storage is unavailable:
+        //   A. Web Share API with attached PDF file (mobile Safari + Chrome)
+        //   B. Web Share API with text summary
+        //   C. Clipboard copy of text summary (universal)
 
-        // Lazy-load jsPDF + html2canvas from CDN. They're only needed when the user actually
-        // generates a PDF, so we don't ship them on every page load.
+        // Lazy-load jsPDF + html2canvas from CDN. Only needed when user generates a PDF.
         let _pdfLibsPromise = null;
         function _loadPdfLibs() {
             if (_pdfLibsPromise) return _pdfLibsPromise;
@@ -10898,48 +10888,38 @@ table.amort tbody tr { page-break-inside: avoid; }
             return _pdfLibsPromise;
         }
 
-        // Render the statement HTML into a real PDF Blob using jsPDF + html2canvas.
-        // We render the statement DOM offscreen at print width, slice it into A4-page-sized
-        // canvas blocks, and add each as an image page in the PDF. Result is a multi-page
-        // A4 PDF that visually matches what the user sees in the print dialog.
+        // Render statement HTML into a real PDF Blob using jsPDF + html2canvas.
         async function _statementHtmlToPdfBlob(statementHTML, loanName) {
             await _loadPdfLibs();
             const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
             if (!jsPDFCtor) throw new Error('jsPDF not available');
 
-            // Render the HTML in a hidden iframe so the document is fully realised
-            // (CSS, fonts, etc.) before we screenshot it.
             const iframe = document.createElement('iframe');
             iframe.style.cssText = 'position:fixed;left:-99999px;top:0;width:794px;height:1123px;border:0;background:#fff;';
             iframe.setAttribute('aria-hidden', 'true');
             document.body.appendChild(iframe);
             try {
                 iframe.srcdoc = statementHTML;
-                // Wait for iframe to load AND for fonts/images to settle
                 await new Promise(resolve => iframe.addEventListener('load', resolve, { once: true }));
-                // Hide the toolbar inside the iframe so it doesn't show up in the PDF
                 try {
                     const toolbar = iframe.contentDocument.querySelector('.toolbar');
                     if (toolbar) toolbar.style.display = 'none';
                 } catch (e) { /* ignore */ }
-                // Give the layout a tick to settle
                 await new Promise(r => setTimeout(r, 250));
 
                 const targetEl = iframe.contentDocument.body;
-                // Snapshot the entire body to a canvas. scale:2 keeps text sharp on print.
                 const canvas = await window.html2canvas(targetEl, {
                     scale: 2,
                     backgroundColor: '#ffffff',
                     useCORS: true,
                     logging: false,
-                    windowWidth: 794, // A4 width in CSS px at 96dpi
+                    windowWidth: 794,
                     windowHeight: targetEl.scrollHeight
                 });
 
-                // Build a multi-page A4 PDF (portrait), slicing the canvas into page-sized blocks.
                 const pdf = new jsPDFCtor({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-                const pageW = pdf.internal.pageSize.getWidth();   // ~595pt
-                const pageH = pdf.internal.pageSize.getHeight();  // ~842pt
+                const pageW = pdf.internal.pageSize.getWidth();
+                const pageH = pdf.internal.pageSize.getHeight();
                 const imgW = pageW;
                 const imgH = (canvas.height * imgW) / canvas.width;
                 let position = 0;
@@ -10959,7 +10939,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                     }
                 }
 
-                // Set sensible PDF metadata so the file looks polished when downloaded
                 pdf.setProperties({
                     title: 'WealthFlow Loan Statement — ' + (loanName || 'Loan'),
                     subject: 'Personal Loan Account Statement',
@@ -10973,99 +10952,80 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
         }
 
-        // Run the 3-step Adobe PDF Services flow. Returns a public download URL.
-        async function _adobeUploadAndGetShareUrl(pdfBlob, onProgress) {
+        // Upload PDF to Firebase Storage and return a permanent download URL.
+        async function _firebaseUploadAndGetShareUrl(pdfBlob, loanName, onProgress) {
             const setProgress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
 
-            // Step 1 — get an access token via our server proxy
-            setProgress('Authenticating with Adobe…');
-            let tokenResp;
-            try {
-                tokenResp = await fetch('/api/adobe-pdf-share', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'token' })
-                });
-            } catch (e) {
-                throw new Error('Network error reaching the share service. Check your connection.');
+            // Verify Firebase Storage is available
+            if (typeof firebase === 'undefined' || !firebase.storage) {
+                throw new Error('Firebase Storage SDK not loaded. Please check your connection.');
             }
-            if (tokenResp.status === 503) {
-                const data = await tokenResp.json().catch(() => ({}));
-                const err = new Error(data.details || 'Adobe PDF Services not configured on the server.');
-                err.code = 'NOT_CONFIGURED';
-                throw err;
+            if (!currentUser) {
+                throw new Error('You must be signed in to generate a shareable link.');
             }
-            if (!tokenResp.ok) {
-                const data = await tokenResp.json().catch(() => ({}));
-                throw new Error('Adobe authentication failed: ' + (data.details || tokenResp.status));
-            }
-            const { accessToken } = await tokenResp.json();
-            if (!accessToken) throw new Error('No access token returned from Adobe.');
 
-            // Step 2 — request a pre-signed upload URI + assetID
-            setProgress('Requesting upload slot…');
-            const assetResp = await fetch('/api/adobe-pdf-share', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'getAsset', accessToken })
+            setProgress('Connecting to cloud storage…');
+            const storageRef = firebase.storage().ref();
+
+            // Build a clean, unique filename
+            const safeName = (loanName || 'Loan').replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
+            const timestamp = Date.now();
+            const dateStr = new Date().toISOString().slice(0, 10);
+            const filePath = `loan-statements/${currentUser.uid}/${safeName}_${dateStr}_${timestamp}.pdf`;
+            const fileRef = storageRef.child(filePath);
+
+            setProgress('Uploading PDF to secure cloud…');
+
+            // Upload with progress tracking
+            const uploadTask = fileRef.put(pdfBlob, {
+                contentType: 'application/pdf',
+                customMetadata: {
+                    generatedBy: 'WealthFlow Elite',
+                    loanName: loanName || 'Loan',
+                    generatedAt: new Date().toISOString(),
+                    userId: currentUser.uid
+                }
             });
-            if (!assetResp.ok) {
-                const data = await assetResp.json().catch(() => ({}));
-                throw new Error('Could not allocate Adobe asset: ' + (data.details || assetResp.status));
-            }
-            const { uploadUri, assetID } = await assetResp.json();
-            if (!uploadUri || !assetID) throw new Error('Adobe returned an incomplete asset response.');
 
-            // Step 3 — PUT the PDF directly to the S3 pre-signed URL.
-            // CORS is permitted by Adobe's S3 bucket for this kind of unsigned-payload PUT.
-            setProgress('Uploading PDF to Adobe Cloud…');
-            const putResp = await fetch(uploadUri, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/pdf' },
-                body: pdfBlob
+            // Wait for upload to complete with progress updates
+            await new Promise((resolve, reject) => {
+                uploadTask.on('state_changed',
+                    (snapshot) => {
+                        const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+                        setProgress(`Uploading… ${pct}%`);
+                    },
+                    (error) => {
+                        console.error('[Firebase Storage] Upload error:', error);
+                        reject(new Error('Upload failed: ' + (error.message || 'unknown error')));
+                    },
+                    () => resolve()
+                );
             });
-            if (!putResp.ok) {
-                const errText = await putResp.text().catch(() => '');
-                throw new Error('PDF upload failed (' + putResp.status + '). ' + errText.slice(0, 200));
-            }
 
-            // Step 4 — get the pre-signed download URI for the uploaded asset
             setProgress('Generating shareable link…');
-            const dlResp = await fetch('/api/adobe-pdf-share', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'getDownload', accessToken, assetID })
-            });
-            if (!dlResp.ok) {
-                const data = await dlResp.json().catch(() => ({}));
-                throw new Error('Could not retrieve download link: ' + (data.details || dlResp.status));
-            }
-            const { downloadUri, expiresInHours } = await dlResp.json();
-            if (!downloadUri) throw new Error('Adobe did not return a download URL.');
+            const downloadURL = await fileRef.getDownloadURL();
 
-            return { url: downloadUri, expiresInHours: expiresInHours || 24 };
+            if (!downloadURL) throw new Error('Firebase Storage did not return a download URL.');
+
+            // Store the share record locally so the user can manage/revoke shared statements later
+            const shareHistory = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
+            shareHistory.unshift({
+                url: downloadURL,
+                loanName: loanName,
+                filePath: filePath,
+                createdAt: new Date().toISOString(),
+                userId: currentUser.uid
+            });
+            // Keep last 50 share records
+            if (shareHistory.length > 50) shareHistory.length = 50;
+            localStorage.setItem('wf_shared_statements', JSON.stringify(shareHistory));
+
+            return { url: downloadURL, permanent: true };
         }
 
-        // Cache "is the Adobe share endpoint configured?" so we don't probe every time.
-        // null  = unknown (haven't checked)
-        // true  = configured (env vars present)
-        // false = not configured (fall back to local share only)
-        let _adobeShareConfigured = null;
-        async function _isAdobeShareAvailable() {
-            if (_adobeShareConfigured !== null) return _adobeShareConfigured;
-            try {
-                const resp = await fetch('/api/adobe-pdf-share', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'token' })
-                });
-                if (resp.status === 503) { _adobeShareConfigured = false; return false; }
-                if (resp.ok) { _adobeShareConfigured = true; return true; }
-                // Anything else (network down, etc.) — assume unavailable but don't cache permanently
-                return false;
-            } catch (e) {
-                return false; // network error — feature unavailable for now
-            }
+        // Check if Firebase Storage share is available (user signed in + SDK loaded)
+        function _isFirebaseShareAvailable() {
+            return !!(typeof firebase !== 'undefined' && firebase.storage && currentUser);
         }
 
         // The "Generate shareable PDF link" workflow — called when the user picks the option
@@ -11110,31 +11070,26 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (cancelled) return;
                 if (!pdfBlob || pdfBlob.size === 0) throw new Error('PDF rendering produced an empty file.');
 
-                const { url, expiresInHours } = await _adobeUploadAndGetShareUrl(pdfBlob, setMsg);
+                const { url, permanent } = await _firebaseUploadAndGetShareUrl(pdfBlob, l.name, setMsg);
                 if (cancelled) return;
 
                 closeOverlay();
-                _showShareableUrlDialog(l, url, expiresInHours, pdfBlob);
+                _showShareableUrlDialog(l, url, permanent, pdfBlob);
             } catch (e) {
                 closeOverlay();
-                if (e.code === 'NOT_CONFIGURED') {
-                    notify('Shareable links not configured on the server — using device share instead.', 'info');
-                } else {
-                    notify('Could not generate shareable link: ' + (e.message || 'unknown error'), 'error');
-                }
-                // Mark as not-configured so we don't show the option again this session
-                if (e.code === 'NOT_CONFIGURED') _adobeShareConfigured = false;
+                console.error('[Share] Error:', e);
+                notify('Could not generate shareable link: ' + (e.message || 'unknown error'), 'error');
             }
         }
 
         // Final UI — show the generated URL with copy / open / Web-Share controls
-        function _showShareableUrlDialog(l, url, expiresInHours, pdfBlob) {
+        function _showShareableUrlDialog(l, url, permanent, pdfBlob) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.style.zIndex = '9998';
-            const expiryText = expiresInHours
-                ? `This link expires in approximately ${expiresInHours} hour${expiresInHours === 1 ? '' : 's'}.`
-                : 'This link is temporary.';
+            const linkNote = permanent
+                ? 'This is a permanent link — it will remain accessible as long as your account is active.'
+                : 'This link is temporary and may expire.';
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:480px;">
                     <div class="md-hdr">
@@ -11143,7 +11098,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>
                     <div style="padding:6px 0 8px;font-size:12.5px;color:var(--text2);line-height:1.55;">
                         Anyone with this link can download the PDF statement for <b>${l.name}</b>.
-                        <span style="color:var(--accent2);">${expiryText}</span>
+                        <span style="color:var(--green);">${linkNote}</span>
                     </div>
                     <div class="fg">
                         <label class="fl">Shareable URL</label>
@@ -11154,9 +11109,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <button class="btn btn-primary btn-sm" id="_surl_copy">📋 Copy Link</button>
                         <button class="btn btn-ghost btn-sm" id="_surl_open">🔍 Open in New Tab</button>
                         <button class="btn btn-ghost btn-sm" id="_surl_share" style="display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share via…</button>
+                        <button class="btn btn-ghost btn-sm" id="_surl_download">💾 Download PDF</button>
                     </div>
-                    <div style="margin-top:12px;padding:8px 10px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text3);line-height:1.5;border-left:3px solid var(--accent);">
-                        ⓘ Powered by Adobe Acrobat Services. The PDF is hosted on Adobe's secure cloud and the link works on any device — no app required.
+                    <div style="margin-top:12px;padding:8px 10px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text3);line-height:1.5;border-left:3px solid var(--green);">
+                        ✅ Powered by Google Firebase Cloud Storage. The PDF is securely hosted and the link works on any device — no app required.
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -11171,9 +11127,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_surl_copy').onclick = async () => {
                 try {
                     await navigator.clipboard.writeText(url);
-                    notify('📋 Link copied to clipboard', 'success');
+                    notify('📋 Link copied to clipboard!', 'success');
                 } catch (e) {
-                    // Fallback: select the input contents so the user can copy manually
                     const inp = overlay.querySelector('#_surl_input');
                     inp.select(); inp.setSelectionRange(0, 99999);
                     notify('Link selected — press Ctrl/⌘ + C to copy', 'info');
@@ -11182,11 +11137,25 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_surl_open').onclick = () => {
                 window.open(url, '_blank', 'noopener,noreferrer');
             };
+            // Download PDF button
+            const dlBtn = overlay.querySelector('#_surl_download');
+            if (dlBtn && pdfBlob) {
+                dlBtn.onclick = () => {
+                    const blobUrl = URL.createObjectURL(pdfBlob);
+                    const a = document.createElement('a');
+                    a.href = blobUrl;
+                    a.download = 'WealthFlow-Loan-Statement-' + (l.name || 'Loan').replace(/[^a-z0-9]+/gi, '-') + '.pdf';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+                    notify('💾 PDF downloaded', 'success');
+                };
+            }
             const shareBtn = overlay.querySelector('#_surl_share');
             if (shareBtn) {
                 shareBtn.onclick = async () => {
                     try {
-                        // Prefer sharing as a file (with URL fallback) so messaging apps can attach the PDF
                         if (pdfBlob && navigator.canShare) {
                             const file = new File([pdfBlob], 'WealthFlow-Loan-Statement-' + (l.name || 'loan').replace(/[^a-z0-9]+/gi, '-') + '.pdf', { type: 'application/pdf' });
                             if (navigator.canShare({ files: [file] })) {
@@ -11198,7 +11167,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 return;
                             }
                         }
-                        // Fallback: share the URL only
                         await navigator.share({
                             title: 'WealthFlow Loan Statement — ' + l.name,
                             text: 'Loan statement for ' + l.name + ' (' + l.bank + ')',
@@ -11226,13 +11194,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 'Installments: ' + proj.schedule.filter(r => r.paid).length + '/' + proj.schedule.length + ' paid\n' +
                 'Generated: ' + new Date().toLocaleString();
 
-            // Probe whether the Adobe-share endpoint is configured. If yes, we offer a chooser
-            // that lets the user pick between "shareable URL (PDF in cloud)" and "device share
-            // (text)". If no, we skip the chooser and go straight to the device-share path.
-            const adobeReady = await _isAdobeShareAvailable();
+            // Check if Firebase Storage is available for cloud sharing
+            const firebaseReady = _isFirebaseShareAvailable();
 
-            if (adobeReady) {
-                // Show a small chooser
+            if (firebaseReady) {
+                // Show a share-method chooser
                 const chooser = document.createElement('div');
                 chooser.className = 'mo';
                 chooser.style.zIndex = '9998';
@@ -11249,7 +11215,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <span style="font-size:24px;margin-right:10px;">🔗</span>
                             <span style="flex:1;">
                                 <div style="font-weight:700;font-size:13px;">Get Shareable Link (Recommended)</div>
-                                <div style="font-size:11px;font-weight:400;opacity:.85;margin-top:2px;">Uploads the PDF to Adobe Cloud and gives you a URL anyone can open. Works on any device.</div>
+                                <div style="font-size:11px;font-weight:400;opacity:.85;margin-top:2px;">Generates a PDF, uploads to secure cloud, and gives you a permanent URL anyone can open.</div>
                             </span>
                         </button>
                         <button class="btn btn-ghost" id="_sc_local" style="width:100%;justify-content:flex-start;text-align:left;padding:14px;">
@@ -11275,7 +11241,6 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 chooser.querySelector('#_sc_url').onclick = () => {
                     closeChooser();
-                    // Use the same statement HTML our toolbar opened with
                     const statementHTML = _buildLoanStatementHTML(l);
                     _generateShareableStatementUrl(l, statementHTML);
                 };
@@ -11286,7 +11251,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return;
             }
 
-            // No Adobe configured — go straight to local Web Share / clipboard path
+            // Firebase not available — go straight to local Web Share / clipboard path
             await _localShareStatement(l, summaryText);
         }
 
