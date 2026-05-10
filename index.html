@@ -11128,8 +11128,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                             outPdfBlob = await _statementHtmlToPdfBlob(statementHTML, l.name);
                         }
                         const formData = new FormData();
-                        const safeName = (l.name || 'Loan').replace(/[^a-zA-Z0-9_\-]/g, '');
-                        formData.append('file', outPdfBlob, \`Statement_\${safeName}.pdf\`);
+                        const safeName = (l.name || 'Loan').replace(/[^a-zA-Z0-9_\\-]/g, '');
+                        formData.append('file', outPdfBlob, `Statement_${safeName}.pdf`);
                         
                         const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData });
                         if (!res.ok) throw new Error('Backup network rejected upload');
