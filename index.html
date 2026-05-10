@@ -1046,6 +1046,16 @@
             background: rgba(16, 185, 129, .25);
         }
 
+        .btn-warning {
+            background: rgba(245, 158, 11, .15);
+            color: var(--accent2);
+            border: 1px solid rgba(245, 158, 11, .35);
+        }
+
+        .btn-warning:hover {
+            background: rgba(245, 158, 11, .25);
+        }
+
         .btn-ghost {
             background: transparent;
             color: var(--text2);
@@ -2825,6 +2835,24 @@
 
         .loan-month-btn.lmb-paid:hover {
             background: rgba(16, 185, 129, 0.18);
+        }
+
+        /* Overdue (past month, still unpaid) — red, subtle pulse to draw the eye */
+        .loan-month-btn.lmb-overdue {
+            background: rgba(239, 68, 68, 0.12);
+            color: var(--red);
+            border-color: rgba(239, 68, 68, 0.35);
+            animation: loanOverduePulse 2.4s ease-in-out infinite;
+        }
+
+        .loan-month-btn.lmb-overdue:hover {
+            background: rgba(239, 68, 68, 0.22);
+            transform: translateY(-1px);
+        }
+
+        @keyframes loanOverduePulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+            50% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15); }
         }
 
         .loan-month-btn.lmb-current {
@@ -9718,11 +9746,129 @@ YOUR PERSONALITY & CRITICAL RULES:
             const todayKey = new Date().toISOString().slice(0, 7);
             const months = _loanInstallmentMonths(l);
             const payments = l.payments || [];
-            const nextMonth = months.find(m =>
+            // Prefer the first unpaid month >= today. If everything from today onward is
+            // paid (or there ARE no months >= today), fall back to the first unpaid month
+            // overall — that's still the "next" installment owed.
+            let nextMonth = months.find(m =>
                 m.key >= todayKey && !payments.find(p => p.month === m.key && p.paid));
-            if (!nextMonth) return l.monthly;
+            if (!nextMonth) {
+                nextMonth = months.find(m => !payments.find(p => p.month === m.key && p.paid));
+            }
+            if (!nextMonth) return l.monthly; // fully paid
             const balBefore = _loanBalanceBeforeMonth(l, nextMonth.key);
             return _scheduledPaymentFor(l, balBefore);
+        }
+
+        // ===================================================================================
+        // RECALCULATED INSTALLMENT  (the "you should pay X/month from now on" figure)
+        // ===================================================================================
+        // After a user makes over- or under-payments, what amount per month — paid every
+        // remaining month — would finish the loan on its ORIGINAL end date?
+        //
+        // For EMI:        new EMI computed from the current balance + remaining months.
+        //                 If the user has been overpaying, this comes out LOWER than the
+        //                 original EMI; if underpaying, it comes out HIGHER.
+        //
+        // For Reducing:   the principal-per-month component changes from (P / n) to
+        //                 (currentBalance / remainingMonths). The first remaining payment is
+        //                 then (newPrincipalPerMonth + currentBalance × monthlyRate); future
+        //                 months drop naturally as in the standard reducing method.
+        //
+        // Return shape:
+        //   {
+        //     remainingMonths,                  // installments still due (original schedule)
+        //     currentBalance,                   // outstanding right now
+        //     scheduledNext,                    // what they'd be billed for next month if they stayed on the original schedule
+        //     recalculatedNext,                 // what they SHOULD pay next month to finish on time
+        //     recommendedFixed,                 // for EMI: new constant EMI; for reducing: 1st-month payment under recalculated principal
+        //     recommendedLast,                  // for reducing: last month's payment (lowest); EMI: same as recommendedFixed
+        //     deltaVsOriginal,                  // recommendedFixed - originalScheduled (positive = pay MORE per month, negative = pay less)
+        //     onTrack,                          // true when delta is within 1 LKR (essentially paying as scheduled)
+        //     direction,                        // 'reduce' | 'increase' | 'on_track'
+        //     reason                            // human-readable summary the prompt + dashboard show
+        //   }
+        function loanRecalculatedInstallment(l) {
+            const months = _loanInstallmentMonths(l);
+            const payments = l.payments || [];
+            const todayKey = new Date().toISOString().slice(0, 7);
+            const monthlyRate = (l.rate || 0) / 100 / 12;
+            const isReducing = _loanMethod(l) === 'reducing';
+
+            // remainingMonths = ALL installments still due. This includes any unpaid past
+            // months (the user is behind on those) AND every future month through the
+            // original end date. We do NOT skip past unpaid months before today —
+            // those still need to be paid for the loan to clear on schedule.
+            const remainingMonths = months.filter(m =>
+                !payments.find(p => p.month === m.key && p.paid)).length;
+            const currentBalance = loanCurrentBalance(l);
+            // "Next scheduled" is what the user would be billed for the very next unpaid
+            // installment at the ORIGINAL pace (helper picks the first unpaid month >= today,
+            // or falls back to first unpaid month overall if all remaining are in the past).
+            const scheduledNext = remainingMonths > 0 ? loanNextScheduledPayment(l) : 0;
+
+            // Edge case: loan already finished
+            if (remainingMonths <= 0 || currentBalance <= 0.5) {
+                return {
+                    remainingMonths: 0, currentBalance: 0,
+                    scheduledNext: 0, recalculatedNext: 0,
+                    recommendedFixed: 0, recommendedLast: 0,
+                    deltaVsOriginal: 0, onTrack: true,
+                    direction: 'on_track',
+                    reason: 'Loan is already paid off — no further installments needed.'
+                };
+            }
+
+            let recommendedFixed, recommendedLast, recalculatedNext;
+            if (isReducing) {
+                // Reducing: redistribute remaining balance over remaining months as principal,
+                // then this month's payment is principal + interest_now.
+                const newPrincipalPerMonth = currentBalance / remainingMonths;
+                recalculatedNext = newPrincipalPerMonth + currentBalance * monthlyRate;
+                recommendedFixed = recalculatedNext; // first (highest)
+                recommendedLast = newPrincipalPerMonth + newPrincipalPerMonth * monthlyRate;
+            } else {
+                // EMI: classic amortization formula on currentBalance over remainingMonths
+                if (monthlyRate === 0) {
+                    recommendedFixed = currentBalance / remainingMonths;
+                } else {
+                    const r = monthlyRate;
+                    recommendedFixed = currentBalance * r * Math.pow(1 + r, remainingMonths) / (Math.pow(1 + r, remainingMonths) - 1);
+                }
+                recommendedLast = recommendedFixed;
+                recalculatedNext = recommendedFixed;
+            }
+
+            const originalScheduledNext = scheduledNext;
+            const deltaVsOriginal = recalculatedNext - originalScheduledNext;
+            const onTrack = Math.abs(deltaVsOriginal) < 1;
+            let direction, reason;
+            if (onTrack) {
+                direction = 'on_track';
+                reason = 'You are exactly on schedule — keep paying ' + fmt(originalScheduledNext) + ' / month.';
+            } else if (deltaVsOriginal < 0) {
+                direction = 'reduce';
+                reason = 'You have been paying ahead — to finish on the original date, you only need ' +
+                         fmt(recommendedFixed) + (isReducing ? ' next month (drops further later)' : ' / month from now on') +
+                         ' (' + fmt(Math.abs(deltaVsOriginal)) + ' LESS than scheduled).';
+            } else {
+                direction = 'increase';
+                reason = 'You are behind schedule — to still finish on time, you need ' +
+                         fmt(recommendedFixed) + (isReducing ? ' next month' : ' / month from now on') +
+                         ' (' + fmt(deltaVsOriginal) + ' MORE than scheduled).';
+            }
+
+            return {
+                remainingMonths,
+                currentBalance,
+                scheduledNext: originalScheduledNext,
+                recalculatedNext,
+                recommendedFixed,
+                recommendedLast,
+                deltaVsOriginal,
+                onTrack,
+                direction,
+                reason
+            };
         }
 
         // Inline modal-style prompt for payment amount with quick presets + live projection.
@@ -9767,6 +9913,29 @@ YOUR PERSONALITY & CRITICAL RULES:
                                 ? 'Each month auto-adjusts based on remaining balance — overpaying drops every future installment.'
                                 : 'Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.'}</span>
                         </div>
+                        ${(() => {
+                            // Recalculated installment banner — only show when off-schedule, so the
+                            // user is told exactly what to pay each remaining month to finish on time.
+                            const rec = loanRecalculatedInstallment(l);
+                            if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                            const isReduce = rec.direction === 'reduce';
+                            const bgGrad = isReduce
+                                ? 'linear-gradient(135deg,rgba(16,185,129,0.14),rgba(16,185,129,0.04))'
+                                : 'linear-gradient(135deg,rgba(245,158,11,0.14),rgba(245,158,11,0.04))';
+                            const borderCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                            const icon = isReduce ? '🎉' : '⚠️';
+                            const title = isReduce ? 'You are AHEAD of schedule' : 'You are BEHIND schedule';
+                            const verb = isReduce ? 'only need to pay' : 'should pay';
+                            return `<div style="background:${bgGrad};border:1px solid ${borderCol};border-left:3px solid ${borderCol};border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:11.5px;line-height:1.5;">
+                                <div style="font-weight:700;color:${borderCol};margin-bottom:4px;">${icon} ${title} — Auto-Recalculated</div>
+                                <div style="color:var(--text2);">To finish on the original end date, you ${verb}:<br>
+                                    <b style="color:${borderCol};font-size:13px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}${isReducing ? ' next month' : ' / month'}</b>
+                                    ${isReducing ? `<span style="color:var(--text3);font-size:10px;"> (drops to ${fmt(rec.recommendedLast)} by the end)</span>` : ''}
+                                    <span style="color:var(--text3);font-size:10px;"> · ${rec.remainingMonths} installments left</span>
+                                </div>
+                                <div style="color:var(--text3);font-size:10px;margin-top:3px;">vs. originally scheduled ${fmt(rec.scheduledNext)} ${isReduce ? '(' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less)' : '(' + fmt(rec.deltaVsOriginal) + ' more)'}</div>
+                            </div>`;
+                        })()}
                         <div class="fg">
                             <label class="fl">Amount Paid (LKR) *</label>
                             <input class="fi money-input" id="_pp_amt" placeholder="${fmtN(scheduledForMonth)}" value="${fmtN(seedAmount)}" autofocus>
@@ -9774,6 +9943,16 @@ YOUR PERSONALITY & CRITICAL RULES:
                         <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px;">
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 0.5)}">½× (${fmtS(scheduledForMonth * 0.5)})</button>
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth)}">Scheduled</button>
+                            ${(() => {
+                                // "Recommended" preset — what we recalculate to keep loan on its original term.
+                                // Only show when it differs meaningfully from "Scheduled".
+                                const rec = loanRecalculatedInstallment(l);
+                                if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                                const v = Math.round(rec.recommendedFixed);
+                                const cls = rec.direction === 'reduce' ? 'btn-success' : 'btn-warning';
+                                const arrow = rec.direction === 'reduce' ? '↓' : '↑';
+                                return `<button class="btn btn-sm _pp_preset ${cls}" data-val="${v}" title="Auto-recalculated to finish on the original end date">⚡ Recommended ${arrow} (${fmtS(v)})</button>`;
+                            })()}
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 1.5)}">1.5× (${fmtS(scheduledForMonth * 1.5)})</button>
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 2)}">2× (${fmtS(scheduledForMonth * 2)})</button>
                         </div>
@@ -9925,7 +10104,19 @@ YOUR PERSONALITY & CRITICAL RULES:
                 const proj = loanProjectedSchedule(l);
 
                 const todayKey = new Date().toISOString().slice(0, 7);
-                const upcomingMonths = months.filter(m => m.key >= todayKey || !payments.find(p => p.month === m.key && p.paid)).slice(0, 6);
+                // Smart auto-centering window for the mini-grid:
+                //   1. Always include the current calendar month (even if paid).
+                //   2. Show up to 2 OVERDUE unpaid months immediately before it (so user sees what they missed).
+                //   3. Pad with future months so the user has a glanceable 6-button schedule.
+                // This is fully automatic — the user never has to scroll or filter to find "this month".
+                const todayIdx = months.findIndex(m => m.key === todayKey);
+                const overdueBefore = todayIdx >= 0
+                    ? months.slice(0, todayIdx).filter(m => !payments.find(p => p.month === m.key && p.paid)).slice(-2)
+                    : [];
+                const fromTodayOnward = todayIdx >= 0 ? months.slice(todayIdx) : months;
+                const slotsLeft = Math.max(1, 6 - overdueBefore.length);
+                const upcomingMonths = [...overdueBefore, ...fromTodayOnward.slice(0, slotsLeft)];
+
                 const recentPaid = months.filter(m => payments.find(p => p.month === m.key && p.paid)).slice(-3);
                 const cardMethod = _loanMethod(l);
                 const isReducingCard = cardMethod === 'reducing';
@@ -10008,6 +10199,36 @@ YOUR PERSONALITY & CRITICAL RULES:
                 <div class="lp-row"><span>Needs ${proj.extraMonthsNeeded} extra month${proj.extraMonthsNeeded > 1 ? 's' : ''}</span><span style="color:var(--red);font-weight:700;">+${fmt(Math.abs(proj.interestSaved))} extra interest</span></div>
             </div>` : ''}
 
+            ${(() => {
+                // Auto-recalculated installment banner — only when off-schedule. Tells the user
+                // what they should pay each remaining month to STILL finish on the original date.
+                const rec = loanRecalculatedInstallment(l);
+                if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                const isReduce = rec.direction === 'reduce';
+                const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                const bgGrad = isReduce
+                    ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
+                    : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
+                const icon = isReduce ? '🎉' : '⚡';
+                const label = isReduce ? 'AHEAD of schedule' : 'BEHIND schedule';
+                return `<div style="margin-top:10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <div style="font-weight:700;color:${accentCol};">${icon} Recalculated Installment — You're ${label}</div>
+                        <span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 6px;border-radius:8px;">AUTO</span>
+                    </div>
+                    <div style="color:var(--text2);">
+                        Pay <b style="color:${accentCol};font-size:14px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}</b>
+                        ${_loanMethod(l) === 'reducing' ? ' next month <span style="color:var(--text3);font-size:10px;">(drops to ' + fmt(rec.recommendedLast) + ' by the end)</span>' : ' / month'}
+                        to finish on the original end date <span style="color:var(--text3);">(${rec.remainingMonths} installments left)</span>
+                    </div>
+                    <div style="font-size:10.5px;color:var(--text3);margin-top:4px;">
+                        ${isReduce
+                            ? '↓ ' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less than originally scheduled (' + fmt(rec.scheduledNext) + ')'
+                            : '↑ ' + fmt(rec.deltaVsOriginal) + ' more than originally scheduled (' + fmt(rec.scheduledNext) + ')'}
+                    </div>
+                </div>`;
+            })()}
+
             ${l.notes ? `<div style="margin-top:8px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${l.notes}</div>` : ''}
 
             <!-- Monthly installment buttons -->
@@ -10022,13 +10243,26 @@ YOUR PERSONALITY & CRITICAL RULES:
                     ${upcomingMonths.slice(0, 6).map(m => {
                         const pay = payments.find(p => p.month === m.key);
                         const isPaid = pay && pay.paid;
-                        const isOver = isPaid && pay.amount > l.monthly + 1;
-                        const isUnder = isPaid && pay.amount < l.monthly - 1;
-                        const btnClass = isPaid ? (isUnder ? 'lmb-partial' : 'lmb-paid') : 'lmb-due';
+                        // Method-aware scheduled amount for THIS specific month — for reducing
+                        // loans the value drops month-to-month with the running balance.
+                        const balBeforeM = _loanBalanceBeforeMonth(l, m.key);
+                        const scheduledM = _scheduledPaymentFor(l, balBeforeM);
+                        const isOver = isPaid && pay.amount > scheduledM + 1;
+                        const isUnder = isPaid && pay.amount < scheduledM - 1;
+                        const isCurrentMonth = m.key === todayKey;
+                        const isOverdue = !isPaid && m.key < todayKey;
+                        const btnClass = isPaid
+                            ? (isUnder ? 'lmb-partial' : 'lmb-paid')
+                            : isOverdue ? 'lmb-overdue' : 'lmb-due';
+                        const tooltip = isPaid
+                            ? 'Paid ' + fmt(pay.amount) + ' of ' + fmt(scheduledM) + ' scheduled — tap to view / edit / undo' + (pay.notes ? ' · ' + pay.notes : '')
+                            : (isOverdue ? 'OVERDUE — ' : '') + 'Tap to record payment of ' + fmt(scheduledM);
+                        const overdueDot = isOverdue ? '<span style="color:var(--red);font-size:10px;">!</span>' : '';
+                        const currentDot = isCurrentMonth ? '<span style="color:var(--accent);font-size:10px;font-weight:900;">●</span>' : '';
                         return `<button class="loan-month-btn ${btnClass}"
                             onclick="clickLoanMonthBtn('${l.id}','${m.key}')"
-                            title="${isPaid ? 'Paid ' + fmt(pay.amount) + ' — tap to view / edit / undo' + (pay.notes ? ' · ' + pay.notes : '') : 'Tap to record payment'}">
-                            ${isPaid ? (isUnder ? '⚠️' : '✅') : '⏰'} ${m.label} ${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
+                            title="${tooltip}">
+                            ${isPaid ? (isUnder ? '⚠️' : '✅') : (isOverdue ? '🔴' : '⏰')} ${m.label} ${currentDot}${overdueDot}${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
                         </button>`;
                     }).join('')}
                 </div>
@@ -10102,6 +10336,27 @@ YOUR PERSONALITY & CRITICAL RULES:
                             <div style="font-size:10px;color:var(--text3);margin-top:1px;">${proj.monthsSaved > 0 ? 'finishing early' : proj.monthsSaved < 0 ? 'extra months added' : 'on track'}</div>
                         </div>
                     </div>
+
+                    ${(() => {
+                        const rec = loanRecalculatedInstallment(l);
+                        if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                        const isReduce = rec.direction === 'reduce';
+                        const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                        const bgGrad = isReduce
+                            ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
+                            : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
+                        const icon = isReduce ? '🎉' : '⚡';
+                        const isReducingLoan = _loanMethod(l) === 'reducing';
+                        return `<div style="margin:0 16px 10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;flex-shrink:0;">
+                            <div style="font-weight:700;color:${accentCol};margin-bottom:4px;">${icon} Recalculated Installment <span style="font-size:9px;background:var(--bg2);padding:2px 6px;border-radius:8px;color:var(--text3);font-weight:500;">AUTO</span></div>
+                            <div style="color:var(--text2);">
+                                Pay <b style="color:${accentCol};font-size:14px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}</b>${isReducingLoan ? ' next month' : ' / month'}
+                                to finish on the original end date.
+                                ${isReducingLoan ? `<span style="color:var(--text3);font-size:10px;">Drops to ${fmt(rec.recommendedLast)} by the end. </span>` : ''}
+                                <span style="color:var(--text3);font-size:10px;">${isReduce ? '↓ ' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less' : '↑ ' + fmt(rec.deltaVsOriginal) + ' more'} per month vs scheduled.</span>
+                            </div>
+                        </div>`;
+                    })()}
 
                     <!-- Filter chips -->
                     <div style="padding:10px 16px; display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--border); flex-shrink:0;">
