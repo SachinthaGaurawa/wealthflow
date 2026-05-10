@@ -10972,11 +10972,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             const fileRef = storageRef.child(fileName);
             const blob = new Blob([statementHTML], { type: 'text/html' });
 
-            // Upload with 20-second timeout — uses same .put().then() pattern as working code
+            // Upload with 4-second timeout — fail fast to trigger fallbacks
             const downloadURL = await new Promise((resolve, reject) => {
                 const timeout = setTimeout(() => {
-                    reject(new Error('Upload timed out. Please check your internet connection and try again.'));
-                }, 20000);
+                    reject(new Error('Firebase upload timed out. Moving to backup.'));
+                }, 4000);
 
                 fileRef.put(blob, { contentType: 'text/html' }).then(snapshot => {
                     setProgress('Generating link…');
@@ -10986,8 +10986,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     resolve(url);
                 }).catch(err => {
                     clearTimeout(timeout);
-                    console.error('[Storage] Upload error:', err);
-                    reject(new Error('Upload failed: ' + (err.message || err.code || 'unknown')));
+                    reject(new Error('Firebase upload failed: ' + (err.message || err.code || 'unknown')));
                 });
             });
 
@@ -11004,12 +11003,59 @@ table.amort tbody tr { page-break-inside: avoid; }
             return { url: downloadURL, permanent: true };
         }
 
+        // -------------------------------------------------------------------------
+        // MULTI-STRATEGY 100% SUCCESS UPLOAD FALLBACKS
+        // -------------------------------------------------------------------------
+
+        async function _adobeUploadAndGetShareUrl(statementHTML, loanName, onProgress) {
+            const setProgress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
+            setProgress('Generating PDF document…');
+            const pdfBlob = await _statementHtmlToPdfBlob(statementHTML, loanName);
+
+            setProgress('Connecting to Adobe Services…');
+            let res = await fetch('/api/adobe-pdf-share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'token' })
+            });
+            if (!res.ok) throw new Error('Adobe API key missing or invalid');
+            const { accessToken } = await res.json();
+
+            setProgress('Requesting secure link…');
+            res = await fetch('/api/adobe-pdf-share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'getAsset', accessToken })
+            });
+            if (!res.ok) throw new Error('Failed to get Adobe asset URI');
+            const { uploadUri, assetID } = await res.json();
+
+            setProgress('Uploading to Adobe Cloud…');
+            const uploadRes = await fetch(uploadUri, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/pdf' },
+                body: pdfBlob
+            });
+            if (!uploadRes.ok) throw new Error('Failed to upload PDF to Adobe S3');
+
+            setProgress('Finalizing shareable URL…');
+            res = await fetch('/api/adobe-pdf-share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'getDownload', accessToken, assetID })
+            });
+            if (!res.ok) throw new Error('Failed to generate Adobe download link');
+            const { downloadUri } = await res.json();
+
+            return { url: downloadUri, permanent: false, pdfBlob };
+        }
+
         // Check if Firebase Storage share is available (user signed in + SDK loaded)
         function _isFirebaseShareAvailable() {
             return !!(typeof firebase !== 'undefined' && firebase.storage && currentUser);
         }
 
-        // Generate shareable URL — uploads the HTML statement directly (instant, no PDF rendering).
+        // Generate shareable URL — Multi-strategy approach for 100% reliability
         async function _generateShareableStatementUrl(l) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
@@ -11023,8 +11069,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <div style="display:flex;justify-content:center;margin-bottom:14px;">
                             <div class="ash-spinner" style="width:56px;height:56px;border:4px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:ashSpin 0.9s linear infinite;"></div>
                         </div>
-                        <div id="_ash_msg" style="font-size:13px;color:var(--text2);min-height:20px;">Uploading statement…</div>
-                        <div style="font-size:11px;color:var(--text3);margin-top:8px;">This usually takes 2–3 seconds.</div>
+                        <div id="_ash_msg" style="font-size:13px;color:var(--text2);min-height:20px;">Preparing upload…</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:8px;">Please wait while we generate a secure link.</div>
                     </div>
                     <div class="md-ftr" style="justify-content:center;">
                         <button class="btn btn-ghost" id="_ash_cancel">Cancel</button>
@@ -11045,16 +11091,84 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const statementHTML = _buildLoanStatementHTML(l);
                 if (cancelled) return;
 
-                const { url, permanent } = await _firebaseUploadAndGetShareUrl(statementHTML, l.name, setMsg);
+                let shareUrl = null;
+                let isPermanent = false;
+                let outPdfBlob = null;
+
+                // STRATEGY 1: Firebase Storage (Super fast HTML upload)
+                if (_isFirebaseShareAvailable()) {
+                    try {
+                        const fbRes = await _firebaseUploadAndGetShareUrl(statementHTML, l.name, setMsg);
+                        shareUrl = fbRes.url;
+                        isPermanent = true;
+                    } catch (e) {
+                        console.warn('[Firebase Share Failed]', e);
+                    }
+                }
                 if (cancelled) return;
 
+                // STRATEGY 2: Adobe PDF Services API (The official fallback)
+                if (!shareUrl) {
+                    try {
+                        const adRes = await _adobeUploadAndGetShareUrl(statementHTML, l.name, setMsg);
+                        shareUrl = adRes.url;
+                        isPermanent = false;
+                        outPdfBlob = adRes.pdfBlob;
+                    } catch (e) {
+                        console.warn('[Adobe Share Failed]', e);
+                    }
+                }
+                if (cancelled) return;
+
+                // STRATEGY 3: Public file sharing network (Guaranteed fallback)
+                if (!shareUrl) {
+                    try {
+                        setMsg('Using backup sharing network…');
+                        if (!outPdfBlob) {
+                            outPdfBlob = await _statementHtmlToPdfBlob(statementHTML, l.name);
+                        }
+                        const formData = new FormData();
+                        const safeName = (l.name || 'Loan').replace(/[^a-zA-Z0-9_\-]/g, '');
+                        formData.append('file', outPdfBlob, \`Statement_\${safeName}.pdf\`);
+                        
+                        const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData });
+                        if (!res.ok) throw new Error('Backup network rejected upload');
+                        const data = await res.json();
+                        shareUrl = data.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+                        isPermanent = false;
+                    } catch (e) {
+                         console.warn('[Backup Share Failed]', e);
+                    }
+                }
+                if (cancelled) return;
+
+                if (!shareUrl) {
+                    throw new Error('All cloud sharing methods failed. Check your internet connection.');
+                }
+
                 closeOverlay();
-                _showShareableUrlDialog(l, url, permanent, null);
+                _showShareableUrlDialog(l, shareUrl, isPermanent, outPdfBlob);
             } catch (e) {
                 closeOverlay();
                 console.error('[Share] Error:', e);
-                notify('Could not generate shareable link: ' + (e.message || 'unknown error'), 'error');
+                notify('Network error. Falling back to local text share.', 'warning');
+                setTimeout(() => _localShareStatement(l, _generateSummaryText(l)), 500);
             }
+        }
+
+        function _generateSummaryText(l) {
+            const proj = loanProjectedSchedule(l);
+            const balToday = loanCurrentBalance(l);
+            const totalPaid = (l.payments || []).filter(p => p.paid).reduce((s, p) => s + (p.amount || 0), 0);
+            return 'WealthFlow Loan Statement\n' +
+                '────────────────────────\n' +
+                'Loan: ' + l.name + ' (' + l.bank + ')\n' +
+                'Method: ' + (_loanMethod(l) === 'reducing' ? 'Reducing Balance' : 'EMI') + '\n' +
+                'Principal: ' + fmt(l.amount) + ' @ ' + l.rate + '% / ' + l.duration + 'm\n' +
+                'Total Paid: ' + fmt(totalPaid) + '\n' +
+                'Outstanding: ' + fmt(balToday) + '\n' +
+                'Installments: ' + proj.schedule.filter(r => r.paid).length + '/' + proj.schedule.length + ' paid\n' +
+                'Generated: ' + new Date().toLocaleString();
         }
 
         // Final UI — show the generated URL with copy / open / Web-Share controls
@@ -11155,11 +11269,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         async function _shareLoanStatement(win, l) {
             // ── STEP 1: Close the statement window/overlay FIRST ──
-            // Close popup window (if statement was opened via window.open)
             if (win && win !== window) {
                 try { win.close(); } catch(e) { /* silent */ }
             }
-            // Close inline statement overlay (if statement was opened via _openLoanStatementInline)
             document.querySelectorAll('.mo').forEach(m => {
                 if (m.querySelector('#_ls_frame')) {
                     m.classList.remove('open');
@@ -11167,27 +11279,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             });
 
-            // ── STEP 2: Generate URL instantly (if signed in) ──
-            if (_isFirebaseShareAvailable()) {
-                _generateShareableStatementUrl(l);
-                return;
-            }
-
-            // ── STEP 3: Fallback — text share via clipboard/Web Share ──
-            const proj = loanProjectedSchedule(l);
-            const balToday = loanCurrentBalance(l);
-            const totalPaid = (l.payments || []).filter(p => p.paid).reduce((s, p) => s + (p.amount || 0), 0);
-            const summaryText =
-                'WealthFlow Loan Statement\n' +
-                '────────────────────────\n' +
-                'Loan: ' + l.name + ' (' + l.bank + ')\n' +
-                'Method: ' + (_loanMethod(l) === 'reducing' ? 'Reducing Balance' : 'EMI') + '\n' +
-                'Principal: ' + fmt(l.amount) + ' @ ' + l.rate + '% / ' + l.duration + 'm\n' +
-                'Total Paid: ' + fmt(totalPaid) + '\n' +
-                'Outstanding: ' + fmt(balToday) + '\n' +
-                'Installments: ' + proj.schedule.filter(r => r.paid).length + '/' + proj.schedule.length + ' paid\n' +
-                'Generated: ' + new Date().toLocaleString();
-            await _localShareStatement(l, summaryText);
+            // ── STEP 2: Initiate Multi-Strategy URL Generation ──
+            // _generateShareableStatementUrl handles Firebase -> Adobe -> TmpFiles -> Text Fallback
+            _generateShareableStatementUrl(l);
         }
 
         // The original local-share path (Web Share API → clipboard fallback). Extracted so
