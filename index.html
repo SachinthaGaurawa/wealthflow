@@ -10153,17 +10153,17 @@ YOUR PERSONALITY & CRITICAL RULES:
                         const scheduledThisMonth = _scheduledPaymentFor(l, balBeforeThis);
                         if (thisPay && thisPay.paid) {
                             const diff = (thisPay.amount || 0) - scheduledThisMonth;
-                            return `<div style="background:linear-gradient(135deg,rgba(16,185,129,0.12),rgba(16,185,129,0.04));border:1px solid var(--green);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;">
-                        <div style="font-size:24px;">✅</div>
-                        <div style="flex:1;font-size:12.5px;line-height:1.5;">
-                            <div style="font-weight:700;color:var(--green);">${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment Paid</div>
-                            <div style="color:var(--text2);font-size:11px;">
+                            return `<div style="background:linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(234, 88, 12, 0.05));border:1px solid rgba(245, 158, 11, 0.5);border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:12px;box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                        <div style="font-size:26px;">🎉</div>
+                        <div style="flex:1;font-size:13px;line-height:1.5;">
+                            <div style="font-weight:700;color:#ea580c;">${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment Paid</div>
+                            <div style="color:var(--text2);font-size:11.5px;margin-top:2px;">
                                 Paid <b>${fmt(thisPay.amount || scheduledThisMonth)}</b>
-                                ${diff > 1 ? `<span style="color:var(--green);">(+${fmt(diff)} extra → reduces total interest)</span>` : ''}
-                                ${diff < -1 ? `<span style="color:var(--red);">(${fmt(diff)} short → balance carried forward)</span>` : ''}
+                                ${diff > 1 ? `<span style="color:var(--green);font-weight:600;margin-left:4px;">(+${fmt(diff)} extra → reduces total interest)</span>` : ''}
+                                ${diff < -1 ? `<span style="color:var(--red);font-weight:600;margin-left:4px;">(${fmt(diff)} short → balance carried forward)</span>` : ''}
                             </div>
                         </div>
-                        <button class="btn btn-ghost btn-sm" onclick="_viewLoanInstallment('${l.id}','${todayMonthKey}')" title="View / edit / undo this payment">⋯</button>
+                        <button class="btn btn-ghost btn-sm" style="background:rgba(234, 88, 12, 0.1);color:#ea580c;border:none;" onclick="_viewLoanInstallment('${l.id}','${todayMonthKey}')" title="View / edit / undo this payment">Manage</button>
                     </div>`;
                         }
                         return `<button class="loan-pay-cta" onclick="toggleLoanInstallment('${l.id}','${todayMonthKey}')">
@@ -10682,7 +10682,10 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 <div class="hdr">
     <div>
-        <h1>WealthFlow</h1>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+            <img src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png" alt="WealthFlow Logo" style="height:32px;">
+            <h1 style="margin:0;">WealthFlow</h1>
+        </div>
         <div class="sub">
             <b>Personal Loan Account Statement</b><br>
             ${esc(l.name)} · ${esc(l.bank)}
@@ -10909,7 +10912,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 const targetEl = iframe.contentDocument.body;
                 const canvas = await window.html2canvas(targetEl, {
-                    scale: 2,
+                    scale: 1.5, // Reduced for faster generation
                     backgroundColor: '#ffffff',
                     useCORS: true,
                     logging: false,
@@ -10923,7 +10926,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const imgW = pageW;
                 const imgH = (canvas.height * imgW) / canvas.width;
                 let position = 0;
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85); // Adjusted quality for better compression
 
                 if (imgH <= pageH) {
                     pdf.addImage(dataUrl, 'JPEG', 0, 0, imgW, imgH);
@@ -10953,8 +10956,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // Upload statement HTML to Firebase Storage and return a permanent download URL.
-        // Uses HTML upload (instant, ~30KB) instead of PDF (slow, ~3MB).
-        // Uses 'statements/' path — same as the working upload elsewhere in the app.
+        // Generates and uploads a compressed PDF so that the preview works in WhatsApp/etc.
         async function _firebaseUploadAndGetShareUrl(statementHTML, loanName, onProgress) {
             const setProgress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
 
@@ -10965,29 +10967,49 @@ table.amort tbody tr { page-break-inside: avoid; }
                 throw new Error('You must be signed in to generate a shareable link.');
             }
 
-            setProgress('Uploading statement…');
-            const storageRef = firebase.storage().ref();
             const safeName = (loanName || 'Loan').replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_');
-            const fileName = `statements/WealthFlow_Loan_${safeName}_${Date.now()}.html`;
+            
+            // Generate PDF Blob for high-efficiency preview
+            setProgress('Compressing PDF…');
+            let pdfBlob;
+            try {
+                pdfBlob = await _statementHtmlToPdfBlob(statementHTML, loanName);
+            } catch (err) {
+                throw new Error('Failed to compress PDF: ' + err.message);
+            }
+
+            setProgress('Uploading secure document…');
+            const storageRef = firebase.storage().ref();
+            const fileName = `statements/WealthFlow_Loan_${safeName}_${Date.now()}.pdf`;
             const fileRef = storageRef.child(fileName);
-            const blob = new Blob([statementHTML], { type: 'text/html' });
 
-            // Upload with 4-second timeout — fail fast to trigger fallbacks
             const downloadURL = await new Promise((resolve, reject) => {
+                const uploadTask = fileRef.put(pdfBlob, { contentType: 'application/pdf' });
+                
+                let settled = false;
                 const timeout = setTimeout(() => {
-                    reject(new Error('Firebase upload timed out. Moving to backup.'));
-                }, 4000);
+                    if (!settled) { settled = true; uploadTask.cancel(); reject(new Error('Upload timed out after 30s')); }
+                }, 30000);
 
-                fileRef.put(blob, { contentType: 'text/html' }).then(snapshot => {
-                    setProgress('Generating link…');
-                    return snapshot.ref.getDownloadURL();
-                }).then(url => {
-                    clearTimeout(timeout);
-                    resolve(url);
-                }).catch(err => {
-                    clearTimeout(timeout);
-                    reject(new Error('Firebase upload failed: ' + (err.message || err.code || 'unknown')));
-                });
+                uploadTask.on('state_changed', 
+                    (snapshot) => {
+                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                        setProgress(`Uploading... ${Math.round(progress)}%`);
+                    }, 
+                    (error) => {
+                        if (settled) return;
+                        settled = true; clearTimeout(timeout); reject(error);
+                    }, 
+                    async () => {
+                        if (settled) return;
+                        settled = true; clearTimeout(timeout);
+                        setProgress('Finalizing link…');
+                        try {
+                            const url = await uploadTask.snapshot.ref.getDownloadURL();
+                            resolve(url);
+                        } catch (e) { reject(e); }
+                    }
+                );
             });
 
             if (!downloadURL) throw new Error('No download URL returned.');
