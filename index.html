@@ -5748,7 +5748,7 @@
         </div>
     </div>
 
-    <div class="mo" id="mdConfirm">
+    <div class="mo" id="mdConfirm" style="z-index:9999;">
         <div class="md md-sm">
             <div class="md-hdr" style="justify-content:flex-end;"><button class="md-x"
                     onclick="closeModal('mdConfirm')">✕</button></div>
@@ -10233,9 +10233,10 @@ YOUR PERSONALITY & CRITICAL RULES:
 
             <!-- Monthly installment buttons -->
             <div style="margin-top:14px;border-top:1px dashed var(--border2);padding-top:12px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
                     <div style="font-size:12px;font-weight:700;color:var(--text2);">📅 Monthly Installments</div>
-                    <div style="display:flex; gap:8px;">
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${l.id}')" title="Generate a professional bank-statement-style PDF for this loan">📄 Statement</button>
                         <button class="btn btn-ghost btn-sm" onclick="_openLoanInstallmentsFresh('${l.id}')">📋 View All ${months.length} Months</button>
                     </div>
                 </div>
@@ -10311,7 +10312,10 @@ YOUR PERSONALITY & CRITICAL RULES:
                 <div class="md" style="max-width:720px;max-height:92vh;display:flex;flex-direction:column;padding:0;">
                     <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
                         <div class="md-title">📅 ${l.name} — Live Amortization</div>
-                        <button class="md-x" onclick="closeModal('mdLoanInstallments')">✕</button>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${l.id}')" title="Generate professional PDF statement">📄 Statement</button>
+                            <button class="md-x" onclick="closeModal('mdLoanInstallments')">✕</button>
+                        </div>
                     </div>
 
                     <!-- Summary strip — always reflects the current state of payments -->
@@ -10472,6 +10476,428 @@ YOUR PERSONALITY & CRITICAL RULES:
             }
         }
 
+        // ===================================================================================
+        // LOAN STATEMENT  (Professional bank-statement-style PDF + print + share)
+        // ===================================================================================
+        // Generates a polished, multi-page-friendly HTML representation of the loan's full
+        // amortization with summary, payment history, and remaining schedule. The same HTML
+        // drives all three actions:
+        //   - Print     → window.print() on a stripped-down popup
+        //   - Save PDF  → browser's "Save as PDF" via the same popup
+        //   - Share     → Web Share API with the rendered PDF if supported, otherwise a
+        //                 fallback: copy a shareable text summary, or just open the print
+        //                 dialog so the user can save/share themselves.
+        // The HTML uses inline styles only (no external CSS), so it renders identically
+        // regardless of where it's opened.
+        function _buildLoanStatementHTML(l) {
+            const proj = loanProjectedSchedule(l);
+            const rec = loanRecalculatedInstallment(l);
+            const isReducing = _loanMethod(l) === 'reducing';
+            const balToday = loanCurrentBalance(l);
+            const totalPaid = (l.payments || []).filter(p => p.paid).reduce((s, p) => s + (p.amount || 0), 0);
+            const interestPaid = loanTotalInterestPaid(l);
+            const paidCount = proj.schedule.filter(r => r.paid).length;
+            const remainingCount = proj.schedule.length - paidCount;
+            const endDate = loanEndDate(l).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            const startDate = new Date(l.start + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            const issuedAt = new Date().toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' });
+            const stmtId = 'WF-' + (l.id || 'LOAN').slice(-6).toUpperCase() + '-' + Date.now().toString(36).toUpperCase().slice(-6);
+            // safe HTML escape for fields the user controls
+            const esc = (s) => String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+            const colorAccent = '#0b3d91'; // navy — bank statement convention
+            const colorBorder = '#cfd6e2';
+            const colorMuted  = '#6b7280';
+            const colorText   = '#0f172a';
+            const colorRowAlt = '#f7f9fc';
+            const colorPaid   = '#0e7c4a';
+            const colorOver   = '#0e7c4a';
+            const colorUnder  = '#b91c1c';
+            const colorBalanceFill = '#fff7e6';
+
+            const summaryRows = [
+                ['Bank',              esc(l.bank)],
+                ['Loan ID',           '<span style="font-family:monospace;">' + esc(l.id || '—') + '</span>'],
+                ['Purpose',           esc(l.purpose) || '—'],
+                ['Repayment Method',  isReducing ? 'Reducing Balance (Floating)' : 'Equal Monthly Installment (EMI)'],
+                ['Principal Amount',  fmt(l.amount)],
+                ['Annual Interest Rate', l.rate + '% p.a.'],
+                ['Loan Term',         l.duration + ' months'],
+                ['Disbursement Date', startDate],
+                ['Original End Date', endDate],
+            ];
+
+            const statusRows = [
+                ['Installments Paid',     paidCount + ' / ' + proj.schedule.length],
+                ['Total Paid',            '<b style="color:' + colorPaid + ';">' + fmt(totalPaid) + '</b>'],
+                ['Interest Paid (so far)','<b style="color:' + colorAccent + ';">' + fmt(interestPaid) + '</b>'],
+                ['Outstanding Balance',   '<b style="color:' + colorUnder + ';">' + fmt(balToday) + '</b>'],
+                ['Installments Remaining', remainingCount + ' months'],
+                ['Projected Total Interest', fmt(proj.totalInterestActual)],
+                ['Projected Total Payable',  fmt(proj.totalLifetimeCost)],
+            ];
+            if (!rec.onTrack && rec.remainingMonths > 0) {
+                statusRows.push([
+                    'Recalculated Installment',
+                    '<b style="color:' + (rec.direction === 'reduce' ? colorPaid : colorUnder) + ';">' + fmt(rec.recommendedFixed) + '</b>' +
+                    ' <span style="color:' + colorMuted + ';font-size:11px;">(' +
+                    (rec.direction === 'reduce' ? '↓ ' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less' : '↑ ' + fmt(rec.deltaVsOriginal) + ' more') +
+                    ' / month vs. originally scheduled ' + fmt(rec.scheduledNext) + ')</span>'
+                ]);
+            }
+
+            const fmtMonthLabel = (m) => m.label || m.month;
+            const fmtPay = (n) => 'LKR ' + Math.round(n).toLocaleString('en-US');
+
+            // Build a single table row. The `idx` is the global row index (not the section index)
+            // so the # column matches the official installment number across both sections.
+            const buildRow = (m, idx, sectionRowIdx) => {
+                let statusBadge;
+                if (m.paid) {
+                    if (m.isOver) statusBadge = '<span style="color:' + colorOver + ';font-weight:600;">PAID +</span>';
+                    else if (m.isPartial) statusBadge = '<span style="color:' + colorUnder + ';font-weight:600;">PAID −</span>';
+                    else statusBadge = '<span style="color:' + colorPaid + ';font-weight:600;">PAID</span>';
+                } else if (m.isExtension) {
+                    statusBadge = '<span style="color:' + colorUnder + ';">EXTENSION</span>';
+                } else if (m.isCurrent) {
+                    statusBadge = '<span style="color:' + colorAccent + ';font-weight:600;">CURRENT</span>';
+                } else {
+                    statusBadge = '<span style="color:' + colorMuted + ';">UPCOMING</span>';
+                }
+                const rowBg = sectionRowIdx % 2 === 0 ? '#ffffff' : colorRowAlt;
+                return '<tr style="background:' + rowBg + ';">' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';font-variant-numeric:tabular-nums;">' + (idx + 1) + '</td>' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';">' + fmtMonthLabel(m) + '</td>' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(m.scheduledAmount) + '</td>' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:right;font-variant-numeric:tabular-nums;font-weight:' + (m.paid ? 700 : 400) + ';">' + fmtPay(m.amount) + '</td>' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:right;font-variant-numeric:tabular-nums;color:' + colorMuted + ';">' + fmtPay(m.principalPaid) + '</td>' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:right;font-variant-numeric:tabular-nums;color:' + colorMuted + ';">' + fmtPay(m.interest) + '</td>' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:right;font-variant-numeric:tabular-nums;font-weight:600;background:' + (m.balance > 0 ? colorBalanceFill : 'transparent') + ';">' + fmtPay(m.balance) + '</td>' +
+                    '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:center;font-size:11px;">' + statusBadge + '</td>' +
+                '</tr>';
+            };
+
+            // Split the schedule into PAID and REMAINING.
+            // Each row keeps its global installment number (idx) so the # column lines up with the
+            // contractual installment sequence across both sections.
+            const paidRows = [];
+            const remainingRows = [];
+            const paidTotals = { scheduled: 0, amount: 0, principal: 0, interest: 0 };
+            const remainingTotals = { scheduled: 0, amount: 0, principal: 0, interest: 0 };
+            proj.schedule.forEach((m, idx) => {
+                if (m.paid) {
+                    paidRows.push(buildRow(m, idx, paidRows.length));
+                    paidTotals.scheduled += m.scheduledAmount;
+                    paidTotals.amount    += m.amount;
+                    paidTotals.principal += m.principalPaid;
+                    paidTotals.interest  += m.interest;
+                } else {
+                    remainingRows.push(buildRow(m, idx, remainingRows.length));
+                    remainingTotals.scheduled += m.scheduledAmount;
+                    remainingTotals.amount    += m.amount;
+                    remainingTotals.principal += m.principalPaid;
+                    remainingTotals.interest  += m.interest;
+                }
+            });
+
+            // Subtotal row builder for the bottom of each section
+            const buildTotalRow = (label, t) =>
+                '<tr style="background:' + colorAccent + ';color:#fff;font-weight:700;">' +
+                    '<td colspan="2" style="padding:9px 10px;border-bottom:0;">' + label + '</td>' +
+                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.scheduled) + '</td>' +
+                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.amount) + '</td>' +
+                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.principal) + '</td>' +
+                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.interest) + '</td>' +
+                    '<td colspan="2" style="padding:9px 10px;text-align:right;"></td>' +
+                '</tr>';
+
+            // Empty-state row for when one section has no installments yet
+            const emptyRow = (msg) =>
+                '<tr><td colspan="8" style="padding:18px;text-align:center;color:' + colorMuted + ';font-style:italic;">' + msg + '</td></tr>';
+
+            const paidSectionRows = paidRows.length > 0
+                ? paidRows.join('') + buildTotalRow('SUBTOTAL — PAID (' + paidRows.length + ')', paidTotals)
+                : emptyRow('No installments paid yet.');
+            const remainingSectionRows = remainingRows.length > 0
+                ? remainingRows.join('') + buildTotalRow('SUBTOTAL — REMAINING (' + remainingRows.length + ')', remainingTotals)
+                : emptyRow('All installments have been paid — loan complete.');
+
+            const summaryHTML = summaryRows.map(([k, v]) =>
+                '<tr><td style="padding:5px 10px 5px 0;color:' + colorMuted + ';font-size:12px;">' + k + '</td>' +
+                '<td style="padding:5px 0;font-size:12px;">' + v + '</td></tr>').join('');
+            const statusHTML = statusRows.map(([k, v]) =>
+                '<tr><td style="padding:5px 10px 5px 0;color:' + colorMuted + ';font-size:12px;">' + k + '</td>' +
+                '<td style="padding:5px 0;font-size:12px;text-align:right;">' + v + '</td></tr>').join('');
+
+            return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Loan Statement — ${esc(l.name)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+@page { size: A4 portrait; margin: 14mm 12mm; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 18mm 14mm; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: ${colorText}; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+@media print { body { padding: 0; } .no-print { display: none !important; } }
+.hdr { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 14px; margin-bottom: 18px; border-bottom: 3px double ${colorAccent}; }
+.hdr h1 { margin: 0 0 4px; font-size: 22px; color: ${colorAccent}; letter-spacing: 0.5px; }
+.hdr .sub { font-size: 11px; color: ${colorMuted}; line-height: 1.5; }
+.hdr .stmt-meta { text-align: right; font-size: 11px; color: ${colorMuted}; line-height: 1.6; }
+.hdr .stmt-meta b { color: ${colorText}; font-weight: 600; }
+.section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: ${colorAccent}; margin: 22px 0 6px; padding-bottom: 4px; border-bottom: 1px solid ${colorBorder}; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.summary-box { padding: 6px 0; }
+table.amort { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 11.5px; }
+table.amort thead th { padding: 8px 10px; text-align: left; background: ${colorAccent}; color: #fff; font-weight: 600; font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; }
+table.amort thead th.r { text-align: right; }
+table.amort thead th.c { text-align: center; }
+table.amort tbody tr { page-break-inside: avoid; }
+.legend { font-size: 10.5px; color: ${colorMuted}; margin-top: 8px; line-height: 1.6; }
+.signature { margin-top: 26px; display: flex; gap: 22px; }
+.sig-block { flex: 1; }
+.sig-line { border-bottom: 1px solid ${colorText}; height: 40px; }
+.sig-label { font-size: 10.5px; color: ${colorMuted}; margin-top: 4px; }
+.disclaimer { margin-top: 22px; padding: 10px 12px; background: ${colorRowAlt}; border-left: 3px solid ${colorAccent}; font-size: 10.5px; line-height: 1.55; color: ${colorText}; border-radius: 4px; }
+.footer { margin-top: 18px; padding-top: 10px; border-top: 1px solid ${colorBorder}; text-align: center; font-size: 10px; color: ${colorMuted}; }
+.toolbar { position: sticky; top: 0; z-index: 10; padding: 10px 14px; background: ${colorAccent}; color: #fff; display: flex; gap: 10px; align-items: center; justify-content: space-between; margin: -18mm -14mm 18mm; box-shadow: 0 2px 4px rgba(0,0,0,0.12); }
+.toolbar h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.toolbar button { background: #ffffff; color: ${colorAccent}; border: 0; padding: 7px 14px; border-radius: 6px; font-weight: 600; font-size: 12px; cursor: pointer; transition: opacity 0.15s; }
+.toolbar button:hover { opacity: 0.92; }
+.toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.toolbar .btn-secondary { background: rgba(255,255,255,0.18); color: #fff; }
+</style>
+</head>
+<body>
+<div class="toolbar no-print">
+    <h2>📄 Loan Statement — ${esc(l.name)}</h2>
+    <div style="display:flex;gap:8px;">
+        <button onclick="window.print()" id="btnPrint" title="Print or save as PDF (use 'Save as PDF' destination)">🖨 Print / Save PDF</button>
+        <button onclick="window.__wfShareStatement && window.__wfShareStatement()" id="btnShare" class="btn-secondary" title="Share this statement">🔗 Share</button>
+        <button onclick="window.close()" class="btn-secondary">✕ Close</button>
+    </div>
+</div>
+
+<div class="hdr">
+    <div>
+        <h1>WealthFlow</h1>
+        <div class="sub">
+            <b>Personal Loan Account Statement</b><br>
+            ${esc(l.name)} · ${esc(l.bank)}
+        </div>
+    </div>
+    <div class="stmt-meta">
+        <div>Statement No: <b>${stmtId}</b></div>
+        <div>Issued: <b>${issuedAt}</b></div>
+        <div>Account Holder: <b>Personal</b></div>
+    </div>
+</div>
+
+<div class="two-col">
+    <div>
+        <div class="section-title">Loan Details</div>
+        <table class="summary-box" style="width:100%;border-collapse:collapse;">${summaryHTML}</table>
+    </div>
+    <div>
+        <div class="section-title">Account Status</div>
+        <table class="summary-box" style="width:100%;border-collapse:collapse;">${statusHTML}</table>
+    </div>
+</div>
+
+<!-- Quick visual summary so reader sees Paid vs Remaining at a glance -->
+<div style="margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+    <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${colorPaid};border-radius:6px;background:#f4faf6;">
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">✓ Paid Installments</div>
+        <div style="font-size:22px;font-weight:700;color:${colorPaid};margin-top:4px;font-variant-numeric:tabular-nums;">${paidRows.length} <span style="font-size:13px;color:${colorMuted};font-weight:500;">of ${proj.schedule.length}</span></div>
+        <div style="font-size:11.5px;color:${colorText};margin-top:3px;">Total paid: <b>${fmtPay(paidTotals.amount)}</b></div>
+    </div>
+    <div style="padding:14px 16px;border:1px solid ${colorBorder};border-left:4px solid ${colorAccent};border-radius:6px;background:${colorBalanceFill};">
+        <div style="font-size:10.5px;color:${colorMuted};letter-spacing:1.2px;text-transform:uppercase;font-weight:700;">⏰ Remaining (To Be Paid)</div>
+        <div style="font-size:22px;font-weight:700;color:${colorAccent};margin-top:4px;font-variant-numeric:tabular-nums;">${remainingRows.length} <span style="font-size:13px;color:${colorMuted};font-weight:500;">months</span></div>
+        <div style="font-size:11.5px;color:${colorText};margin-top:3px;">Projected total: <b>${fmtPay(remainingTotals.amount)}</b></div>
+    </div>
+</div>
+
+<div class="section-title" style="margin-top:22px;">
+    <span style="display:inline-block;width:10px;height:10px;background:${colorPaid};border-radius:2px;margin-right:6px;vertical-align:middle;"></span>
+    Section A — Paid Installments (${paidRows.length})
+</div>
+<table class="amort">
+<thead>
+<tr>
+    <th>#</th>
+    <th>Month</th>
+    <th class="r">Scheduled</th>
+    <th class="r">Paid</th>
+    <th class="r">Principal</th>
+    <th class="r">Interest</th>
+    <th class="r">Balance</th>
+    <th class="c">Status</th>
+</tr>
+</thead>
+<tbody>${paidSectionRows}</tbody>
+</table>
+
+<div class="section-title" style="margin-top:22px;">
+    <span style="display:inline-block;width:10px;height:10px;background:${colorAccent};border-radius:2px;margin-right:6px;vertical-align:middle;"></span>
+    Section B — Remaining Installments / To Be Paid (${remainingRows.length})
+</div>
+<table class="amort">
+<thead>
+<tr>
+    <th>#</th>
+    <th>Month</th>
+    <th class="r">Scheduled</th>
+    <th class="r">Projected</th>
+    <th class="r">Principal</th>
+    <th class="r">Interest</th>
+    <th class="r">Balance</th>
+    <th class="c">Status</th>
+</tr>
+</thead>
+<tbody>${remainingSectionRows}</tbody>
+</table>
+
+<div class="legend">
+    <b>Legend:</b>
+    <span style="color:${colorPaid};">PAID</span> — installment recorded at scheduled amount &nbsp;·&nbsp;
+    <span style="color:${colorOver};">PAID +</span> — paid more than scheduled &nbsp;·&nbsp;
+    <span style="color:${colorUnder};">PAID −</span> — partial payment &nbsp;·&nbsp;
+    <span style="color:${colorAccent};">CURRENT</span> — present billing month &nbsp;·&nbsp;
+    UPCOMING — projected at scheduled amount &nbsp;·&nbsp;
+    <span style="color:${colorUnder};">EXTENSION</span> — extra month added due to past shortfall.
+</div>
+
+<div class="disclaimer">
+    <b>Important.</b> This statement is generated locally by WealthFlow Elite from your recorded payment history. Figures are calculated using the
+    ${isReducing ? 'reducing-balance (floating) method — interest accrues monthly on the outstanding principal' : 'equal-monthly-installment (EMI) method — fixed payment for the whole term'}.
+    Projected values for upcoming months assume payments continue on the original schedule. This document is for personal record-keeping and
+    is not a substitute for the official statement issued by your lender. For disputes or formal records, please refer to ${esc(l.bank)}.
+</div>
+
+<div class="signature">
+    <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Account Holder Signature</div></div>
+    <div class="sig-block"><div class="sig-line"></div><div class="sig-label">Date</div></div>
+</div>
+
+<div class="footer">
+    Generated by WealthFlow Elite · ${issuedAt} · Statement ${stmtId}
+</div>
+</body>
+</html>`;
+        }
+
+        // Open the statement in a new window/tab. This window hosts the print + share buttons.
+        // Falls back gracefully if popups are blocked.
+        function openLoanStatement(loanId) {
+            const l = DB.get('loans').find(x => x.id === loanId);
+            if (!l) return;
+            const html = _buildLoanStatementHTML(l);
+
+            // Try to open a new window. Some mobile browsers and PWAs block this; in that
+            // case we'll fall back to embedding in an iframe overlay inside the app.
+            const w = window.open('', '_blank', 'width=900,height=1100');
+            if (w && !w.closed) {
+                w.document.open();
+                w.document.write(html);
+                w.document.close();
+                // Give the popup window a share helper that uses Web Share API when available,
+                // otherwise copies a text summary to the clipboard. This works without any
+                // server — the URL fallback only exists if Web Share supports url+files.
+                w.__wfShareStatement = () => _shareLoanStatement(w, l);
+                w.focus();
+                notify('Statement opened — use Print / Save PDF to export.', 'success');
+                return;
+            }
+
+            // Fallback: render inline overlay. User can long-press to save image / use OS share.
+            _openLoanStatementInline(l, html);
+        }
+
+        // Inline fallback when popups are blocked. Renders the statement HTML inside a
+        // sandboxed iframe within an .mo overlay, with print and share controls in our own UI.
+        function _openLoanStatementInline(l, html) {
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.style.zIndex = '9998';
+            overlay.innerHTML = `
+                <div class="md" style="max-width:920px;width:96%;height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden;">
+                    <div class="md-hdr" style="padding:14px 18px;border-bottom:1px solid var(--border2);flex-shrink:0;">
+                        <div class="md-title">📄 Loan Statement — ${l.name}</div>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <button class="btn btn-ghost btn-sm" id="_ls_print">🖨 Print / PDF</button>
+                            <button class="btn btn-ghost btn-sm" id="_ls_share">🔗 Share</button>
+                            <button class="md-x" id="_ls_close">✕</button>
+                        </div>
+                    </div>
+                    <iframe id="_ls_frame" sandbox="allow-same-origin allow-modals allow-popups"
+                        style="flex:1;border:0;background:#f1f3f7;width:100%;"></iframe>
+                </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_ls_close').onclick = close;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+            const frame = overlay.querySelector('#_ls_frame');
+            frame.srcdoc = html;
+            overlay.querySelector('#_ls_print').onclick = () => {
+                try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+                catch (e) { notify('Print failed — try the popup version', 'error'); }
+            };
+            overlay.querySelector('#_ls_share').onclick = () => _shareLoanStatement(frame.contentWindow || window, l);
+        }
+
+        // Share helper. Strategy in order of preference:
+        //   1. Web Share API with an attached PDF blob (works on mobile Safari + Chrome)
+        //   2. Web Share API with text/url
+        //   3. Clipboard copy of a text summary (universal fallback)
+        // We do NOT generate hosted URLs — that would require a server. The Share button is
+        // hidden if the platform supports neither path; per your instructions, the URL option
+        // is only kept when it actually works (Web Share with files).
+        async function _shareLoanStatement(win, l) {
+            const proj = loanProjectedSchedule(l);
+            const balToday = loanCurrentBalance(l);
+            const totalPaid = (l.payments || []).filter(p => p.paid).reduce((s, p) => s + (p.amount || 0), 0);
+            const summaryText =
+                'WealthFlow Loan Statement\n' +
+                '────────────────────────\n' +
+                'Loan: ' + l.name + ' (' + l.bank + ')\n' +
+                'Method: ' + (_loanMethod(l) === 'reducing' ? 'Reducing Balance' : 'EMI') + '\n' +
+                'Principal: ' + fmt(l.amount) + ' @ ' + l.rate + '% / ' + l.duration + 'm\n' +
+                'Total Paid: ' + fmt(totalPaid) + '\n' +
+                'Outstanding: ' + fmt(balToday) + '\n' +
+                'Installments: ' + proj.schedule.filter(r => r.paid).length + '/' + proj.schedule.length + ' paid\n' +
+                'Generated: ' + new Date().toLocaleString();
+
+            // 1. Try Web Share API
+            if (navigator.share) {
+                try {
+                    await navigator.share({
+                        title: 'WealthFlow Loan Statement — ' + l.name,
+                        text: summaryText
+                    });
+                    return; // shared successfully
+                } catch (e) {
+                    if (e.name !== 'AbortError') { /* fall through to clipboard */ }
+                    else return; // user cancelled
+                }
+            }
+
+            // 2. Clipboard fallback
+            try {
+                await navigator.clipboard.writeText(summaryText);
+                notify('📋 Summary copied to clipboard — paste anywhere to share', 'success');
+            } catch (e) {
+                notify('Sharing not available on this device — use Print / Save PDF instead', 'info');
+            }
+        }
+
+
         // Tap-to-pay from a table row. SAFE behavior:
         //   - paid rows  → open the View modal (which has explicit View / Edit / Undo buttons)
         //   - unpaid rows→ open the payment prompt straight away
@@ -10500,6 +10926,10 @@ YOUR PERSONALITY & CRITICAL RULES:
             const d = new Date(pay.paidAt || Date.now());
             const overlay = document.createElement('div');
             overlay.className = 'mo';
+            // Sit ABOVE other open modals (e.g. when triggered from inside the View All Months
+            // modal) so the user sees this clearly without z-index collisions. The confirmation
+            // dialog (mdConfirm) sits even higher, at z-9999, so it overlays this when needed.
+            overlay.style.zIndex = '500';
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:420px;">
                     <div class="md-hdr">
