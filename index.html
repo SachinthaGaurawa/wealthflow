@@ -10859,6 +10859,358 @@ table.amort tbody tr { page-break-inside: avoid; }
         // We do NOT generate hosted URLs — that would require a server. The Share button is
         // hidden if the platform supports neither path; per your instructions, the URL option
         // is only kept when it actually works (Web Share with files).
+        // ===================================================================================
+        // ADOBE PDF SERVICES — shareable PDF link
+        // ===================================================================================
+        // The 3-step Adobe flow we use here:
+        //   1. POST  /api/adobe-pdf-share { action:'token' }                  → accessToken
+        //   2. POST  /api/adobe-pdf-share { action:'getAsset', accessToken }  → uploadUri + assetID
+        //   3. PUT   {uploadUri}  ←  PDF bytes (Content-Type: application/pdf) [browser → S3 directly]
+        //   4. POST  /api/adobe-pdf-share { action:'getDownload', accessToken, assetID } → downloadUri
+        //
+        // The token + getAsset + getDownload calls go through our own Vercel function because
+        // pdf-services.adobe.io blocks browser CORS. The PUT step IS a direct browser→S3 call
+        // (S3 pre-signed URLs allow CORS for unsigned-payload PUT).
+        //
+        // The frontend gracefully degrades: if /api/adobe-pdf-share returns 503 (env vars not set),
+        // we hide the "Get shareable link" option and the Web Share / clipboard paths still work.
+
+        // Lazy-load jsPDF + html2canvas from CDN. They're only needed when the user actually
+        // generates a PDF, so we don't ship them on every page load.
+        let _pdfLibsPromise = null;
+        function _loadPdfLibs() {
+            if (_pdfLibsPromise) return _pdfLibsPromise;
+            _pdfLibsPromise = (async () => {
+                const loadScript = (src) => new Promise((resolve, reject) => {
+                    const s = document.createElement('script');
+                    s.src = src; s.async = true;
+                    s.onload = () => resolve();
+                    s.onerror = () => reject(new Error('Failed to load ' + src));
+                    document.head.appendChild(s);
+                });
+                if (typeof window.html2canvas === 'undefined') {
+                    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+                }
+                if (typeof window.jspdf === 'undefined' && typeof window.jsPDF === 'undefined') {
+                    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+                }
+            })();
+            return _pdfLibsPromise;
+        }
+
+        // Render the statement HTML into a real PDF Blob using jsPDF + html2canvas.
+        // We render the statement DOM offscreen at print width, slice it into A4-page-sized
+        // canvas blocks, and add each as an image page in the PDF. Result is a multi-page
+        // A4 PDF that visually matches what the user sees in the print dialog.
+        async function _statementHtmlToPdfBlob(statementHTML, loanName) {
+            await _loadPdfLibs();
+            const jsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+            if (!jsPDFCtor) throw new Error('jsPDF not available');
+
+            // Render the HTML in a hidden iframe so the document is fully realised
+            // (CSS, fonts, etc.) before we screenshot it.
+            const iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;left:-99999px;top:0;width:794px;height:1123px;border:0;background:#fff;';
+            iframe.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(iframe);
+            try {
+                iframe.srcdoc = statementHTML;
+                // Wait for iframe to load AND for fonts/images to settle
+                await new Promise(resolve => iframe.addEventListener('load', resolve, { once: true }));
+                // Hide the toolbar inside the iframe so it doesn't show up in the PDF
+                try {
+                    const toolbar = iframe.contentDocument.querySelector('.toolbar');
+                    if (toolbar) toolbar.style.display = 'none';
+                } catch (e) { /* ignore */ }
+                // Give the layout a tick to settle
+                await new Promise(r => setTimeout(r, 250));
+
+                const targetEl = iframe.contentDocument.body;
+                // Snapshot the entire body to a canvas. scale:2 keeps text sharp on print.
+                const canvas = await window.html2canvas(targetEl, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                    logging: false,
+                    windowWidth: 794, // A4 width in CSS px at 96dpi
+                    windowHeight: targetEl.scrollHeight
+                });
+
+                // Build a multi-page A4 PDF (portrait), slicing the canvas into page-sized blocks.
+                const pdf = new jsPDFCtor({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+                const pageW = pdf.internal.pageSize.getWidth();   // ~595pt
+                const pageH = pdf.internal.pageSize.getHeight();  // ~842pt
+                const imgW = pageW;
+                const imgH = (canvas.height * imgW) / canvas.width;
+                let position = 0;
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+
+                if (imgH <= pageH) {
+                    pdf.addImage(dataUrl, 'JPEG', 0, 0, imgW, imgH);
+                } else {
+                    let heightLeft = imgH;
+                    pdf.addImage(dataUrl, 'JPEG', 0, position, imgW, imgH);
+                    heightLeft -= pageH;
+                    while (heightLeft > 0) {
+                        position -= pageH;
+                        pdf.addPage();
+                        pdf.addImage(dataUrl, 'JPEG', 0, position, imgW, imgH);
+                        heightLeft -= pageH;
+                    }
+                }
+
+                // Set sensible PDF metadata so the file looks polished when downloaded
+                pdf.setProperties({
+                    title: 'WealthFlow Loan Statement — ' + (loanName || 'Loan'),
+                    subject: 'Personal Loan Account Statement',
+                    author: 'WealthFlow Elite',
+                    creator: 'WealthFlow Elite',
+                    keywords: 'loan, statement, wealthflow'
+                });
+                return pdf.output('blob');
+            } finally {
+                if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+            }
+        }
+
+        // Run the 3-step Adobe PDF Services flow. Returns a public download URL.
+        async function _adobeUploadAndGetShareUrl(pdfBlob, onProgress) {
+            const setProgress = (msg) => { if (typeof onProgress === 'function') onProgress(msg); };
+
+            // Step 1 — get an access token via our server proxy
+            setProgress('Authenticating with Adobe…');
+            let tokenResp;
+            try {
+                tokenResp = await fetch('/api/adobe-pdf-share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'token' })
+                });
+            } catch (e) {
+                throw new Error('Network error reaching the share service. Check your connection.');
+            }
+            if (tokenResp.status === 503) {
+                const data = await tokenResp.json().catch(() => ({}));
+                const err = new Error(data.details || 'Adobe PDF Services not configured on the server.');
+                err.code = 'NOT_CONFIGURED';
+                throw err;
+            }
+            if (!tokenResp.ok) {
+                const data = await tokenResp.json().catch(() => ({}));
+                throw new Error('Adobe authentication failed: ' + (data.details || tokenResp.status));
+            }
+            const { accessToken } = await tokenResp.json();
+            if (!accessToken) throw new Error('No access token returned from Adobe.');
+
+            // Step 2 — request a pre-signed upload URI + assetID
+            setProgress('Requesting upload slot…');
+            const assetResp = await fetch('/api/adobe-pdf-share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'getAsset', accessToken })
+            });
+            if (!assetResp.ok) {
+                const data = await assetResp.json().catch(() => ({}));
+                throw new Error('Could not allocate Adobe asset: ' + (data.details || assetResp.status));
+            }
+            const { uploadUri, assetID } = await assetResp.json();
+            if (!uploadUri || !assetID) throw new Error('Adobe returned an incomplete asset response.');
+
+            // Step 3 — PUT the PDF directly to the S3 pre-signed URL.
+            // CORS is permitted by Adobe's S3 bucket for this kind of unsigned-payload PUT.
+            setProgress('Uploading PDF to Adobe Cloud…');
+            const putResp = await fetch(uploadUri, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/pdf' },
+                body: pdfBlob
+            });
+            if (!putResp.ok) {
+                const errText = await putResp.text().catch(() => '');
+                throw new Error('PDF upload failed (' + putResp.status + '). ' + errText.slice(0, 200));
+            }
+
+            // Step 4 — get the pre-signed download URI for the uploaded asset
+            setProgress('Generating shareable link…');
+            const dlResp = await fetch('/api/adobe-pdf-share', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'getDownload', accessToken, assetID })
+            });
+            if (!dlResp.ok) {
+                const data = await dlResp.json().catch(() => ({}));
+                throw new Error('Could not retrieve download link: ' + (data.details || dlResp.status));
+            }
+            const { downloadUri, expiresInHours } = await dlResp.json();
+            if (!downloadUri) throw new Error('Adobe did not return a download URL.');
+
+            return { url: downloadUri, expiresInHours: expiresInHours || 24 };
+        }
+
+        // Cache "is the Adobe share endpoint configured?" so we don't probe every time.
+        // null  = unknown (haven't checked)
+        // true  = configured (env vars present)
+        // false = not configured (fall back to local share only)
+        let _adobeShareConfigured = null;
+        async function _isAdobeShareAvailable() {
+            if (_adobeShareConfigured !== null) return _adobeShareConfigured;
+            try {
+                const resp = await fetch('/api/adobe-pdf-share', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'token' })
+                });
+                if (resp.status === 503) { _adobeShareConfigured = false; return false; }
+                if (resp.ok) { _adobeShareConfigured = true; return true; }
+                // Anything else (network down, etc.) — assume unavailable but don't cache permanently
+                return false;
+            } catch (e) {
+                return false; // network error — feature unavailable for now
+            }
+        }
+
+        // The "Generate shareable PDF link" workflow — called when the user picks the option
+        // from the Share menu. Shows a progress overlay while running, then a copy/share UI.
+        async function _generateShareableStatementUrl(l, statementHTML) {
+            // Progress overlay — give the user something to watch since this takes 5–15 seconds
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.style.zIndex = '9998';
+            overlay.innerHTML = `
+                <div class="md md-sm" style="max-width:420px;text-align:center;">
+                    <div class="md-hdr" style="justify-content:center;border-bottom:0;">
+                        <div class="md-title" id="_ash_title">🔗 Generating Shareable Link</div>
+                    </div>
+                    <div style="padding:18px 4px 8px;">
+                        <div style="display:flex;justify-content:center;margin-bottom:14px;">
+                            <div class="ash-spinner" style="width:56px;height:56px;border:4px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:ashSpin 0.9s linear infinite;"></div>
+                        </div>
+                        <div id="_ash_msg" style="font-size:13px;color:var(--text2);min-height:20px;">Preparing PDF…</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:8px;">This may take a few seconds. Please don't close this window.</div>
+                    </div>
+                    <div class="md-ftr" style="justify-content:center;">
+                        <button class="btn btn-ghost" id="_ash_cancel">Cancel</button>
+                    </div>
+                </div>
+                <style>@keyframes ashSpin { to { transform: rotate(360deg); } }</style>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const setMsg = (msg) => { const el = overlay.querySelector('#_ash_msg'); if (el) el.textContent = msg; };
+            const closeOverlay = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            let cancelled = false;
+            overlay.querySelector('#_ash_cancel').onclick = () => { cancelled = true; closeOverlay(); };
+
+            try {
+                setMsg('Loading PDF libraries…');
+                if (cancelled) return;
+                setMsg('Rendering PDF (this can take a few seconds)…');
+                const pdfBlob = await _statementHtmlToPdfBlob(statementHTML, l.name);
+                if (cancelled) return;
+                if (!pdfBlob || pdfBlob.size === 0) throw new Error('PDF rendering produced an empty file.');
+
+                const { url, expiresInHours } = await _adobeUploadAndGetShareUrl(pdfBlob, setMsg);
+                if (cancelled) return;
+
+                closeOverlay();
+                _showShareableUrlDialog(l, url, expiresInHours, pdfBlob);
+            } catch (e) {
+                closeOverlay();
+                if (e.code === 'NOT_CONFIGURED') {
+                    notify('Shareable links not configured on the server — using device share instead.', 'info');
+                } else {
+                    notify('Could not generate shareable link: ' + (e.message || 'unknown error'), 'error');
+                }
+                // Mark as not-configured so we don't show the option again this session
+                if (e.code === 'NOT_CONFIGURED') _adobeShareConfigured = false;
+            }
+        }
+
+        // Final UI — show the generated URL with copy / open / Web-Share controls
+        function _showShareableUrlDialog(l, url, expiresInHours, pdfBlob) {
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.style.zIndex = '9998';
+            const expiryText = expiresInHours
+                ? `This link expires in approximately ${expiresInHours} hour${expiresInHours === 1 ? '' : 's'}.`
+                : 'This link is temporary.';
+            overlay.innerHTML = `
+                <div class="md md-sm" style="max-width:480px;">
+                    <div class="md-hdr">
+                        <div class="md-title">🔗 Shareable Link Ready</div>
+                        <button class="md-x" id="_surl_close">✕</button>
+                    </div>
+                    <div style="padding:6px 0 8px;font-size:12.5px;color:var(--text2);line-height:1.55;">
+                        Anyone with this link can download the PDF statement for <b>${l.name}</b>.
+                        <span style="color:var(--accent2);">${expiryText}</span>
+                    </div>
+                    <div class="fg">
+                        <label class="fl">Shareable URL</label>
+                        <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
+                            style="font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--bg2);">
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+                        <button class="btn btn-primary btn-sm" id="_surl_copy">📋 Copy Link</button>
+                        <button class="btn btn-ghost btn-sm" id="_surl_open">🔍 Open in New Tab</button>
+                        <button class="btn btn-ghost btn-sm" id="_surl_share" style="display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share via…</button>
+                    </div>
+                    <div style="margin-top:12px;padding:8px 10px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text3);line-height:1.5;border-left:3px solid var(--accent);">
+                        ⓘ Powered by Adobe Acrobat Services. The PDF is hosted on Adobe's secure cloud and the link works on any device — no app required.
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_surl_close').onclick = close;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+            overlay.querySelector('#_surl_copy').onclick = async () => {
+                try {
+                    await navigator.clipboard.writeText(url);
+                    notify('📋 Link copied to clipboard', 'success');
+                } catch (e) {
+                    // Fallback: select the input contents so the user can copy manually
+                    const inp = overlay.querySelector('#_surl_input');
+                    inp.select(); inp.setSelectionRange(0, 99999);
+                    notify('Link selected — press Ctrl/⌘ + C to copy', 'info');
+                }
+            };
+            overlay.querySelector('#_surl_open').onclick = () => {
+                window.open(url, '_blank', 'noopener,noreferrer');
+            };
+            const shareBtn = overlay.querySelector('#_surl_share');
+            if (shareBtn) {
+                shareBtn.onclick = async () => {
+                    try {
+                        // Prefer sharing as a file (with URL fallback) so messaging apps can attach the PDF
+                        if (pdfBlob && navigator.canShare) {
+                            const file = new File([pdfBlob], 'WealthFlow-Loan-Statement-' + (l.name || 'loan').replace(/[^a-z0-9]+/gi, '-') + '.pdf', { type: 'application/pdf' });
+                            if (navigator.canShare({ files: [file] })) {
+                                await navigator.share({
+                                    title: 'WealthFlow Loan Statement — ' + l.name,
+                                    text: 'Loan statement for ' + l.name + ' (' + l.bank + '). Online copy: ' + url,
+                                    files: [file]
+                                });
+                                return;
+                            }
+                        }
+                        // Fallback: share the URL only
+                        await navigator.share({
+                            title: 'WealthFlow Loan Statement — ' + l.name,
+                            text: 'Loan statement for ' + l.name + ' (' + l.bank + ')',
+                            url: url
+                        });
+                    } catch (e) {
+                        if (e.name !== 'AbortError') notify('Share failed: ' + e.message, 'error');
+                    }
+                };
+            }
+        }
+
         async function _shareLoanStatement(win, l) {
             const proj = loanProjectedSchedule(l);
             const balToday = loanCurrentBalance(l);
@@ -10874,6 +11226,73 @@ table.amort tbody tr { page-break-inside: avoid; }
                 'Installments: ' + proj.schedule.filter(r => r.paid).length + '/' + proj.schedule.length + ' paid\n' +
                 'Generated: ' + new Date().toLocaleString();
 
+            // Probe whether the Adobe-share endpoint is configured. If yes, we offer a chooser
+            // that lets the user pick between "shareable URL (PDF in cloud)" and "device share
+            // (text)". If no, we skip the chooser and go straight to the device-share path.
+            const adobeReady = await _isAdobeShareAvailable();
+
+            if (adobeReady) {
+                // Show a small chooser
+                const chooser = document.createElement('div');
+                chooser.className = 'mo';
+                chooser.style.zIndex = '9998';
+                chooser.innerHTML = `
+                    <div class="md md-sm" style="max-width:420px;">
+                        <div class="md-hdr">
+                            <div class="md-title">📤 Share Statement</div>
+                            <button class="md-x" id="_sc_close">✕</button>
+                        </div>
+                        <div style="padding:6px 0 14px;font-size:12.5px;color:var(--text2);line-height:1.5;">
+                            Choose how you want to share this statement.
+                        </div>
+                        <button class="btn btn-primary" id="_sc_url" style="width:100%;justify-content:flex-start;text-align:left;padding:14px;margin-bottom:8px;">
+                            <span style="font-size:24px;margin-right:10px;">🔗</span>
+                            <span style="flex:1;">
+                                <div style="font-weight:700;font-size:13px;">Get Shareable Link (Recommended)</div>
+                                <div style="font-size:11px;font-weight:400;opacity:.85;margin-top:2px;">Uploads the PDF to Adobe Cloud and gives you a URL anyone can open. Works on any device.</div>
+                            </span>
+                        </button>
+                        <button class="btn btn-ghost" id="_sc_local" style="width:100%;justify-content:flex-start;text-align:left;padding:14px;">
+                            <span style="font-size:24px;margin-right:10px;">📱</span>
+                            <span style="flex:1;">
+                                <div style="font-weight:700;font-size:13px;">Quick Share (Text Summary)</div>
+                                <div style="font-size:11px;font-weight:400;opacity:.85;margin-top:2px;">Shares a text summary via your device's native share sheet — no PDF upload.</div>
+                            </span>
+                        </button>
+                        <div class="md-ftr" style="justify-content:center;">
+                            <button class="btn btn-ghost" id="_sc_cancel">Cancel</button>
+                        </div>
+                    </div>`;
+                document.body.appendChild(chooser);
+                requestAnimationFrame(() => chooser.classList.add('open'));
+                const closeChooser = () => {
+                    chooser.classList.remove('open');
+                    setTimeout(() => { if (chooser.parentNode) chooser.parentNode.removeChild(chooser); }, 230);
+                };
+                chooser.querySelector('#_sc_close').onclick = closeChooser;
+                chooser.querySelector('#_sc_cancel').onclick = closeChooser;
+                chooser.addEventListener('click', (e) => { if (e.target === chooser) closeChooser(); });
+
+                chooser.querySelector('#_sc_url').onclick = () => {
+                    closeChooser();
+                    // Use the same statement HTML our toolbar opened with
+                    const statementHTML = _buildLoanStatementHTML(l);
+                    _generateShareableStatementUrl(l, statementHTML);
+                };
+                chooser.querySelector('#_sc_local').onclick = async () => {
+                    closeChooser();
+                    await _localShareStatement(l, summaryText);
+                };
+                return;
+            }
+
+            // No Adobe configured — go straight to local Web Share / clipboard path
+            await _localShareStatement(l, summaryText);
+        }
+
+        // The original local-share path (Web Share API → clipboard fallback). Extracted so
+        // both the Adobe-configured chooser and the not-configured shortcut can call it.
+        async function _localShareStatement(l, summaryText) {
             // 1. Try Web Share API
             if (navigator.share) {
                 try {
@@ -10883,11 +11302,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     });
                     return; // shared successfully
                 } catch (e) {
-                    if (e.name !== 'AbortError') { /* fall through to clipboard */ }
-                    else return; // user cancelled
+                    if (e.name === 'AbortError') return; // user cancelled
+                    // fall through to clipboard
                 }
             }
-
             // 2. Clipboard fallback
             try {
                 await navigator.clipboard.writeText(summaryText);
@@ -10896,7 +11314,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify('Sharing not available on this device — use Print / Save PDF instead', 'info');
             }
         }
-
 
         // Tap-to-pay from a table row. SAFE behavior:
         //   - paid rows  → open the View modal (which has explicit View / Edit / Undo buttons)
