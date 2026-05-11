@@ -8473,7 +8473,6 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     isSyncingFromCloud = true;
                                                     const cloudData = snap.data();
                                                     let changed = false;
-                                                    let onlySessionsChanged = true;
 
                                                     // Check if PIN was changed on another device
                                                     const newAuth = cloudData.auth;
@@ -8495,6 +8494,9 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         return;
                                                     }
 
+                                                    let nonSessionChanged = false;
+                                                    let sessionsChanged = false;
+
                                                     Object.keys(cloudData).forEach(key => {
                                                         if (key === '_lastModified' || key === '_lastModifiedBy') return;
                                                         const newVal = JSON.stringify(cloudData[key]);
@@ -8502,33 +8504,28 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         if (newVal !== oldVal) {
                                                             appData[key] = cloudData[key];
                                                             localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                                                            changed = true;
-                                                            if (key !== 'sessions') {
-                                                                onlySessionsChanged = false;
+                                                            if (key === 'sessions') {
+                                                                sessionsChanged = true;
+                                                            } else {
+                                                                nonSessionChanged = true;
                                                             }
                                                         }
                                                     });
                                                     isSyncingFromCloud = false;
                                                     lastSyncTime = Date.now();
 
-                                                    if (changed) {
-                                                        if (onlySessionsChanged) {
-                                                            console.log('[SYNC] 🔄 Only sessions changed — updating sessions UI if active');
-                                                            if (document.getElementById('page-sessions')?.classList.contains('active')) {
-                                                                if (typeof _renderSessionsDebounced === 'function') {
-                                                                    _renderSessionsDebounced();
-                                                                } else if (typeof renderSessions === 'function') {
-                                                                    renderSessions();
-                                                                }
-                                                            }
-                                                        } else {
-                                                            console.log('[SYNC] 🔄 Data changed — re-rendering UI');
-                                                            if ($('app') && $('app').classList.contains('show')) {
-                                                                const active = document.querySelector('.page.active');
-                                                                if (active) renderPage(active.id.replace('page-', ''));
-                                                                try { updateCCOTBadge(); } catch (e) { }
-                                                                try { updateChequeBadge(); } catch (e) { }
-                                                            }
+                                                    if (nonSessionChanged) {
+                                                        console.log('[SYNC] 🔄 Core data changed — re-rendering global UI');
+                                                        if ($('app') && $('app').classList.contains('show')) {
+                                                            const active = document.querySelector('.page.active');
+                                                            if (active) renderPage(active.id.replace('page-', ''));
+                                                            try { updateCCOTBadge(); } catch (e) { }
+                                                            try { updateChequeBadge(); } catch (e) { }
+                                                        }
+                                                    } else if (sessionsChanged) {
+                                                        console.log('[SYNC] 🔄 Sessions updated — localized render');
+                                                        if ($('app') && $('app').classList.contains('show') && document.getElementById('page-sessions')?.classList.contains('active')) {
+                                                            try { _renderSessionsDebounced(); } catch(e) {}
                                                         }
                                                     }
                                                 }
