@@ -16360,14 +16360,27 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             }
 
             try {
-                // Fetch IP, Location, & ISP Background using hyper-accurate ipwho.is
-                const res = await fetch('https://ipwho.is/');
-                const data = await res.json();
-                if (data && data.success) {
-                    ip = data.ip;
-                    location = `${data.city || 'Unknown City'}, ${data.country || 'Unknown Country'}`;
-                    isp = data.connection?.isp || data.connection?.org || 'Unknown ISP';
+                // Robust Multi-API Fetch to guarantee IP and ISP
+                const apis = ['https://ipwho.is/', 'https://ipapi.co/json/'];
+                let success = false;
+                for (let api of apis) {
+                    try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 3500);
+                        const res = await fetch(api, { signal: controller.signal });
+                        clearTimeout(timeoutId);
+                        const data = await res.json();
+                        
+                        if (data.ip || (data.success && data.ip)) {
+                            ip = data.ip;
+                            location = `${data.city || 'Unknown City'}, ${data.country_name || data.country || 'Unknown Country'}`;
+                            isp = data.connection?.isp || data.connection?.org || data.org || 'Unknown ISP';
+                            success = true;
+                            break;
+                        }
+                    } catch(e) {}
                 }
+                if (!success) throw new Error("All APIs failed");
             } catch (e) {
                 if (ip === 'Fetching...') ip = 'Unknown IP';
                 if (location === 'Determining location...') location = 'Unknown Location';
@@ -16403,9 +16416,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 _renderSessionsDebounced();
             }
 
-            // Start background heartbeat pulse EVERY 15 SECONDS
+            // Start background heartbeat pulse EVERY 60 SECONDS
             if (_sessionPulseInterval) clearInterval(_sessionPulseInterval);
-            _sessionPulseInterval = setInterval(_pulseSessionHeartbeat, 15000); 
+            _sessionPulseInterval = setInterval(_pulseSessionHeartbeat, 60000); 
             
             // Listen to visibility to immediately pulse on return
             if (!window._sessionVisListenerAdded) {
@@ -16435,8 +16448,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     ${sessions.map(s => {
                         const isCurrent = s.id === sessionId;
                         const lastPulse = new Date(s.lastActive).getTime();
-                        // Extremely tight 25-second threshold for hyper-accurate online status
-                        const isOnline = (Date.now() - lastPulse) <= 25000; 
+                        // 75-second threshold for online status (since heartbeat is 60s)
+                        const isOnline = (Date.now() - lastPulse) <= 75000; 
                         
                         return `
                         <div class="session-card ${isCurrent ? 'session-current' : ''}" style="align-items:flex-start; flex-direction:column;">
