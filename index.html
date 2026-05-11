@@ -51,6 +51,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://js.puter.com/v2/"></script>
 
     <style>
         /* ================== THEME VARIABLES ================== */
@@ -11506,19 +11507,50 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const statementHTML = _buildLoanStatementHTML(l);
                 if (cancelled) return;
 
-                // Step 2: Cloud Upload
-                setProgress(55, 'Uploading to secure network...');
-                const result = await _uploadStatementForSharing(statementHTML, l.name);
-                if (cancelled) return;
-                
-                setProgress(80, 'Finalizing smart link...');
-                await new Promise(r => setTimeout(r, 300)); // Psychological delay
+                // Step 2: Cloud Upload via Puter.js (User requested Puter integration & PDF)
+                setProgress(40, 'Rendering Professional PDF...');
+                await new Promise(r => setTimeout(r, 100));
+                let shareUrl = null;
+                let validityStr = 'Permanent';
 
-                let shareUrl = result.url;
-                let validityStr = result.expires || '30 days';
-                
-                // Step 3: URL Shortening (Force shorten always for cleanest UX)
-                if (true) {
+                try {
+                    // Generate the PDF from HTML
+                    const pdfBlob = await _statementHtmlToPdfBlob(statementHTML, l.name);
+                    if (cancelled) return;
+
+                    setProgress(60, 'Connecting to Puter Network...');
+                    if (typeof puter !== 'undefined') {
+                        // Puter will prompt login if needed.
+                        const shortId = _generateShortId(6).toLowerCase();
+                        const siteName = 'stmt-' + shortId;
+                        
+                        setProgress(75, 'Uploading Secure Document...');
+                        await puter.fs.mkdir(siteName);
+                        
+                        // Write the PDF
+                        await puter.fs.write(`${siteName}/statement.pdf`, pdfBlob);
+                        
+                        // Write an index.html that redirects to the PDF automatically, for better UX
+                        const indexHtml = `<!DOCTYPE html><html><head><title>WealthFlow Statement</title><meta http-equiv="refresh" content="0; url=statement.pdf"></head><body style="background:#060a14;color:#fff;font-family:sans-serif;text-align:center;padding:50px;"><h2>Loading Secure Statement...</h2><p>If not redirected automatically, <a href="statement.pdf" style="color:#00f0ff;">click here</a>.</p></body></html>`;
+                        await puter.fs.write(`${siteName}/index.html`, indexHtml);
+                        
+                        // Deploy the site
+                        setProgress(85, 'Finalizing Puter deployment...');
+                        const site = await puter.hosting.create(siteName, siteName);
+                        
+                        shareUrl = `https://${site.subdomain}.puter.site/statement.pdf`;
+                        console.log('[Share] ✅ Puter upload success:', shareUrl);
+                    } else {
+                        throw new Error('Puter SDK not loaded');
+                    }
+                } catch (e) {
+                    console.warn('[Share] Puter upload failed, falling back...', e);
+                    // Fallback to legacy upload if Puter fails or user cancels login
+                    setProgress(70, 'Using fallback secure network...');
+                    const result = await _uploadStatementForSharing(statementHTML, l.name);
+                    shareUrl = result.url;
+                    validityStr = result.expires || '30 days';
+                    
                     setProgress(90, 'Shrinking URL...');
                     shareUrl = await _shortenUrl(shareUrl);
                 }
@@ -15142,7 +15174,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             // strategy: 'avalanche' (highest rate first) or 'snowball' (smallest balance first)
             // Returns { months, totalInterest, payoffDate, perLoanMonths }
             const work = loans.map(l => ({
-                id: l.id, name: l.name, rate: l.rate / 100 / 12,
+                id: l.id, name: l.name, rate: (l.rate || 0) / 100 / 12,
                 bal: l.amount, monthly: l.monthly, paidMonths: 0, totalInterest: 0, paidOff: false
             }));
 
@@ -15150,33 +15182,46 @@ Be direct and use real numbers. Avoid generic advice.`;
             const maxMonths = 600; // 50 years cap
             while (work.some(w => !w.paidOff) && month < maxMonths) {
                 month++;
-                // Pick the focus loan
-                const active = work.filter(w => !w.paidOff);
-                const focus = strategy === 'avalanche'
-                    ? active.slice().sort((a, b) => b.rate - a.rate)[0]
-                    : active.slice().sort((a, b) => a.bal - b.bal)[0];
-
-                // Pay all minimums first; freed-up cashflow + extra goes to focus
+                
                 let pool = extraPayment;
-                active.forEach(w => {
+                // Add the minimums of already paid off loans to the pool
+                work.filter(w => w.paidOff).forEach(w => {
+                    pool += w.monthly;
+                });
+
+                // Pay all minimums first
+                work.filter(w => !w.paidOff).forEach(w => {
                     const interest = w.bal * w.rate;
                     w.totalInterest += interest;
                     w.bal += interest;
+                    
                     let pay = Math.min(w.monthly, w.bal);
                     w.bal -= pay;
-                    if (w === focus) pool += 0; // we'll dump extras here below
                     w.paidMonths++;
+                    
                     if (w.bal <= 0.01) {
                         w.bal = 0; w.paidOff = true;
-                        // Avalanche/Snowball: roll the freed monthly into the pool for next iteration
-                        pool += w.monthly;
+                        // Add the leftover part of the minimum payment to the pool
+                        pool += (w.monthly - pay);
                     }
                 });
-                // Apply the extra cashflow + any rolled minimums to the focus
-                if (focus && !focus.paidOff && pool > 0) {
+
+                // Apply the extra cashflow + rolled minimums to the focus loan(s)
+                while (pool > 0.01 && work.some(w => !w.paidOff)) {
+                    const active = work.filter(w => !w.paidOff);
+                    const focus = strategy === 'avalanche'
+                        ? active.sort((a, b) => b.rate - a.rate)[0]
+                        : active.sort((a, b) => a.bal - b.bal)[0];
+                    if (!focus) break;
+
                     const dump = Math.min(pool, focus.bal);
                     focus.bal -= dump;
-                    if (focus.bal <= 0.01) { focus.bal = 0; focus.paidOff = true; }
+                    pool -= dump;
+                    
+                    if (focus.bal <= 0.01) { 
+                        focus.bal = 0; 
+                        focus.paidOff = true; 
+                    }
                 }
             }
 
@@ -15189,30 +15234,65 @@ Be direct and use real numbers. Avoid generic advice.`;
         }
 
         function renderDebtDemolisher() {
-            const loans = DB.get('loans').filter(l => loanEndDate(l) > new Date());
+            const rawLoans = DB.get('loans').filter(l => loanEndDate(l) > new Date() && loanCurrentBalance(l) > 0);
+            const ccInstalls = DB.get('ccinstall').filter(c => !c.completed);
+            
+            const debtItems = [];
+            
+            rawLoans.forEach(l => {
+                const bal = loanCurrentBalance(l);
+                debtItems.push({
+                    id: l.id,
+                    name: l.name,
+                    bank: l.bank,
+                    amount: bal, // use current balance
+                    monthly: l.monthly,
+                    rate: l.rate || 0,
+                    type: 'loan'
+                });
+            });
+            
+            ccInstalls.forEach(c => {
+                const prog = cciProgress(c);
+                const remainingMonths = c.duration - prog.paid;
+                const bal = remainingMonths > 0 ? (c.monthly * remainingMonths) : 0;
+                
+                if (bal > 0) {
+                    debtItems.push({
+                        id: c.id,
+                        name: c.product,
+                        bank: c.bank,
+                        amount: bal,
+                        monthly: c.monthly,
+                        rate: c.rate || 0,
+                        type: 'cc'
+                    });
+                }
+            });
+
             const wrap = $('debtDemoContent');
             if (!wrap) return;
-            if (!loans.length) { wrap.innerHTML = emptyState('🎉', 'Debt Free!', 'No active loans. You are debt-free!'); return; }
+            if (!debtItems.length) { wrap.innerHTML = emptyState('🎉', 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
 
-            const totalDebt = loans.reduce((s, l) => s + l.amount, 0);
-            const totalMonthly = loans.reduce((s, l) => s + l.monthly, 0);
+            const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);
+            const totalMonthly = debtItems.reduce((s, d) => s + d.monthly, 0);
 
             // Find user's free cashflow that could go to extra payments
             const ctx = buildFinancialContext();
             const suggestedExtra = Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
 
             // Run both strategies
-            const baseline = _amortizeStrategy(loans, 0, 'avalanche');
-            const avalanche = _amortizeStrategy(loans, suggestedExtra, 'avalanche');
-            const snowball = _amortizeStrategy(loans, suggestedExtra, 'snowball');
+            const baseline = _amortizeStrategy(debtItems, 0, 'avalanche');
+            const avalanche = _amortizeStrategy(debtItems, suggestedExtra, 'avalanche');
+            const snowball = _amortizeStrategy(debtItems, suggestedExtra, 'snowball');
 
             const interestSavedAvalanche = baseline.totalInterest - avalanche.totalInterest;
             const monthsSavedAvalanche = baseline.months - avalanche.months;
             const interestSavedSnowball = baseline.totalInterest - snowball.totalInterest;
             const monthsSavedSnowball = baseline.months - snowball.months;
 
-            const sortedAvalanche = [...loans].sort((a, b) => b.rate - a.rate);
-            const sortedSnowball = [...loans].sort((a, b) => a.amount - b.amount);
+            const sortedAvalanche = [...debtItems].sort((a, b) => b.rate - a.rate);
+            const sortedSnowball = [...debtItems].sort((a, b) => a.amount - b.amount);
 
             const renderDebtList = (ordered, strategy, plan) => ordered.map((loan, i) => {
                 const plMonths = plan.perLoan.find(p => p.id === loan.id)?.months || 0;
@@ -15234,7 +15314,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             wrap.innerHTML = `
                 <div class="g3" style="margin-bottom:16px;">
-                    <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${loans.length} loans</div></div>
+                    <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${debtItems.length} accounts</div></div>
                     <div class="stat-card sc-gold"><div class="stat-label">Monthly Payments</div><div class="stat-val">${fmtS(totalMonthly)}</div><div class="stat-meta">minimums</div></div>
                     <div class="stat-card sc-blue"><div class="stat-label">Suggested Extra/mo</div><div class="stat-val">${fmtS(suggestedExtra)}</div><div class="stat-meta">50% of free cashflow</div></div>
                 </div>
@@ -15292,13 +15372,25 @@ Be direct and use real numbers. Avoid generic advice.`;
             if (!out) return;
             out.innerHTML = `<div style="background:rgba(212,175,55,.06);border-radius:10px;padding:14px;font-size:12px;color:var(--accent);">🧠 Analyzing your debt structure with AI… (5-15 sec)</div>`;
             try {
-                const loans = DB.get('loans').filter(l => loanEndDate(l) > new Date());
+                const rawLoans = DB.get('loans').filter(l => loanEndDate(l) > new Date() && loanCurrentBalance(l) > 0);
+                const ccInstalls = DB.get('ccinstall').filter(c => !c.completed);
                 const ctx = buildFinancialContext();
-                const loanDetails = loans.map(l => {
+                
+                const loanDetails = rawLoans.map(l => {
                     const bal = loanCurrentBalance(l);
                     const intPaid = loanTotalInterestPaid(l);
-                    return `- ${l.name} (${l.bank}): Balance LKR ${Math.round(bal).toLocaleString()}, Rate ${l.rate}%, Monthly ${l.monthly.toLocaleString()}, Interest paid so far: ${Math.round(intPaid).toLocaleString()}`;
+                    return `- [Loan] ${l.name} (${l.bank}): Balance LKR ${Math.round(bal).toLocaleString()}, Rate ${l.rate || 0}%, Monthly ${l.monthly.toLocaleString()}, Interest paid so far: ${Math.round(intPaid).toLocaleString()}`;
                 }).join('\n');
+
+                const ccDetails = ccInstalls.map(c => {
+                    const prog = cciProgress(c);
+                    const remainingMonths = c.duration - prog.paid;
+                    const bal = remainingMonths > 0 ? (c.monthly * remainingMonths) : 0;
+                    if (bal <= 0) return '';
+                    return `- [CC Installment] ${c.product} (${c.bank}): Balance LKR ${Math.round(bal).toLocaleString()}, Rate ${c.rate || 0}%, Monthly ${c.monthly.toLocaleString()}`;
+                }).filter(Boolean).join('\n');
+
+                const allDebtDetails = loanDetails + (ccDetails ? '\n' + ccDetails : '');
                 const prompt = `You are an elite Sri Lankan debt-restructuring strategist. Analyze this user's debt portfolio and provide a SPECIFIC actionable plan.
 
 USER FINANCIAL CONTEXT:
@@ -15308,7 +15400,7 @@ USER FINANCIAL CONTEXT:
 - Cash on hand: LKR ${ctx.balanceOnHand.toLocaleString()}
 
 ACTIVE LOANS:
-${loanDetails}
+${allDebtDetails}
 
 In 5-7 sentences, provide:
 1. The single most impactful action to take THIS MONTH (specific LKR amount, specific loan)
