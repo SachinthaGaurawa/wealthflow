@@ -2158,235 +2158,232 @@
             border: 1px solid rgba(139, 92, 246, .3);
         }
 
-        /* ================== AI CHAT UI ================== */
+        /* ================== AI CHAT UI — PREMIUM OVERHAUL ================== */
         .ai-msg-wrap {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             align-items: flex-start;
-            animation: pgIn .25s ease;
+            animation: aiMsgSlide .35s cubic-bezier(.22,1,.36,1);
         }
-
-        .ai-msg-wrap.user-msg {
-            flex-direction: row-reverse;
-        }
+        @keyframes aiMsgSlide { from { opacity:0; transform:translateY(14px) scale(.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+        .ai-msg-wrap.user-msg { flex-direction: row-reverse; }
 
         .ai-avatar {
-            width: 34px;
-            height: 34px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            flex-shrink: 0;
-            border: 1.5px solid var(--border2);
+            width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            font-size: 17px; flex-shrink: 0; border: 1.5px solid var(--border2); position: relative;
         }
-
         .ai-avatar.bot {
-            background: linear-gradient(135deg, #0d1d3c, #1a2d4c);
-            border-color: var(--accent);
+            background: linear-gradient(135deg, #0a1628, #162544); border-color: var(--accent);
+            box-shadow: 0 0 12px rgba(212,175,55,.15);
         }
-
-        .ai-avatar.user {
-            background: linear-gradient(135deg, var(--card2), var(--card3));
+        .ai-avatar.bot::after {
+            content:''; position:absolute; bottom:1px; right:1px; width:9px; height:9px; border-radius:50%;
+            background:var(--green); border:2px solid var(--bg); box-shadow:0 0 6px var(--green);
         }
+        .ai-avatar.user { background: linear-gradient(135deg, var(--card2), var(--card3)); }
 
         .ai-bubble {
-            max-width: 80%;
-            padding: 11px 15px;
-            border-radius: 16px;
-            font-size: 13.5px;
-            line-height: 1.75;
-            word-break: break-word;
+            max-width: 82%; padding: 14px 18px; border-radius: 18px; font-size: 13.5px;
+            line-height: 1.8; word-break: break-word; position: relative;
         }
-
         .ai-bubble.bot {
-            background: var(--card2);
-            border: 1px solid var(--border);
-            border-radius: 4px 16px 16px 16px;
-            color: var(--text);
+            background: linear-gradient(145deg, var(--card2), rgba(26,45,76,.35));
+            border: 1px solid rgba(212,175,55,.1); border-radius: 4px 18px 18px 18px; color: var(--text);
         }
 
-        /* ISSUE 12 — Markdown-style rendering inside AI bubbles */
-        .ai-bubble strong {
-            color: var(--accent);
-            font-weight: 700;
-        }
+        /* Rich markdown rendering */
+        .ai-bubble strong { color: var(--accent); font-weight: 700; }
+        .ai-bubble em { color: var(--text2); font-style: italic; }
 
-        .ai-bubble em {
-            color: var(--text);
-            font-style: italic;
-        }
+        .ai-bubble .ai-paragraph { margin: 0 0 12px 0; line-height: 1.85; }
+        .ai-bubble .ai-paragraph:last-of-type { margin-bottom: 4px; }
 
         .ai-bubble .ai-bullet {
-            padding: 3px 0 3px 8px;
-            line-height: 1.6;
+            padding: 4px 0 4px 14px; line-height: 1.7; position: relative;
+            border-left: 2px solid rgba(212,175,55,.2); margin-left: 4px; margin-bottom: 2px;
         }
+        .ai-bubble .ai-bullet::before { content:''; position:absolute; left:-4px; top:12px; width:6px; height:6px; border-radius:50%; background:var(--accent); }
 
         .ai-bubble .ai-numbered {
-            padding: 4px 0 4px 4px;
-            line-height: 1.6;
-            display: flex;
-            gap: 8px;
+            padding: 5px 0 5px 6px; line-height: 1.7; display: flex; gap: 10px; align-items: flex-start;
         }
-
         .ai-bubble .ai-numbered .ai-num {
-            color: var(--accent);
-            font-weight: 700;
-            min-width: 20px;
+            color: #000; font-weight: 800; min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+            background: var(--accent); border-radius: 50%; font-size: 11px; flex-shrink: 0; margin-top: 1px;
         }
 
         .ai-bubble .ai-money {
-            color: var(--accent);
-            font-weight: 700;
-            background: rgba(212, 175, 55, .08);
-            padding: 1px 5px;
-            border-radius: 4px;
-            font-family: var(--mono);
-            font-size: 12.5px;
+            color: var(--accent); font-weight: 700; background: rgba(212,175,55,.1);
+            padding: 2px 7px; border-radius: 6px; font-family: var(--mono); font-size: 12.5px;
+            border: 1px solid rgba(212,175,55,.15); display: inline-block;
         }
 
         .ai-bubble .ai-takeaway {
-            background: linear-gradient(135deg, rgba(212, 175, 55, .12), rgba(16, 185, 129, .06));
-            border-left: 3px solid var(--accent);
-            padding: 8px 12px;
-            margin: 8px 0 4px;
-            border-radius: 6px;
-            font-weight: 600;
-            color: var(--text);
-            font-size: 13px;
+            background: linear-gradient(135deg, rgba(212,175,55,.12), rgba(16,185,129,.08));
+            border-left: 3px solid var(--accent); padding: 10px 14px; margin: 10px 0 6px;
+            border-radius: 0 10px 10px 0; font-weight: 600; color: var(--text); font-size: 13px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.1);
         }
 
-        .ai-bubble .ai-spacer {
-            height: 10px;
+        .ai-bubble .ai-callout {
+            padding: 10px 14px; margin: 8px 0; border-radius: 10px; font-size: 13px; line-height: 1.7;
+            display: flex; gap: 10px; align-items: flex-start;
         }
+        .ai-bubble .ai-callout-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+        .ai-bubble .ai-callout.warning { background: rgba(245,166,35,.1); border: 1px solid rgba(245,166,35,.2); }
+        .ai-bubble .ai-callout.success { background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.2); }
+        .ai-bubble .ai-callout.info { background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.2); }
+
+        .ai-bubble .ai-spacer { height: 12px; }
 
         .ai-bubble .ai-section-header {
-            font-size: 13.5px;
-            font-weight: 700;
-            color: var(--text);
-            margin: 10px 0 4px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            font-size: 14px; font-weight: 700; color: var(--text); margin: 14px 0 6px; display: flex;
+            align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid rgba(212,175,55,.1);
         }
+        .ai-bubble .ai-section-header:first-child { margin-top: 2px; }
 
         .ai-bubble .ai-code-block {
-            background: rgba(0, 0, 0, .25);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 10px 12px;
-            font-family: var(--mono);
-            font-size: 11.5px;
-            line-height: 1.6;
-            overflow-x: auto;
-            margin: 8px 0;
-            white-space: pre-wrap;
-            color: var(--text2);
+            background: rgba(0,0,0,.3); border: 1px solid var(--border); border-radius: 10px;
+            padding: 12px 14px; font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+            overflow-x: auto; margin: 8px 0; white-space: pre-wrap; color: var(--text2);
         }
 
-        .ai-bubble p {
-            margin: 0 0 6px 0;
-        }
+        .ai-bubble .ai-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
+        .ai-bubble .ai-table th { background: rgba(212,175,55,.1); color: var(--accent); font-weight: 700; text-align: left; padding: 8px 10px; border-bottom: 2px solid rgba(212,175,55,.2); }
+        .ai-bubble .ai-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+        .ai-bubble .ai-table tr:last-child td { border-bottom: none; }
+
+        .ai-bubble p { margin: 0 0 8px 0; }
 
         .ai-bubble.user {
-            background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(245, 166, 35, 0.1));
-            border: 1px solid rgba(212, 175, 55, 0.25);
-            border-radius: 16px 4px 16px 16px;
-            color: var(--text);
+            background: linear-gradient(135deg, rgba(212,175,55,.18), rgba(245,166,35,.1));
+            border: 1px solid rgba(212,175,55,.25); border-radius: 18px 4px 18px 18px; color: var(--text);
         }
+
+        /* Bot message action buttons (copy, read aloud) */
+        .ai-msg-actions {
+            display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity .2s;
+        }
+        .ai-msg-wrap:hover .ai-msg-actions { opacity: 1; }
+        .ai-msg-action-btn {
+            background: rgba(212,175,55,.08); border: 1px solid rgba(212,175,55,.15); border-radius: 8px;
+            padding: 4px 10px; font-size: 10px; color: var(--text3); cursor: pointer; transition: all .15s;
+            display: flex; align-items: center; gap: 4px;
+        }
+        .ai-msg-action-btn:hover { background: rgba(212,175,55,.18); color: var(--accent); }
+        .ai-msg-action-btn.active { background: var(--accent); color: #000; }
 
         .ai-bubble-meta {
-            font-size: 10px;
-            color: var(--text3);
-            margin-top: 5px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
+            font-size: 10px; color: var(--text3); margin-top: 6px; display: flex; align-items: center; gap: 6px;
         }
 
-        .ai-followup-pills {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-top: 10px;
-        }
-
+        .ai-followup-pills { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
         .ai-followup-pill {
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 11.5px;
-            font-weight: 600;
-            background: rgba(212, 175, 55, 0.08);
-            border: 1px solid rgba(212, 175, 55, 0.25);
-            color: var(--accent);
-            cursor: pointer;
-            transition: all .15s;
-            white-space: nowrap;
+            padding: 6px 14px; border-radius: 20px; font-size: 11.5px; font-weight: 600;
+            background: rgba(212,175,55,.06); border: 1px solid rgba(212,175,55,.2); color: var(--accent);
+            cursor: pointer; transition: all .2s; white-space: nowrap;
         }
-
-        .ai-followup-pill:hover {
-            background: rgba(212, 175, 55, 0.18);
-            transform: translateY(-1px);
-        }
+        .ai-followup-pill:hover { background: rgba(212,175,55,.18); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(212,175,55,.15); }
 
         .ai-suggestion-pill {
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-            background: var(--card2);
-            border: 1px solid var(--border);
-            color: var(--text2);
-            cursor: pointer;
-            transition: all .15s;
-            white-space: nowrap;
+            padding: 7px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
+            background: var(--card2); border: 1px solid var(--border); color: var(--text2);
+            cursor: pointer; transition: all .2s; white-space: nowrap;
+            animation: aiPillIn .4s ease backwards;
         }
+        .ai-suggestion-pill:nth-child(1) { animation-delay: .05s; }
+        .ai-suggestion-pill:nth-child(2) { animation-delay: .1s; }
+        .ai-suggestion-pill:nth-child(3) { animation-delay: .15s; }
+        .ai-suggestion-pill:nth-child(4) { animation-delay: .2s; }
+        .ai-suggestion-pill:nth-child(5) { animation-delay: .25s; }
+        @keyframes aiPillIn { from { opacity:0; transform:translateY(8px) scale(.9); } }
+        .ai-suggestion-pill:hover { background: var(--card3); border-color: var(--accent); color: var(--accent); transform: translateY(-2px); }
 
-        .ai-suggestion-pill:hover {
-            background: var(--card3);
-            border-color: var(--accent);
-            color: var(--accent);
-        }
+        .ai-nav-pulse { position: relative; }
 
-        .ai-nav-pulse {
-            position: relative;
-        }
-
-        .ai-typing-dots span {
-            display: inline-block;
-            animation: aiDot 1.2s infinite;
-        }
-
-        .ai-typing-dots span:nth-child(2) {
-            animation-delay: .2s;
-        }
-
-        .ai-typing-dots span:nth-child(3) {
-            animation-delay: .4s;
-        }
-
-        @keyframes aiDot {
-
-            0%,
-            80%,
-            100% {
-                opacity: .2;
-                transform: scale(.8)
-            }
-
-            40% {
-                opacity: 1;
-                transform: scale(1)
-            }
-        }
+        /* Typing indicator */
+        .ai-typing-dots span { display: inline-block; animation: aiDot 1.2s infinite; }
+        .ai-typing-dots span:nth-child(2) { animation-delay: .2s; }
+        .ai-typing-dots span:nth-child(3) { animation-delay: .4s; }
+        @keyframes aiDot { 0%,80%,100% { opacity:.2; transform:scale(.8) } 40% { opacity:1; transform:scale(1.1) } }
 
         .ai-welcome-msg {
-            background: linear-gradient(135deg, rgba(212, 175, 55, 0.06), rgba(59, 130, 246, 0.04));
-            border: 1px solid rgba(212, 175, 55, 0.15);
-            border-radius: 14px;
-            padding: 18px;
+            background: linear-gradient(135deg, rgba(212,175,55,.06), rgba(59,130,246,.04));
+            border: 1px solid rgba(212,175,55,.15); border-radius: 16px; padding: 20px;
         }
+
+        /* Chat date separator */
+        .ai-date-sep { text-align:center; padding:8px 0; font-size:10px; color:var(--text3); position:relative; }
+        .ai-date-sep span { background:var(--bg2); padding:0 12px; position:relative; z-index:1; }
+        .ai-date-sep::before { content:''; position:absolute; left:10%; right:10%; top:50%; height:1px; background:var(--border); }
+
+        /* Scroll-to-bottom FAB */
+        .ai-scroll-bottom {
+            position:absolute; bottom:80px; right:16px; width:36px; height:36px; border-radius:50%;
+            background:var(--accent); color:#000; border:none; cursor:pointer; font-size:16px;
+            display:none; align-items:center; justify-content:center; z-index:5;
+            box-shadow:0 4px 14px rgba(212,175,55,.3); transition:all .2s;
+        }
+        .ai-scroll-bottom:hover { transform:scale(1.1); }
+        .ai-scroll-bottom.show { display:flex; }
+
+        /* Voice recording UI */
+        .ai-voice-recording { display:flex; align-items:center; gap:10px; padding:8px 14px; background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.2); border-radius:12px; margin-bottom:8px; }
+        .ai-voice-wave { display:flex; gap:3px; align-items:center; height:24px; }
+        .ai-voice-wave-bar { width:3px; border-radius:2px; background:var(--red); animation:waveBar .8s ease-in-out infinite; }
+        .ai-voice-wave-bar:nth-child(1) { height:8px; animation-delay:0s; }
+        .ai-voice-wave-bar:nth-child(2) { height:16px; animation-delay:.1s; }
+        .ai-voice-wave-bar:nth-child(3) { height:24px; animation-delay:.2s; }
+        .ai-voice-wave-bar:nth-child(4) { height:12px; animation-delay:.3s; }
+        .ai-voice-wave-bar:nth-child(5) { height:20px; animation-delay:.15s; }
+        @keyframes waveBar { 0%,100% { transform:scaleY(.4); } 50% { transform:scaleY(1); } }
+        .ai-voice-timer { font-family:var(--mono); font-size:12px; color:var(--red); font-weight:600; }
+        .ai-voice-label { font-size:11px; color:var(--text3); flex:1; }
+
+        /* Sync status badge */
+        .ai-sync-badge { font-size:10px; padding:3px 8px; border-radius:10px; font-family:var(--mono); display:inline-flex; align-items:center; gap:4px; }
+        .ai-sync-badge.synced { background:rgba(16,185,129,.1); color:var(--green); }
+        .ai-sync-badge.syncing { background:rgba(245,166,35,.1); color:var(--amber); }
+        .ai-sync-badge.offline { background:rgba(239,68,68,.1); color:var(--red); }
+
+        /* Language picker modal */
+        .ai-lang-modal { position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(8px); z-index:10000; display:none; align-items:center; justify-content:center; }
+        .ai-lang-modal.show { display:flex; }
+        .ai-lang-modal-content { background:var(--card); border:1px solid var(--border2); border-radius:20px; width:92%; max-width:480px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden; animation:mdIn .3s ease; }
+        .ai-lang-search { padding:16px; border-bottom:1px solid var(--border); }
+        .ai-lang-search input { width:100%; padding:12px 16px; border:1px solid var(--border2); border-radius:12px; background:var(--bg2); color:var(--text); font-size:14px; outline:none; }
+        .ai-lang-search input:focus { border-color:var(--accent); }
+        .ai-lang-search input::placeholder { color:var(--text3); }
+        .ai-lang-list { flex:1; overflow-y:auto; padding:8px 12px; }
+        .ai-lang-group-title { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:1px; padding:8px 8px 4px; font-weight:700; }
+        .ai-lang-item { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:12px; cursor:pointer; transition:all .15s; }
+        .ai-lang-item:hover { background:rgba(212,175,55,.08); }
+        .ai-lang-item.active { background:rgba(212,175,55,.12); border:1px solid rgba(212,175,55,.3); }
+        .ai-lang-item-name { font-size:14px; color:var(--text); font-weight:500; flex:1; }
+        .ai-lang-item-code { font-size:11px; color:var(--text3); font-family:var(--mono); }
+        .ai-lang-item-check { color:var(--accent); font-size:16px; display:none; }
+        .ai-lang-item.active .ai-lang-item-check { display:block; }
+        .ai-lang-modal-hdr { display:flex; align-items:center; justify-content:space-between; padding:18px 20px 0; }
+        .ai-lang-modal-title { font-size:17px; font-weight:700; color:var(--text); }
+        .ai-lang-modal-close { background:none; border:none; color:var(--text3); font-size:22px; cursor:pointer; padding:4px 8px; border-radius:8px; }
+        .ai-lang-modal-close:hover { background:var(--card2); color:var(--text); }
+
+        /* AI context pills row */
+        .ai-context-pills { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+        .ai-context-pill { font-size:10px; padding:4px 10px; border-radius:10px; background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.15); color:var(--blue); font-weight:600; }
+
+        /* AI Callout boxes */
+        .ai-callout { display:flex; align-items:flex-start; gap:10px; padding:12px 16px; border-radius:12px; margin:8px 0; font-size:13px; line-height:1.6; }
+        .ai-callout.warning { background:rgba(245,166,35,.08); border:1px solid rgba(245,166,35,.2); color:var(--amber); }
+        .ai-callout.success { background:rgba(16,185,129,.08); border:1px solid rgba(16,185,129,.2); color:var(--green); }
+        .ai-callout.info { background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.2); color:var(--blue); }
+        .ai-callout-icon { font-size:16px; flex-shrink:0; margin-top:1px; }
+
+        /* AI Table */
+        .ai-table { width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; border-radius:8px; overflow:hidden; }
+        .ai-table th { background:rgba(212,175,55,.1); color:var(--accent); text-align:left; padding:8px 12px; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+        .ai-table td { padding:8px 12px; border-top:1px solid var(--border); color:var(--text2); }
+        .ai-table tr:hover td { background:rgba(212,175,55,.04); }
 
         /* ================== HAPTIC RIPPLE (visual feedback for all OS) ================== */
         @keyframes hapticRipple {
@@ -4878,67 +4875,71 @@
                     </div>
                 </div>
 
-                <!-- ==================== AI ADVISOR PAGE ==================== -->
+                <!-- ==================== AI ADVISOR PAGE — PREMIUM ==================== -->
                 <div class="page" id="page-ai">
-                    <div class="sh" style="margin-bottom:16px;">
+                    <div class="sh" style="margin-bottom:12px;">
                         <div>
                             <div class="sh-title">🤖 AI Financial Advisor</div>
-                            <div style="font-size:12px;color:var(--text3);margin-top:3px;">Your personalized,
-                                always-learning wealth companion</div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                <span>Your personalized, always-learning wealth companion</span>
+                                <span class="ai-sync-badge synced" id="aiSyncBadge">● Synced</span>
+                            </div>
                         </div>
-                        <div class="sh-actions" style="gap:8px;">
-                            <div id="aiPersonaStatus"
-                                style="font-size:11px;color:var(--accent);font-family:var(--mono);display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.2);border-radius:20px;">
-                                <span
-                                    style="width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:luxuryBlink 3s infinite;display:inline-block;"></span>
+                        <div class="sh-actions" style="gap:8px;flex-wrap:wrap;">
+                            <div id="aiPersonaStatus" style="font-size:11px;color:var(--accent);font-family:var(--mono);display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.2);border-radius:20px;">
+                                <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:luxuryBlink 3s infinite;display:inline-block;"></span>
                                 <span id="aiPersonaLabel">Learning your style...</span>
                             </div>
-                            <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')"
-                                title="Change AI personality">🎭 Persona</button>
-                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history">🗑️
-                                Clear</button>
+                            <button class="btn btn-secondary btn-sm" onclick="openLangModal()" title="AI language">🌐 <span id="aiLangBadge">EN</span></button>
+                            <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')" title="Change AI personality">🎭 Persona</button>
+                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history">🗑️</button>
                         </div>
                     </div>
 
+                    <!-- AI Context Awareness -->
+                    <div class="ai-context-pills" id="aiContextPills"></div>
+
                     <!-- AI Suggestion Pills -->
-                    <div id="aiSuggestionPills" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;"></div>
+                    <div id="aiSuggestionPills" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
 
                     <!-- Chat Area -->
-                    <div class="card"
-                        style="padding:0;overflow:hidden;border:1px solid var(--border2);margin-bottom:0;">
-                        <div id="aiChatMessages"
-                            style="height:420px;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth;">
+                    <div class="card" style="padding:0;overflow:hidden;border:1px solid var(--border2);margin-bottom:0;position:relative;">
+                        <div id="aiChatMessages" style="height:480px;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth;" onscroll="_handleAIChatScroll()">
                             <div class="ai-welcome-msg" id="aiWelcomeBlock">
                                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-                                    <div
-                                        style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">
-                                        🤖</div>
+                                    <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#0a1628,#162544);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;box-shadow:0 0 12px rgba(212,175,55,.15);">🤖</div>
                                     <div>
-                                        <div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI
-                                        </div>
-                                        <div style="font-size:10px;color:var(--text3);">Your personal financial advisor
-                                        </div>
+                                        <div style="font-size:14px;font-weight:700;color:var(--accent);">WealthFlow AI</div>
+                                        <div style="font-size:10px;color:var(--text3);">Triple-Engine · Gemini · DeepSeek · Groq</div>
                                     </div>
                                 </div>
-                                <div style="font-size:14px;color:var(--text);line-height:1.7;">
-                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI
-                                        Advisor</strong> — a triple-engine system (Gemini · DeepSeek · Groq) trained to
-                                    understand <em>your</em> unique financial patterns.<br><br>
-                                    💡 I can help you analyze your spending, plan your savings, review your loans, and
-                                    give you smart, personalized advice based on your actual data.<br><br>
-                                    <div
-                                        style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text2);margin-top:8px;">
-                                        <span
-                                            style="background:rgba(212,175,55,0.1);padding:5px 10px;border-radius:14px;border:1px solid rgba(212,175,55,0.25);">🎤
-                                            Voice input — speak any language</span>
-                                        <span
-                                            style="background:rgba(66,133,244,0.1);padding:5px 10px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">🌐
-                                            70+ languages — set in Settings</span>
-                                        <span
-                                            style="background:rgba(16,185,129,0.1);padding:5px 10px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸
-                                            Scan receipts</span>
+                                <div style="font-size:14px;color:var(--text);line-height:1.8;">
+                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — I understand <em>your</em> unique financial patterns and learn from every conversation.<br><br>
+                                    💡 Ask me about your spending, savings goals, loan strategies, investments, or even just chat — I'm friendly!<br><br>
+                                    <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--text2);margin-top:8px;">
+                                        <span style="background:rgba(212,175,55,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(212,175,55,0.25);">🎤 Voice — any language</span>
+                                        <span style="background:rgba(66,133,244,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">🌐 70+ languages</span>
+                                        <span style="background:rgba(16,185,129,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸 Scan receipts</span>
+                                        <span style="background:rgba(139,92,246,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(139,92,246,0.25);">🔊 Read aloud</span>
+                                        <span style="background:rgba(236,72,153,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(236,72,153,0.25);">☁️ Synced across devices</span>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                        <!-- Scroll-to-bottom FAB -->
+                        <button class="ai-scroll-bottom" id="aiScrollBottom" onclick="document.getElementById('aiChatMessages').scrollTop=document.getElementById('aiChatMessages').scrollHeight" title="Jump to latest">↓</button>
+
+                        <!-- Voice Recording UI (hidden by default) -->
+                        <div id="aiVoiceRecordingBar" style="display:none;padding:0 16px;">
+                            <div class="ai-voice-recording">
+                                <div class="ai-voice-wave">
+                                    <div class="ai-voice-wave-bar"></div><div class="ai-voice-wave-bar"></div>
+                                    <div class="ai-voice-wave-bar"></div><div class="ai-voice-wave-bar"></div>
+                                    <div class="ai-voice-wave-bar"></div>
+                                </div>
+                                <span class="ai-voice-timer" id="aiVoiceTimer">0:00</span>
+                                <span class="ai-voice-label">Listening — speak in any language...</span>
+                                <button class="btn btn-sm" style="background:var(--red);color:#fff;padding:4px 12px;border-radius:8px;" onclick="toggleAIChatVoice()">⏹ Stop</button>
                             </div>
                         </div>
 
@@ -4946,33 +4947,20 @@
                         <div style="border-top:1px solid var(--border);padding:14px 16px;background:var(--bg2);">
                             <div style="display:flex;gap:10px;align-items:flex-end;">
                                 <div style="flex:1;position:relative;">
-                                    <textarea id="aiChatInput" class="fi"
-                                        placeholder="Ask me anything about your finances... 💬" rows="1"
-                                        style="resize:none;padding-right:80px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;"
-                                        onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
-                                    <button id="aiVoiceBtn" type="button" onclick="toggleAIChatVoice()"
-                                        title="Voice input (multi-lingual)" aria-label="Voice input"
-                                        style="position:absolute;right:42px;bottom:7px;width:32px;height:32px;border-radius:50%;background:var(--card2);border:1px solid var(--border2);color:var(--accent);cursor:pointer;font-size:14px;transition:all .2s;">🎤</button>
-                                    <label
-                                        style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;"
-                                        title="Scan receipt with AI">
+                                    <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:80px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
+                                    <button id="aiVoiceBtn" type="button" onclick="toggleAIChatVoice()" title="Voice input (multi-lingual)" aria-label="Voice input" style="position:absolute;right:42px;bottom:7px;width:32px;height:32px;border-radius:50%;background:var(--card2);border:1px solid var(--border2);color:var(--accent);cursor:pointer;font-size:14px;transition:all .2s;">🎤</button>
+                                    <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Scan receipt with AI">
                                         📸
-                                        <input type="file" accept="image/*" capture="environment" id="ai_chat_scan"
-                                            style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
+                                        <input type="file" accept="image/*" capture="environment" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
                                     </label>
                                 </div>
-                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()"
-                                    style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">
-                                    ➤
-                                </button>
+                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
                                 <div id="aiTypingIndicator" style="font-size:11px;color:var(--text3);display:none;">
-                                    <span style="color:var(--accent);">●</span><span style="opacity:0.5;">●</span><span
-                                        style="opacity:0.2;">●</span> AI is thinking...
+                                    <span style="color:var(--accent);">●</span><span style="opacity:0.5;">●</span><span style="opacity:0.2;">●</span> AI is thinking...
                                 </div>
-                                <div style="font-size:10px;color:var(--text3);margin-left:auto;font-family:var(--mono);"
-                                    id="aiProviderInfo">Gemini · DeepSeek · Groq</div>
+                                <div style="font-size:10px;color:var(--text3);margin-left:auto;font-family:var(--mono);" id="aiProviderInfo">Gemini · DeepSeek · Groq</div>
                             </div>
                         </div>
                     </div>
@@ -5907,6 +5895,20 @@
 
     <input type="file" id="importFile" accept=".json" style="display:none;" onchange="handleImportFile(event)">
 
+    <!-- Language Picker Modal -->
+    <div class="ai-lang-modal" id="aiLangModal">
+        <div class="ai-lang-modal-content">
+            <div class="ai-lang-modal-hdr">
+                <div class="ai-lang-modal-title">🌐 AI Response Language</div>
+                <button class="ai-lang-modal-close" onclick="closeLangModal()">✕</button>
+            </div>
+            <div class="ai-lang-search">
+                <input type="text" id="aiLangModalSearch" placeholder="Search languages..." oninput="_filterLangModal()">
+            </div>
+            <div class="ai-lang-list" id="aiLangModalList"></div>
+        </div>
+    </div>
+
     <script>
         // =====================================================
         // WEALTHFLOW v5.1 - Infinity Cloud Financial System
@@ -6615,15 +6617,13 @@ Rules:
             e.target.value = '';
         }
 
-        // ==================== WEALTHFLOW AI ADVISOR SYSTEM ====================
-        // Persistent memory: conversation + persona per user
+        // ==================== WEALTHFLOW AI ADVISOR SYSTEM — v2 ====================
         const AI_MEMORY_KEY = 'wf_ai_memory';
         const AI_PERSONA_KEY = 'wf_ai_persona';
         const AI_HISTORY_KEY = 'wf_ai_history';
-        const MAX_HISTORY_MSGS = 20; // rolling window
+        const MAX_HISTORY_MSGS = 50;
 
-        // ==================== ISSUE 10 — CROSS-DEVICE AI MEMORY SYNC ====================
-        // Chat history + persona now sync to Firestore so they follow the user across devices.
+        // ==================== CROSS-DEVICE AI MEMORY SYNC (HARDENED) ====================
         let _aiSyncTimer = null;
         let _aiSyncing = false;
         let _aiHistoryUnsub = null;
@@ -6631,6 +6631,7 @@ Rules:
         async function _syncAIToCloud() {
             if (_aiSyncing) return;
             if (!currentUser || !firebase || !firebase.firestore) return;
+            _updateAISyncBadge('syncing');
             _aiSyncing = true;
             try {
                 const hist = getAIHistory();
@@ -6638,16 +6639,29 @@ Rules:
                 const memory = getAIMemory();
                 await firebase.firestore().collection('userAI').doc(currentUser.uid).set({
                     history: hist.slice(-MAX_HISTORY_MSGS),
-                    persona,
-                    memory,
-                    updatedAt: Date.now()
+                    persona, memory,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedAtMs: Date.now(),
+                    deviceId: _getDeviceId()
                 });
-                console.log('[AI Sync] ↑ pushed to cloud');
+                _updateAISyncBadge('synced');
             } catch (e) {
                 console.warn('[AI Sync] push failed:', e.message);
-            } finally {
-                _aiSyncing = false;
-            }
+                _updateAISyncBadge('offline');
+            } finally { _aiSyncing = false; }
+        }
+
+        function _getDeviceId() {
+            let id = localStorage.getItem('wf_device_id');
+            if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 9); localStorage.setItem('wf_device_id', id); }
+            return id;
+        }
+
+        function _updateAISyncBadge(status) {
+            const badge = document.getElementById('aiSyncBadge');
+            if (!badge) return;
+            badge.className = 'ai-sync-badge ' + status;
+            badge.textContent = status === 'synced' ? '● Synced' : status === 'syncing' ? '● Syncing…' : '● Offline';
         }
 
         function _scheduleAISync() {
@@ -6658,25 +6672,41 @@ Rules:
         function startAIMemoryListener() {
             if (!currentUser || !firebase || !firebase.firestore) return;
             if (_aiHistoryUnsub) { _aiHistoryUnsub(); _aiHistoryUnsub = null; }
+            // Pull initial state from cloud
+            firebase.firestore().collection('userAI').doc(currentUser.uid).get().then(snap => {
+                if (snap.exists) {
+                    const data = snap.data() || {};
+                    const remoteHist = data.history || [];
+                    const localHist = getAIHistory();
+                    if (remoteHist.length > localHist.length) {
+                        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
+                        if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
+                        if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
+                        if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
+                    }
+                }
+                _updateAISyncBadge('synced');
+            }).catch(() => _updateAISyncBadge('offline'));
+            // Live listener for cross-device updates
             _aiHistoryUnsub = firebase.firestore().collection('userAI').doc(currentUser.uid)
                 .onSnapshot(snap => {
                     if (!snap.exists) return;
                     const data = snap.data() || {};
-                    const localHist = getAIHistory();
+                    // Skip if this device just pushed
+                    if (data.deviceId === _getDeviceId()) return;
                     const remoteHist = data.history || [];
-                    // Take whichever has more recent activity
-                    if (remoteHist.length > localHist.length || (data.updatedAt && data.updatedAt > (parseInt(localStorage.getItem('wf_ai_synced_at') || '0')))) {
+                    const localHist = getAIHistory();
+                    const remoteMs = data.updatedAtMs || 0;
+                    const localMs = parseInt(localStorage.getItem('wf_ai_synced_at') || '0');
+                    if (remoteMs > localMs || remoteHist.length > localHist.length) {
                         localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
                         if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
                         if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
-                        localStorage.setItem('wf_ai_synced_at', String(data.updatedAt || Date.now()));
-                        console.log('[AI Sync] ↓ pulled', remoteHist.length, 'messages from cloud');
-                        // Re-render the AI page if currently visible
-                        if (document.getElementById('page-ai')?.classList.contains('active')) {
-                            renderAIChatHistory();
-                        }
+                        localStorage.setItem('wf_ai_synced_at', String(remoteMs || Date.now()));
+                        _updateAISyncBadge('synced');
+                        if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
                     }
-                }, err => console.warn('[AI Sync] listener error:', err.message));
+                }, err => { console.warn('[AI Sync] listener error:', err.message); _updateAISyncBadge('offline'); });
         }
 
         function renderAIChatHistory() {
@@ -6684,6 +6714,14 @@ Rules:
             if (!wrap) return;
             const hist = getAIHistory();
             wrap.innerHTML = '';
+            if (hist.length === 0) {
+                // Re-show welcome
+                const wb = document.getElementById('aiWelcomeBlock');
+                if (wb) wb.style.display = '';
+                return;
+            }
+            const welcome = document.getElementById('aiWelcomeBlock');
+            if (welcome) welcome.style.display = 'none';
             hist.forEach(m => appendAIMessage(m.role === 'user' ? 'user' : 'bot', m.content, [], true));
         }
 
@@ -6769,21 +6807,25 @@ Rules:
                 aggressive: 'Be challenging about wealth building. Push hard to cut unnecessary spending. Demand excellence — but always respect the user.'
             };
 
-            // ISSUE 3 FIX — Language preference for AI responses
             const langCode = s.aiResponseLang || 'en';
             const langName = WF_LANG_NAMES[langCode] || 'English';
             const langDirective = langCode === 'en'
                 ? 'Respond in clear, natural English.'
                 : `CRITICAL LANGUAGE INSTRUCTION: Always respond in ${langName} (language code: ${langCode}). All financial terms, numbers, and explanations must be in ${langName}. If the user writes in another language, you may briefly acknowledge it but your full reply MUST be in ${langName}. Use the native script of ${langName}, not transliteration.`;
 
-            // Get conversation history to learn user's style
             const hist = getAIHistory();
             const recentUserMsgs = hist.filter(m => m.role === 'user').slice(-5).map(m => m.content);
             const styleHints = recentUserMsgs.length > 0
                 ? `\n\nUser's recent messages (mirror their style/length/formality):\n${recentUserMsgs.map((m, i) => `  ${i + 1}. "${m.substring(0, 120)}"`).join('\n')}`
                 : '';
 
+            // Time-of-day awareness
+            const hour = new Date().getHours();
+            const timeGreeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+            const dayOfWeek = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+
             return `You are WealthFlow AI — a friendly, knowledgeable financial advisor and conversation partner for ${ctx.userName} in Sri Lanka.
+Current time context: ${dayOfWeek} ${timeGreeting}. Use this to personalize greetings naturally (e.g., "Good ${timeGreeting}!" for first message, or reference the day when relevant).
 
 ${langDirective}
 
@@ -6929,6 +6971,7 @@ YOUR PERSONALITY & CRITICAL RULES:
 
                 // Update persona based on interaction
                 updateAIPersona(msg, mainReply);
+                _updateAIContextPills();
 
             } catch (e) {
                 appendAIMessage('bot', `⚠️ I'm having trouble connecting right now. Please try again in a moment!\n\nError: ${e.message}`);
@@ -6938,15 +6981,12 @@ YOUR PERSONALITY & CRITICAL RULES:
             }
         }
 
-        function appendAIMessage(role, text, followups = []) {
+        function appendAIMessage(role, text, followups = [], isReplay = false) {
             const container = $('aiChatMessages');
             if (!container) return;
 
-            // Remove welcome block on first real message
             const welcome = $('aiWelcomeBlock');
-            if (welcome && container.querySelectorAll('.ai-msg-wrap').length === 0) {
-                welcome.style.display = 'none';
-            }
+            if (welcome && container.querySelectorAll('.ai-msg-wrap').length === 0) welcome.style.display = 'none';
 
             const wrap = document.createElement('div');
             wrap.className = `ai-msg-wrap ${role === 'user' ? 'user-msg' : ''}`;
@@ -6958,44 +6998,57 @@ YOUR PERSONALITY & CRITICAL RULES:
             const bubble = document.createElement('div');
             bubble.className = `ai-bubble ${role}`;
 
-            // Format text: render basic markdown for readability (Issue 12)
-            // - **bold** → <strong>
-            // - ```code blocks``` → highlighted blocks
-            // - line-start "- " → bullet
-            // - line-start "1. " "2. " → numbered list
-            // - LKR amounts → highlighted
-            const escapeHTML = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            let formatted = escapeHTML(text);
-            // Code blocks: ```text``` → styled block (MUST run before other transforms)
-            formatted = formatted.replace(/```([\s\S]*?)```/g, '<div class="ai-code-block">$1</div>');
-            // Bold: **text** → <strong>
-            formatted = formatted.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-            // Italic: *text* (single asterisks) — only when not part of bullets
-            formatted = formatted.replace(/(^|[\s])\*([^\s*][^*]*[^\s*]|[^\s*])\*(?=[\s.,!?:;]|$)/gm, '$1<em>$2</em>');
-            // Section headers with emojis (e.g. "📊 **Title**" on its own line)
-            formatted = formatted.replace(/(^|\n)([\p{Emoji_Presentation}\p{Emoji}]\s+)(&lt;strong&gt;.+?&lt;\/strong&gt;)/gu, '$1<div class="ai-section-header">$2$3</div>');
-            // Convert lines starting with "- " or "• " to bullet items
-            formatted = formatted.replace(/(^|\n)[\-•]\s+(.+)/g, '$1<div class="ai-bullet">• $2</div>');
-            // Convert lines starting with "1. ", "2. ", etc.
-            formatted = formatted.replace(/(^|\n)(\d+)\.\s+(.+)/g, '$1<div class="ai-numbered"><span class="ai-num">$2.</span> $3</div>');
-            // Highlight LKR amounts
-            formatted = formatted.replace(/(LKR\s?[\d,]+(?:\.\d+)?)/g, '<span class="ai-money">$1</span>');
-            // "Bottom line:" / "Best move:" etc. → emphasized
-            formatted = formatted.replace(/^(Bottom line|Best move|Recommendation|Takeaway|Key point):/gim, '<div class="ai-takeaway">💡 $1:</div>');
-            // Remaining newlines → <br> (but not inside our block divs)
-            formatted = formatted.replace(/\n{2,}/g, '<div class="ai-spacer"></div>');
-            formatted = formatted.replace(/\n/g, '<br>');
-            bubble.innerHTML = formatted;
+            // === PREMIUM MARKDOWN RENDERER ===
+            const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            let f = esc(text);
+            // Code blocks first
+            f = f.replace(/```([\s\S]*?)```/g, '<div class="ai-code-block">$1</div>');
+            // Bold
+            f = f.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            // Italic
+            f = f.replace(/(^|[\s])\*([^\s*][^*]*[^\s*]|[^\s*])\*(?=[\s.,!?:;]|$)/gm, '$1<em>$2</em>');
+            // Section headers with emojis
+            f = f.replace(/(^|\n)([\p{Emoji_Presentation}\p{Emoji}]\s+)(&lt;strong&gt;.+?&lt;\/strong&gt;)/gu, '$1<div class="ai-section-header">$2$3</div>');
+            // Callout boxes (warning/success/info lines)
+            f = f.replace(/(^|\n)⚠️\s*(.+)/g, '$1<div class="ai-callout warning"><span class="ai-callout-icon">⚠️</span><span>$2</span></div>');
+            f = f.replace(/(^|\n)✅\s*(.+)/g, '$1<div class="ai-callout success"><span class="ai-callout-icon">✅</span><span>$2</span></div>');
+            f = f.replace(/(^|\n)💡\s*(.+)/g, '$1<div class="ai-callout info"><span class="ai-callout-icon">💡</span><span>$2</span></div>');
+            // Bullets
+            f = f.replace(/(^|\n)[\-•]\s+(.+)/g, '$1<div class="ai-bullet">$2</div>');
+            // Numbered list with badge
+            f = f.replace(/(^|\n)(\d+)\.\s+(.+)/g, '$1<div class="ai-numbered"><span class="ai-num">$2</span> <span>$3</span></div>');
+            // Currency highlighting (LKR, USD, EUR, GBP, etc.)
+            f = f.replace(/((?:LKR|USD|EUR|GBP|INR|AUD|JPY|Rs\.?)\s?[\d,]+(?:\.\d+)?)/g, '<span class="ai-money">$1</span>');
+            // Takeaway / Bottom line
+            f = f.replace(/^(Bottom line|Best move|Recommendation|Takeaway|Key point|Summary|Action plan):/gim, '<div class="ai-takeaway">💡 $1:</div>');
+            // Table detection (simple | delimited)
+            f = f.replace(/((?:(?:^|\n)\|.+\|(?:\n|$))+)/g, (match) => {
+                const rows = match.trim().split('\n').filter(r => r.includes('|'));
+                if (rows.length < 2) return match;
+                const isSep = (r) => /^\|[\s\-:]+\|$/.test(r.trim());
+                let html = '<table class="ai-table">';
+                rows.forEach((row, i) => {
+                    if (isSep(row)) return;
+                    const cells = row.split('|').filter(c => c.trim());
+                    const tag = i === 0 ? 'th' : 'td';
+                    html += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+                });
+                return html + '</table>';
+            });
+            // Paragraph spacing
+            f = f.replace(/\n{2,}/g, '<div class="ai-spacer"></div>');
+            f = f.replace(/\n/g, '<br>');
+            bubble.innerHTML = f;
 
-            // Meta row
+            // Meta row with time
             const meta = document.createElement('div');
             meta.className = 'ai-bubble-meta';
             const now = new Date();
             const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
             if (role === 'bot') {
-                const providerLabels = { gemini: '✨ Gemini', groq: '⚡ Groq', deepseek: '🧠 DeepSeek' };
-                const provLabel = providerLabels[_lastAIProvider] || '🤖 AI';
+                const provLabels = { gemini: '✨ Gemini', groq: '⚡ Groq', deepseek: '🧠 DeepSeek' };
+                const provLabel = provLabels[_lastAIProvider] || '🤖 AI';
                 meta.innerHTML = `<span style="color:var(--accent);font-size:9px;">${provLabel}</span> <span>${timeStr}</span>`;
 
                 // Follow-up pills
@@ -7009,9 +7062,15 @@ YOUR PERSONALITY & CRITICAL RULES:
                         pill.onclick = () => sendAIMessage(q);
                         pillWrap.appendChild(pill);
                     });
-                    bubble.appendChild(document.createElement('br'));
                     bubble.appendChild(pillWrap);
                 }
+
+                // Action buttons (copy + read aloud)
+                const actions = document.createElement('div');
+                actions.className = 'ai-msg-actions';
+                const rawText = text;
+                actions.innerHTML = `<button class="ai-msg-action-btn" onclick="this.textContent='✓ Copied';navigator.clipboard.writeText(this.closest('.ai-msg-wrap').querySelector('.ai-bubble').innerText);setTimeout(()=>this.textContent='📋 Copy',1500)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button>`;
+                bubble.appendChild(actions);
             } else {
                 meta.innerHTML = `<span>${timeStr}</span>`;
             }
@@ -7020,8 +7079,6 @@ YOUR PERSONALITY & CRITICAL RULES:
             wrap.appendChild(avatar);
             wrap.appendChild(bubble);
             container.appendChild(wrap);
-
-            // Scroll to bottom smoothly
             setTimeout(() => { container.scrollTop = container.scrollHeight; }, 50);
         }
 
@@ -7057,31 +7114,29 @@ YOUR PERSONALITY & CRITICAL RULES:
         }
 
         // ISSUE 3 FIX — Voice input for the main AI chat (multi-lingual)
+        let _aiVoiceTimer = null;
+        let _aiVoiceSeconds = 0;
         async function toggleAIChatVoice() {
             const inp = $('aiChatInput');
             const btn = $('aiVoiceBtn');
+            const recBar = document.getElementById('aiVoiceRecordingBar');
+            const timerEl = document.getElementById('aiVoiceTimer');
             if (!inp || !btn) return;
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) {
-                notify('🎤 Voice input not supported on this browser. Use Chrome / Edge / Safari for the best experience.', 'warn');
-                return;
-            }
+            if (!SR) { notify('🎤 Voice input not supported. Use Chrome / Edge / Safari.', 'warn'); return; }
             if (!window._wfAIVoiceRec && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
-                } catch (e) {
-                    notify('🎤 Microphone access denied. Please allow it in your browser settings.', 'error');
-                    return;
-                }
+                } catch (e) { notify('🎤 Microphone access denied.', 'error'); return; }
             }
-            // Toggle off if running
+            // Toggle off
             if (window._wfAIVoiceRec) {
                 try { window._wfAIVoiceRec.stop(); } catch (e) { }
                 window._wfAIVoiceRec = null;
-                btn.style.background = 'var(--card2)';
-                btn.style.color = 'var(--accent)';
-                btn.textContent = '🎤';
+                btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤';
+                if (recBar) recBar.style.display = 'none';
+                clearInterval(_aiVoiceTimer); _aiVoiceTimer = null;
                 return;
             }
             const settings = DB.getObj('settings', {});
@@ -7092,48 +7147,46 @@ YOUR PERSONALITY & CRITICAL RULES:
             rec.continuous = true;
             rec.maxAlternatives = 3;
             let finalText = inp.value ? inp.value + ' ' : '';
+            let silenceTimer = null;
             rec.onresult = (e) => {
                 let interim = '';
                 for (let i = e.resultIndex; i < e.results.length; i++) {
-                    const transcript = e.results[i][0].transcript;
-                    if (e.results[i].isFinal) {
-                        finalText += transcript + ' ';
-                    } else {
-                        interim += transcript;
-                    }
+                    if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+                    else interim += e.results[i][0].transcript;
                 }
                 inp.value = (finalText + interim).trim();
                 autoResizeAIInput(inp);
+                // Reset silence timer on speech
+                if (silenceTimer) clearTimeout(silenceTimer);
+                silenceTimer = setTimeout(() => {
+                    try { rec.stop(); } catch(e) {}
+                }, 4000); // Auto-stop after 4s silence
             };
             rec.onerror = (e) => {
-                let msg = 'Voice error: ' + e.error;
-                if (e.error === 'no-speech') msg = '🎤 No speech detected. Try again.';
-                else if (e.error === 'not-allowed') msg = '🎤 Microphone permission denied. Allow it in your browser settings.';
-                else if (e.error === 'audio-capture') msg = '🎤 No microphone found.';
-                else if (e.error === 'network') msg = '🎤 Network error — voice transcription needs internet.';
+                let msg = e.error === 'no-speech' ? '🎤 No speech detected.' : e.error === 'not-allowed' ? '🎤 Mic denied.' : '🎤 Voice error: ' + e.error;
                 notify(msg, 'error');
-                btn.style.background = 'var(--card2)';
-                btn.style.color = 'var(--accent)';
-                btn.textContent = '🎤';
-                window._wfAIVoiceRec = null;
+                btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤';
+                if (recBar) recBar.style.display = 'none';
+                clearInterval(_aiVoiceTimer); window._wfAIVoiceRec = null;
             };
             rec.onend = () => {
-                btn.style.background = 'var(--card2)';
-                btn.style.color = 'var(--accent)';
-                btn.textContent = '🎤';
-                window._wfAIVoiceRec = null;
+                btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤';
+                if (recBar) recBar.style.display = 'none';
+                clearInterval(_aiVoiceTimer); window._wfAIVoiceRec = null;
             };
             try {
                 rec.start();
                 window._wfAIVoiceRec = rec;
-                btn.style.background = 'var(--red)';
-                btn.style.color = '#fff';
-                btn.textContent = '🔴';
+                btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
+                if (recBar) recBar.style.display = 'block';
+                _aiVoiceSeconds = 0;
+                if (timerEl) timerEl.textContent = '0:00';
+                _aiVoiceTimer = setInterval(() => {
+                    _aiVoiceSeconds++;
+                    if (timerEl) timerEl.textContent = Math.floor(_aiVoiceSeconds/60) + ':' + String(_aiVoiceSeconds%60).padStart(2,'0');
+                }, 1000);
                 triggerHaptic('light');
-                notify('🎤 Listening… speak in any language. Tap again to stop.', 'info');
-            } catch (e) {
-                notify('🎤 Could not start: ' + e.message, 'error');
-            }
+            } catch (e) { notify('🎤 Could not start: ' + e.message, 'error'); }
         }
 
         function clearAIChat() {
@@ -7234,6 +7287,122 @@ YOUR PERSONALITY & CRITICAL RULES:
             container.innerHTML = suggestions.slice(0, 5).map(s =>
                 `<button class="ai-suggestion-pill" onclick="sendAIMessage('${s.replace(/'/g, "\\'")}')">  ${s}</button>`
             ).join('');
+        }
+
+        // ==================== TEXT-TO-SPEECH (Read Aloud) ====================
+        function _readAIAloud(btn) {
+            if (!('speechSynthesis' in window)) { notify('🔊 Text-to-speech not supported.', 'warn'); return; }
+            if (window.speechSynthesis.speaking) {
+                window.speechSynthesis.cancel();
+                btn.classList.remove('active'); btn.textContent = '🔊 Read'; return;
+            }
+            const rawText = btn.getAttribute('data-text') || btn.closest('.ai-bubble')?.innerText || '';
+            if (!rawText) return;
+            const s = DB.getObj('settings', {});
+            const utt = new SpeechSynthesisUtterance(rawText.replace(/[*#_~`]/g, ''));
+            utt.lang = s.aiResponseLang || 'en'; utt.rate = 0.95; utt.pitch = 1;
+            btn.classList.add('active'); btn.textContent = '⏹ Stop';
+            utt.onend = () => { btn.classList.remove('active'); btn.textContent = '🔊 Read'; };
+            utt.onerror = () => { btn.classList.remove('active'); btn.textContent = '🔊 Read'; };
+            window.speechSynthesis.speak(utt);
+        }
+
+        // ==================== LANGUAGE PICKER MODAL ====================
+        function openLangModal() {
+            const modal = document.getElementById('aiLangModal');
+            if (!modal) return;
+            modal.classList.add('show');
+            const search = document.getElementById('aiLangModalSearch');
+            if (search) { search.value = ''; setTimeout(() => search.focus(), 100); }
+            _renderLangModalList('');
+        }
+        function closeLangModal() {
+            const modal = document.getElementById('aiLangModal');
+            if (modal) modal.classList.remove('show');
+        }
+        function _renderLangModalList(query) {
+            const list = document.getElementById('aiLangModalList');
+            if (!list) return;
+            const s = DB.getObj('settings', {});
+            const current = s.aiResponseLang || 'en';
+            const q = query.toLowerCase().trim();
+            const popular = ['en','si','ta','hi','zh-CN','ja','ko','es','fr','de','ar','pt','ru'];
+            const entries = Object.entries(WF_LANG_NAMES).filter(([code]) => code !== 'auto');
+            const filtered = q ? entries.filter(([code, name]) => name.toLowerCase().includes(q) || code.toLowerCase().includes(q)) : entries;
+            let html = '';
+            if (!q) {
+                html += '<div class="ai-lang-group-title">⭐ Popular</div>';
+                popular.forEach(code => {
+                    const name = WF_LANG_NAMES[code] || code;
+                    html += '<div class="ai-lang-item ' + (code===current?'active':'') + '" onclick="selectAILanguage(\'' + code + '\')"><span class="ai-lang-item-name">' + name + '</span><span class="ai-lang-item-code">' + code + '</span><span class="ai-lang-item-check">✓</span></div>';
+                });
+                html += '<div class="ai-lang-group-title">🌍 All Languages</div>';
+            }
+            const sorted = filtered.sort((a,b) => a[1].localeCompare(b[1]));
+            sorted.forEach(([code, name]) => {
+                if (!q && popular.includes(code)) return;
+                html += '<div class="ai-lang-item ' + (code===current?'active':'') + '" onclick="selectAILanguage(\'' + code + '\')"><span class="ai-lang-item-name">' + name + '</span><span class="ai-lang-item-code">' + code + '</span><span class="ai-lang-item-check">✓</span></div>';
+            });
+            if (sorted.length === 0) html = '<div style="text-align:center;padding:30px;color:var(--text3);">No languages match</div>';
+            list.innerHTML = html;
+        }
+        function _filterLangModal() { _renderLangModalList(document.getElementById('aiLangModalSearch')?.value || ''); }
+        function selectAILanguage(code) {
+            const s = DB.getObj('settings', {});
+            s.aiResponseLang = code;
+            DB.set('settings', s);
+            const langName = WF_LANG_NAMES[code] || code;
+            notify('✓ AI will now respond in ' + langName, 'success');
+            triggerHaptic('toggle');
+            closeLangModal();
+            const badge = document.getElementById('aiLangBadge');
+            if (badge) badge.textContent = code.toUpperCase().split('-')[0];
+        }
+
+        // ==================== SCROLL-TO-BOTTOM HANDLER ====================
+        function _handleAIChatScroll() {
+            const c = document.getElementById('aiChatMessages');
+            const b = document.getElementById('aiScrollBottom');
+            if (!c || !b) return;
+            b.classList.toggle('show', c.scrollHeight - c.scrollTop - c.clientHeight > 100);
+        }
+
+        // ==================== AI CONTEXT PILLS ====================
+        function _updateAIContextPills() {
+            const el = document.getElementById('aiContextPills');
+            if (!el) return;
+            try {
+                const ctx = buildFinancialContext();
+                const pills = [];
+                if (ctx.incomeSources > 0) pills.push('💰 ' + ctx.incomeSources + ' income source' + (ctx.incomeSources>1?'s':''));
+                if (ctx.activeLoans > 0) pills.push('🏦 ' + ctx.activeLoans + ' loan' + (ctx.activeLoans>1?'s':''));
+                if (ctx.savingsTargets > 0) pills.push('🎯 ' + ctx.savingsTargets + ' goal' + (ctx.savingsTargets>1?'s':''));
+                const st = DB.getObj('settings', {});
+                const lang = WF_LANG_NAMES[st.aiResponseLang || 'en'] || 'English';
+                pills.push('🌐 ' + lang.split('(')[0].trim());
+                const persona = getAIPersona();
+                if (persona && persona.questionCount > 5) pills.push('🧠 ' + persona.questionCount + ' chats');
+                el.innerHTML = pills.map(function(p){ return '<span class="ai-context-pill">' + p + '</span>'; }).join('');
+            } catch(e) { el.innerHTML = ''; }
+        }
+
+        // ==================== AI PAGE INIT ====================
+        function _initAIPage() {
+            initAISuggestionPills();
+            _updateAIContextPills();
+            renderAIChatHistory();
+            var s = DB.getObj('settings', {});
+            var lang = s.aiResponseLang || 'en';
+            var badge = document.getElementById('aiLangBadge');
+            if (badge) badge.textContent = lang.toUpperCase().split('-')[0];
+            var persona = getAIPersona();
+            if (persona) {
+                var label = document.getElementById('aiPersonaLabel');
+                if (label) {
+                    var c = persona.questionCount || 0;
+                    label.textContent = c < 3 ? 'Learning your style...' : c < 8 ? 'Getting to know you...' : c < 20 ? 'Personalized ✓ (' + (persona.style||'balanced') + ')' : 'Fully personalized ✓';
+                }
+            }
         }
 
         // ==================== AI SMART NOTIFICATIONS ====================
@@ -9220,7 +9389,7 @@ YOUR PERSONALITY & CRITICAL RULES:
             if (fbar) fbar.classList.remove('show');
 
             if (name === 'ai') {
-                initAISuggestionPills();
+                _initAIPage();
                 requestAINotificationPermission();
                 const nb = $('nb-ai');
                 if (nb) nb.style.display = 'none';
