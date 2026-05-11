@@ -10925,7 +10925,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 const targetEl = iframe.contentDocument.body;
                 const canvas = await window.html2canvas(targetEl, {
-                    scale: 3, // Increased for original smooth quality
+                    scale: 2, // High resolution, ultra-fast generation
                     backgroundColor: '#ffffff',
                     useCORS: true,
                     logging: false,
@@ -10969,6 +10969,41 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
 
+
+        // Instant PDF Upload Network (Catbox -> Tmpfiles)
+        async function _uploadToFastShareNetwork(pdfBlob, fileName) {
+            try {
+                // Primary: Catbox API (Ultra-fast, permanent, no-auth)
+                const formData = new FormData();
+                formData.append('reqtype', 'fileupload');
+                formData.append('fileToUpload', pdfBlob, fileName);
+                
+                const abortCtrl = new AbortController();
+                const timer = setTimeout(() => abortCtrl.abort(), 4000); // 4 seconds max
+                const res = await fetch('https://catbox.moe/user/api.php', { 
+                    method: 'POST', 
+                    body: formData,
+                    signal: abortCtrl.signal
+                });
+                clearTimeout(timer);
+                
+                if (res.ok) return { url: await res.text(), permanent: true };
+            } catch (e) {
+                console.warn('Catbox failed, falling back...', e);
+            }
+
+            // Fallback: Tmpfiles (60 min expiry)
+            try {
+                const formData = new FormData();
+                formData.append('file', pdfBlob, fileName);
+                const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData });
+                if (!res.ok) throw new Error('Backup network rejected');
+                const data = await res.json();
+                return { url: data.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/'), permanent: false };
+            } catch (e) {
+                throw new Error('All sharing networks failed');
+            }
+        }
 
         // Generate shareable URL — Multi-strategy approach for 100% reliability
         async function _generateShareableStatementUrl(l) {
@@ -11015,75 +11050,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                     outPdfBlob = await _statementHtmlToPdfBlob(statementHTML, l.name);
                     if (cancelled) return;
 
-                    setMsg('Generating instant shareable link…');
+                    setMsg('Uploading to secure high-speed network…');
                     const safeName = (l.name || 'Loan').replace(/[^a-zA-Z0-9_\\-]/g, '');
                     const fileName = `WealthFlow_Statement_${safeName}_${Date.now()}.pdf`;
 
-                    // Try Firebase Storage first if available (fastest for authenticated users)
-                    if (typeof firebase !== 'undefined' && firebase.storage && currentUser) {
-                        try {
-                            const storageRef = firebase.storage().ref();
-                            const fileRef = storageRef.child('statements/' + fileName);
-                            const downloadURL = await new Promise((resolve, reject) => {
-                                const uploadTask = fileRef.put(outPdfBlob, { contentType: 'application/pdf' });
-                                let settled = false;
-                                const timeout = setTimeout(() => {
-                                    if (!settled) { settled = true; uploadTask.cancel(); reject(new Error('Upload timed out')); }
-                                }, 5000); // 5 seconds max for Firebase
-                                uploadTask.on('state_changed', null,
-                                    (error) => { if (!settled) { settled = true; clearTimeout(timeout); reject(error); } },
-                                    async () => {
-                                        if (settled) return;
-                                        settled = true; clearTimeout(timeout);
-                                        try { resolve(await uploadTask.snapshot.ref.getDownloadURL()); } catch (e) { reject(e); }
-                                    }
-                                );
-                            });
-                            shareUrl = downloadURL;
-                            isPermanent = true;
-                        } catch (fbErr) {
-                            console.warn('Firebase Storage upload failed, falling back to public network', fbErr);
-                        }
-                    }
-
-                    // Fallback to Catbox API (Ultra-fast, permanent, no-auth)
-                    if (!shareUrl) {
-                        setMsg('Finalizing secure link…');
-                        try {
-                            const formData = new FormData();
-                            formData.append('reqtype', 'fileupload');
-                            formData.append('fileToUpload', outPdfBlob, fileName);
-                            
-                            const abortCtrl = new AbortController();
-                            const timer = setTimeout(() => abortCtrl.abort(), 5000);
-                            const res = await fetch('https://catbox.moe/user/api.php', { 
-                                method: 'POST', 
-                                body: formData,
-                                signal: abortCtrl.signal
-                            });
-                            clearTimeout(timer);
-                            
-                            if (res.ok) {
-                                shareUrl = await res.text();
-                                isPermanent = true;
-                            }
-                        } catch (catErr) {
-                            console.warn('Catbox failed, trying tmpfiles...', catErr);
-                        }
-                    }
-
-                    // Final Fallback to tmpfiles
-                    if (!shareUrl) {
-                        setMsg('Using backup network…');
-                        const formData = new FormData();
-                        formData.append('file', outPdfBlob, fileName);
-                        
-                        const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData });
-                        if (!res.ok) throw new Error('Backup network rejected upload');
-                        const data = await res.json();
-                        shareUrl = data.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
-                        isPermanent = false;
-                    }
+                    const uploadRes = await _uploadToFastShareNetwork(outPdfBlob, fileName);
+                    shareUrl = uploadRes.url;
+                    isPermanent = uploadRes.permanent;
                 } catch (e) {
                     console.warn('[Share] PDF generation/upload failed:', e);
                 }
@@ -14080,29 +14053,31 @@ table.amort tbody tr { page-break-inside: avoid; }
             a.click();
             document.body.removeChild(a);
 
-            // Upload to Firebase Storage to get a shareable URL
-            notify('Generating secure shareable link...', 'info');
-            const storageRef = firebase.storage().ref();
-            const fileName = `statements/WealthFlow_Statement_${new Date().getTime()}.pdf`;
-            const fileRef = storageRef.child(fileName);
+            // Instant Upload Network
+            notify('Generating instant shareable link...', 'info');
+            _uploadToFastShareNetwork(pdfBlob, a.download).then(res => {
+                const downloadURL = res.url;
+                try {
+                    const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
+                    hist.unshift({ url: downloadURL, loanName: 'Elite Report', createdAt: new Date().toISOString() });
+                    if (hist.length > 50) hist.length = 50;
+                    localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
+                } catch(e) { }
 
-            fileRef.put(pdfBlob).then(snapshot => {
-                return snapshot.ref.getDownloadURL();
-            }).then(downloadURL => {
-                navigator.clipboard.writeText(downloadURL).then(() => {
-                    notify('Shareable Link copied to clipboard! ✨', 'success');
-                });
+                navigator.clipboard.writeText(downloadURL).catch(()=>{});
+                notify('Shareable Link copied to clipboard! ✨', 'success');
 
                 if (navigator.share) {
                     navigator.share({
                         title: 'WealthFlow Elite Statement',
-                        text: 'Here is your generated financial statement from WealthFlow.',
+                        text: 'Here is your generated financial statement from WealthFlow. URL: ' + downloadURL,
                         url: downloadURL
-                    }).catch(e => console.log('Share failed:', e));
+                    }).catch(()=>{});
+                } else {
+                    _showShareableUrlDialog({name: 'Elite PDF Report', bank: 'WealthFlow Analytics'}, downloadURL, res.permanent, pdfBlob);
                 }
-            }).catch(err => {
-                console.error("Storage upload error:", err);
-                notify('Downloaded locally. Cloud link unavailable (Check connection or auth).', 'error');
+            }).catch(e => {
+                notify('Could not generate shareable link.', 'error');
             });
         }
 
