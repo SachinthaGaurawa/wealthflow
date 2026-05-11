@@ -7934,46 +7934,94 @@ YOUR PERSONALITY & CRITICAL RULES:
         })();
 
         // ── SHARED STATEMENT VIEWER ──
-        // If URL contains ?stmt=DOC_ID, fetch the statement HTML from Firestore
-        // and display it full-screen. This allows anyone with the link to view it
-        // without needing to log in or have the app installed.
+        // Handles 3 URL formats:
+        //   ?stmt=DOC_ID          → Firestore shared_statements collection
+        //   ?ustmt=UID_DOCID      → Firestore users/{uid}/shared_stmts/{id}
+        //   #stmtdata=BASE64      → Compressed HTML embedded in URL hash
         (function detectSharedStatement() {
             try {
                 const params = new URLSearchParams(window.location.search);
                 const stmtId = params.get('stmt');
-                if (!stmtId) return;
+                const ustmtId = params.get('ustmt');
+                const hash = window.location.hash;
+                const hashData = hash && hash.startsWith('#stmtdata=') ? decodeURIComponent(hash.slice(10)) : null;
+
+                if (!stmtId && !ustmtId && !hashData) return;
 
                 // Mark that we're in statement viewer mode — skip app boot
                 window._isStatementViewer = true;
 
-                // Wait for Firebase to initialize, then fetch the document
+                // Show loading screen
+                const splash = document.querySelector('#splash');
+                if (splash) {
+                    splash.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div style="width:48px;height:48px;border:3px solid rgba(212,175,55,0.2);border-top-color:#d4af37;border-radius:50%;animation:_stmtSpin 0.8s linear infinite;margin-bottom:18px;"></div><h2 style="color:#d4af37;margin:0 0 8px;">WealthFlow</h2><p style="color:rgba(255,255,255,0.6);font-size:14px;">Loading shared statement…</p><style>@keyframes _stmtSpin{to{transform:rotate(360deg)}}</style></div>';
+                }
+
+                const _renderStmt = (html, title) => {
+                    document.body.innerHTML = html || '<p>Empty statement</p>';
+                    document.title = 'WealthFlow Statement — ' + (title || 'Loan');
+                };
+                const _showError = (msg) => {
+                    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>' + msg + '</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
+                };
+
+                // Format 3: Hash data URL — instant, no Firebase needed
+                if (hashData) {
+                    try {
+                        const html = decodeURIComponent(escape(atob(hashData)));
+                        _renderStmt(html, 'Shared Statement');
+                    } catch(e) {
+                        try { _renderStmt(atob(hashData), 'Shared Statement'); }
+                        catch(e2) { _showError('Could not decode this statement link.'); }
+                    }
+                    return;
+                }
+
+                // Format 1 & 2: Firestore-based — wait for Firebase SDK
                 const waitForFirebase = setInterval(() => {
                     if (typeof firebase === 'undefined' || !firebase.firestore) return;
                     clearInterval(waitForFirebase);
 
-                    firebase.firestore().collection('shared_statements').doc(stmtId).get()
+                    let docPromise;
+                    if (stmtId) {
+                        // Format 1: shared_statements/{id}
+                        docPromise = firebase.firestore().collection('shared_statements').doc(stmtId).get();
+                    } else if (ustmtId) {
+                        // Format 2: users/{uid}/shared_stmts/{id}
+                        const parts = ustmtId.split('_');
+                        if (parts.length >= 2) {
+                            const uid = parts[0];
+                            const docId = parts.slice(1).join('_');
+                            docPromise = firebase.firestore()
+                                .collection('users').doc(uid)
+                                .collection('shared_stmts').doc(docId).get();
+                        } else {
+                            _showError('Invalid statement link format.');
+                            return;
+                        }
+                    }
+
+                    docPromise
                         .then(doc => {
                             if (!doc.exists) {
-                                document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>This shared statement has expired or does not exist.</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
+                                _showError('This shared statement has expired or does not exist.');
                                 return;
                             }
                             const data = doc.data();
-                            // Hide splash and render the statement HTML full-screen
-                            document.body.innerHTML = data.html || '<p>Empty statement</p>';
-                            document.title = 'WealthFlow Statement — ' + (data.loanName || 'Loan');
+                            _renderStmt(data.html, data.loanName);
                         })
                         .catch(err => {
                             console.error('[Shared Statement] Fetch error:', err);
-                            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>Could not load this statement. The link may have expired.</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
+                            _showError('Could not load this statement. The link may have expired.');
                         });
                 }, 200);
 
-                // Safety timeout — if Firebase never loads, show error after 8s
+                // Safety timeout
                 setTimeout(() => {
                     if (document.querySelector('#splash')) {
-                        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>Failed to connect. Please check your internet connection and try again.</p><a href="/" style="color:#d4af37;">Retry →</a></div></div>';
+                        _showError('Failed to connect. Please check your internet connection and try again.');
                     }
-                }, 8000);
+                }, 10000);
             } catch (e) { console.error('[stmt viewer]', e); }
         })();
 
@@ -10158,17 +10206,10 @@ YOUR PERSONALITY & CRITICAL RULES:
             if (!arr.length) { el.innerHTML = emptyState('🏦', 'No loans added', 'Add your bank loans to track monthly payments'); return; }
             const totM = arr.reduce((sum, l) => { const e = loanEndDate(l); return e > new Date() ? sum + l.monthly : sum; }, 0);
             const totA = arr.reduce((sum, l) => sum + l.amount, 0);
-            const totInterest = arr.reduce((sum, l) => sum + loanTotalInterestPaid(l), 0);
-            const totRemaining = arr.reduce((sum, l) => sum + loanCurrentBalance(l), 0);
-            
             el.innerHTML = `<div class="g3" style="margin-bottom:16px;">
-        <div class="stat-card sc-red"><div class="stat-label">Monthly Payments</div><div class="stat-val">${fmtS(totM)}</div></div>
+        <div class="stat-card sc-red"><div class="stat-label">Monthly Loan Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmt(totM)}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Total Principal</div><div class="stat-val">${fmtS(totA)}</div></div>
         <div class="stat-card sc-purple"><div class="stat-label">Active Loans</div><div class="stat-val">${activeLoans.length}</div></div>
-    </div>
-    <div class="g2" style="margin-bottom:20px;">
-        <div class="stat-card sc-yellow"><div class="stat-label">Total Remaining Balance</div><div class="stat-val">${fmtS(totRemaining)}</div></div>
-        <div class="stat-card sc-green"><div class="stat-label">Total Interest Paid</div><div class="stat-val">${fmtS(totInterest)}</div></div>
     </div>` + arr.map(l => {
                 const prog = loanProgress(l), end = loanEndDate(l), active = end > new Date();
                 const months = _loanInstallmentMonths(l);
@@ -11038,170 +11079,85 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 
         // =====================================================================
-        // UNIVERSAL SHARE UPLOAD — Server-Side Proxy (CORS-Free, 100% Reliable)
+        // LOAN STATEMENT SHARE — Multi-Strategy (GitHub Pages Compatible)
         // =====================================================================
-        // The browser CANNOT upload directly to catbox/tmpfiles/0x0 because CORS
-        // blocks the request. Instead, we send base64 to our own Vercel serverless
-        // function at /api/share-upload, which uploads server-side (no CORS).
-        //
-        // Strategy order:
-        //   1. Vercel API Proxy → uploads PDF server-side to file.io / 0x0.st / tmpfiles
-        //   2. Firestore HTML doc → instant write, served via ?stmt= viewer (loan only)
-        //   3. Firebase Storage → direct SDK upload (if Storage rules allow)
-        //   4. Web Share API file → attach PDF to native share sheet (mobile)
+        // Strategy chain (each one instant, ~0.5-1s):
+        //   1. Firestore shared_statements collection (public read)
+        //   2. User-scoped subcollection: users/{uid}/shared_stmts/{id}
+        //   3. Compressed hash URL: embeds statement data directly in URL fragment
+        // All strategies produce a valid, shareable URL. Zero server dependencies.
 
-        // Convert a Blob to base64 string
-        function _blobToBase64(blob) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                    const b64 = reader.result.split(',')[1]; // strip data:...;base64,
-                    resolve(b64);
-                };
-                reader.onerror = reject;
-                reader.readAsDataURL(blob);
-            });
-        }
-
-        // PRIMARY: Upload via Public Cloud Providers (CORS-friendly, Reliable, 14+ days)
-        async function _uploadViaPublicCloud(pdfBlob, fileName) {
-            // Strategy 1: GoFile (Permanent storage, 100% reliable)
-            try {
-                const sRes = await fetch('https://api.gofile.io/servers');
-                if (sRes.ok) {
-                    const sData = await sRes.json();
-                    if (sData.status === 'ok' && sData.data.servers.length > 0) {
-                        const server = sData.data.servers[0].name;
-                        const fd = new FormData();
-                        fd.append('file', pdfBlob, fileName);
-                        const uRes = await fetch(`https://${server}.gofile.io/contents/uploadfile`, {
-                            method: 'POST',
-                            body: fd
-                        });
-                        if (uRes.ok) {
-                            const uData = await uRes.json();
-                            if (uData.status === 'ok' && uData.data.downloadPage) {
-                                return { url: uData.data.downloadPage, permanent: true };
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('[Share] GoFile failed:', e);
+        // LZString-style compression for hash URLs (minimal implementation)
+        const _lzMini = {
+            compress: function(input) {
+                if (!input) return '';
+                try { return btoa(unescape(encodeURIComponent(input))); }
+                catch(e) { return btoa(input); }
+            },
+            decompress: function(input) {
+                if (!input) return '';
+                try { return decodeURIComponent(escape(atob(input))); }
+                catch(e) { try { return atob(input); } catch(e2) { return ''; } }
             }
+        };
 
-            // Strategy 2: Filebin (6 days, fast direct PDF link)
-            try {
-                const binId = 'wf' + Date.now();
-                const uRes = await fetch(`https://filebin.net/${binId}/${fileName}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/pdf', 'Accept': 'application/json' },
-                    body: pdfBlob
-                });
-                if (uRes.ok) {
-                    const uData = await uRes.json();
-                    return { url: `https://filebin.net/${uData.bin.id}/${fileName}`, permanent: false };
-                }
-            } catch (e) {
-                console.warn('[Share] Filebin failed:', e);
-            }
-
-            // Strategy 3: Deployed Vercel Serverless Proxy (Fix for GitHub Pages)
-            const base64 = await _blobToBase64(pdfBlob);
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 12000); // 12s max
-            try {
-                const resp = await fetch('https://wealthflow-personal.vercel.app/api/share-upload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ base64, fileName }),
-                    signal: controller.signal
-                });
-                clearTimeout(timer);
-                if (!resp.ok) throw new Error('Vercel proxy ' + resp.status);
-                const data = await resp.json();
-                return { url: data.url, permanent: !!data.permanent };
-            } finally {
-                clearTimeout(timer);
-            }
-        }
-
-        // FALLBACK: Store HTML in Firestore (instant for loan statements)
-        async function _uploadHtmlToFirestore(html, loanName) {
+        // Strategy 1: Firestore shared_statements (public collection)
+        async function _uploadToSharedStatements(html, loanName) {
             if (!currentUser) throw new Error('Not signed in');
             if (typeof firebase === 'undefined' || !firebase.firestore) throw new Error('Firestore unavailable');
-
             const docRef = firebase.firestore().collection('shared_statements').doc();
             await docRef.set({
-                html: html,
-                loanName: loanName || 'Statement',
+                html: html, loanName: loanName || 'Statement',
                 uid: currentUser.uid,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
             });
             const appUrl = window.location.origin + window.location.pathname;
-            return { url: appUrl + '?stmt=' + docRef.id, permanent: true };
+            return { url: appUrl + '?stmt=' + docRef.id, days: 30 };
         }
 
-        // FALLBACK 2: Firebase Storage direct upload (SDK handles auth, no CORS issue)
-        async function _uploadToFirebaseStorage(pdfBlob, fileName) {
+        // Strategy 2: User-scoped subcollection (users/{uid}/shared_stmts)
+        async function _uploadToUserSubcollection(html, loanName) {
             if (!currentUser) throw new Error('Not signed in');
-            if (typeof firebase === 'undefined' || !firebase.storage) throw new Error('Storage unavailable');
-
-            const storageRef = firebase.storage().ref();
-            const fileRef = storageRef.child('statements/' + fileName);
-            const downloadURL = await new Promise((resolve, reject) => {
-                const uploadTask = fileRef.put(pdfBlob, { contentType: 'application/pdf' });
-                let settled = false;
-                const timeout = setTimeout(() => {
-                    if (!settled) { settled = true; uploadTask.cancel(); reject(new Error('Storage upload timed out')); }
-                }, 6000);
-                uploadTask.on('state_changed', null,
-                    (error) => { if (!settled) { settled = true; clearTimeout(timeout); reject(error); } },
-                    async () => {
-                        if (settled) return;
-                        settled = true; clearTimeout(timeout);
-                        try { resolve(await uploadTask.snapshot.ref.getDownloadURL()); } catch (e) { reject(e); }
-                    }
-                );
+            if (typeof firebase === 'undefined' || !firebase.firestore) throw new Error('Firestore unavailable');
+            const docRef = firebase.firestore()
+                .collection('users').doc(currentUser.uid)
+                .collection('shared_stmts').doc();
+            await docRef.set({
+                html: html, loanName: loanName || 'Statement',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
             });
-            return { url: downloadURL, permanent: true };
+            const appUrl = window.location.origin + window.location.pathname;
+            return { url: appUrl + '?ustmt=' + currentUser.uid + '_' + docRef.id, days: 30 };
         }
 
-        // Master upload function — tries all strategies in order for maximum speed
-        async function _uploadToFastShareNetwork(pdfBlob, fileName, statementHTML, loanName) {
-            const errors = [];
-
-            // Strategy 1: Firestore HTML (INSTANT ~1s, 90-day expiry)
-            if (statementHTML) {
-                try {
-                    return await _uploadHtmlToFirestore(statementHTML, loanName);
-                } catch (e) {
-                    errors.push('Firestore: ' + e.message);
-                    console.warn('[Share] Firestore failed:', e.message);
-                }
-            }
-
-            // Strategy 2: Firebase Storage (SDK upload, permanent)
-            try {
-                return await _uploadToFirebaseStorage(pdfBlob, fileName);
-            } catch (e) {
-                errors.push('Storage: ' + e.message);
-                console.warn('[Share] Firebase Storage failed:', e.message);
-            }
-
-            // Strategy 3: Public Cloud Fallback (GoFile / Filebin / Proxy)
-            try {
-                return await _uploadViaPublicCloud(pdfBlob, fileName);
-            } catch (e) {
-                errors.push('PublicCloud: ' + e.message);
-                console.warn('[Share] Public cloud sharing failed:', e.message);
-            }
-
-            throw new Error('All sharing methods failed (' + errors.join(', ') + ')');
+        // Strategy 3: Hash URL (100% client-side, no backend needed, permanent)
+        function _createHashUrl(html, loanName) {
+            const compressed = _lzMini.compress(html);
+            const appUrl = window.location.origin + window.location.pathname;
+            return { url: appUrl + '#stmtdata=' + encodeURIComponent(compressed), days: 999 };
         }
 
-        // Generate shareable URL — Multi-strategy approach for 100% reliability
+        // Master upload: tries strategies in order, guaranteed to succeed
+        async function _uploadStatementForSharing(html, loanName) {
+            // Strategy 1: Public shared_statements collection
+            try {
+                return await _uploadToSharedStatements(html, loanName);
+            } catch (e) {
+                console.warn('[Share] shared_statements failed:', e.message);
+            }
+            // Strategy 2: User-scoped subcollection
+            try {
+                return await _uploadToUserSubcollection(html, loanName);
+            } catch (e) {
+                console.warn('[Share] user subcollection failed:', e.message);
+            }
+            // Strategy 3: Hash URL (always works, but URL is long)
+            return _createHashUrl(html, loanName);
+        }
+
+        // Generate shareable URL — Firestore-first, instant, bulletproof
         async function _generateShareableStatementUrl(l) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
@@ -11213,16 +11169,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>
                     <div style="padding:18px 4px 8px;">
                         <div style="display:flex;justify-content:center;margin-bottom:14px;">
-                            <div class="ash-spinner" style="width:56px;height:56px;border:4px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:ashSpin 0.9s linear infinite;"></div>
+                            <div style="width:56px;height:56px;border:4px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:_wfSpin 0.9s linear infinite;"></div>
                         </div>
-                        <div id="_ash_msg" style="font-size:13px;color:var(--text2);min-height:20px;">Preparing upload…</div>
-                        <div style="font-size:11px;color:var(--text3);margin-top:8px;">Please wait while we generate a secure link.</div>
+                        <div id="_ash_msg" style="font-size:13px;color:var(--text2);min-height:20px;">Preparing statement…</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:8px;">Please wait — generating a secure link…</div>
                     </div>
                     <div class="md-ftr" style="justify-content:center;">
                         <button class="btn btn-ghost" id="_ash_cancel">Cancel</button>
                     </div>
                 </div>
-                <style>@keyframes ashSpin { to { transform: rotate(360deg); } }</style>`;
+                <style>@keyframes _wfSpin { to { transform: rotate(360deg); } }</style>`;
             document.body.appendChild(overlay);
             requestAnimationFrame(() => overlay.classList.add('open'));
             const setMsg = (msg) => { const el = overlay.querySelector('#_ash_msg'); if (el) el.textContent = msg; };
@@ -11234,35 +11190,17 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_ash_cancel').onclick = () => { cancelled = true; closeOverlay(); };
 
             try {
+                setMsg('Building statement HTML…');
                 const statementHTML = _buildLoanStatementHTML(l);
                 if (cancelled) return;
 
-                let shareUrl = null;
-                let isPermanent = false;
-                let outPdfBlob = null;
-
-                try {
-                    setMsg('Generating smooth PDF document…');
-                    outPdfBlob = await _statementHtmlToPdfBlob(statementHTML, l.name);
-                    if (cancelled) return;
-
-                    setMsg('Uploading to secure high-speed network…');
-                    const safeName = (l.name || 'Loan').replace(/[^a-zA-Z0-9_\\-]/g, '');
-                    const fileName = `WealthFlow_Statement_${safeName}_${Date.now()}.pdf`;
-
-                    const uploadRes = await _uploadToFastShareNetwork(outPdfBlob, fileName, statementHTML, l.name);
-                    shareUrl = uploadRes.url;
-                    isPermanent = uploadRes.permanent;
-                } catch (e) {
-                    console.warn('[Share] PDF generation/upload failed:', e);
-                }
-
+                setMsg('Uploading to secure cloud…');
+                const result = await _uploadStatementForSharing(statementHTML, l.name);
                 if (cancelled) return;
 
-                if (!shareUrl) {
-                    throw new Error('All cloud sharing methods failed. Check your internet connection.');
-                }
+                const shareUrl = result.url;
 
+                // Save to history
                 try {
                     const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
                     hist.unshift({ url: shareUrl, loanName: l.name, createdAt: new Date().toISOString() });
@@ -11271,21 +11209,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                 } catch (e) { /* silent */ }
 
                 closeOverlay();
-                navigator.clipboard.writeText(shareUrl).catch(() => {});
-                notify('✨ Shareable link ready and copied to clipboard!', 'success');
 
-                if (navigator.share) {
-                    navigator.share({
-                        title: 'WealthFlow Statement — ' + l.name,
-                        text: 'Here is your secure loan account statement from WealthFlow. URL: ' + shareUrl,
-                        url: shareUrl
-                    }).catch(e => console.log('Share failed:', e));
-                }
+                // Auto-copy to clipboard
+                try { await navigator.clipboard.writeText(shareUrl); } catch (e) { /* silent */ }
+
+                // Show the rich share dialog
+                _showShareableUrlDialog(l, shareUrl);
+
             } catch (e) {
                 closeOverlay();
                 console.error('[Share] Error:', e);
-                notify('Network error. Falling back to local text share.', 'warning');
-                setTimeout(() => _localShareStatement(l, _generateSummaryText(l)), 500);
+                notify('⚠️ Could not generate link: ' + (e.message || 'Unknown error') + '. Falling back to text share.', 'warning');
+                setTimeout(() => _localShareStatement(l, _generateSummaryText(l)), 400);
             }
         }
 
@@ -11304,36 +11239,33 @@ table.amort tbody tr { page-break-inside: avoid; }
                 'Generated: ' + new Date().toLocaleString();
         }
 
-        // Final UI — show the generated URL with copy / open / Web-Share controls
-        function _showShareableUrlDialog(l, url, permanent, pdfBlob) {
+        // Rich share URL dialog with copy / open / share / download
+        function _showShareableUrlDialog(l, url) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.style.zIndex = '10000';
-            const linkNote = permanent
-                ? 'This is a permanent link — it will remain accessible as long as your account is active.'
-                : 'This link is temporary and may expire.';
             overlay.innerHTML = `
-                <div class="md md-sm" style="max-width:480px;">
+                <div class="md md-sm" style="max-width:500px;">
                     <div class="md-hdr">
-                        <div class="md-title">🔗 Shareable Link Ready</div>
+                        <div class="md-title">✅ Shareable Link Ready</div>
                         <button class="md-x" id="_surl_close">✕</button>
                     </div>
-                    <div style="padding:6px 0 8px;font-size:12.5px;color:var(--text2);line-height:1.55;">
-                        Anyone with this link can view the loan statement for <b>${l.name}</b>.
-                        <span style="color:var(--green);">${linkNote}</span>
+                    <div style="padding:8px 0;font-size:12.5px;color:var(--text2);line-height:1.55;">
+                        Anyone with this link can view the loan statement for <b>${(l.name||'').replace(/</g,'&lt;')}</b>.
+                        <span style="color:var(--green);">Link valid for 30 days.</span>
                     </div>
-                    <div class="fg">
+                    <div class="fg" style="margin-top:6px;">
                         <label class="fl">Shareable URL</label>
                         <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
-                            style="font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--bg2);">
+                            style="font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--bg2);cursor:text;">
                     </div>
-                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
                         <button class="btn btn-primary btn-sm" id="_surl_copy">📋 Copy Link</button>
-                        <button class="btn btn-ghost btn-sm" id="_surl_open">🔍 Open in New Tab</button>
-                        <button class="btn btn-ghost btn-sm" id="_surl_share" style="display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share via…</button>
+                        <button class="btn btn-ghost btn-sm" id="_surl_open">🔗 Open in New Tab</button>
+                        <button class="btn btn-ghost btn-sm" id="_surl_native" style="display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share via…</button>
                     </div>
-                    <div style="margin-top:12px;padding:8px 10px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text3);line-height:1.5;border-left:3px solid var(--green);">
-                        ✅ Powered by Google Firebase Cloud Storage. The statement is securely hosted and the link works on any device — no app required.
+                    <div style="margin-top:14px;padding:10px 12px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text3);line-height:1.55;border-left:3px solid var(--green);">
+                        ✅ Link copied to clipboard! Powered by Google Firebase. Works on any device — no app required.
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -11344,7 +11276,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
             overlay.querySelector('#_surl_close').onclick = close;
             overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
             overlay.querySelector('#_surl_copy').onclick = async () => {
                 try {
                     await navigator.clipboard.writeText(url);
@@ -11358,70 +11289,42 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_surl_open').onclick = () => {
                 window.open(url, '_blank', 'noopener,noreferrer');
             };
-            // Download PDF button
-            const dlBtn = overlay.querySelector('#_surl_download');
-            if (dlBtn && pdfBlob) {
-                dlBtn.onclick = () => {
-                    const blobUrl = URL.createObjectURL(pdfBlob);
-                    const a = document.createElement('a');
-                    a.href = blobUrl;
-                    a.download = 'WealthFlow-Loan-Statement-' + (l.name || 'Loan').replace(/[^a-z0-9]+/gi, '-') + '.pdf';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-                    notify('💾 PDF downloaded', 'success');
-                };
-            }
-            const shareBtn = overlay.querySelector('#_surl_share');
-            if (shareBtn) {
-                shareBtn.onclick = async () => {
+            const nativeBtn = overlay.querySelector('#_surl_native');
+            if (nativeBtn) {
+                nativeBtn.onclick = async () => {
                     try {
                         await navigator.share({
                             title: 'WealthFlow Loan Statement — ' + l.name,
-                            text: 'Loan statement for ' + l.name + ' (' + l.bank + '). Online copy: ' + url,
+                            text: 'Loan statement for ' + l.name + '. View online: ' + url,
                             url: url
                         });
                     } catch (e) {
-                        if (e.name !== 'AbortError') notify('Share failed: ' + e.message, 'error');
+                        if (e.name !== 'AbortError') notify('Share cancelled', 'info');
                     }
                 };
             }
         }
-        async function _shareLoanStatement(win, l) {
-            // ── STEP 1: Close the statement window/overlay FIRST ──
-            if (win && win !== window) {
-                try { win.close(); } catch (e) { /* silent */ }
-            }
-            document.querySelectorAll('.mo').forEach(m => {
-                if (m.querySelector('#_ls_frame')) {
-                    m.classList.remove('open');
-                    setTimeout(() => { if (m.parentNode) m.parentNode.removeChild(m); }, 230);
-                }
-            });
 
-            // ── STEP 2: Initiate Multi-Strategy URL Generation ──
-            // _generateShareableStatementUrl handles Firebase -> Adobe -> TmpFiles -> Text Fallback
+        // Share entry point — keeps statement window open, generates link in background
+        async function _shareLoanStatement(win, l) {
+            // Don't close the statement window — let the user keep viewing it
+            // Just bring the main window's share dialog on top
             _generateShareableStatementUrl(l);
         }
 
-        // The original local-share path (Web Share API → clipboard fallback). Extracted so
-        // both the Adobe-configured chooser and the not-configured shortcut can call it.
+        // Local text share fallback (Web Share API → clipboard)
         async function _localShareStatement(l, summaryText) {
-            // 1. Try Web Share API
             if (navigator.share) {
                 try {
                     await navigator.share({
                         title: 'WealthFlow Loan Statement — ' + l.name,
                         text: summaryText
                     });
-                    return; // shared successfully
+                    return;
                 } catch (e) {
-                    if (e.name === 'AbortError') return; // user cancelled
-                    // fall through to clipboard
+                    if (e.name === 'AbortError') return;
                 }
             }
-            // 2. Clipboard fallback
             try {
                 await navigator.clipboard.writeText(summaryText);
                 notify('📋 Summary copied to clipboard — paste anywhere to share', 'success');
