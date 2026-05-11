@@ -10158,10 +10158,17 @@ YOUR PERSONALITY & CRITICAL RULES:
             if (!arr.length) { el.innerHTML = emptyState('🏦', 'No loans added', 'Add your bank loans to track monthly payments'); return; }
             const totM = arr.reduce((sum, l) => { const e = loanEndDate(l); return e > new Date() ? sum + l.monthly : sum; }, 0);
             const totA = arr.reduce((sum, l) => sum + l.amount, 0);
+            const totInterest = arr.reduce((sum, l) => sum + loanTotalInterestPaid(l), 0);
+            const totRemaining = arr.reduce((sum, l) => sum + loanCurrentBalance(l), 0);
+            
             el.innerHTML = `<div class="g3" style="margin-bottom:16px;">
-        <div class="stat-card sc-red"><div class="stat-label">Monthly Loan Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmt(totM)}</div></div>
+        <div class="stat-card sc-red"><div class="stat-label">Monthly Payments</div><div class="stat-val">${fmtS(totM)}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Total Principal</div><div class="stat-val">${fmtS(totA)}</div></div>
         <div class="stat-card sc-purple"><div class="stat-label">Active Loans</div><div class="stat-val">${activeLoans.length}</div></div>
+    </div>
+    <div class="g2" style="margin-bottom:20px;">
+        <div class="stat-card sc-yellow"><div class="stat-label">Total Remaining Balance</div><div class="stat-val">${fmtS(totRemaining)}</div></div>
+        <div class="stat-card sc-green"><div class="stat-label">Total Interest Paid</div><div class="stat-val">${fmtS(totInterest)}</div></div>
     </div>` + arr.map(l => {
                 const prog = loanProgress(l), end = loanEndDate(l), active = end > new Date();
                 const months = _loanInstallmentMonths(l);
@@ -11056,23 +11063,62 @@ table.amort tbody tr { page-break-inside: avoid; }
             });
         }
 
-        // PRIMARY: Upload via Vercel serverless proxy (bypasses ALL CORS)
-        async function _uploadViaServerProxy(pdfBlob, fileName) {
+        // PRIMARY: Upload via Public Cloud Providers (CORS-friendly, Reliable, 14+ days)
+        async function _uploadViaPublicCloud(pdfBlob, fileName) {
+            // Strategy 1: GoFile (Permanent storage, 100% reliable)
+            try {
+                const sRes = await fetch('https://api.gofile.io/servers');
+                if (sRes.ok) {
+                    const sData = await sRes.json();
+                    if (sData.status === 'ok' && sData.data.servers.length > 0) {
+                        const server = sData.data.servers[0].name;
+                        const fd = new FormData();
+                        fd.append('file', pdfBlob, fileName);
+                        const uRes = await fetch(`https://${server}.gofile.io/contents/uploadfile`, {
+                            method: 'POST',
+                            body: fd
+                        });
+                        if (uRes.ok) {
+                            const uData = await uRes.json();
+                            if (uData.status === 'ok' && uData.data.downloadPage) {
+                                return { url: uData.data.downloadPage, permanent: true };
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[Share] GoFile failed:', e);
+            }
+
+            // Strategy 2: Filebin (6 days, fast direct PDF link)
+            try {
+                const binId = 'wf' + Date.now();
+                const uRes = await fetch(`https://filebin.net/${binId}/${fileName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/pdf', 'Accept': 'application/json' },
+                    body: pdfBlob
+                });
+                if (uRes.ok) {
+                    const uData = await uRes.json();
+                    return { url: `https://filebin.net/${uData.bin.id}/${fileName}`, permanent: false };
+                }
+            } catch (e) {
+                console.warn('[Share] Filebin failed:', e);
+            }
+
+            // Strategy 3: Deployed Vercel Serverless Proxy (Fix for GitHub Pages)
             const base64 = await _blobToBase64(pdfBlob);
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 12000); // 12s total max
+            const timer = setTimeout(() => controller.abort(), 12000); // 12s max
             try {
-                const resp = await fetch('/api/share-upload', {
+                const resp = await fetch('https://wealthflow-personal.vercel.app/api/share-upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ base64, fileName }),
                     signal: controller.signal
                 });
                 clearTimeout(timer);
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    throw new Error(err.error || 'Server proxy returned ' + resp.status);
-                }
+                if (!resp.ok) throw new Error('Vercel proxy ' + resp.status);
                 const data = await resp.json();
                 return { url: data.url, permanent: !!data.permanent };
             } finally {
@@ -11144,12 +11190,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 console.warn('[Share] Firebase Storage failed:', e.message);
             }
 
-            // Strategy 3: Server-side proxy (Fallback, 14-day to permanent)
+            // Strategy 3: Public Cloud Fallback (GoFile / Filebin / Proxy)
             try {
-                return await _uploadViaServerProxy(pdfBlob, fileName);
+                return await _uploadViaPublicCloud(pdfBlob, fileName);
             } catch (e) {
-                errors.push('Proxy: ' + e.message);
-                console.warn('[Share] Server proxy failed:', e.message);
+                errors.push('PublicCloud: ' + e.message);
+                console.warn('[Share] Public cloud sharing failed:', e.message);
             }
 
             throw new Error('All sharing methods failed (' + errors.join(', ') + ')');
