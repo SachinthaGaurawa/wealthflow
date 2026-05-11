@@ -7113,80 +7113,226 @@ YOUR PERSONALITY & CRITICAL RULES:
             el.style.height = Math.min(el.scrollHeight, 120) + 'px';
         }
 
-        // ISSUE 3 FIX — Voice input for the main AI chat (multi-lingual)
+        // ==================== ULTRA-ROBUST VOICE INPUT ENGINE v2 ====================
+        // Fixes: network error, auto-retry, mobile compat, silence detection
         let _aiVoiceTimer = null;
         let _aiVoiceSeconds = 0;
+        let _aiVoiceRetries = 0;
+        let _aiVoiceWantStop = false;
+        const _AI_VOICE_MAX_RETRIES = 3;
+
+        function _stopVoiceUI() {
+            const btn = $('aiVoiceBtn');
+            const recBar = document.getElementById('aiVoiceRecordingBar');
+            if (btn) { btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤'; }
+            if (recBar) recBar.style.display = 'none';
+            if (_aiVoiceTimer) { clearInterval(_aiVoiceTimer); _aiVoiceTimer = null; }
+            window._wfAIVoiceRec = null;
+            _aiVoiceRetries = 0;
+            _aiVoiceWantStop = false;
+        }
+
         async function toggleAIChatVoice() {
             const inp = $('aiChatInput');
             const btn = $('aiVoiceBtn');
-            const recBar = document.getElementById('aiVoiceRecordingBar');
-            const timerEl = document.getElementById('aiVoiceTimer');
             if (!inp || !btn) return;
+
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) { notify('🎤 Voice input not supported. Use Chrome / Edge / Safari.', 'warn'); return; }
-            if (!window._wfAIVoiceRec && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            if (!SR) {
+                notify('🎤 Voice not supported. Use Chrome, Edge, or Safari.', 'warn');
+                return;
+            }
+
+            // Toggle OFF if currently recording
+            if (window._wfAIVoiceRec) {
+                _aiVoiceWantStop = true;
+                try { window._wfAIVoiceRec.stop(); } catch (e) { }
+                _stopVoiceUI();
+                return;
+            }
+
+            // Request microphone permission first (critical for mobile)
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
-                } catch (e) { notify('🎤 Microphone access denied.', 'error'); return; }
+                } catch (e) {
+                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                        notify('🎤 Microphone permission denied. Go to browser Settings → Site Settings → Microphone → Allow.', 'error');
+                    } else if (e.name === 'NotFoundError') {
+                        notify('🎤 No microphone found on this device.', 'error');
+                    } else {
+                        notify('🎤 Microphone error: ' + e.message, 'error');
+                    }
+                    return;
+                }
             }
-            // Toggle off
-            if (window._wfAIVoiceRec) {
-                try { window._wfAIVoiceRec.stop(); } catch (e) { }
-                window._wfAIVoiceRec = null;
-                btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤';
-                if (recBar) recBar.style.display = 'none';
-                clearInterval(_aiVoiceTimer); _aiVoiceTimer = null;
-                return;
-            }
+
+            // Start voice recognition
+            _aiVoiceWantStop = false;
+            _aiVoiceRetries = 0;
+            _startVoiceRecognition(inp, btn);
+        }
+
+        function _startVoiceRecognition(inp, btn) {
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recBar = document.getElementById('aiVoiceRecordingBar');
+            const timerEl = document.getElementById('aiVoiceTimer');
             const settings = DB.getObj('settings', {});
             const langPref = settings.aiVoiceLang || 'auto';
+
             const rec = new SR();
-            if (langPref !== 'auto') rec.lang = langPref;
+            // Language setup
+            if (langPref !== 'auto') {
+                rec.lang = langPref;
+            } else {
+                // Auto-detect: set to user's browser language for better accuracy
+                rec.lang = navigator.language || 'en-US';
+            }
+
+            // Mobile-friendly: use continuous=false with auto-restart for reliability
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            rec.continuous = !isMobile; // Desktop: continuous. Mobile: single utterance + auto-restart
             rec.interimResults = true;
-            rec.continuous = true;
             rec.maxAlternatives = 3;
+
             let finalText = inp.value ? inp.value + ' ' : '';
             let silenceTimer = null;
+            let hasReceivedSpeech = false;
+
             rec.onresult = (e) => {
+                hasReceivedSpeech = true;
                 let interim = '';
                 for (let i = e.resultIndex; i < e.results.length; i++) {
-                    if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
-                    else interim += e.results[i][0].transcript;
+                    const transcript = e.results[i][0].transcript;
+                    if (e.results[i].isFinal) {
+                        finalText += transcript + ' ';
+                    } else {
+                        interim += transcript;
+                    }
                 }
                 inp.value = (finalText + interim).trim();
                 autoResizeAIInput(inp);
-                // Reset silence timer on speech
+
+                // Reset silence timer — auto-stop after 6 seconds of silence
                 if (silenceTimer) clearTimeout(silenceTimer);
                 silenceTimer = setTimeout(() => {
+                    _aiVoiceWantStop = true;
                     try { rec.stop(); } catch(e) {}
-                }, 4000); // Auto-stop after 4s silence
+                }, 6000);
             };
+
             rec.onerror = (e) => {
-                let msg = e.error === 'no-speech' ? '🎤 No speech detected.' : e.error === 'not-allowed' ? '🎤 Mic denied.' : '🎤 Voice error: ' + e.error;
-                notify(msg, 'error');
-                btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤';
-                if (recBar) recBar.style.display = 'none';
-                clearInterval(_aiVoiceTimer); window._wfAIVoiceRec = null;
+                const err = e.error;
+
+                // NETWORK ERROR — auto-retry up to 3 times
+                if (err === 'network') {
+                    _aiVoiceRetries++;
+                    if (_aiVoiceRetries <= _AI_VOICE_MAX_RETRIES && !_aiVoiceWantStop) {
+                        console.warn('[Voice] Network error, retry ' + _aiVoiceRetries + '/' + _AI_VOICE_MAX_RETRIES);
+                        notify('🎤 Network issue — retrying... (' + _aiVoiceRetries + '/' + _AI_VOICE_MAX_RETRIES + ')', 'warn');
+                        setTimeout(() => {
+                            if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
+                        }, 800);
+                        return;
+                    } else {
+                        notify('🎤 Voice requires internet. Check your connection and try again.', 'error');
+                        _stopVoiceUI();
+                        return;
+                    }
+                }
+
+                // NO SPEECH — restart silently (user might just be thinking)
+                if (err === 'no-speech') {
+                    if (!_aiVoiceWantStop) {
+                        // Auto-restart without notifying
+                        setTimeout(() => {
+                            if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
+                        }, 300);
+                        return;
+                    }
+                    _stopVoiceUI();
+                    return;
+                }
+
+                // ABORTED — user or system stopped, not an error
+                if (err === 'aborted') {
+                    _stopVoiceUI();
+                    return;
+                }
+
+                // PERMISSION ERRORS
+                if (err === 'not-allowed' || err === 'service-not-allowed') {
+                    notify('🎤 Microphone blocked. Allow microphone in browser settings.', 'error');
+                    _stopVoiceUI();
+                    return;
+                }
+
+                // AUDIO CAPTURE
+                if (err === 'audio-capture') {
+                    notify('🎤 No microphone detected. Connect a mic and try again.', 'error');
+                    _stopVoiceUI();
+                    return;
+                }
+
+                // GENERIC ERROR
+                notify('🎤 Voice error: ' + err, 'error');
+                _stopVoiceUI();
             };
+
             rec.onend = () => {
-                btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤';
-                if (recBar) recBar.style.display = 'none';
-                clearInterval(_aiVoiceTimer); window._wfAIVoiceRec = null;
+                if (silenceTimer) clearTimeout(silenceTimer);
+
+                // If we want to stop, clean up
+                if (_aiVoiceWantStop) {
+                    _stopVoiceUI();
+                    return;
+                }
+
+                // Auto-restart for mobile (continuous=false) or unexpected stops
+                if (!_aiVoiceWantStop && hasReceivedSpeech) {
+                    // Brief pause then restart
+                    setTimeout(() => {
+                        if (!_aiVoiceWantStop && window._wfAIVoiceRec) {
+                            _startVoiceRecognition(inp, btn);
+                        }
+                    }, 300);
+                    return;
+                }
+
+                // If no speech was ever received and we ended, try restart once
+                if (!_aiVoiceWantStop && !hasReceivedSpeech && _aiVoiceRetries < _AI_VOICE_MAX_RETRIES) {
+                    _aiVoiceRetries++;
+                    setTimeout(() => {
+                        if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
+                    }, 500);
+                    return;
+                }
+
+                _stopVoiceUI();
             };
+
             try {
                 rec.start();
                 window._wfAIVoiceRec = rec;
+                _aiVoiceRetries = 0; // Reset retries on successful start
                 btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
                 if (recBar) recBar.style.display = 'block';
-                _aiVoiceSeconds = 0;
-                if (timerEl) timerEl.textContent = '0:00';
-                _aiVoiceTimer = setInterval(() => {
-                    _aiVoiceSeconds++;
-                    if (timerEl) timerEl.textContent = Math.floor(_aiVoiceSeconds/60) + ':' + String(_aiVoiceSeconds%60).padStart(2,'0');
-                }, 1000);
+                if (!_aiVoiceTimer) {
+                    _aiVoiceSeconds = 0;
+                    if (timerEl) timerEl.textContent = '0:00';
+                    _aiVoiceTimer = setInterval(() => {
+                        _aiVoiceSeconds++;
+                        if (timerEl) timerEl.textContent = Math.floor(_aiVoiceSeconds/60) + ':' + String(_aiVoiceSeconds%60).padStart(2,'0');
+                    }, 1000);
+                }
                 triggerHaptic('light');
-            } catch (e) { notify('🎤 Could not start: ' + e.message, 'error'); }
+            } catch (e) {
+                // InvalidStateError means it's already running — ignore
+                if (e.name === 'InvalidStateError') return;
+                notify('🎤 Could not start voice: ' + e.message, 'error');
+                _stopVoiceUI();
+            }
         }
 
         function clearAIChat() {
@@ -14987,65 +15133,109 @@ table.amort tbody tr { page-break-inside: avoid; }
             showPage('ai', document.getElementById('aiNavItem'));
             setTimeout(() => sendAIMessage(msg), 300);
         }
-        // ISSUE 3 FIX — Voice input for the floating AI bar
+        // ROBUST FLOATING AI VOICE — uses same retry engine
+        let _floatVoiceRetries = 0;
+        let _floatVoiceWantStop = false;
         async function toggleFloatingAIVoice() {
             const inp = $('floatingAIInput');
             const btn = $('floatingAIVoiceBtn');
             if (!inp || !btn) return;
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) {
-                notify('🎤 Voice input is not supported on this browser. Use Chrome / Edge / Safari.', 'warn');
+            if (!SR) { notify('🎤 Voice not supported. Use Chrome, Edge, or Safari.', 'warn'); return; }
+
+            // Toggle OFF
+            if (window._wfVoiceRec) {
+                _floatVoiceWantStop = true;
+                try { window._wfVoiceRec.stop(); } catch (e) { }
+                window._wfVoiceRec = null;
+                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
                 return;
             }
-            if (!window._wfVoiceRec && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+
+            // Request mic permission
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
                 } catch (e) {
-                    notify('🎤 Microphone access denied. Please allow it in your browser settings.', 'error');
+                    notify('🎤 Microphone permission denied. Allow mic in browser settings.', 'error');
                     return;
                 }
             }
-            // Toggle off if already running
-            if (window._wfVoiceRec) {
-                try { window._wfVoiceRec.stop(); } catch (e) { }
-                window._wfVoiceRec = null;
-                btn.style.background = 'var(--card2)';
-                btn.textContent = '🎤';
-                return;
-            }
+
+            _floatVoiceWantStop = false;
+            _floatVoiceRetries = 0;
+            _startFloatingVoice(inp, btn);
+        }
+
+        function _startFloatingVoice(inp, btn) {
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
             const rec = new SR();
             const langPref = (DB.getObj('settings', {}).aiVoiceLang) || 'auto';
-            // 'auto' uses browser default + multi-lang support; otherwise, use chosen BCP-47 tag
             if (langPref !== 'auto') rec.lang = langPref;
+            else rec.lang = navigator.language || 'en-US';
             rec.interimResults = true;
             rec.continuous = false;
             rec.maxAlternatives = 3;
+            let finalText = inp.value ? inp.value + ' ' : '';
+
             rec.onresult = (e) => {
-                let txt = '';
-                for (const r of e.results) txt += r[0].transcript + ' ';
-                inp.value = txt.trim();
+                let interim = '';
+                for (let i = e.resultIndex; i < e.results.length; i++) {
+                    if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
+                    else interim += e.results[i][0].transcript;
+                }
+                inp.value = (finalText + interim).trim();
             };
+
             rec.onerror = (e) => {
-                notify('🎤 ' + (e.error === 'no-speech' ? 'No speech detected' : e.error === 'not-allowed' ? 'Microphone permission denied' : 'Voice error: ' + e.error), 'error');
-                btn.style.background = 'var(--card2)';
-                btn.textContent = '🎤';
+                const err = e.error;
+                // Network error — retry
+                if (err === 'network' && _floatVoiceRetries < 3 && !_floatVoiceWantStop) {
+                    _floatVoiceRetries++;
+                    notify('🎤 Network issue — retrying (' + _floatVoiceRetries + '/3)...', 'warn');
+                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 800);
+                    return;
+                }
+                // No speech — restart silently
+                if (err === 'no-speech' && !_floatVoiceWantStop) {
+                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 300);
+                    return;
+                }
+                if (err === 'aborted') { /* user stopped */ }
+                else if (err === 'network') notify('🎤 Voice needs internet connection.', 'error');
+                else if (err === 'not-allowed') notify('🎤 Microphone blocked. Allow in settings.', 'error');
+                else notify('🎤 Voice error: ' + err, 'error');
+                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
                 window._wfVoiceRec = null;
             };
+
             rec.onend = () => {
-                btn.style.background = 'var(--card2)';
-                btn.textContent = '🎤';
+                if (_floatVoiceWantStop) {
+                    btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
+                    window._wfVoiceRec = null;
+                    return;
+                }
+                // Auto-restart on mobile
+                if (!_floatVoiceWantStop && inp.value.trim()) {
+                    setTimeout(() => {
+                        if (!_floatVoiceWantStop && window._wfVoiceRec) _startFloatingVoice(inp, btn);
+                    }, 300);
+                    return;
+                }
+                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
                 window._wfVoiceRec = null;
             };
+
             try {
                 rec.start();
                 window._wfVoiceRec = rec;
-                btn.style.background = 'var(--red)';
-                btn.style.color = '#fff';
-                btn.textContent = '🔴';
+                _floatVoiceRetries = 0;
+                btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
                 triggerHaptic('light');
             } catch (e) {
-                notify('🎤 Could not start: ' + e.message, 'error');
+                if (e.name !== 'InvalidStateError') notify('🎤 Could not start: ' + e.message, 'error');
+                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
             }
         }
 
