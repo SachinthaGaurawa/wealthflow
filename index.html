@@ -15413,13 +15413,24 @@ Be direct and use real numbers. Avoid generic advice.`;
                             <div style="font-size:14px;font-weight:800;font-family:var(--mono);">${fmt(loan.monthly)}/mo</div>
                             <div style="font-size:10px;color:var(--text3);">Balance: ${fmt(loan.amount)}</div>
                         </div>
-                        ${i === 0 ? '<div style="background:var(--accent);color:#000;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:800;">PAY NEXT</div>' : ''}
+                        ${i === 0 ? '<div style="color:var(--accent);font-size:11px;font-weight:800;margin-left:8px;display:flex;align-items:center;gap:4px;">🎯 TARGET</div>' : ''}
                     </div>
                 `;
             }).join('');
 
-            if (!$('debtDemoSlider')) {
-                wrap.innerHTML = `
+            wrap.innerHTML = `
+                    <div style="background:linear-gradient(135deg,rgba(212,175,55,0.08),rgba(16,185,129,0.04));border:1px solid rgba(212,175,55,0.2);border-radius:12px;padding:16px;margin-bottom:16px;">
+                        <div style="font-size:14px;font-weight:800;color:var(--accent);margin-bottom:6px;">💡 How to Use Debt Demolisher</div>
+                        <div style="font-size:12px;color:var(--text2);line-height:1.6;">
+                            This tool helps you pay off debt faster. Enter how much extra cash you can afford to pay each month using the slider. 
+                            We calculate two different strategies:
+                            <br><br>
+                            <b>🏔️ Avalanche Method:</b> We apply your extra cash to the loan with the highest interest rate. This is mathematically the best and saves you the most money.
+                            <br>
+                            <b>⛄ Snowball Method:</b> We apply your extra cash to the smallest loan first. This gives you quick wins and builds motivation.
+                        </div>
+                    </div>
+
                     <div class="g3" style="margin-bottom:16px;">
                         <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${debtItems.length} accounts</div></div>
                         <div class="stat-card sc-gold"><div class="stat-label">Monthly Minimums</div><div class="stat-val">${fmtS(totalMonthly)}</div><div class="stat-meta">Required</div></div>
@@ -15446,7 +15457,6 @@ Be direct and use real numbers. Avoid generic advice.`;
 
                     <div id="debtDemoResultCards"></div>
                 `;
-            }
 
             window.updateDebtDemoCards = function(newExtra) {
                 const ex = parseInt(newExtra);
