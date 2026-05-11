@@ -6152,6 +6152,14 @@
 
         // ISSUE 3 FIX — Language map for AI responses (60+ languages, BCP-47 codes)
         // Used by buildSystemPrompt + the language picker in Settings.
+        const WF_VOICE_MAP = {
+            'en': 'en-US', 'si': 'si-LK', 'ta': 'ta-LK', 'hi': 'hi-IN',
+            'ar': 'ar-SA', 'bn': 'bn-IN', 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW',
+            'fr': 'fr-FR', 'de': 'de-DE', 'ja': 'ja-JP', 'ko': 'ko-KR',
+            'es': 'es-ES', 'pt': 'pt-PT', 'ru': 'ru-RU', 'it': 'it-IT',
+            'nl': 'nl-NL', 'pl': 'pl-PL', 'tr': 'tr-TR', 'vi': 'vi-VN',
+            'th': 'th-TH', 'id': 'id-ID', 'ms': 'ms-MY', 'ur': 'ur-PK'
+        };
         const WF_LANG_NAMES = {
             'auto': '🌐 Auto-Detect (All Languages)',
             'en': 'English',
@@ -7183,18 +7191,20 @@ YOUR PERSONALITY & CRITICAL RULES:
             const recBar = document.getElementById('aiVoiceRecordingBar');
             const timerEl = document.getElementById('aiVoiceTimer');
             const settings = DB.getObj('settings', {});
-            const langPref = settings.aiVoiceLang || 'auto';
+            let langPref = settings.aiVoiceLang || 'auto';
+
+            // *** LANGUAGE FIX v4 ***
+            // If voice input is "Auto", inherit the language the user is chatting in!
+            // This is the ONLY way to do "Auto" across 60+ languages in Web Speech API
+            if (langPref === 'auto') {
+                langPref = settings.aiResponseLang || 'en';
+            }
 
             const rec = new SR();
-
-            // *** LANGUAGE FIX ***
-            // When 'auto': do NOT set rec.lang at all — lets browser auto-detect
-            // any language including Sinhala, Tamil, Hindi, mixed languages etc.
-            // When specific: set the exact BCP-47 tag for that language.
-            if (langPref !== 'auto') {
-                rec.lang = langPref;
-            }
-            // If auto, we intentionally skip setting rec.lang
+            
+            // Map the short lang code (e.g., 'si') to the BCP-47 tag (e.g., 'si-LK')
+            // Fallback to the short code if not in our map
+            rec.lang = WF_VOICE_MAP[langPref] || langPref;
 
             // Desktop: use continuous=true (one long session)
             // Mobile: use continuous=false (single utterance, we auto-restart)
@@ -7502,7 +7512,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                         return;
                     }
                     const utt = new SpeechSynthesisUtterance(chunks[chunkIndex]);
-                    utt.lang = lang;
+                    utt.lang = WF_VOICE_MAP[lang] || lang;
                     utt.rate = 0.92;
                     utt.pitch = 1;
                     if (bestVoice) utt.voice = bestVoice;
@@ -14041,9 +14051,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             }
             const s = DB.getObj('settings', {});
-            const langPref = s.aiVoiceLang || 'auto';
+            let langPref = s.aiVoiceLang || 'auto';
+            if (langPref === 'auto') langPref = s.aiResponseLang || 'en';
             const rec = new SR();
-            if (langPref !== 'auto') rec.lang = langPref;
+            rec.lang = WF_VOICE_MAP[langPref] || langPref;
             rec.interimResults = false;
             rec.continuous = false;
             notify('🎤 Listening — say a few words…', 'info');
@@ -15256,9 +15267,12 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
             const rec = new SR();
-            const langPref = (DB.getObj('settings', {}).aiVoiceLang) || 'auto';
-            // *** LANGUAGE FIX: auto = do NOT set rec.lang ***
-            if (langPref !== 'auto') rec.lang = langPref;
+            const settings = DB.getObj('settings', {});
+            let langPref = settings.aiVoiceLang || 'auto';
+            if (langPref === 'auto') {
+                langPref = settings.aiResponseLang || 'en';
+            }
+            rec.lang = WF_VOICE_MAP[langPref] || langPref;
             rec.interimResults = true;
             rec.continuous = false;
             rec.maxAlternatives = 3;
