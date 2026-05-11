@@ -11259,8 +11259,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 let shareUrl = result.url;
                 let validityStr = result.expires || '30 days';
                 
-                // Step 3: URL Shortening (if necessary)
-                if (shareUrl.length > 150) {
+                // Step 3: URL Shortening (Force shorten always for cleanest UX)
+                if (true) {
                     setProgress(90, 'Shrinking URL...');
                     shareUrl = await _shortenUrl(shareUrl);
                 }
@@ -11316,6 +11316,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&margin=1&data=' + encodeURIComponent(url);
             
             overlay.innerHTML = `
+                <style>
+                    .btn-3d { transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.1s, background-color 0.2s; }
+                    .btn-3d:active { transform: scale(0.92); box-shadow: inset 0 2px 6px rgba(0,0,0,0.2) !important; filter: brightness(0.9); }
+                </style>
                 <div class="md md-sm" style="max-width:540px;">
                     <div class="md-hdr">
                         <div class="md-title">✅ Shareable Link Ready</div>
@@ -11334,9 +11338,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                                     style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--bg2);cursor:text;padding-right:40px;">
                             </div>
                             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
-                                <button class="btn btn-primary btn-sm" id="_surl_copy" style="flex:1;">📋 Copy Link</button>
-                                <button class="btn btn-ghost btn-sm" id="_surl_open" style="flex:1;">🔗 Open</button>
-                                <button class="btn btn-ghost btn-sm" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share…</button>
+                                <button class="btn btn-primary btn-sm btn-3d" id="_surl_copy" style="flex:1;">📋 Copy Link</button>
+                                <button class="btn btn-ghost btn-sm btn-3d" id="_surl_open" style="flex:1;">🔗 Open</button>
+                                <button class="btn btn-ghost btn-sm btn-3d" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share…</button>
                             </div>
                         </div>
                         <div style="width:110px;height:110px;background:#fff;border-radius:8px;padding:5px;flex-shrink:0;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
@@ -11356,11 +11360,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
             overlay.querySelector('#_surl_close').onclick = close;
             overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-            overlay.querySelector('#_surl_copy').onclick = async () => {
+            overlay.querySelector('#_surl_copy').onclick = async (e) => {
+                const btn = e.currentTarget;
                 try {
                     await navigator.clipboard.writeText(url);
-                    notify('📋 Link copied to clipboard!', 'success');
-                } catch (e) {
+                    btn.innerHTML = '✅ Copied!';
+                    btn.style.backgroundColor = 'var(--green)';
+                    btn.style.borderColor = 'var(--green)';
+                    btn.style.color = '#fff';
+                    setTimeout(() => {
+                        btn.innerHTML = '📋 Copy Link';
+                        btn.style.backgroundColor = '';
+                        btn.style.borderColor = '';
+                        btn.style.color = '';
+                    }, 2000);
+                } catch (err) {
                     const inp = overlay.querySelector('#_surl_input');
                     inp.select(); inp.setSelectionRange(0, 99999);
                     notify('Link selected — press Ctrl/⌘ + C to copy', 'info');
