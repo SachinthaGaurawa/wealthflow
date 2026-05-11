@@ -7,7 +7,7 @@
 //   - GROQ_API_KEY        (Groq)
 
 export const config = {
-    maxDuration: 30 // seconds
+    maxDuration: 45 // seconds — increased for richer responses
 };
 
 // Helper: fetch with timeout — prevents one slow provider from blocking the chain
@@ -39,12 +39,12 @@ export default async function handler(req, res) {
     const groqKey = process.env.GROQ_API_KEY;
 
     const temp = (typeof temperature === 'number') ? temperature : 0.7;
-    const tokens = (typeof maxTokens === 'number') ? maxTokens : 1500;
+    const tokens = (typeof maxTokens === 'number') ? maxTokens : 2500;
 
     // ---------- ENGINE 1: GEMINI (Primary, supports vision) ----------
     async function fetchGemini() {
         if (!geminiKey) throw new Error('Gemini key not configured');
-        const model = image ? 'gemini-1.5-flash' : 'gemini-2.0-flash';
+        const model = image ? 'gemini-2.0-flash' : 'gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
         const parts = [{ text: prompt }];
