@@ -7934,19 +7934,21 @@ YOUR PERSONALITY & CRITICAL RULES:
         })();
 
         // ── SHARED STATEMENT VIEWER ──
-        // Handles 3 URL formats:
+        // Handles 4 URL formats:
+        //   ?tstmt=ID             → tmpfiles.org upload (short URL, primary)
         //   ?stmt=DOC_ID          → Firestore shared_statements collection
         //   ?ustmt=UID_DOCID      → Firestore users/{uid}/shared_stmts/{id}
         //   #stmtdata=BASE64      → Compressed HTML embedded in URL hash
         (function detectSharedStatement() {
             try {
                 const params = new URLSearchParams(window.location.search);
+                const tstmtId = params.get('tstmt');
                 const stmtId = params.get('stmt');
                 const ustmtId = params.get('ustmt');
                 const hash = window.location.hash;
                 const hashData = hash && hash.startsWith('#stmtdata=') ? decodeURIComponent(hash.slice(10)) : null;
 
-                if (!stmtId && !ustmtId && !hashData) return;
+                if (!tstmtId && !stmtId && !ustmtId && !hashData) return;
 
                 // Mark that we're in statement viewer mode — skip app boot
                 window._isStatementViewer = true;
@@ -7964,6 +7966,18 @@ YOUR PERSONALITY & CRITICAL RULES:
                 const _showError = (msg) => {
                     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>' + msg + '</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
                 };
+
+                // Format 0: tmpfiles.org upload — Instant, high-speed fetch
+                if (tstmtId) {
+                    fetch('https://tmpfiles.org/dl/' + tstmtId + '/stmt.txt')
+                        .then(res => {
+                            if (!res.ok) throw new Error('Statement expired or not found.');
+                            return res.text();
+                        })
+                        .then(html => _renderStmt(html, 'Shared Statement'))
+                        .catch(err => _showError(err.message || 'Could not load statement. It may have expired.'));
+                    return;
+                }
 
                 // Format 3: Hash data URL — instant, no Firebase needed
                 if (hashData) {
@@ -11139,20 +11153,31 @@ table.amort tbody tr { page-break-inside: avoid; }
             return { url: appUrl + '#stmtdata=' + encodeURIComponent(compressed), days: 999 };
         }
 
+        async function _uploadToTmpFiles(html) {
+            const fd = new FormData();
+            const blob = new Blob([html], { type: "text/plain" });
+            fd.append("file", blob, "stmt.txt");
+            const res = await fetch("https://tmpfiles.org/api/v1/upload", { method: "POST", body: fd });
+            const data = await res.json();
+            if (data && data.status === 'success' && data.data && data.data.url) {
+                const parts = data.data.url.split('/');
+                const id = parts[3];
+                if (id) {
+                    const appUrl = window.location.origin + window.location.pathname;
+                    return { url: appUrl + '?tstmt=' + id, expires: '60 minutes' };
+                }
+            }
+            throw new Error("Tmpfiles upload failed");
+        }
+
         // Master upload: tries strategies in order, guaranteed to succeed
         async function _uploadStatementForSharing(html, loanName) {
+            // Strategy 0: TmpFiles (Super fast, short URL, backend-less)
+            try { return await _uploadToTmpFiles(html); } catch(e) { console.warn('[Share] tmpfiles failed', e); }
             // Strategy 1: Public shared_statements collection
-            try {
-                return await _uploadToSharedStatements(html, loanName);
-            } catch (e) {
-                console.warn('[Share] shared_statements failed:', e.message);
-            }
+            try { return await _uploadToSharedStatements(html, loanName); } catch (e) { }
             // Strategy 2: User-scoped subcollection
-            try {
-                return await _uploadToUserSubcollection(html, loanName);
-            } catch (e) {
-                console.warn('[Share] user subcollection failed:', e.message);
-            }
+            try { return await _uploadToUserSubcollection(html, loanName); } catch (e) { }
             // Strategy 3: Hash URL (always works, but URL is long)
             return _createHashUrl(html, loanName);
         }
@@ -11164,43 +11189,51 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const data = await res.json();
                 if (data && data.shorturl) return data.shorturl;
             } catch (e) {
-                console.warn('[Shorten] is.gd failed, trying tinyurl', e);
                 try {
                     const res2 = await fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl));
                     const text = await res2.text();
                     if (text && text.startsWith('http')) return text;
-                } catch(e2) {
-                    console.warn('[Shorten] all shorteners failed', e2);
-                }
+                } catch(e2) {}
             }
             return longUrl; // Fallback to original
         }
 
-        // Generate shareable URL — Firestore-first, instant, bulletproof
+        // Generate shareable URL — High-speed, robust
         async function _generateShareableStatementUrl(l) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
-            overlay.style.zIndex = '999999'; // Fixed z-index to sit on top of statement modal
+            overlay.style.zIndex = '999999'; // Fixed z-index to sit on top
             overlay.innerHTML = `
-                <div class="md md-sm" style="max-width:420px;text-align:center;">
-                    <div class="md-hdr" style="justify-content:center;border-bottom:0;">
-                        <div class="md-title" id="_ash_title">🔗 Generating Shareable Link</div>
+                <div class="md md-sm" style="max-width:440px;text-align:center;">
+                    <div class="md-hdr" style="justify-content:center;border-bottom:0;padding-bottom:0;">
+                        <div class="md-title" id="_ash_title">🚀 Generating Smart Link</div>
                     </div>
-                    <div style="padding:18px 4px 8px;">
-                        <div style="display:flex;justify-content:center;margin-bottom:14px;">
-                            <div style="width:56px;height:56px;border:4px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:_wfSpin 0.9s linear infinite;"></div>
+                    <div style="padding:24px 20px 12px;">
+                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Initializing secure engine...</div>
+                        
+                        <!-- Progress Bar -->
+                        <div style="width:100%;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden;margin-bottom:8px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.3);">
+                            <div id="_ash_bar" style="height:100%;width:5%;background:linear-gradient(90deg, var(--accent), #2ecc71);border-radius:5px;transition:width 0.4s ease-out;"></div>
                         </div>
-                        <div id="_ash_msg" style="font-size:13px;color:var(--text2);min-height:20px;">Preparing statement…</div>
-                        <div style="font-size:11px;color:var(--text3);margin-top:8px;">Please wait — generating a secure link…</div>
+                        
+                        <div style="font-size:11px;color:var(--text3);display:flex;justify-content:space-between;">
+                            <span id="_ash_pct">5%</span>
+                            <span>Powered by WealthFlow Infinity</span>
+                        </div>
                     </div>
-                    <div class="md-ftr" style="justify-content:center;">
+                    <div class="md-ftr" style="justify-content:center;border-top:0;">
                         <button class="btn btn-ghost" id="_ash_cancel">Cancel</button>
                     </div>
-                </div>
-                <style>@keyframes _wfSpin { to { transform: rotate(360deg); } }</style>`;
+                </div>`;
             document.body.appendChild(overlay);
             requestAnimationFrame(() => overlay.classList.add('open'));
-            const setMsg = (msg) => { const el = overlay.querySelector('#_ash_msg'); if (el) el.textContent = msg; };
+            
+            const setProgress = (pct, msg) => {
+                const el = overlay.querySelector('#_ash_msg'); if (el && msg) el.textContent = msg;
+                const bar = overlay.querySelector('#_ash_bar'); if (bar) bar.style.width = pct + '%';
+                const pctTxt = overlay.querySelector('#_ash_pct'); if (pctTxt) pctTxt.textContent = pct + '%';
+            };
+            
             const closeOverlay = () => {
                 overlay.classList.remove('open');
                 setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
@@ -11209,21 +11242,31 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_ash_cancel').onclick = () => { cancelled = true; closeOverlay(); };
 
             try {
-                setMsg('Building statement HTML…');
+                // Step 1: Render HTML
+                setProgress(20, 'Compiling statement data...');
+                await new Promise(r => setTimeout(r, 400)); // Psychological delay
                 const statementHTML = _buildLoanStatementHTML(l);
                 if (cancelled) return;
 
-                setMsg('Uploading to secure cloud…');
+                // Step 2: Cloud Upload
+                setProgress(55, 'Uploading to secure network...');
                 const result = await _uploadStatementForSharing(statementHTML, l.name);
                 if (cancelled) return;
+                
+                setProgress(80, 'Finalizing smart link...');
+                await new Promise(r => setTimeout(r, 300)); // Psychological delay
 
                 let shareUrl = result.url;
+                let validityStr = result.expires || '30 days';
                 
-                // Shorten URL if it's a hash URL or very long
-                if (shareUrl.length > 100) {
-                    setMsg('Shortening URL for easy sharing…');
+                // Step 3: URL Shortening (if necessary)
+                if (shareUrl.length > 150) {
+                    setProgress(90, 'Shrinking URL...');
                     shareUrl = await _shortenUrl(shareUrl);
                 }
+
+                setProgress(100, 'Ready!');
+                await new Promise(r => setTimeout(r, 200));
 
                 // Save to history
                 try {
@@ -11239,7 +11282,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { await navigator.clipboard.writeText(shareUrl); } catch (e) { /* silent */ }
 
                 // Show the rich share dialog
-                _showShareableUrlDialog(l, shareUrl);
+                _showShareableUrlDialog(l, shareUrl, validityStr);
 
             } catch (e) {
                 closeOverlay();
@@ -11265,10 +11308,10 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // Rich share URL dialog with copy / open / share / download + QR Code
-        function _showShareableUrlDialog(l, url) {
+        function _showShareableUrlDialog(l, url, validityStr = '30 days') {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
-            overlay.style.zIndex = '999999'; // Ensure it's above the statement overlay
+            overlay.style.zIndex = '999999'; // Ensure it's above everything
             
             const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&margin=1&data=' + encodeURIComponent(url);
             
@@ -11280,7 +11323,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
                         Anyone with this link can view the loan statement for <b>${(l.name||'').replace(/</g,'&lt;')}</b>.
-                        <span style="color:var(--green);">Link valid for 30 days.</span>
+                        <span style="color:var(--green);">Link valid for ${validityStr}.</span>
                     </div>
                     
                     <div style="display:flex;gap:16px;margin-top:8px;align-items:center;">
@@ -11342,10 +11385,20 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
         }
 
-        // Share entry point — keeps statement window open, generates link in background
+        // Share entry point — auto-closes statement window to focus on share flow
         async function _shareLoanStatement(win, l) {
-            // Don't close the statement window — let the user keep viewing it
-            // Just bring the main window's share dialog on top
+            // Auto-close any open statement overlays so the user isn't confused by background popups
+            document.querySelectorAll('.mo.open').forEach(el => {
+                if (el.querySelector('#_ls_frame') || el.id === 'mdStatementView') {
+                    el.classList.remove('open');
+                    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
+                }
+            });
+            // Also close if it's an external window
+            if (win && win !== window && typeof win.close === 'function') {
+                try { win.close(); } catch(e){}
+            }
+
             _generateShareableStatementUrl(l);
         }
 
