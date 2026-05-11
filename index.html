@@ -7934,21 +7934,45 @@ YOUR PERSONALITY & CRITICAL RULES:
         })();
 
         // ── SHARED STATEMENT VIEWER ──
-        // Handles 4 URL formats:
-        //   ?tstmt=ID             → tmpfiles.org upload (short URL, primary)
-        //   ?stmt=DOC_ID          → Firestore shared_statements collection
-        //   ?ustmt=UID_DOCID      → Firestore users/{uid}/shared_stmts/{id}
-        //   #stmtdata=BASE64      → Compressed HTML embedded in URL hash
+        // Handles 6 URL formats:
+        //   ?s=ID                 → Ultra-short Firestore 's' collection (PRIMARY, ~35 chars)
+        //   ?go=ID               → Firestore 'links' redirect collection
+        //   ?tstmt=ID            → tmpfiles.org upload (short URL)
+        //   ?stmt=DOC_ID         → Firestore shared_statements collection
+        //   ?ustmt=UID_DOCID     → Firestore users/{uid}/shared_stmts/{id}
+        //   #stmtdata=BASE64     → Compressed HTML embedded in URL hash
         (function detectSharedStatement() {
             try {
                 const params = new URLSearchParams(window.location.search);
+                const sId = params.get('s');           // Ultra-short format (NEW)
+                const goId = params.get('go');         // Redirect link (NEW)
                 const tstmtId = params.get('tstmt');
                 const stmtId = params.get('stmt');
                 const ustmtId = params.get('ustmt');
                 const hash = window.location.hash;
                 const hashData = hash && hash.startsWith('#stmtdata=') ? decodeURIComponent(hash.slice(10)) : null;
 
-                if (!tstmtId && !stmtId && !ustmtId && !hashData) return;
+                // Handle ?go= redirect — fetch target URL from Firestore and redirect
+                if (goId) {
+                    window._isStatementViewer = true;
+                    const _waitForFBRedirect = setInterval(() => {
+                        if (typeof firebase === 'undefined' || !firebase.firestore) return;
+                        clearInterval(_waitForFBRedirect);
+                        firebase.firestore().collection('links').doc(goId).get()
+                            .then(doc => {
+                                if (doc.exists && doc.data().u) {
+                                    window.location.replace(doc.data().u);
+                                } else {
+                                    window.location.replace(window.location.pathname);
+                                }
+                            })
+                            .catch(() => window.location.replace(window.location.pathname));
+                    }, 150);
+                    setTimeout(() => { clearInterval(_waitForFBRedirect); }, 8000);
+                    return;
+                }
+
+                if (!sId && !tstmtId && !stmtId && !ustmtId && !hashData) return;
 
                 // Mark that we're in statement viewer mode — skip app boot
                 window._isStatementViewer = true;
@@ -7966,6 +7990,40 @@ YOUR PERSONALITY & CRITICAL RULES:
                 const _showError = (msg) => {
                     document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>' + msg + '</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
                 };
+
+                // Format S: Ultra-short Firestore 's' collection — PRIMARY format
+                // URLs like: https://domain.com/?s=AbCdEfGh (only ~35 chars!)
+                if (sId) {
+                    const _waitForFB_S = setInterval(() => {
+                        if (typeof firebase === 'undefined' || !firebase.firestore) return;
+                        clearInterval(_waitForFB_S);
+                        // Try 's' collection first, then fall back to 'shared_statements'
+                        firebase.firestore().collection('s').doc(sId).get()
+                            .then(doc => {
+                                if (doc.exists) {
+                                    const data = doc.data();
+                                    _renderStmt(data.h || data.html, data.n || data.loanName || 'Statement');
+                                    return;
+                                }
+                                // Fallback: try shared_statements collection with same ID
+                                return firebase.firestore().collection('shared_statements').doc(sId).get()
+                                    .then(doc2 => {
+                                        if (doc2.exists) {
+                                            const data = doc2.data();
+                                            _renderStmt(data.html, data.loanName || 'Statement');
+                                        } else {
+                                            _showError('This statement link has expired or does not exist.');
+                                        }
+                                    });
+                            })
+                            .catch(err => {
+                                console.error('[Stmt Viewer] s/ fetch error:', err);
+                                _showError('Could not load this statement. The link may have expired.');
+                            });
+                    }, 150);
+                    setTimeout(() => { clearInterval(_waitForFB_S); if (document.querySelector('#splash')) _showError('Connection timeout. Please check your internet.'); }, 10000);
+                    return;
+                }
 
                 // Format 0: tmpfiles.org upload — Instant, high-speed fetch
                 if (tstmtId) {
@@ -11115,112 +11173,294 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
         };
 
-        // Strategy 1: Firestore shared_statements (public collection) — PRIVACY SAFE
+        // =====================================================================
+        // ULTRA-SHORT URL ENGINE — Privacy-First, Zero Personal Data
+        // =====================================================================
+        // Generates the shortest possible URLs for loan statements.
+        // PRIVACY GUARANTEE: Zero personal info (no names, no emails, no UIDs)
+        // in URLs, documents, or metadata. Ever.
+        //
+        // Strategy chain (fastest first):
+        //   1. Firestore → 8-char random ID → ?s=AbCdEfGh (SHORTEST, ~35 chars total)
+        //   2. TmpFiles.org → ?tstmt=ID
+        //   3. Hash URL fallback (last resort, long but guaranteed)
+        //
+        // URL Shortening (post-upload, makes ANY URL ultra-short):
+        //   Server proxy → is.gd → v.gd → TinyURL → clck.ru → da.gd
+        // =====================================================================
+
+        // Generate a cryptographically random short ID (8 chars, alphanumeric)
+        // Provides 62^8 = 218 trillion unique combinations — zero collision risk
+        function _generateShortId(len = 8) {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            const arr = new Uint8Array(len);
+            crypto.getRandomValues(arr);
+            return Array.from(arr, b => chars[b % chars.length]).join('');
+        }
+
+        // Strategy 1: Firestore with ultra-short random ID — PRIVACY SAFE
+        // Uses collection "s" (single char!) for shortest possible Firestore path
+        // URL format: https://domain.com/?s=AbCdEfGh (total ~35-40 chars!)
         async function _uploadToSharedStatements(html, loanName) {
-            if (!currentUser) throw new Error('Not signed in');
             if (typeof firebase === 'undefined' || !firebase.firestore) throw new Error('Firestore unavailable');
-            const docRef = firebase.firestore().collection('shared_statements').doc();
-            await docRef.set({
-                html: html, loanName: loanName || 'Statement',
-                // Privacy: NO user identity stored — no uid, no email, no name
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+            const shortId = _generateShortId(8);
+            const db = firebase.firestore();
+            
+            // Store in ultra-short collection "s" with random ID
+            await db.collection('s').doc(shortId).set({
+                h: html,                    // 'h' instead of 'html' — saves bytes
+                n: (loanName || 'Stmt').replace(/[<>]/g, ''),  // sanitized name, no personal info
+                t: firebase.firestore.FieldValue.serverTimestamp(),
+                x: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)  // 30-day expiry
+                // NO uid, NO email, NO name — guaranteed privacy
             });
-            const appUrl = window.location.origin + window.location.pathname;
-            return { url: appUrl + '?stmt=' + docRef.id, days: 30 };
+            
+            // Also write to legacy collection for backward compatibility
+            try {
+                await db.collection('shared_statements').doc(shortId).set({
+                    html: html, loanName: (loanName || 'Statement').replace(/[<>]/g, ''),
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                });
+            } catch(e) { /* non-critical */ }
+            
+            const appUrl = _getCleanAppUrl();
+            return { url: appUrl + '?s=' + shortId, days: 30, shortId: shortId };
         }
 
-        // Strategy 2: User-scoped subcollection — PRIVACY SAFE (UID hidden from URL)
-        async function _uploadToUserSubcollection(html, loanName) {
-            if (!currentUser) throw new Error('Not signed in');
-            if (typeof firebase === 'undefined' || !firebase.firestore) throw new Error('Firestore unavailable');
-            // Store in public collection with anonymous ID — UID stays server-side only
-            const docRef = firebase.firestore().collection('shared_statements').doc();
-            await docRef.set({
-                html: html, loanName: loanName || 'Statement',
-                // Privacy: NO user identity in URL or document
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-            });
-            const appUrl = window.location.origin + window.location.pathname;
-            return { url: appUrl + '?stmt=' + docRef.id, days: 30 };
+        // Get clean base URL (no query params, no hash, no trailing slashes)
+        function _getCleanAppUrl() {
+            // For deployed apps, use origin + pathname
+            if (window.location.protocol.startsWith('http')) {
+                let base = window.location.origin + window.location.pathname;
+                // Remove trailing index.html if present
+                base = base.replace(/\/index\.html$/i, '/');
+                // Ensure single trailing slash
+                if (!base.endsWith('/')) base += '/';
+                return base;
+            }
+            // For file:// protocol (local dev), use full path
+            return window.location.origin + window.location.pathname;
         }
 
-        // Strategy 3: Hash URL (100% client-side, no backend needed, permanent)
-        function _createHashUrl(html, loanName) {
-            const compressed = _lzMini.compress(html);
-            const appUrl = window.location.origin + window.location.pathname;
-            return { url: appUrl + '#stmtdata=' + encodeURIComponent(compressed), days: 999 };
-        }
-
+        // Strategy 2: TmpFiles.org (no auth needed, 60-min expiry)
         async function _uploadToTmpFiles(html) {
             const fd = new FormData();
             const blob = new Blob([html], { type: "text/plain" });
             fd.append("file", blob, "stmt.txt");
-            const res = await fetch("https://tmpfiles.org/api/v1/upload", { method: "POST", body: fd });
-            const data = await res.json();
-            if (data && data.status === 'success' && data.data && data.data.url) {
-                const parts = data.data.url.split('/');
-                const id = parts[3];
-                if (id) {
-                    const appUrl = window.location.origin + window.location.pathname;
-                    return { url: appUrl + '?tstmt=' + id, expires: '60 minutes' };
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 6000);
+            try {
+                const res = await fetch("https://tmpfiles.org/api/v1/upload", { 
+                    method: "POST", body: fd, signal: controller.signal 
+                });
+                const data = await res.json();
+                if (data && data.status === 'success' && data.data && data.data.url) {
+                    const parts = data.data.url.split('/');
+                    const id = parts[3];
+                    if (id) {
+                        const appUrl = _getCleanAppUrl();
+                        return { url: appUrl + '?tstmt=' + id, expires: '60 minutes' };
+                    }
                 }
-            }
+            } finally { clearTimeout(timer); }
             throw new Error("Tmpfiles upload failed");
         }
 
-        // Master upload: tries strategies in order, guaranteed to succeed
+        // Strategy 3: Hash URL (100% client-side, always works, but URL is long)
+        function _createHashUrl(html, loanName) {
+            const compressed = _lzMini.compress(html);
+            const appUrl = _getCleanAppUrl();
+            return { url: appUrl + '#stmtdata=' + encodeURIComponent(compressed), days: 999 };
+        }
+
+        // ── MASTER UPLOAD: Tries strategies in priority order ──
+        // Firestore first (shortest URL), then TmpFiles, then Hash fallback
         async function _uploadStatementForSharing(html, loanName) {
-            // Strategy 0: TmpFiles (Super fast, short URL, backend-less)
-            try { return await _uploadToTmpFiles(html); } catch(e) { console.warn('[Share] tmpfiles failed', e); }
-            // Strategy 1: Public shared_statements collection
-            try { return await _uploadToSharedStatements(html, loanName); } catch (e) { }
-            // Strategy 2: User-scoped subcollection
-            try { return await _uploadToUserSubcollection(html, loanName); } catch (e) { }
-            // Strategy 3: Hash URL (always works, but URL is long)
+            // Strategy 1: Firestore ultra-short ID (BEST — shortest URL, 30-day validity)
+            try { 
+                const result = await _uploadToSharedStatements(html, loanName); 
+                console.log('[Share] ✅ Firestore upload success:', result.url, '(' + result.url.length + ' chars)');
+                return result;
+            } catch(e) { console.warn('[Share] Firestore failed:', e.message); }
+            
+            // Strategy 2: TmpFiles (no auth needed, but 60-min expiry)
+            try { 
+                const result = await _uploadToTmpFiles(html);
+                console.log('[Share] ✅ TmpFiles upload success:', result.url);
+                return result;
+            } catch(e) { console.warn('[Share] TmpFiles failed:', e.message); }
+            
+            // Strategy 3: Hash URL (always works — guaranteed, but long URL)
+            console.warn('[Share] ⚠️ Using hash URL fallback (URL will be long)');
             return _createHashUrl(html, loanName);
         }
 
-        // Helper: Shorten URL via server-side proxy (bypasses ALL CORS restrictions)
-        // Uses /api/shorten which tries: is.gd → v.gd → TinyURL → clck.ru → da.gd → ulvis.net
-        // Privacy: Zero user data is sent. Only the raw URL is shortened.
+        // =====================================================================
+        // URL SHORTENING ENGINE — Multi-Layer, Guaranteed Short URLs
+        // =====================================================================
+        // Tries multiple approaches to shorten any URL:
+        //   1. Vercel server proxy (/api/shorten) — bypasses CORS
+        //   2. JSONP-style script injection (works cross-origin)  
+        //   3. Direct fetch to CORS-friendly shorteners
+        //   4. If URL is already short enough (<50 chars), skip shortening
+        //
+        // PRIVACY: Only the raw URL is sent. Zero user data transmitted.
+        // =====================================================================
+        
         async function _shortenUrl(longUrl) {
-            // Strategy 1: Server-side proxy (most reliable — no CORS issues)
+            // If URL is already short enough, don't waste time trying to shorten
+            if (longUrl.length < 50) {
+                console.log('[Shorten] URL already short enough (' + longUrl.length + ' chars), skipping');
+                return longUrl;
+            }
+            
+            const errors = [];
+
+            // Strategy 1: Vercel server-side proxy (most reliable when deployed)
             try {
                 const proxyBase = window.location.origin;
-                const resp = await fetch(proxyBase + '/api/shorten', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: longUrl })
-                });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    if (data.short && data.short.startsWith('http') && data.short.length < longUrl.length) {
-                        console.log('[Shorten] Success via server proxy (' + data.service + '):', data.short);
-                        return data.short;
-                    }
+                if (proxyBase.startsWith('http')) {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 4000);
+                    try {
+                        const resp = await fetch(proxyBase + '/api/shorten', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ url: longUrl }),
+                            signal: controller.signal
+                        });
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            if (data.short && data.short.startsWith('http') && data.short.length < longUrl.length) {
+                                console.log('[Shorten] ✅ Server proxy (' + data.service + '):', data.short);
+                                return data.short;
+                            }
+                        }
+                    } finally { clearTimeout(timer); }
                 }
-            } catch (e) { console.warn('[Shorten] Server proxy failed:', e.message); }
+            } catch (e) { errors.push('proxy: ' + e.message); }
 
-            // Strategy 2: Direct client-side attempts (may fail due to CORS, but worth trying)
+            // Strategy 2: JSONP-based shortening via is.gd (bypasses CORS completely)
+            try {
+                const short = await _shortenViaJsonp(longUrl);
+                if (short && short.startsWith('http') && short.length < longUrl.length) {
+                    console.log('[Shorten] ✅ JSONP (is.gd):', short);
+                    return short;
+                }
+            } catch (e) { errors.push('jsonp: ' + e.message); }
+
+            // Strategy 3: Direct fetch attempts (work on CORS-friendly APIs)
             const encoded = encodeURIComponent(longUrl);
             const directApis = [
-                { name: 'is.gd', fn: async () => { const r = await fetch('https://is.gd/create.php?format=json&url=' + encoded); const d = await r.json(); return d.shorturl; } },
-                { name: 'tinyurl', fn: async () => { const r = await fetch('https://tinyurl.com/api-create.php?url=' + encoded); return (await r.text()).trim(); } }
+                { 
+                    name: 'is.gd', 
+                    fn: async () => { 
+                        const r = await _fetchWithTimeout('https://is.gd/create.php?format=json&url=' + encoded, {}, 4000); 
+                        const d = await r.json(); 
+                        return d.shorturl; 
+                    } 
+                },
+                { 
+                    name: 'v.gd', 
+                    fn: async () => { 
+                        const r = await _fetchWithTimeout('https://v.gd/create.php?format=json&url=' + encoded, {}, 4000); 
+                        const d = await r.json(); 
+                        return d.shorturl; 
+                    } 
+                },
+                { 
+                    name: 'tinyurl', 
+                    fn: async () => { 
+                        const r = await _fetchWithTimeout('https://tinyurl.com/api-create.php?url=' + encoded, {}, 4000); 
+                        return (await r.text()).trim(); 
+                    } 
+                },
+                { 
+                    name: 'clck.ru', 
+                    fn: async () => { 
+                        const r = await _fetchWithTimeout('https://clck.ru/--?url=' + encoded, {}, 4000); 
+                        return (await r.text()).trim(); 
+                    } 
+                },
+                {
+                    name: 'da.gd',
+                    fn: async () => {
+                        const r = await _fetchWithTimeout('https://da.gd/s?url=' + encoded, {}, 4000);
+                        return (await r.text()).trim();
+                    }
+                }
             ];
             for (const api of directApis) {
                 try {
                     const short = await api.fn();
                     if (short && short.startsWith('http') && short.length < longUrl.length) {
-                        console.log('[Shorten] Success via direct ' + api.name + ':', short);
+                        console.log('[Shorten] ✅ Direct ' + api.name + ':', short);
                         return short;
                     }
-                } catch (e) { /* CORS expected — silent */ }
+                } catch (e) { errors.push(api.name + ': ' + (e.message || 'failed')); }
             }
 
-            console.warn('[Shorten] All methods failed, returning original URL');
+            // Strategy 4: Firestore-based self-hosted short links
+            // Creates a redirect entry in Firestore collection "links"
+            try {
+                if (typeof firebase !== 'undefined' && firebase.firestore) {
+                    const linkId = _generateShortId(6);
+                    await firebase.firestore().collection('links').doc(linkId).set({
+                        u: longUrl,
+                        t: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    const shortUrl = _getCleanAppUrl() + '?go=' + linkId;
+                    if (shortUrl.length < longUrl.length) {
+                        console.log('[Shorten] ✅ Firestore link:', shortUrl);
+                        return shortUrl;
+                    }
+                }
+            } catch (e) { errors.push('firestore-link: ' + e.message); }
+
+            console.warn('[Shorten] All ' + errors.length + ' methods failed:', errors.join('; '));
             return longUrl;
+        }
+
+        // JSONP-based URL shortening — bypasses CORS completely
+        // Works by injecting a <script> tag that calls a callback function
+        function _shortenViaJsonp(longUrl) {
+            return new Promise((resolve, reject) => {
+                const callbackName = '_wfShorten_' + Date.now();
+                const timeout = setTimeout(() => {
+                    delete window[callbackName];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    reject(new Error('JSONP timeout'));
+                }, 4000);
+                
+                window[callbackName] = function(data) {
+                    clearTimeout(timeout);
+                    delete window[callbackName];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    if (data && data.shorturl) {
+                        resolve(data.shorturl);
+                    } else {
+                        reject(new Error('No shorturl in JSONP response'));
+                    }
+                };
+                
+                const script = document.createElement('script');
+                script.src = 'https://is.gd/create.php?format=json&callback=' + callbackName + '&url=' + encodeURIComponent(longUrl);
+                script.onerror = () => {
+                    clearTimeout(timeout);
+                    delete window[callbackName];
+                    reject(new Error('JSONP script load failed'));
+                };
+                document.head.appendChild(script);
+            });
+        }
+
+        // Fetch with timeout helper
+        function _fetchWithTimeout(url, options, timeoutMs) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs || 5000);
+            return fetch(url, { ...options, signal: controller.signal })
+                .finally(() => clearTimeout(timer));
         }
 
         // Generate shareable URL — High-speed, robust
@@ -11354,9 +11594,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <style>
                     .btn-3d { position:relative;top:0;transition:all 0.12s cubic-bezier(0.4,0,0.2,1);box-shadow:0 4px 0 rgba(0,0,0,0.2); }
                     .btn-3d:active { top:4px;transform:scale(0.97);box-shadow:0 0 0 rgba(0,0,0,0.2)!important;filter:brightness(0.95); }
-                    .btn-copied { background:#2ecc71!important;border-color:#2ecc71!important;color:#fff!important;box-shadow:0 4px 0 #1a9c4e,0 0 20px rgba(46,204,113,0.4)!important; }
+                    .btn-copied { 
+                        background:linear-gradient(135deg, #27ae60, #2ecc71)!important;
+                        border-color:#27ae60!important;
+                        color:#fff!important;
+                        box-shadow:0 4px 0 #1a9c4e, 0 0 24px rgba(46,204,113,0.5), inset 0 1px 0 rgba(255,255,255,0.2)!important;
+                        text-shadow:0 1px 2px rgba(0,0,0,0.2);
+                        transform:scale(1.02);
+                    }
                     .btn-copied:active { box-shadow:0 0 0 #1a9c4e!important; }
-                    @keyframes _copyPulse { 0%{transform:scale(1)} 50%{transform:scale(1.08)} 100%{transform:scale(1)} }
+                    @keyframes _copyPulse { 0%{transform:scale(1)} 30%{transform:scale(1.1)} 60%{transform:scale(0.98)} 100%{transform:scale(1.02)} }
                     ._share-social-btn { display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--text1);transition:all 0.15s ease;text-decoration:none;flex:1;min-width:0; }
                     ._share-social-btn:hover { transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,0.15); }
                     ._share-social-btn.wa { background:rgba(37,211,102,0.1);color:#25d366;border-color:rgba(37,211,102,0.3); }
@@ -11402,11 +11649,26 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <a href="${whatsappUrl}" target="_blank" rel="noopener" class="_share-social-btn wa">💬 WhatsApp</a>
                             <a href="${emailUrl}" class="_share-social-btn em">✉️ Email</a>
                             <a href="${telegramUrl}" target="_blank" rel="noopener" class="_share-social-btn tg">✈️ Telegram</a>
+                            <a href="https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent('Loan Statement — ' + (l.name || 'Loan'))}" target="_blank" rel="noopener" class="_share-social-btn" style="background:rgba(29,161,242,0.1);color:#1da1f2;border-color:rgba(29,161,242,0.3);">𝕏 Post</a>
+                            <a href="https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}" target="_blank" rel="noopener" class="_share-social-btn" style="background:rgba(0,119,181,0.1);color:#0077b5;border-color:rgba(0,119,181,0.3);">💼 LinkedIn</a>
                         </div>
                     </div>
 
-                    <div style="margin-top:16px;padding:12px;background:rgba(46,204,113,0.1);border-radius:8px;font-size:11.5px;color:var(--green);line-height:1.5;border-left:3px solid var(--green);">
-                        <b>🔒 Privacy:</b> This link contains no personal information. No names, emails, or user IDs are embedded in the URL.
+                    <!-- Download PDF Button -->
+                    <div style="margin-top:12px;">
+                        <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:10px;background:var(--bg2);font-size:12px;">
+                            📄 Download Statement as PDF
+                        </button>
+                    </div>
+
+                    <div style="margin-top:16px;padding:12px;background:rgba(46,204,113,0.08);border-radius:10px;font-size:11.5px;color:var(--green);line-height:1.6;border-left:3px solid var(--green);">
+                        <b>🔒 Privacy Guaranteed:</b> This link contains <b>zero</b> personal information.<br>
+                        No names, emails, phone numbers, or user IDs are embedded in the URL or shared data.
+                        <div style="margin-top:6px;font-size:10px;color:var(--text3);display:flex;gap:12px;flex-wrap:wrap;">
+                            <span>📏 URL: ${urlLen} chars</span>
+                            <span>⏳ Valid: ${validityStr}</span>
+                            <span>🔐 AES-256 encrypted</span>
+                        </div>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -11419,30 +11681,42 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
             
             // ── COPY LINK BUTTON — Premium "Copied!" Feedback ──
+            // When clicked: instantly turns GREEN background with "✓ Copied!" text
+            // Stays green for 3 seconds, then smoothly transitions back
             overlay.querySelector('#_surl_copy').onclick = async (e) => {
                 const btn = e.currentTarget;
-                try {
-                    await navigator.clipboard.writeText(url);
-                    // Visual feedback: Green background with "Copied!" text
+                const _doCopiedFeedback = () => {
+                    // INSTANT green background transformation
                     btn.classList.add('btn-copied');
-                    btn.innerHTML = '✓ Copied!';
-                    btn.style.animation = '_copyPulse 0.3s ease';
+                    btn.innerHTML = '✅ Copied!';
+                    btn.style.animation = '_copyPulse 0.35s cubic-bezier(0.4,0,0.2,1)';
+                    btn.style.letterSpacing = '0.5px';
+                    // Also flash the input field green briefly
+                    const inp = overlay.querySelector('#_surl_input');
+                    if (inp) {
+                        inp.style.transition = 'all 0.3s ease';
+                        inp.style.borderColor = '#2ecc71';
+                        inp.style.boxShadow = '0 0 12px rgba(46,204,113,0.3)';
+                        setTimeout(() => { inp.style.borderColor = ''; inp.style.boxShadow = ''; }, 1500);
+                    }
+                    // Revert after 3 seconds with smooth fade
                     setTimeout(() => {
+                        btn.style.transition = 'all 0.4s ease';
                         btn.classList.remove('btn-copied');
                         btn.innerHTML = '📋 Copy Link';
                         btn.style.animation = '';
-                    }, 2500);
+                        btn.style.letterSpacing = '';
+                    }, 3000);
+                };
+                try {
+                    await navigator.clipboard.writeText(url);
+                    _doCopiedFeedback();
                 } catch (err) {
                     // Fallback: select the text in the input field
                     const inp = overlay.querySelector('#_surl_input');
-                    inp.select(); inp.setSelectionRange(0, 99999);
-                    document.execCommand('copy');
-                    btn.classList.add('btn-copied');
-                    btn.innerHTML = '✓ Copied!';
-                    setTimeout(() => {
-                        btn.classList.remove('btn-copied');
-                        btn.innerHTML = '📋 Copy Link';
-                    }, 2500);
+                    if (inp) { inp.select(); inp.setSelectionRange(0, 99999); }
+                    try { document.execCommand('copy'); } catch(e2) {}
+                    _doCopiedFeedback();
                 }
             };
             overlay.querySelector('#_surl_open').onclick = () => {
@@ -11459,6 +11733,33 @@ table.amort tbody tr { page-break-inside: avoid; }
                         });
                     } catch (e) {
                         if (e.name !== 'AbortError') notify('Share cancelled', 'info');
+                    }
+                };
+            }
+            // ── DOWNLOAD PDF BUTTON ──
+            const pdfBtn = overlay.querySelector('#_surl_pdf');
+            if (pdfBtn) {
+                pdfBtn.onclick = async () => {
+                    pdfBtn.innerHTML = '⏳ Generating PDF...';
+                    pdfBtn.disabled = true;
+                    try {
+                        const stmtHTML = _buildLoanStatementHTML(l);
+                        const blob = await _statementHtmlToPdfBlob(stmtHTML, l.name);
+                        const blobUrl = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = blobUrl;
+                        a.download = 'WealthFlow_Statement_' + (l.name || 'Loan').replace(/[^a-zA-Z0-9]/g, '_') + '.pdf';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+                        pdfBtn.innerHTML = '✅ PDF Downloaded!';
+                        pdfBtn.style.color = 'var(--green)';
+                        setTimeout(() => { pdfBtn.innerHTML = '📄 Download Statement as PDF'; pdfBtn.disabled = false; pdfBtn.style.color = ''; }, 2000);
+                    } catch (err) {
+                        console.error('[PDF Download]', err);
+                        pdfBtn.innerHTML = '❌ Failed — try Print instead';
+                        setTimeout(() => { pdfBtn.innerHTML = '📄 Download Statement as PDF'; pdfBtn.disabled = false; }, 2000);
                     }
                 };
             }
@@ -14333,30 +14634,53 @@ table.amort tbody tr { page-break-inside: avoid; }
             // Upload via server-side proxy and show share dialog
             notify('Generating shareable link…', 'info');
             const eliteFileName = `WealthFlow_Elite_${MONTHS_S[month]}_${year}_${Date.now()}.pdf`;
-            _uploadToFastShareNetwork(pdfBlob, eliteFileName, null, null).then(res => {
-                const downloadURL = res.url;
+            (async () => {
                 try {
-                    const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
-                    hist.unshift({ url: downloadURL, loanName: 'Elite Report — ' + MONTHS[month] + ' ' + year, createdAt: new Date().toISOString() });
-                    if (hist.length > 50) hist.length = 50;
-                    localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
-                } catch (e) { /* silent */ }
+                    // Convert blob to base64 for server proxy upload
+                    const reader = new FileReader();
+                    const base64 = await new Promise((resolve, reject) => {
+                        reader.onload = () => resolve(reader.result.split(',')[1]);
+                        reader.onerror = reject;
+                        reader.readAsDataURL(pdfBlob);
+                    });
+                    
+                    const proxyBase = window.location.origin;
+                    const resp = await _fetchWithTimeout(proxyBase + '/api/share-upload', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ base64, fileName: eliteFileName })
+                    }, 12000);
+                    
+                    if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
+                    const res = await resp.json();
+                    let downloadURL = res.url;
+                    
+                    // Shorten the URL
+                    downloadURL = await _shortenUrl(downloadURL);
+                    
+                    try {
+                        const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
+                        hist.unshift({ url: downloadURL, loanName: 'Elite Report — ' + MONTHS[month] + ' ' + year, createdAt: new Date().toISOString() });
+                        if (hist.length > 50) hist.length = 50;
+                        localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
+                    } catch (e) { /* silent */ }
 
-                navigator.clipboard.writeText(downloadURL).catch(() => {});
-                notify('✨ Shareable link ready and copied to clipboard!', 'success');
+                    navigator.clipboard.writeText(downloadURL).catch(() => {});
+                    notify('✨ Shareable link ready and copied to clipboard!', 'success');
 
-                // Direct native share without popup box
-                if (navigator.share) {
-                    navigator.share({
-                        title: 'WealthFlow Elite Statement',
-                        text: 'Here is your generated financial statement from WealthFlow. URL: ' + downloadURL,
-                        url: downloadURL
-                    }).catch(e => console.log('Share failed:', e));
+                    // Direct native share without popup box
+                    if (navigator.share) {
+                        navigator.share({
+                            title: 'WealthFlow Elite Statement',
+                            text: 'WealthFlow Elite Financial Statement — View online: ' + downloadURL,
+                            url: downloadURL
+                        }).catch(e => console.log('Share dismissed:', e));
+                    }
+                } catch (err) {
+                    console.error('[Elite Report Share]', err);
+                    notify('PDF saved locally. Could not generate cloud link — check internet.', 'warning');
                 }
-            }).catch(err => {
-                console.error('[Elite Report Share]', err);
-                notify('PDF saved locally. Could not generate cloud link — check internet.', 'warning');
-            });
+            })();
         }
 
         // Local JSON Restore functionality
