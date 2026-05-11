@@ -10,14 +10,17 @@
     <meta name="description" content="WealthFlow Elite Financial System - Manage your wealth with precision">
     <meta name="theme-color" content="#060a14">
     <meta property="og:title" content="WealthFlow — Loan Statement">
-    <meta property="og:description" content="View your secure personal loan account statement from WealthFlow Elite Financial System.">
-    <meta property="og:image" content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
+    <meta property="og:description"
+        content="View your secure personal loan account statement from WealthFlow Elite Financial System.">
+    <meta property="og:image"
+        content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="WealthFlow">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="WealthFlow — Loan Statement">
     <meta name="twitter:description" content="Secure personal loan account statement from WealthFlow.">
-    <meta name="twitter:image" content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
+    <meta name="twitter:image"
+        content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -2860,8 +2863,15 @@
         }
 
         @keyframes loanOverduePulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-            50% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15); }
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            }
+
+            50% {
+                box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+            }
         }
 
         .loan-month-btn.lmb-current {
@@ -2898,11 +2908,12 @@
         }
 
         /* Repayment Method radio cards (Add/Edit Loan modal) */
-        .loan-method-opt input[type="radio"]:checked + .loan-method-card {
+        .loan-method-opt input[type="radio"]:checked+.loan-method-card {
             border-color: var(--accent);
             background: linear-gradient(135deg, rgba(212, 175, 55, 0.10), rgba(212, 175, 55, 0.02));
             box-shadow: 0 0 0 1px var(--accent) inset;
         }
+
         .loan-method-card:hover {
             border-color: var(--accent2);
         }
@@ -5435,12 +5446,14 @@
                 <label class="fl">Repayment Method *</label>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
                     <label class="loan-method-opt" style="cursor:pointer;">
-                        <input type="radio" name="l_method" id="l_method_emi" value="emi" checked
-                            onchange="calcLoanM()" style="display:none;">
+                        <input type="radio" name="l_method" id="l_method_emi" value="emi" checked onchange="calcLoanM()"
+                            style="display:none;">
                         <div class="loan-method-card" data-for="l_method_emi"
                             style="padding:12px;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);transition:all 0.2s;">
-                            <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;">📊 EMI <span style="font-size:9px;color:var(--text3);font-weight:400;">(Equal)</span></div>
-                            <div style="font-size:11px;color:var(--text3);margin-top:3px;line-height:1.4;">Fixed monthly payment for the whole term. Standard bank loan.</div>
+                            <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;">📊 EMI
+                                <span style="font-size:9px;color:var(--text3);font-weight:400;">(Equal)</span></div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:3px;line-height:1.4;">Fixed monthly
+                                payment for the whole term. Standard bank loan.</div>
                         </div>
                     </label>
                     <label class="loan-method-opt" style="cursor:pointer;">
@@ -5448,8 +5461,11 @@
                             onchange="calcLoanM()" style="display:none;">
                         <div class="loan-method-card" data-for="l_method_reducing"
                             style="padding:12px;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);transition:all 0.2s;">
-                            <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;">📉 Reducing <span style="font-size:9px;color:var(--text3);font-weight:400;">(Floating)</span></div>
-                            <div style="font-size:11px;color:var(--text3);margin-top:3px;line-height:1.4;">Payment drops each month as principal reduces. Auto-adjusts to over/underpayments.</div>
+                            <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;">📉
+                                Reducing <span
+                                    style="font-size:9px;color:var(--text3);font-weight:400;">(Floating)</span></div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:3px;line-height:1.4;">Payment drops
+                                each month as principal reduces. Auto-adjusts to over/underpayments.</div>
                         </div>
                     </label>
                 </div>
@@ -7917,6 +7933,50 @@ YOUR PERSONALITY & CRITICAL RULES:
             } catch (e) { }
         })();
 
+        // ── SHARED STATEMENT VIEWER ──
+        // If URL contains ?stmt=DOC_ID, fetch the statement HTML from Firestore
+        // and display it full-screen. This allows anyone with the link to view it
+        // without needing to log in or have the app installed.
+        (function detectSharedStatement() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const stmtId = params.get('stmt');
+                if (!stmtId) return;
+
+                // Mark that we're in statement viewer mode — skip app boot
+                window._isStatementViewer = true;
+
+                // Wait for Firebase to initialize, then fetch the document
+                const waitForFirebase = setInterval(() => {
+                    if (typeof firebase === 'undefined' || !firebase.firestore) return;
+                    clearInterval(waitForFirebase);
+
+                    firebase.firestore().collection('shared_statements').doc(stmtId).get()
+                        .then(doc => {
+                            if (!doc.exists) {
+                                document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>This shared statement has expired or does not exist.</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
+                                return;
+                            }
+                            const data = doc.data();
+                            // Hide splash and render the statement HTML full-screen
+                            document.body.innerHTML = data.html || '<p>Empty statement</p>';
+                            document.title = 'WealthFlow Statement — ' + (data.loanName || 'Loan');
+                        })
+                        .catch(err => {
+                            console.error('[Shared Statement] Fetch error:', err);
+                            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>Could not load this statement. The link may have expired.</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
+                        });
+                }, 200);
+
+                // Safety timeout — if Firebase never loads, show error after 8s
+                setTimeout(() => {
+                    if (document.querySelector('#splash')) {
+                        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>Failed to connect. Please check your internet connection and try again.</p><a href="/" style="color:#d4af37;">Retry →</a></div></div>';
+                    }
+                }, 8000);
+            } catch (e) { console.error('[stmt viewer]', e); }
+        })();
+
         // Detect email-link landing — handles BOTH magic-link and OTP-link arrivals
         async function checkEmailLinkRecovery() {
             try {
@@ -9386,7 +9446,7 @@ YOUR PERSONALITY & CRITICAL RULES:
             $('l_rate').value = l.rate; $('l_dur').value = l.duration;
             // Restore the saved method (default 'emi' for legacy records without the field)
             const savedMethod = _loanMethod(l);
-            if ($('l_method_emi'))      $('l_method_emi').checked      = savedMethod === 'emi';
+            if ($('l_method_emi')) $('l_method_emi').checked = savedMethod === 'emi';
             if ($('l_method_reducing')) $('l_method_reducing').checked = savedMethod === 'reducing';
             // Only pre-fill override if user had manually overridden (check vs auto-calc for the saved method)
             let autoCalc;
@@ -9857,13 +9917,13 @@ YOUR PERSONALITY & CRITICAL RULES:
             } else if (deltaVsOriginal < 0) {
                 direction = 'reduce';
                 reason = 'You have been paying ahead — to finish on the original date, you only need ' +
-                         fmt(recommendedFixed) + (isReducing ? ' next month (drops further later)' : ' / month from now on') +
-                         ' (' + fmt(Math.abs(deltaVsOriginal)) + ' LESS than scheduled).';
+                    fmt(recommendedFixed) + (isReducing ? ' next month (drops further later)' : ' / month from now on') +
+                    ' (' + fmt(Math.abs(deltaVsOriginal)) + ' LESS than scheduled).';
             } else {
                 direction = 'increase';
                 reason = 'You are behind schedule — to still finish on time, you need ' +
-                         fmt(recommendedFixed) + (isReducing ? ' next month' : ' / month from now on') +
-                         ' (' + fmt(deltaVsOriginal) + ' MORE than scheduled).';
+                    fmt(recommendedFixed) + (isReducing ? ' next month' : ' / month from now on') +
+                    ' (' + fmt(deltaVsOriginal) + ' MORE than scheduled).';
             }
 
             return {
@@ -9919,23 +9979,23 @@ YOUR PERSONALITY & CRITICAL RULES:
                             Method: <b>${isReducing ? 'Reducing Balance (floating)' : 'EMI (fixed)'}</b> · Rate: <b>${l.rate}% p.a.</b><br>
                             Scheduled this month: <b>${fmt(scheduledForMonth)}</b> · Balance: <b style="color:var(--red);">${fmt(curBal)}</b><br>
                             <span style="font-size:11px;color:var(--text3);">${isReducing
-                                ? 'Each month auto-adjusts based on remaining balance — overpaying drops every future installment.'
-                                : 'Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.'}</span>
+                        ? 'Each month auto-adjusts based on remaining balance — overpaying drops every future installment.'
+                        : 'Pay any amount — extra goes to principal (reducing total interest), less means a partial payment.'}</span>
                         </div>
                         ${(() => {
-                            // Recalculated installment banner — only show when off-schedule, so the
-                            // user is told exactly what to pay each remaining month to finish on time.
-                            const rec = loanRecalculatedInstallment(l);
-                            if (rec.onTrack || rec.remainingMonths <= 0) return '';
-                            const isReduce = rec.direction === 'reduce';
-                            const bgGrad = isReduce
-                                ? 'linear-gradient(135deg,rgba(16,185,129,0.14),rgba(16,185,129,0.04))'
-                                : 'linear-gradient(135deg,rgba(245,158,11,0.14),rgba(245,158,11,0.04))';
-                            const borderCol = isReduce ? 'var(--green)' : 'var(--accent2)';
-                            const icon = isReduce ? '🎉' : '⚠️';
-                            const title = isReduce ? 'You are AHEAD of schedule' : 'You are BEHIND schedule';
-                            const verb = isReduce ? 'only need to pay' : 'should pay';
-                            return `<div style="background:${bgGrad};border:1px solid ${borderCol};border-left:3px solid ${borderCol};border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:11.5px;line-height:1.5;">
+                        // Recalculated installment banner — only show when off-schedule, so the
+                        // user is told exactly what to pay each remaining month to finish on time.
+                        const rec = loanRecalculatedInstallment(l);
+                        if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                        const isReduce = rec.direction === 'reduce';
+                        const bgGrad = isReduce
+                            ? 'linear-gradient(135deg,rgba(16,185,129,0.14),rgba(16,185,129,0.04))'
+                            : 'linear-gradient(135deg,rgba(245,158,11,0.14),rgba(245,158,11,0.04))';
+                        const borderCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                        const icon = isReduce ? '🎉' : '⚠️';
+                        const title = isReduce ? 'You are AHEAD of schedule' : 'You are BEHIND schedule';
+                        const verb = isReduce ? 'only need to pay' : 'should pay';
+                        return `<div style="background:${bgGrad};border:1px solid ${borderCol};border-left:3px solid ${borderCol};border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:11.5px;line-height:1.5;">
                                 <div style="font-weight:700;color:${borderCol};margin-bottom:4px;">${icon} ${title} — Auto-Recalculated</div>
                                 <div style="color:var(--text2);">To finish on the original end date, you ${verb}:<br>
                                     <b style="color:${borderCol};font-size:13px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}${isReducing ? ' next month' : ' / month'}</b>
@@ -9944,7 +10004,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                 </div>
                                 <div style="color:var(--text3);font-size:10px;margin-top:3px;">vs. originally scheduled ${fmt(rec.scheduledNext)} ${isReduce ? '(' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less)' : '(' + fmt(rec.deltaVsOriginal) + ' more)'}</div>
                             </div>`;
-                        })()}
+                    })()}
                         <div class="fg">
                             <label class="fl">Amount Paid (LKR) *</label>
                             <input class="fi money-input" id="_pp_amt" placeholder="${fmtN(scheduledForMonth)}" value="${fmtN(seedAmount)}" autofocus>
@@ -9953,15 +10013,15 @@ YOUR PERSONALITY & CRITICAL RULES:
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 0.5)}">½× (${fmtS(scheduledForMonth * 0.5)})</button>
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth)}">Scheduled</button>
                             ${(() => {
-                                // "Recommended" preset — what we recalculate to keep loan on its original term.
-                                // Only show when it differs meaningfully from "Scheduled".
-                                const rec = loanRecalculatedInstallment(l);
-                                if (rec.onTrack || rec.remainingMonths <= 0) return '';
-                                const v = Math.round(rec.recommendedFixed);
-                                const cls = rec.direction === 'reduce' ? 'btn-success' : 'btn-warning';
-                                const arrow = rec.direction === 'reduce' ? '↓' : '↑';
-                                return `<button class="btn btn-sm _pp_preset ${cls}" data-val="${v}" title="Auto-recalculated to finish on the original end date">⚡ Recommended ${arrow} (${fmtS(v)})</button>`;
-                            })()}
+                        // "Recommended" preset — what we recalculate to keep loan on its original term.
+                        // Only show when it differs meaningfully from "Scheduled".
+                        const rec = loanRecalculatedInstallment(l);
+                        if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                        const v = Math.round(rec.recommendedFixed);
+                        const cls = rec.direction === 'reduce' ? 'btn-success' : 'btn-warning';
+                        const arrow = rec.direction === 'reduce' ? '↓' : '↑';
+                        return `<button class="btn btn-sm _pp_preset ${cls}" data-val="${v}" title="Auto-recalculated to finish on the original end date">⚡ Recommended ${arrow} (${fmtS(v)})</button>`;
+                    })()}
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 1.5)}">1.5× (${fmtS(scheduledForMonth * 1.5)})</button>
                             <button class="btn btn-ghost btn-sm _pp_preset" data-val="${Math.round(scheduledForMonth * 2)}">2× (${fmtS(scheduledForMonth * 2)})</button>
                         </div>
@@ -10209,18 +10269,18 @@ YOUR PERSONALITY & CRITICAL RULES:
             </div>` : ''}
 
             ${(() => {
-                // Auto-recalculated installment banner — only when off-schedule. Tells the user
-                // what they should pay each remaining month to STILL finish on the original date.
-                const rec = loanRecalculatedInstallment(l);
-                if (rec.onTrack || rec.remainingMonths <= 0) return '';
-                const isReduce = rec.direction === 'reduce';
-                const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
-                const bgGrad = isReduce
-                    ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
-                    : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
-                const icon = isReduce ? '🎉' : '⚡';
-                const label = isReduce ? 'AHEAD of schedule' : 'BEHIND schedule';
-                return `<div style="margin-top:10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;">
+                        // Auto-recalculated installment banner — only when off-schedule. Tells the user
+                        // what they should pay each remaining month to STILL finish on the original date.
+                        const rec = loanRecalculatedInstallment(l);
+                        if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                        const isReduce = rec.direction === 'reduce';
+                        const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                        const bgGrad = isReduce
+                            ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
+                            : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
+                        const icon = isReduce ? '🎉' : '⚡';
+                        const label = isReduce ? 'AHEAD of schedule' : 'BEHIND schedule';
+                        return `<div style="margin-top:10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
                         <div style="font-weight:700;color:${accentCol};">${icon} Recalculated Installment — You're ${label}</div>
                         <span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 6px;border-radius:8px;">AUTO</span>
@@ -10232,11 +10292,11 @@ YOUR PERSONALITY & CRITICAL RULES:
                     </div>
                     <div style="font-size:10.5px;color:var(--text3);margin-top:4px;">
                         ${isReduce
-                            ? '↓ ' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less than originally scheduled (' + fmt(rec.scheduledNext) + ')'
-                            : '↑ ' + fmt(rec.deltaVsOriginal) + ' more than originally scheduled (' + fmt(rec.scheduledNext) + ')'}
+                                ? '↓ ' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less than originally scheduled (' + fmt(rec.scheduledNext) + ')'
+                                : '↑ ' + fmt(rec.deltaVsOriginal) + ' more than originally scheduled (' + fmt(rec.scheduledNext) + ')'}
                     </div>
                 </div>`;
-            })()}
+                    })()}
 
             ${l.notes ? `<div style="margin-top:8px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${l.notes}</div>` : ''}
 
@@ -10351,16 +10411,16 @@ YOUR PERSONALITY & CRITICAL RULES:
                     </div>
 
                     ${(() => {
-                        const rec = loanRecalculatedInstallment(l);
-                        if (rec.onTrack || rec.remainingMonths <= 0) return '';
-                        const isReduce = rec.direction === 'reduce';
-                        const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
-                        const bgGrad = isReduce
-                            ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
-                            : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
-                        const icon = isReduce ? '🎉' : '⚡';
-                        const isReducingLoan = _loanMethod(l) === 'reducing';
-                        return `<div style="margin:0 16px 10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;flex-shrink:0;">
+                    const rec = loanRecalculatedInstallment(l);
+                    if (rec.onTrack || rec.remainingMonths <= 0) return '';
+                    const isReduce = rec.direction === 'reduce';
+                    const accentCol = isReduce ? 'var(--green)' : 'var(--accent2)';
+                    const bgGrad = isReduce
+                        ? 'linear-gradient(135deg,rgba(16,185,129,0.10),rgba(16,185,129,0.02))'
+                        : 'linear-gradient(135deg,rgba(245,158,11,0.10),rgba(245,158,11,0.02))';
+                    const icon = isReduce ? '🎉' : '⚡';
+                    const isReducingLoan = _loanMethod(l) === 'reducing';
+                    return `<div style="margin:0 16px 10px;background:${bgGrad};border:1px solid ${accentCol};border-left:3px solid ${accentCol};border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;flex-shrink:0;">
                             <div style="font-weight:700;color:${accentCol};margin-bottom:4px;">${icon} Recalculated Installment <span style="font-size:9px;background:var(--bg2);padding:2px 6px;border-radius:8px;color:var(--text3);font-weight:500;">AUTO</span></div>
                             <div style="color:var(--text2);">
                                 Pay <b style="color:${accentCol};font-size:14px;font-family:var(--mono);">${fmt(rec.recommendedFixed)}</b>${isReducingLoan ? ' next month' : ' / month'}
@@ -10369,15 +10429,15 @@ YOUR PERSONALITY & CRITICAL RULES:
                                 <span style="color:var(--text3);font-size:10px;">${isReduce ? '↓ ' + fmt(Math.abs(rec.deltaVsOriginal)) + ' less' : '↑ ' + fmt(rec.deltaVsOriginal) + ' more'} per month vs scheduled.</span>
                             </div>
                         </div>`;
-                    })()}
+                })()}
 
                     <!-- Filter chips -->
                     <div style="padding:10px 16px; display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--border); flex-shrink:0;">
-                        <button class="btn btn-sm ${filter==='all' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','all')">All (${proj.schedule.length})</button>
-                        <button class="btn btn-sm ${filter==='paid' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','paid')">✅ Paid (${paidCount})</button>
-                        <button class="btn btn-sm ${filter==='upcoming' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','upcoming')">⏰ Upcoming (${proj.schedule.length - paidCount})</button>
-                        ${overCount > 0 ? `<button class="btn btn-sm ${filter==='over' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','over')">⬆ Over (${overCount})</button>` : ''}
-                        ${underCount > 0 ? `<button class="btn btn-sm ${filter==='under' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','under')">⬇ Under (${underCount})</button>` : ''}
+                        <button class="btn btn-sm ${filter === 'all' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','all')">All (${proj.schedule.length})</button>
+                        <button class="btn btn-sm ${filter === 'paid' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','paid')">✅ Paid (${paidCount})</button>
+                        <button class="btn btn-sm ${filter === 'upcoming' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','upcoming')">⏰ Upcoming (${proj.schedule.length - paidCount})</button>
+                        ${overCount > 0 ? `<button class="btn btn-sm ${filter === 'over' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','over')">⬆ Over (${overCount})</button>` : ''}
+                        ${underCount > 0 ? `<button class="btn btn-sm ${filter === 'under' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','under')">⬇ Under (${underCount})</button>` : ''}
                     </div>
 
                     <!-- Notes -->
@@ -10399,43 +10459,43 @@ YOUR PERSONALITY & CRITICAL RULES:
                             </thead>
                             <tbody>
                                 ${filteredSchedule.length === 0 ? `<tr><td colspan="6" style="padding:30px;text-align:center;color:var(--text3);">No installments match this filter.</td></tr>` : filteredSchedule.map(m => {
-                const isCurrent = m.isCurrent;
-                let bg;
-                if (m.paid) bg = 'rgba(16,185,129,0.05)';
-                else if (m.isExtension) bg = 'rgba(239,68,68,0.06)';
-                else if (isCurrent) bg = 'rgba(212,175,55,0.08)';
-                else bg = 'transparent';
+                    const isCurrent = m.isCurrent;
+                    let bg;
+                    if (m.paid) bg = 'rgba(16,185,129,0.05)';
+                    else if (m.isExtension) bg = 'rgba(239,68,68,0.06)';
+                    else if (isCurrent) bg = 'rgba(212,175,55,0.08)';
+                    else bg = 'transparent';
 
-                const labelColor = m.paid ? 'var(--green)' : m.isExtension ? 'var(--red)' : '';
-                const amtCol = m.isOver ? 'var(--green)' : m.isPartial ? 'var(--red)' : 'var(--text)';
-                const principalCol = m.paid ? 'var(--text)' : 'var(--text3)';
+                    const labelColor = m.paid ? 'var(--green)' : m.isExtension ? 'var(--red)' : '';
+                    const amtCol = m.isOver ? 'var(--green)' : m.isPartial ? 'var(--red)' : 'var(--text)';
+                    const principalCol = m.paid ? 'var(--text)' : 'var(--text3)';
 
-                let statusLine = '';
-                if (m.paid) statusLine = '<div style="font-size:10px;color:var(--green);margin-top:2px;">✅ Paid' + (m.notes ? ' · ' + (m.notes.length > 22 ? m.notes.slice(0,22)+'…' : m.notes) : '') + '</div>';
-                else if (m.isExtension) statusLine = '<div style="font-size:10px;color:var(--red);margin-top:2px;">⚠️ Extra (catch-up)</div>';
-                else if (isCurrent) statusLine = '<div style="font-size:10px;color:var(--accent);margin-top:2px;font-weight:700;">📍 CURRENT MONTH</div>';
-                else statusLine = '<div style="font-size:10px;color:var(--text3);margin-top:2px;">⏰ Projected</div>';
+                    let statusLine = '';
+                    if (m.paid) statusLine = '<div style="font-size:10px;color:var(--green);margin-top:2px;">✅ Paid' + (m.notes ? ' · ' + (m.notes.length > 22 ? m.notes.slice(0, 22) + '…' : m.notes) : '') + '</div>';
+                    else if (m.isExtension) statusLine = '<div style="font-size:10px;color:var(--red);margin-top:2px;">⚠️ Extra (catch-up)</div>';
+                    else if (isCurrent) statusLine = '<div style="font-size:10px;color:var(--accent);margin-top:2px;font-weight:700;">📍 CURRENT MONTH</div>';
+                    else statusLine = '<div style="font-size:10px;color:var(--text3);margin-top:2px;">⏰ Projected</div>';
 
-                let payCell = '<div style="font-family:var(--mono);color:' + amtCol + ';">' + fmt(m.amount) + '</div>';
-                if (m.isOver) payCell += '<div style="font-size:10px;color:var(--green);margin-top:1px;">+' + fmt(m.diff) + ' extra</div>';
-                if (m.isPartial) payCell += '<div style="font-size:10px;color:var(--red);margin-top:1px;">' + fmt(m.diff) + ' short</div>';
+                    let payCell = '<div style="font-family:var(--mono);color:' + amtCol + ';">' + fmt(m.amount) + '</div>';
+                    if (m.isOver) payCell += '<div style="font-size:10px;color:var(--green);margin-top:1px;">+' + fmt(m.diff) + ' extra</div>';
+                    if (m.isPartial) payCell += '<div style="font-size:10px;color:var(--red);margin-top:1px;">' + fmt(m.diff) + ' short</div>';
 
-                const actionBtn = m.paid
-                    ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${l.id}','${m.month}')">👁</button>`
-                    : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${l.id}','${m.month}')">💸</button>`;
+                    const actionBtn = m.paid
+                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${l.id}','${m.month}')">👁</button>`
+                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${l.id}','${m.month}')">💸</button>`;
 
-                let row = '<tr ' + (isCurrent ? 'data-current-row="1" ' : '') + 'style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer;" ';
-                row += 'onclick="_payLoanInstallmentFromTable(\'' + l.id + '\',\'' + m.month + '\')" ';
-                row += '>';
-                row += '<td style="padding:10px 12px;"><div style="font-weight:700;color:' + labelColor + ';">' + m.label + '</div>' + statusLine + '</td>';
-                row += '<td style="padding:10px 6px; text-align:right; font-family:var(--mono);">' + payCell + '</td>';
-                row += '<td style="padding:10px 6px; text-align:right; font-family:var(--mono); color:' + principalCol + ';">' + fmt(m.principalPaid) + '</td>';
-                row += '<td style="padding:10px 6px; text-align:right; font-family:var(--mono); color:var(--accent);">' + fmt(m.interest) + '</td>';
-                row += '<td style="padding:10px 12px; text-align:right; font-family:var(--mono); font-weight:700; color:' + (m.balance > 0 ? 'var(--red)' : 'var(--green)') + ';">' + fmt(m.balance) + '</td>';
-                row += '<td style="padding:10px 12px; text-align:center;">' + actionBtn + '</td>';
-                row += '</tr>';
-                return row;
-            }).join('')}
+                    let row = '<tr ' + (isCurrent ? 'data-current-row="1" ' : '') + 'style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer;" ';
+                    row += 'onclick="_payLoanInstallmentFromTable(\'' + l.id + '\',\'' + m.month + '\')" ';
+                    row += '>';
+                    row += '<td style="padding:10px 12px;"><div style="font-weight:700;color:' + labelColor + ';">' + m.label + '</div>' + statusLine + '</td>';
+                    row += '<td style="padding:10px 6px; text-align:right; font-family:var(--mono);">' + payCell + '</td>';
+                    row += '<td style="padding:10px 6px; text-align:right; font-family:var(--mono); color:' + principalCol + ';">' + fmt(m.principalPaid) + '</td>';
+                    row += '<td style="padding:10px 6px; text-align:right; font-family:var(--mono); color:var(--accent);">' + fmt(m.interest) + '</td>';
+                    row += '<td style="padding:10px 12px; text-align:right; font-family:var(--mono); font-weight:700; color:' + (m.balance > 0 ? 'var(--red)' : 'var(--green)') + ';">' + fmt(m.balance) + '</td>';
+                    row += '<td style="padding:10px 12px; text-align:center;">' + actionBtn + '</td>';
+                    row += '</tr>';
+                    return row;
+                }).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -10518,34 +10578,34 @@ YOUR PERSONALITY & CRITICAL RULES:
 
             const colorAccent = '#0b3d91'; // navy — bank statement convention
             const colorBorder = '#cfd6e2';
-            const colorMuted  = '#6b7280';
-            const colorText   = '#0f172a';
+            const colorMuted = '#6b7280';
+            const colorText = '#0f172a';
             const colorRowAlt = '#f7f9fc';
-            const colorPaid   = '#0e7c4a';
-            const colorOver   = '#0e7c4a';
-            const colorUnder  = '#b91c1c';
+            const colorPaid = '#0e7c4a';
+            const colorOver = '#0e7c4a';
+            const colorUnder = '#b91c1c';
             const colorBalanceFill = '#fff7e6';
 
             const summaryRows = [
-                ['Bank',              esc(l.bank)],
-                ['Loan ID',           '<span style="font-family:monospace;">' + esc(l.id || '—') + '</span>'],
-                ['Purpose',           esc(l.purpose) || '—'],
-                ['Repayment Method',  isReducing ? 'Reducing Balance (Floating)' : 'Equal Monthly Installment (EMI)'],
-                ['Principal Amount',  fmt(l.amount)],
+                ['Bank', esc(l.bank)],
+                ['Loan ID', '<span style="font-family:monospace;">' + esc(l.id || '—') + '</span>'],
+                ['Purpose', esc(l.purpose) || '—'],
+                ['Repayment Method', isReducing ? 'Reducing Balance (Floating)' : 'Equal Monthly Installment (EMI)'],
+                ['Principal Amount', fmt(l.amount)],
                 ['Annual Interest Rate', l.rate + '% p.a.'],
-                ['Loan Term',         l.duration + ' months'],
+                ['Loan Term', l.duration + ' months'],
                 ['Disbursement Date', startDate],
                 ['Original End Date', endDate],
             ];
 
             const statusRows = [
-                ['Installments Paid',     paidCount + ' / ' + proj.schedule.length],
-                ['Total Paid',            '<b style="color:' + colorPaid + ';">' + fmt(totalPaid) + '</b>'],
-                ['Interest Paid (so far)','<b style="color:' + colorAccent + ';">' + fmt(interestPaid) + '</b>'],
-                ['Outstanding Balance',   '<b style="color:' + colorUnder + ';">' + fmt(balToday) + '</b>'],
+                ['Installments Paid', paidCount + ' / ' + proj.schedule.length],
+                ['Total Paid', '<b style="color:' + colorPaid + ';">' + fmt(totalPaid) + '</b>'],
+                ['Interest Paid (so far)', '<b style="color:' + colorAccent + ';">' + fmt(interestPaid) + '</b>'],
+                ['Outstanding Balance', '<b style="color:' + colorUnder + ';">' + fmt(balToday) + '</b>'],
                 ['Installments Remaining', remainingCount + ' months'],
                 ['Projected Total Interest', fmt(proj.totalInterestActual)],
-                ['Projected Total Payable',  fmt(proj.totalLifetimeCost)],
+                ['Projected Total Payable', fmt(proj.totalLifetimeCost)],
             ];
             if (!rec.onTrack && rec.remainingMonths > 0) {
                 statusRows.push([
@@ -10585,7 +10645,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                     '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:right;font-variant-numeric:tabular-nums;color:' + colorMuted + ';">' + fmtPay(m.interest) + '</td>' +
                     '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:right;font-variant-numeric:tabular-nums;font-weight:600;background:' + (m.balance > 0 ? colorBalanceFill : 'transparent') + ';">' + fmtPay(m.balance) + '</td>' +
                     '<td style="padding:7px 10px;border-bottom:1px solid ' + colorBorder + ';text-align:center;font-size:11px;">' + statusBadge + '</td>' +
-                '</tr>';
+                    '</tr>';
             };
 
             // Split the schedule into PAID and REMAINING.
@@ -10599,27 +10659,27 @@ YOUR PERSONALITY & CRITICAL RULES:
                 if (m.paid) {
                     paidRows.push(buildRow(m, idx, paidRows.length));
                     paidTotals.scheduled += m.scheduledAmount;
-                    paidTotals.amount    += m.amount;
+                    paidTotals.amount += m.amount;
                     paidTotals.principal += m.principalPaid;
-                    paidTotals.interest  += m.interest;
+                    paidTotals.interest += m.interest;
                 } else {
                     remainingRows.push(buildRow(m, idx, remainingRows.length));
                     remainingTotals.scheduled += m.scheduledAmount;
-                    remainingTotals.amount    += m.amount;
+                    remainingTotals.amount += m.amount;
                     remainingTotals.principal += m.principalPaid;
-                    remainingTotals.interest  += m.interest;
+                    remainingTotals.interest += m.interest;
                 }
             });
 
             // Subtotal row builder for the bottom of each section
             const buildTotalRow = (label, t) =>
                 '<tr style="background:' + colorAccent + ';color:#fff;font-weight:700;">' +
-                    '<td colspan="2" style="padding:9px 10px;border-bottom:0;">' + label + '</td>' +
-                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.scheduled) + '</td>' +
-                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.amount) + '</td>' +
-                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.principal) + '</td>' +
-                    '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.interest) + '</td>' +
-                    '<td colspan="2" style="padding:9px 10px;text-align:right;"></td>' +
+                '<td colspan="2" style="padding:9px 10px;border-bottom:0;">' + label + '</td>' +
+                '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.scheduled) + '</td>' +
+                '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.amount) + '</td>' +
+                '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.principal) + '</td>' +
+                '<td style="padding:9px 10px;text-align:right;font-variant-numeric:tabular-nums;">' + fmtPay(t.interest) + '</td>' +
+                '<td colspan="2" style="padding:9px 10px;text-align:right;"></td>' +
                 '</tr>';
 
             // Empty-state row for when one section has no installments yet
@@ -10970,39 +11030,129 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 
 
-        // Instant PDF Upload Network (Catbox -> Tmpfiles)
-        async function _uploadToFastShareNetwork(pdfBlob, fileName) {
+        // =====================================================================
+        // UNIVERSAL SHARE UPLOAD — Server-Side Proxy (CORS-Free, 100% Reliable)
+        // =====================================================================
+        // The browser CANNOT upload directly to catbox/tmpfiles/0x0 because CORS
+        // blocks the request. Instead, we send base64 to our own Vercel serverless
+        // function at /api/share-upload, which uploads server-side (no CORS).
+        //
+        // Strategy order:
+        //   1. Vercel API Proxy → uploads PDF server-side to file.io / 0x0.st / tmpfiles
+        //   2. Firestore HTML doc → instant write, served via ?stmt= viewer (loan only)
+        //   3. Firebase Storage → direct SDK upload (if Storage rules allow)
+        //   4. Web Share API file → attach PDF to native share sheet (mobile)
+
+        // Convert a Blob to base64 string
+        function _blobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const b64 = reader.result.split(',')[1]; // strip data:...;base64,
+                    resolve(b64);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        // PRIMARY: Upload via Vercel serverless proxy (bypasses ALL CORS)
+        async function _uploadViaServerProxy(pdfBlob, fileName) {
+            const base64 = await _blobToBase64(pdfBlob);
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 12000); // 12s total max
             try {
-                // Primary: Catbox API (Ultra-fast, permanent, no-auth)
-                const formData = new FormData();
-                formData.append('reqtype', 'fileupload');
-                formData.append('fileToUpload', pdfBlob, fileName);
-                
-                const abortCtrl = new AbortController();
-                const timer = setTimeout(() => abortCtrl.abort(), 4000); // 4 seconds max
-                const res = await fetch('https://catbox.moe/user/api.php', { 
-                    method: 'POST', 
-                    body: formData,
-                    signal: abortCtrl.signal
+                const resp = await fetch('/api/share-upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ base64, fileName }),
+                    signal: controller.signal
                 });
                 clearTimeout(timer);
-                
-                if (res.ok) return { url: await res.text(), permanent: true };
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error || 'Server proxy returned ' + resp.status);
+                }
+                const data = await resp.json();
+                return { url: data.url, permanent: !!data.permanent };
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        // FALLBACK: Store HTML in Firestore (instant for loan statements)
+        async function _uploadHtmlToFirestore(html, loanName) {
+            if (!currentUser) throw new Error('Not signed in');
+            if (typeof firebase === 'undefined' || !firebase.firestore) throw new Error('Firestore unavailable');
+
+            const docRef = firebase.firestore().collection('shared_statements').doc();
+            await docRef.set({
+                html: html,
+                loanName: loanName || 'Statement',
+                uid: currentUser.uid,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+            });
+            const appUrl = window.location.origin + window.location.pathname;
+            return { url: appUrl + '?stmt=' + docRef.id, permanent: true };
+        }
+
+        // FALLBACK 2: Firebase Storage direct upload (SDK handles auth, no CORS issue)
+        async function _uploadToFirebaseStorage(pdfBlob, fileName) {
+            if (!currentUser) throw new Error('Not signed in');
+            if (typeof firebase === 'undefined' || !firebase.storage) throw new Error('Storage unavailable');
+
+            const storageRef = firebase.storage().ref();
+            const fileRef = storageRef.child('statements/' + fileName);
+            const downloadURL = await new Promise((resolve, reject) => {
+                const uploadTask = fileRef.put(pdfBlob, { contentType: 'application/pdf' });
+                let settled = false;
+                const timeout = setTimeout(() => {
+                    if (!settled) { settled = true; uploadTask.cancel(); reject(new Error('Storage upload timed out')); }
+                }, 6000);
+                uploadTask.on('state_changed', null,
+                    (error) => { if (!settled) { settled = true; clearTimeout(timeout); reject(error); } },
+                    async () => {
+                        if (settled) return;
+                        settled = true; clearTimeout(timeout);
+                        try { resolve(await uploadTask.snapshot.ref.getDownloadURL()); } catch (e) { reject(e); }
+                    }
+                );
+            });
+            return { url: downloadURL, permanent: true };
+        }
+
+        // Master upload function — tries all strategies in order
+        async function _uploadToFastShareNetwork(pdfBlob, fileName, statementHTML, loanName) {
+            const errors = [];
+
+            // Strategy 1: Server-side proxy (most reliable — zero CORS)
+            try {
+                return await _uploadViaServerProxy(pdfBlob, fileName);
             } catch (e) {
-                console.warn('Catbox failed, falling back...', e);
+                errors.push('Proxy: ' + e.message);
+                console.warn('[Share] Server proxy failed:', e.message);
             }
 
-            // Fallback: Tmpfiles (60 min expiry)
-            try {
-                const formData = new FormData();
-                formData.append('file', pdfBlob, fileName);
-                const res = await fetch('https://tmpfiles.org/api/v1/upload', { method: 'POST', body: formData });
-                if (!res.ok) throw new Error('Backup network rejected');
-                const data = await res.json();
-                return { url: data.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/'), permanent: false };
-            } catch (e) {
-                throw new Error('All sharing networks failed');
+            // Strategy 2: Firestore HTML (instant — only if HTML provided)
+            if (statementHTML) {
+                try {
+                    return await _uploadHtmlToFirestore(statementHTML, loanName);
+                } catch (e) {
+                    errors.push('Firestore: ' + e.message);
+                    console.warn('[Share] Firestore failed:', e.message);
+                }
             }
+
+            // Strategy 3: Firebase Storage (direct SDK, no CORS)
+            try {
+                return await _uploadToFirebaseStorage(pdfBlob, fileName);
+            } catch (e) {
+                errors.push('Storage: ' + e.message);
+                console.warn('[Share] Firebase Storage failed:', e.message);
+            }
+
+            throw new Error('All sharing methods failed (' + errors.join(', ') + ')');
         }
 
         // Generate shareable URL — Multi-strategy approach for 100% reliability
@@ -11054,7 +11204,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const safeName = (l.name || 'Loan').replace(/[^a-zA-Z0-9_\\-]/g, '');
                     const fileName = `WealthFlow_Statement_${safeName}_${Date.now()}.pdf`;
 
-                    const uploadRes = await _uploadToFastShareNetwork(outPdfBlob, fileName);
+                    const uploadRes = await _uploadToFastShareNetwork(outPdfBlob, fileName, statementHTML, l.name);
                     shareUrl = uploadRes.url;
                     isPermanent = uploadRes.permanent;
                 } catch (e) {
@@ -11072,7 +11222,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     hist.unshift({ url: shareUrl, loanName: l.name, createdAt: new Date().toISOString() });
                     if (hist.length > 50) hist.length = 50;
                     localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
-                } catch(e) { /* silent */ }
+                } catch (e) { /* silent */ }
 
                 closeOverlay();
                 _showShareableUrlDialog(l, shareUrl, isPermanent, outPdfBlob);
@@ -11186,7 +11336,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function _shareLoanStatement(win, l) {
             // ── STEP 1: Close the statement window/overlay FIRST ──
             if (win && win !== window) {
-                try { win.close(); } catch(e) { /* silent */ }
+                try { win.close(); } catch (e) { /* silent */ }
             }
             document.querySelectorAll('.mo').forEach(m => {
                 if (m.querySelector('#_ls_frame')) {
@@ -11282,11 +11432,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                         ${Math.abs(diff) > 1 ? `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                             <span style="color:var(--text3);font-size:12px;">Difference</span>
-                            <span style="font-family:var(--mono);font-weight:700;color:${diff>0?'var(--green)':'var(--red)'};">${diff > 0 ? '+' : ''}${fmt(diff)}</span>
+                            <span style="font-family:var(--mono);font-weight:700;color:${diff > 0 ? 'var(--green)' : 'var(--red)'};">${diff > 0 ? '+' : ''}${fmt(diff)}</span>
                         </div>` : ''}
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                             <span style="color:var(--text3);font-size:12px;">Recorded On</span>
-                            <span style="font-family:var(--mono);">${fmtDatePretty(d.toISOString().slice(0,10))}</span>
+                            <span style="font-family:var(--mono);">${fmtDatePretty(d.toISOString().slice(0, 10))}</span>
                         </div>
                         ${pay.notes ? `<div style="margin-top:10px;padding:10px;background:var(--bg2);border-radius:8px;border-left:3px solid var(--accent);font-size:12px;color:var(--text2);">📝 ${pay.notes}</div>` : ''}
                     </div>
@@ -14053,31 +14203,29 @@ table.amort tbody tr { page-break-inside: avoid; }
             a.click();
             document.body.removeChild(a);
 
-            // Instant Upload Network
-            notify('Generating instant shareable link...', 'info');
-            _uploadToFastShareNetwork(pdfBlob, a.download).then(res => {
+            // Upload via server-side proxy and show share dialog
+            notify('Generating shareable link…', 'info');
+            const eliteFileName = `WealthFlow_Elite_${MONTHS_S[month]}_${year}_${Date.now()}.pdf`;
+            _uploadToFastShareNetwork(pdfBlob, eliteFileName, null, null).then(res => {
                 const downloadURL = res.url;
                 try {
                     const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
-                    hist.unshift({ url: downloadURL, loanName: 'Elite Report', createdAt: new Date().toISOString() });
+                    hist.unshift({ url: downloadURL, loanName: 'Elite Report — ' + MONTHS[month] + ' ' + year, createdAt: new Date().toISOString() });
                     if (hist.length > 50) hist.length = 50;
                     localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
-                } catch(e) { }
+                } catch (e) { /* silent */ }
 
-                navigator.clipboard.writeText(downloadURL).catch(()=>{});
-                notify('Shareable Link copied to clipboard! ✨', 'success');
+                navigator.clipboard.writeText(downloadURL).catch(() => {});
+                notify('✨ Shareable link ready and copied to clipboard!', 'success');
 
-                if (navigator.share) {
-                    navigator.share({
-                        title: 'WealthFlow Elite Statement',
-                        text: 'Here is your generated financial statement from WealthFlow. URL: ' + downloadURL,
-                        url: downloadURL
-                    }).catch(()=>{});
-                } else {
-                    _showShareableUrlDialog({name: 'Elite PDF Report', bank: 'WealthFlow Analytics'}, downloadURL, res.permanent, pdfBlob);
-                }
-            }).catch(e => {
-                notify('Could not generate shareable link.', 'error');
+                // Show the full share dialog (copy link, open, Web Share)
+                _showShareableUrlDialog(
+                    { name: 'Elite Report — ' + MONTHS[month] + ' ' + year, bank: 'WealthFlow Analytics' },
+                    downloadURL, res.permanent, pdfBlob
+                );
+            }).catch(err => {
+                console.error('[Elite Report Share]', err);
+                notify('PDF saved locally. Could not generate cloud link — check internet.', 'warning');
             });
         }
 
