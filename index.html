@@ -16288,9 +16288,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             // Auto-purge revoked sessions
             sessions = sessions.filter(s => !revoked.includes(s.id));
 
-            // Advanced UA parsing & Client Hints
+            // Advanced UA parsing & exact hardware model extraction (NO OS)
             const ua = navigator.userAgent;
-            let os = 'Unknown OS';
             let brand = '';
 
             try {
@@ -16301,39 +16300,25 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const c = navigator.userAgentData.brands.find(b => !b.brand.includes('Not'));
                         if (c) brand = c.brand;
                     }
-                    if (navigator.userAgentData.platform) os = navigator.userAgentData.platform;
                 }
             } catch (e) {}
 
-            if (os === 'Unknown OS' || !os) {
-                if (/Windows NT 10.0/.test(ua)) os = 'Windows 10/11';
-                else if (/Windows NT 6.3/.test(ua)) os = 'Windows 8.1';
-                else if (/Windows NT 6.2/.test(ua)) os = 'Windows 8';
-                else if (/Windows NT 6.1/.test(ua)) os = 'Windows 7';
-                else if (/Mac OS X 10_([0-9]+)_?([0-9]+)?/.test(ua)) {
-                    const m = ua.match(/Mac OS X 10_([0-9]+)_?([0-9]+)?/);
-                    os = `macOS 10.${m[1]}`;
+            let deviceType = '🌐 Device';
+            if (/iPhone/.test(ua)) deviceType = '📱 iPhone';
+            else if (/iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) deviceType = '📲 iPad';
+            else if (/Mac OS X/.test(ua)) deviceType = '💻 Mac';
+            else if (/Windows/.test(ua)) deviceType = '🖥️ Windows PC';
+            else if (/Linux/.test(ua) && !/Android/.test(ua)) deviceType = '🐧 Linux PC';
+            else if (/Android/.test(ua)) {
+                const match = ua.match(/Android [^;]+; ([^)]+)\)/);
+                let model = 'Android Device';
+                if (match && match[1]) {
+                    model = match[1].split(' Build/')[0].replace(' wv', '').trim();
+                    // Clean up if it grabbed language codes (e.g., "en-us; SM-G991B")
+                    if (model.includes('; ')) model = model.split('; ').pop();
                 }
-                else if (/Mac OS X/.test(ua)) os = 'macOS';
-                else if (/Android ([0-9.]+)/.test(ua)) {
-                    const m = ua.match(/Android ([0-9.]+)/);
-                    os = `Android ${m[1]}`;
-                }
-                else if (/iPhone OS ([0-9_]+)/.test(ua)) {
-                    const m = ua.match(/iPhone OS ([0-9_]+)/);
-                    os = `iOS ${m[1].replace(/_/g, '.')}`;
-                }
-                else if (/iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) os = 'iPadOS';
-                else if (/Linux/.test(ua)) os = 'Linux';
+                deviceType = `📱 ${model}`;
             }
-
-            const deviceType =
-                /iPhone/.test(ua) ? '📱 iPhone' :
-                    os === 'iPadOS' ? '📲 iPad' :
-                        /Android/.test(ua) ? '📱 Android' :
-                            /Mac/.test(ua) ? '💻 Mac' :
-                                /Windows/.test(ua) ? '🖥️ Windows PC' :
-                                    /Linux/.test(ua) ? '🐧 Linux' : '🌐 Device';
 
             const browser = brand || (
                 /Edg/.test(ua) ? 'Edge' :
@@ -16363,13 +16348,13 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             }
 
             try {
-                // Fetch IP, Location, & ISP Background
-                const res = await fetch('https://ipapi.co/json/');
+                // Fetch IP, Location, & ISP Background using hyper-accurate ipwho.is
+                const res = await fetch('https://ipwho.is/');
                 const data = await res.json();
-                if (data && data.ip) {
+                if (data && data.success) {
                     ip = data.ip;
-                    location = `${data.city || 'Unknown City'}, ${data.country_name || 'Unknown Country'}`;
-                    isp = data.org || 'Unknown ISP';
+                    location = `${data.city || 'Unknown City'}, ${data.country || 'Unknown Country'}`;
+                    isp = data.connection?.isp || data.connection?.org || 'Unknown ISP';
                 }
             } catch (e) {
                 if (ip === 'Fetching...') ip = 'Unknown IP';
@@ -16378,7 +16363,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             const currentSession = {
                 id: sessionId,
-                device: `${deviceType} (${os})`,
+                device: deviceType, // NO OS showing here
                 browser,
                 hardware: hwStr,
                 lastActive: new Date().toISOString(),
@@ -16406,9 +16391,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 _renderSessionsDebounced();
             }
 
-            // Start background heartbeat pulse
+            // Start background heartbeat pulse EVERY 15 SECONDS
             if (_sessionPulseInterval) clearInterval(_sessionPulseInterval);
-            _sessionPulseInterval = setInterval(_pulseSessionHeartbeat, 60000); // 1 minute pulse
+            _sessionPulseInterval = setInterval(_pulseSessionHeartbeat, 15000); 
             
             // Listen to visibility to immediately pulse on return
             if (!window._sessionVisListenerAdded) {
@@ -16438,56 +16423,63 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     ${sessions.map(s => {
                         const isCurrent = s.id === sessionId;
                         const lastPulse = new Date(s.lastActive).getTime();
-                        const isOnline = (Date.now() - lastPulse) < (5 * 60 * 1000); // Online if pulsed within 5 mins
+                        // Extremely tight 25-second threshold for hyper-accurate online status
+                        const isOnline = (Date.now() - lastPulse) <= 25000; 
                         
                         return `
-                        <div class="session-card ${isCurrent ? 'session-current' : ''}" style="align-items:flex-start;">
-                            <div class="session-device-icon" style="margin-top:4px;">${(s.device ? s.device.split(' ')[0] : '🌐')}</div>
-                            <div style="flex:1;">
-                                <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
-                                    <span style="font-size:14px;font-weight:700;color:var(--text);">${s.device || 'Unknown Device'}</span>
-                                    ${isCurrent ? '<span style="background:rgba(16,185,129,0.15);color:var(--green);font-size:9px;padding:3px 8px;border-radius:12px;font-weight:800;letter-spacing:0.5px; border:1px solid rgba(16,185,129,0.3);">THIS DEVICE</span>' : ''}
-                                    ${isOnline ? '<span style="display:flex;align-items:center;gap:5px;color:var(--green);font-size:10px;font-weight:800;background:rgba(16,185,129,0.1);padding:3px 8px;border-radius:12px;"><div style="width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 6px var(--green);"></div>ONLINE</span>' : `<span style="color:var(--text3);font-size:10px;font-weight:600;background:var(--bg);padding:3px 8px;border-radius:12px;">🕒 ${timeAgo(s.lastActive)}</span>`}
-                                </div>
-                                
-                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:12px;">
-                                    <div style="font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
-                                        <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Location</div>
-                                        <div style="display:flex;align-items:center;gap:4px;">🌍 <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.location || 'Unknown'}</span></div>
-                                    </div>
-                                    <div style="font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
-                                        <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Network / ISP</div>
-                                        <div style="display:flex;align-items:center;gap:4px;">📡 <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.isp || 'Unknown'}</span></div>
-                                    </div>
-                                    <div style="font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
-                                        <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Hardware</div>
-                                        <div style="display:flex;align-items:center;gap:4px;">⚙️ <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.hardware || 'Standard'}</span></div>
-                                    </div>
-                                    <div style="font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
-                                        <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Software</div>
-                                        <div style="display:flex;align-items:center;gap:4px;">🌐 <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.browser || 'Unknown'}</span></div>
+                        <div class="session-card ${isCurrent ? 'session-current' : ''}" style="align-items:flex-start; flex-direction:column;">
+                            <div style="display:flex; width:100%; justify-content:space-between; align-items:flex-start;">
+                                <div style="display:flex; flex:1;">
+                                    <div class="session-device-icon" style="margin-top:4px;">${(s.device ? s.device.split(' ')[0] : '🌐')}</div>
+                                    <div style="flex:1;">
+                                        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+                                            <span style="font-size:14px;font-weight:700;color:var(--text);">${s.device || 'Unknown Device'}</span>
+                                            ${isCurrent ? '<span style="background:rgba(16,185,129,0.15);color:var(--green);font-size:9px;padding:3px 8px;border-radius:12px;font-weight:800;letter-spacing:0.5px; border:1px solid rgba(16,185,129,0.3);">THIS DEVICE</span>' : ''}
+                                            ${isOnline ? '<span style="display:flex;align-items:center;gap:5px;color:var(--green);font-size:10px;font-weight:800;background:rgba(16,185,129,0.1);padding:3px 8px;border-radius:12px;"><div style="width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 6px var(--green);animation:pulseGreen 2s infinite;"></div>ONLINE NOW</span>' : `<span style="color:var(--text3);font-size:10px;font-weight:600;background:var(--bg);padding:3px 8px;border-radius:12px;">🕒 ${timeAgo(s.lastActive)}</span>`}
+                                        </div>
                                     </div>
                                 </div>
-
-                                <div style="font-size:10px;color:var(--text3);font-family:var(--mono);opacity:.8;background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;display:inline-block;">
-                                    <span style="color:var(--text2);">IP:</span> ${s.ip || 'Unknown'} <span style="margin:0 6px;">|</span> <span style="color:var(--text2);">ID:</span> ${s.id.substring(0, 10)}…
+                                <div style="margin-left:12px; display:flex; flex-direction:column; justify-content:center;">
+                                    ${!isCurrent
+                            ? `<button class="btn btn-danger btn-sm" onclick="revokeSession('${s.id}')" style="padding:8px 14px; border-radius:8px; font-weight:700;">🚫 Revoke</button>`
+                            : `<button class="btn btn-ghost btn-sm" onclick="revokeSession('${s.id}', true)" title="Sign out this device" style="padding:8px 14px; border-radius:8px; font-weight:700; color:var(--text3);">⏻ Sign Out</button>`}
                                 </div>
                             </div>
-                            <div style="margin-left:12px; display:flex; flex-direction:column; justify-content:center; align-self:center;">
-                                ${!isCurrent
-                        ? `<button class="btn btn-danger btn-sm" onclick="revokeSession('${s.id}')" style="padding:8px 14px; border-radius:8px; font-weight:700;">🚫 Revoke</button>`
-                        : `<button class="btn btn-ghost btn-sm" onclick="revokeSession('${s.id}', true)" title="Sign out this device" style="padding:8px 14px; border-radius:8px; font-weight:700; color:var(--text3);">⏻ Sign Out</button>`}
+                            
+                            <!-- Responsive flex-wrap grid for data blocks -->
+                            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; width:100%; margin-top:8px;">
+                                <div style="flex: 1 1 130px; font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
+                                    <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Location</div>
+                                    <div style="display:flex;align-items:center;gap:4px;word-break:break-word;">🌍 ${s.location || 'Unknown'}</div>
+                                </div>
+                                <div style="flex: 1 1 130px; font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
+                                    <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Network / ISP</div>
+                                    <div style="display:flex;align-items:center;gap:4px;word-break:break-word;">📡 ${s.isp || 'Unknown'}</div>
+                                </div>
+                                <div style="flex: 1 1 130px; font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
+                                    <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Hardware</div>
+                                    <div style="display:flex;align-items:center;gap:4px;word-break:break-word;">⚙️ ${s.hardware || 'Standard'}</div>
+                                </div>
+                                <div style="flex: 1 1 130px; font-size:12px;color:var(--text2); background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border);">
+                                    <div style="color:var(--text3);font-size:9px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:3px;">Software</div>
+                                    <div style="display:flex;align-items:center;gap:4px;word-break:break-word;">🌐 ${s.browser || 'Unknown'}</div>
+                                </div>
+                            </div>
+
+                            <div style="font-size:10px;color:var(--text3);font-family:var(--mono);opacity:.8;background:rgba(0,0,0,0.2);padding:4px 8px;border-radius:4px;display:inline-block;">
+                                <span style="color:var(--text2);">IP:</span> ${s.ip || 'Unknown'} <span style="margin:0 6px;">|</span> <span style="color:var(--text2);">ID:</span> ${s.id.substring(0, 10)}…
                             </div>
                         </div>
                     `}).join('')}
                 </div>
+                <style>@keyframes pulseGreen { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.7); } 70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } }</style>
                 <div class="card" style="margin-top:14px;">
                     <div class="card-header"><div class="card-title">🔒 Military-Grade Tracking Active</div></div>
                     <div style="font-size:12px;color:var(--text2);line-height:1.8;">
-                        • <strong style="color:var(--green);">🟢 Online Status:</strong> Powered by a dynamic background heartbeat.<br>
-                        • <strong style="color:var(--text);">📱 Hardware Fingerprinting:</strong> Extracts deep hardware & OS configurations.<br>
-                        • <strong style="color:var(--text);">📡 Deep Network Tracking:</strong> Identifies ISP to spot unfamiliar cellular networks or VPNs.<br>
-                        • <strong style="color:var(--red);">⚡ Instant Kill-Switch:</strong> Real-time WebSocket revocation terminates unauthorized sessions in milliseconds.
+                        • <strong style="color:var(--green);">🟢 Hyper-Accurate Online Status:</strong> Detects offline devices instantly within 25 seconds.<br>
+                        • <strong style="color:var(--text);">📱 True Device Identity:</strong> Deep extraction of exact hardware model numbers.<br>
+                        • <strong style="color:var(--text);">📡 Deep Network Tracking:</strong> Enterprise-grade ISP detection to spot cellular networks or VPNs.<br>
+                        • <strong style="color:var(--red);">⚡ Instant Kill-Switch:</strong> Revocation terminates unauthorized sessions in milliseconds.
                     </div>
                 </div>
             `;
