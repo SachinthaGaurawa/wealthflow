@@ -15170,16 +15170,22 @@ Be direct and use real numbers. Avoid generic advice.`;
         // ==================== DEBT DEMOLISHER (UPGRADED — Issue 3) ====================
         // Now properly simulates each strategy month-by-month with amortization,
         // computes total interest paid, payoff date, and ranks strategies.
+        // ==================== DEBT DEMOLISHER (UPGRADED — Issue 3) ====================
+        // Now properly simulates each strategy month-by-month with amortization,
+        // computes total interest paid, payoff date, and ranks strategies.
         function _amortizeStrategy(loans, extraPayment, strategy) {
             // strategy: 'avalanche' (highest rate first) or 'snowball' (smallest balance first)
-            // Returns { months, totalInterest, payoffDate, perLoanMonths }
+            // Returns { months, totalInterest, payoffDate, perLoanMonths, history }
             const work = loans.map(l => ({
                 id: l.id, name: l.name, rate: (l.rate || 0) / 100 / 12,
-                bal: l.amount, monthly: l.monthly, paidMonths: 0, totalInterest: 0, paidOff: false
+                bal: l.amount, monthly: l.monthly, paidMonths: 0, totalInterest: 0, paidOff: false,
+                isNegativeAmortization: false
             }));
 
             let month = 0;
             const maxMonths = 600; // 50 years cap
+            const history = [work.reduce((s, w) => s + w.bal, 0)]; // Initial total balance
+
             while (work.some(w => !w.paidOff) && month < maxMonths) {
                 month++;
                 
@@ -15195,14 +15201,21 @@ Be direct and use real numbers. Avoid generic advice.`;
                     w.totalInterest += interest;
                     w.bal += interest;
                     
-                    let pay = Math.min(w.monthly, w.bal);
+                    // Fix negative amortization
+                    let effectiveMonthly = w.monthly;
+                    if (effectiveMonthly <= interest && interest > 0) {
+                        effectiveMonthly = interest + (w.bal * 0.01); // Force at least 1% principal reduction
+                        w.isNegativeAmortization = true;
+                    }
+
+                    let pay = Math.min(effectiveMonthly, w.bal);
                     w.bal -= pay;
                     w.paidMonths++;
                     
                     if (w.bal <= 0.01) {
                         w.bal = 0; w.paidOff = true;
                         // Add the leftover part of the minimum payment to the pool
-                        pool += (w.monthly - pay);
+                        pool += (effectiveMonthly - pay);
                     }
                 });
 
@@ -15223,32 +15236,36 @@ Be direct and use real numbers. Avoid generic advice.`;
                         focus.paidOff = true; 
                     }
                 }
+
+                // Record total balance for this month for the chart
+                history.push(work.reduce((s, w) => s + w.bal, 0));
             }
 
             return {
                 months: month,
                 totalInterest: work.reduce((s, w) => s + w.totalInterest, 0),
                 payoffDate: new Date(Date.now() + month * 30.44 * 86400000),
-                perLoan: work.map(w => ({ id: w.id, name: w.name, months: w.paidMonths, interest: w.totalInterest }))
+                perLoan: work.map(w => ({ id: w.id, name: w.name, months: w.paidMonths, interest: w.totalInterest })),
+                hasNegativeAmortization: work.some(w => w.isNegativeAmortization),
+                history: history
             };
         }
+
+        let debtDemoChartInstance = null;
+        let debtDemoBaseExtra = 0;
+        let debtDemoItems = [];
 
         function renderDebtDemolisher() {
             const rawLoans = DB.get('loans').filter(l => loanEndDate(l) > new Date() && loanCurrentBalance(l) > 0);
             const ccInstalls = DB.get('ccinstall').filter(c => !c.completed);
             
-            const debtItems = [];
+            debtDemoItems = [];
             
             rawLoans.forEach(l => {
                 const bal = loanCurrentBalance(l);
-                debtItems.push({
-                    id: l.id,
-                    name: l.name,
-                    bank: l.bank,
-                    amount: bal, // use current balance
-                    monthly: l.monthly,
-                    rate: l.rate || 0,
-                    type: 'loan'
+                debtDemoItems.push({
+                    id: l.id, name: l.name, bank: l.bank,
+                    amount: bal, monthly: l.monthly, rate: l.rate || 0, type: 'loan'
                 });
             });
             
@@ -15258,104 +15275,72 @@ Be direct and use real numbers. Avoid generic advice.`;
                 const bal = remainingMonths > 0 ? (c.monthly * remainingMonths) : 0;
                 
                 if (bal > 0) {
-                    debtItems.push({
-                        id: c.id,
-                        name: c.product,
-                        bank: c.bank,
-                        amount: bal,
-                        monthly: c.monthly,
-                        rate: c.rate || 0,
-                        type: 'cc'
+                    debtDemoItems.push({
+                        id: c.id, name: c.product, bank: c.bank,
+                        amount: bal, monthly: c.monthly, rate: c.rate || 0, type: 'cc'
                     });
                 }
             });
 
             const wrap = $('debtDemoContent');
             if (!wrap) return;
-            if (!debtItems.length) { wrap.innerHTML = emptyState('🎉', 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
+            if (!debtDemoItems.length) { wrap.innerHTML = emptyState('🎉', 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
 
-            const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);
-            const totalMonthly = debtItems.reduce((s, d) => s + d.monthly, 0);
-
-            // Find user's free cashflow that could go to extra payments
             const ctx = buildFinancialContext();
-            const suggestedExtra = Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
-
-            // Run both strategies
-            const baseline = _amortizeStrategy(debtItems, 0, 'avalanche');
-            const avalanche = _amortizeStrategy(debtItems, suggestedExtra, 'avalanche');
-            const snowball = _amortizeStrategy(debtItems, suggestedExtra, 'snowball');
-
-            const interestSavedAvalanche = baseline.totalInterest - avalanche.totalInterest;
-            const monthsSavedAvalanche = baseline.months - avalanche.months;
-            const interestSavedSnowball = baseline.totalInterest - snowball.totalInterest;
-            const monthsSavedSnowball = baseline.months - snowball.months;
-
-            const sortedAvalanche = [...debtItems].sort((a, b) => b.rate - a.rate);
-            const sortedSnowball = [...debtItems].sort((a, b) => a.amount - b.amount);
-
-            const renderDebtList = (ordered, strategy, plan) => ordered.map((loan, i) => {
-                const plMonths = plan.perLoan.find(p => p.id === loan.id)?.months || 0;
-                return `
-                    <div class="debt-item ${i === 0 ? 'focus' : ''}">
-                        <div class="debt-priority" style="background:${i === 0 ? 'var(--accent)' : i === 1 ? 'var(--blue)' : 'var(--text3)'};">${i + 1}</div>
-                        <div style="flex:1;">
-                            <div style="font-size:13px;font-weight:700;">${loan.name}</div>
-                            <div style="font-size:11px;color:var(--text3);">${loan.bank} · ${loan.rate}% APR · pays off in ${plMonths} mo</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:14px;font-weight:800;font-family:var(--mono);">${fmt(loan.monthly)}/mo</div>
-                            <div style="font-size:10px;color:var(--text3);">Balance: ${fmt(loan.amount)}</div>
-                        </div>
-                        ${i === 0 ? '<div style="background:var(--accent);color:#000;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:800;">PAY NEXT</div>' : ''}
-                    </div>
-                `;
-            }).join('');
+            debtDemoBaseExtra = Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
 
             wrap.innerHTML = `
-                <div class="g3" style="margin-bottom:16px;">
-                    <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${debtItems.length} accounts</div></div>
-                    <div class="stat-card sc-gold"><div class="stat-label">Monthly Payments</div><div class="stat-val">${fmtS(totalMonthly)}</div><div class="stat-meta">minimums</div></div>
-                    <div class="stat-card sc-blue"><div class="stat-label">Suggested Extra/mo</div><div class="stat-val">${fmtS(suggestedExtra)}</div><div class="stat-meta">50% of free cashflow</div></div>
+                <!-- Educational Intro -->
+                <div style="background:linear-gradient(135deg, rgba(212,175,55,0.08), rgba(59,130,246,0.08)); border:1px solid var(--border2); border-radius:12px; padding:16px; margin-bottom:16px;">
+                    <div style="font-size:14px; font-weight:800; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:18px;">🎓</span> How Debt Demolisher Works
+                    </div>
+                    <div style="font-size:12px; color:var(--text2); line-height:1.6; margin-bottom:12px;">
+                        This tool simulates the exact date you will be debt-free. By paying a little extra each month, you can save millions in interest. We use two proven strategies:
+                        <br><br>
+                        <strong style="color:var(--green);">🏔️ Avalanche:</strong> Pays off the highest interest rate first. Mathematically saves the most money.
+                        <br>
+                        <strong style="color:var(--blue);">⛄ Snowball:</strong> Pays off the smallest balance first. Great for quick psychological wins.
+                    </div>
                 </div>
 
                 <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header"><div class="card-title">🎯 Your Personalized Payoff Plan</div><div class="card-sub">Based on adding ${fmt(suggestedExtra)}/month to your highest-priority loan</div></div>
-                    <div class="g2">
-                        <div style="padding:14px;background:rgba(16,185,129,0.06);border-radius:12px;">
-                            <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🏔️ Avalanche</div>
-                            <div style="font-size:11px;color:var(--text3);">Payoff date</div>
-                            <div style="font-size:18px;font-weight:800;font-family:var(--mono);">${avalanche.payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div>
-                            <div style="margin-top:10px;font-size:11px;color:var(--text3);">vs minimum payments</div>
-                            <div style="font-size:14px;color:var(--green);font-weight:700;font-family:var(--mono);">${fmt(interestSavedAvalanche)} saved · ${monthsSavedAvalanche} mo earlier</div>
-                        </div>
-                        <div style="padding:14px;background:rgba(59,130,246,0.06);border-radius:12px;">
-                            <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:10px;">⛄ Snowball</div>
-                            <div style="font-size:11px;color:var(--text3);">Payoff date</div>
-                            <div style="font-size:18px;font-weight:800;font-family:var(--mono);">${snowball.payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div>
-                            <div style="margin-top:10px;font-size:11px;color:var(--text3);">vs minimum payments</div>
-                            <div style="font-size:14px;color:var(--green);font-weight:700;font-family:var(--mono);">${fmt(interestSavedSnowball)} saved · ${monthsSavedSnowball} mo earlier</div>
-                        </div>
+                    <div class="card-header">
+                        <div class="card-title">🎚️ Interactive Payoff Sandbox</div>
+                        <div class="card-sub">Drag the slider to see how extra payments accelerate your payoff date.</div>
                     </div>
-                    <div style="margin-top:14px;padding:12px;background:rgba(212,175,55,0.06);border-radius:10px;font-size:12px;color:var(--accent);text-align:center;font-weight:600;">
-                        🏆 Recommendation: ${interestSavedAvalanche > interestSavedSnowball ? 'Avalanche method saves ' + fmt(interestSavedAvalanche - interestSavedSnowball) + ' more in interest' : 'Both strategies produce similar results — pick what motivates you'}
+                    <div style="padding:20px 10px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                            <span style="font-size:12px; font-weight:700; color:var(--text2);">Extra Monthly Payment</span>
+                            <span style="font-size:18px; font-weight:800; font-family:var(--mono); color:var(--accent);" id="debtDemoSliderVal">${fmt(debtDemoBaseExtra)}</span>
+                        </div>
+                        <input type="range" id="debtDemoSlider" min="0" max="${Math.max(debtDemoBaseExtra * 3, 500000)}" step="5000" value="${debtDemoBaseExtra}" style="width:100%; accent-color:var(--accent); cursor:pointer;" oninput="updateDebtDemoSlider(this.value)">
+                        <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:10px; color:var(--text3);">
+                            <span>LKR 0</span>
+                            <span>LKR ${fmt(Math.max(debtDemoBaseExtra * 3, 500000))}</span>
+                        </div>
                     </div>
                 </div>
 
-                <div class="g2">
-                    <div class="card">
-                        <div class="card-header"><div class="card-title">🏔️ Avalanche Method</div><div class="card-sub">Pay highest interest rate first — saves the most money</div></div>
-                        ${renderDebtList(sortedAvalanche, 'avalanche', avalanche)}
-                        <div style="margin-top:12px;padding:10px;background:rgba(16,185,129,0.08);border-radius:8px;font-size:12px;color:var(--green);text-align:center;font-weight:600;">✨ Mathematically optimal — saves maximum interest</div>
+                <div class="g2" style="margin-bottom:16px;" id="debtDemoResultsBoxes">
+                    <!-- Dynamic Boxes injected here -->
+                </div>
+
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-header">
+                        <div class="card-title">📉 Balance Trajectory</div>
+                        <div class="card-sub">Visualizing your path to zero debt</div>
                     </div>
-                    <div class="card">
-                        <div class="card-header"><div class="card-title">⛄ Snowball Method</div><div class="card-sub">Pay smallest balance first — builds momentum</div></div>
-                        ${renderDebtList(sortedSnowball, 'snowball', snowball)}
-                        <div style="margin-top:12px;padding:10px;background:rgba(59,130,246,0.08);border-radius:8px;font-size:12px;color:var(--blue);text-align:center;font-weight:600;">💪 Psychologically motivating — quick wins</div>
+                    <div style="height:280px; position:relative;">
+                        <canvas id="debtDemoChart"></canvas>
                     </div>
                 </div>
 
-                <!-- ISSUE 6 — Deep AI debt analysis -->
+                <div class="g2" id="debtDemoLists">
+                     <!-- Dynamic Lists injected here -->
+                </div>
+
+                <!-- Deep AI debt analysis -->
                 <div class="card" style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
                     <div class="card-header">
                         <div class="card-title">🧠 AI Debt Strategist</div>
@@ -15365,6 +15350,151 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div id="debtAIInsight" style="margin-top:14px;"></div>
                 </div>
             `;
+
+            // Initial Update
+            updateDebtDemoData(debtDemoBaseExtra);
+        }
+
+        function updateDebtDemoSlider(val) {
+            const num = parseInt(val, 10);
+            $('debtDemoSliderVal').innerText = fmt(num);
+            updateDebtDemoData(num);
+        }
+
+        function updateDebtDemoData(extraPayment) {
+            const baseline = _amortizeStrategy(debtDemoItems, 0, 'avalanche');
+            const avalanche = _amortizeStrategy(debtDemoItems, extraPayment, 'avalanche');
+            const snowball = _amortizeStrategy(debtDemoItems, extraPayment, 'snowball');
+
+            const interestSavedAvalanche = baseline.totalInterest - avalanche.totalInterest;
+            const monthsSavedAvalanche = baseline.months - avalanche.months;
+            const interestSavedSnowball = baseline.totalInterest - snowball.totalInterest;
+            const monthsSavedSnowball = baseline.months - snowball.months;
+
+            // Render Result Boxes
+            const boxesWrap = $('debtDemoResultsBoxes');
+            if (boxesWrap) {
+                let negWarn = baseline.hasNegativeAmortization ? `<div style="grid-column:1/-1; background:rgba(239,68,68,0.1); border:1px solid var(--red); padding:10px; border-radius:8px; font-size:12px; color:var(--red); text-align:center; margin-bottom:10px;">⚠️ Warning: Your minimum payments do not cover the interest on some loans. Your debt is growing! The simulation has artificially boosted minimums to calculate a projection.</div>` : '';
+                
+                boxesWrap.innerHTML = negWarn + `
+                    <div style="padding:16px;background:rgba(16,185,129,0.06);border-radius:12px;border:1px solid rgba(16,185,129,0.2);transition:all 0.3s;">
+                        <div style="font-size:14px;font-weight:800;color:var(--green);margin-bottom:10px;display:flex;align-items:center;gap:6px;">🏔️ Avalanche</div>
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Payoff Date</div>
+                        <div style="font-size:22px;font-weight:900;font-family:var(--mono);color:var(--text);margin-bottom:12px;">${avalanche.payoffDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</div>
+                        <div style="border-top:1px dashed rgba(16,185,129,0.3);padding-top:10px;">
+                            <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">vs minimum payments</div>
+                            <div style="font-size:14px;color:var(--green);font-weight:700;font-family:var(--mono);">+${fmt(interestSavedAvalanche)} saved</div>
+                            <div style="font-size:12px;color:var(--green);font-weight:600;margin-top:2px;">${monthsSavedAvalanche} months earlier</div>
+                        </div>
+                    </div>
+                    <div style="padding:16px;background:rgba(59,130,246,0.06);border-radius:12px;border:1px solid rgba(59,130,246,0.2);transition:all 0.3s;">
+                        <div style="font-size:14px;font-weight:800;color:var(--blue);margin-bottom:10px;display:flex;align-items:center;gap:6px;">⛄ Snowball</div>
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Payoff Date</div>
+                        <div style="font-size:22px;font-weight:900;font-family:var(--mono);color:var(--text);margin-bottom:12px;">${snowball.payoffDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</div>
+                        <div style="border-top:1px dashed rgba(59,130,246,0.3);padding-top:10px;">
+                            <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">vs minimum payments</div>
+                            <div style="font-size:14px;color:var(--blue);font-weight:700;font-family:var(--mono);">+${fmt(interestSavedSnowball)} saved</div>
+                            <div style="font-size:12px;color:var(--blue);font-weight:600;margin-top:2px;">${monthsSavedSnowball} months earlier</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Render Chart
+            renderDebtDemoChart(baseline.history, avalanche.history, snowball.history);
+
+            // Render Lists
+            const sortedAvalanche = [...debtDemoItems].sort((a, b) => b.rate - a.rate);
+            const sortedSnowball = [...debtDemoItems].sort((a, b) => a.amount - b.amount);
+
+            const renderDebtList = (ordered, strat, plan) => ordered.map((loan, i) => {
+                const plMonths = plan.perLoan.find(p => p.id === loan.id)?.months || 0;
+                return \`
+                    <div class="debt-item \${i === 0 ? 'focus' : ''}">
+                        <div class="debt-priority" style="background:\${i === 0 ? 'var(--accent)' : i === 1 ? 'var(--blue)' : 'var(--text3)'};">\${i + 1}</div>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:700;">\${loan.name}</div>
+                            <div style="font-size:11px;color:var(--text3);">\${loan.bank} · \${loan.rate}% APR · \${plMonths} mo to zero</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:14px;font-weight:800;font-family:var(--mono);">\${fmt(loan.monthly)}/mo</div>
+                            <div style="font-size:10px;color:var(--text3);">Bal: \${fmt(loan.amount)}</div>
+                        </div>
+                        \${i === 0 && extraPayment > 0 ? \`<div style="background:var(--accent);color:#000;padding:4px 8px;border-radius:6px;font-size:10px;font-weight:800;">+\${fmt(extraPayment)} NEXT</div>\` : ''}
+                    </div>
+                \`;
+            }).join('');
+
+            const listsWrap = $('debtDemoLists');
+            if (listsWrap) {
+                listsWrap.innerHTML = \`
+                    <div class="card" style="padding:0; overflow:hidden;">
+                        <div class="card-header" style="background:rgba(16,185,129,0.05); padding:16px;"><div class="card-title">🏔️ Avalanche Order</div><div class="card-sub">Optimized for maximum savings</div></div>
+                        <div style="padding:12px;">\${renderDebtList(sortedAvalanche, 'avalanche', avalanche)}</div>
+                    </div>
+                    <div class="card" style="padding:0; overflow:hidden;">
+                        <div class="card-header" style="background:rgba(59,130,246,0.05); padding:16px;"><div class="card-title">⛄ Snowball Order</div><div class="card-sub">Optimized for quick psychological wins</div></div>
+                        <div style="padding:12px;">\${renderDebtList(sortedSnowball, 'snowball', snowball)}</div>
+                    </div>
+                \`;
+            }
+        }
+
+        function renderDebtDemoChart(baseHist, avaHist, snowHist) {
+            const canvas = document.getElementById('debtDemoChart');
+            if (!canvas) return;
+            
+            const maxLen = Math.max(baseHist.length, avaHist.length, snowHist.length);
+            const labels = Array.from({length: maxLen}, (_, i) => \`Mo \${i}\`);
+
+            // Pad the histories with 0 if they finished early
+            const pad = (arr, len) => {
+                const res = [...arr];
+                while(res.length < len) res.push(0);
+                return res;
+            };
+
+            const pBase = pad(baseHist, maxLen);
+            const pAva = pad(avaHist, maxLen);
+            const pSnow = pad(snowHist, maxLen);
+
+            if (debtDemoChartInstance) {
+                debtDemoChartInstance.data.labels = labels;
+                debtDemoChartInstance.data.datasets[0].data = pBase;
+                debtDemoChartInstance.data.datasets[1].data = pAva;
+                debtDemoChartInstance.data.datasets[2].data = pSnow;
+                debtDemoChartInstance.update('none'); // Update without animation for smooth sliding
+                return;
+            }
+
+            debtDemoChartInstance = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Minimums Only', data: pBase, borderColor: '#ef4444', borderDash: [5, 5], borderWidth: 2, pointRadius: 0, tension: 0.4 },
+                        { label: 'Avalanche', data: pAva, borderColor: '#10b981', borderWidth: 3, backgroundColor: 'rgba(16,185,129,0.1)', fill: true, pointRadius: 0, tension: 0.4 },
+                        { label: 'Snowball', data: pSnow, borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0, tension: 0.4 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#8892b0', font: { family: 'Inter', size: 11 } } },
+                        tooltip: {
+                            backgroundColor: 'rgba(13, 29, 60, 0.9)', titleColor: '#fff', bodyColor: '#fff',
+                            borderColor: 'rgba(212,175,55,0.3)', borderWidth: 1, padding: 10,
+                            callbacks: { label: (ctx) => ctx.dataset.label + ': LKR ' + Math.round(ctx.raw).toLocaleString() }
+                        }
+                    },
+                    scales: {
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8892b0', maxTicksLimit: 10 } },
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8892b0', callback: (v) => 'LKR ' + (v/1000).toFixed(0) + 'k' } }
+                    }
+                }
+            });
         }
 
         async function generateDebtAIInsight() {
