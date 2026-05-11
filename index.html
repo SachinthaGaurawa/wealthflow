@@ -8497,11 +8497,20 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     let nonSessionChanged = false;
                                                     let sessionsChanged = false;
 
+                                                    const _isEq = (a, b) => {
+                                                        if (a === b) return true;
+                                                        if (a && b && typeof a == 'object' && typeof b == 'object') {
+                                                            if (Array.isArray(a) !== Array.isArray(b)) return false;
+                                                            let keys = Object.keys(a);
+                                                            if (keys.length !== Object.keys(b).length) return false;
+                                                            return keys.every(k => _isEq(a[k], b[k]));
+                                                        }
+                                                        return false;
+                                                    };
+
                                                     Object.keys(cloudData).forEach(key => {
                                                         if (key === '_lastModified' || key === '_lastModifiedBy') return;
-                                                        const newVal = JSON.stringify(cloudData[key]);
-                                                        const oldVal = JSON.stringify(appData[key]);
-                                                        if (newVal !== oldVal) {
+                                                        if (!_isEq(cloudData[key], appData[key])) {
                                                             appData[key] = cloudData[key];
                                                             localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                                                             if (key === 'sessions') {
