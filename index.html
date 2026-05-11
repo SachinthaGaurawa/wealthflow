@@ -11182,21 +11182,20 @@ table.amort tbody tr { page-break-inside: avoid; }
             return _createHashUrl(html, loanName);
         }
 
-        // Helper: Shorten URL using public APIs (Bulletproof redundancy to hide domain and shorten link)
+        // Helper: Shorten URL using backend API (to bypass CORS and ensure short URL)
         async function _shortenUrl(longUrl) {
-            const encoded = encodeURIComponent(longUrl);
-            const apis = [
-                async () => { const r = await fetch('https://is.gd/create.php?format=json&url=' + encoded); const d = await r.json(); return d.shorturl; },
-                async () => { const r = await fetch('https://v.gd/create.php?format=json&url=' + encoded); const d = await r.json(); return d.shorturl; },
-                async () => { const r = await fetch('https://clck.ru/--?url=' + encoded); return await r.text(); },
-                async () => { const r = await fetch('https://tinyurl.com/api-create.php?url=' + encoded); return await r.text(); }
-            ];
-            
-            for (let getShortUrl of apis) {
-                try {
-                    const shortUrl = await getShortUrl();
-                    if (shortUrl && shortUrl.startsWith('http')) return shortUrl;
-                } catch(e) { /* ignore and try next */ }
+            try {
+                const encoded = encodeURIComponent(longUrl);
+                // Call our Vercel serverless function which wraps is.gd, v.gd, and TinyURL
+                const r = await fetch('/api/shorten?url=' + encoded);
+                if (r.ok) {
+                    const data = await r.json();
+                    if (data && data.shortUrl && data.shortUrl.startsWith('http')) {
+                        return data.shortUrl;
+                    }
+                }
+            } catch(e) {
+                console.error('[Share] URL shorten failed', e);
             }
             return longUrl; // Fallback to original
         }
@@ -11377,16 +11376,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const btn = e.currentTarget;
                 try {
                     await navigator.clipboard.writeText(url);
-                    btn.innerHTML = 'Copied';
-                    btn.style.backgroundColor = 'var(--green)';
-                    btn.style.borderColor = 'var(--green)';
-                    btn.style.color = '#fff';
+                    btn.innerHTML = '✅ Copied!';
+                    btn.style.setProperty('background', 'var(--green)', 'important');
+                    btn.style.setProperty('border-color', 'var(--green)', 'important');
+                    btn.style.setProperty('color', '#fff', 'important');
                     setTimeout(() => {
                         btn.innerHTML = '📋 Copy Link';
-                        btn.style.backgroundColor = '';
-                        btn.style.borderColor = '';
-                        btn.style.color = '';
-                    }, 2000);
+                        btn.style.removeProperty('background');
+                        btn.style.removeProperty('border-color');
+                        btn.style.removeProperty('color');
+                    }, 2500);
                 } catch (err) {
                     const inp = overlay.querySelector('#_surl_input');
                     inp.select(); inp.setSelectionRange(0, 99999);
