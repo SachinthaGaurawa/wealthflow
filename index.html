@@ -5452,7 +5452,8 @@
                         <div class="loan-method-card" data-for="l_method_emi"
                             style="padding:12px;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);transition:all 0.2s;">
                             <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;">📊 EMI
-                                <span style="font-size:9px;color:var(--text3);font-weight:400;">(Equal)</span></div>
+                                <span style="font-size:9px;color:var(--text3);font-weight:400;">(Equal)</span>
+                            </div>
                             <div style="font-size:11px;color:var(--text3);margin-top:3px;line-height:1.4;">Fixed monthly
                                 payment for the whole term. Standard bank loan.</div>
                         </div>
@@ -8043,9 +8044,9 @@ YOUR PERSONALITY & CRITICAL RULES:
                     try {
                         const html = decodeURIComponent(escape(atob(hashData)));
                         _renderStmt(html, 'Shared Statement');
-                    } catch(e) {
+                    } catch (e) {
                         try { _renderStmt(atob(hashData), 'Shared Statement'); }
-                        catch(e2) { _showError('Could not decode this statement link.'); }
+                        catch (e2) { _showError('Could not decode this statement link.'); }
                     }
                     return;
                 }
@@ -11162,15 +11163,15 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // LZString-style compression for hash URLs (minimal implementation)
         const _lzMini = {
-            compress: function(input) {
+            compress: function (input) {
                 if (!input) return '';
                 try { return btoa(unescape(encodeURIComponent(input))); }
-                catch(e) { return btoa(input); }
+                catch (e) { return btoa(input); }
             },
-            decompress: function(input) {
+            decompress: function (input) {
                 if (!input) return '';
                 try { return decodeURIComponent(escape(atob(input))); }
-                catch(e) { try { return atob(input); } catch(e2) { return ''; } }
+                catch (e) { try { return atob(input); } catch (e2) { return ''; } }
             }
         };
 
@@ -11206,7 +11207,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (typeof firebase === 'undefined' || !firebase.firestore) throw new Error('Firestore unavailable');
             const shortId = _generateShortId(8);
             const db = firebase.firestore();
-            
+
             // Store in ultra-short collection "s" with random ID
             await db.collection('s').doc(shortId).set({
                 h: html,                    // 'h' instead of 'html' — saves bytes
@@ -11215,7 +11216,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 x: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)  // 30-day expiry
                 // NO uid, NO email, NO name — guaranteed privacy
             });
-            
+
             // Also write to legacy collection for backward compatibility
             try {
                 await db.collection('shared_statements').doc(shortId).set({
@@ -11223,8 +11224,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
                 });
-            } catch(e) { /* non-critical */ }
-            
+            } catch (e) { /* non-critical */ }
+
             const appUrl = _getCleanAppUrl();
             return { url: appUrl + '?s=' + shortId, days: 30, shortId: shortId };
         }
@@ -11247,8 +11248,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 6000);
             try {
-                const res = await fetch("https://tmpfiles.org/api/v1/upload", { 
-                    method: "POST", body: fd, signal: controller.signal 
+                const res = await fetch("https://tmpfiles.org/api/v1/upload", {
+                    method: "POST", body: fd, signal: controller.signal
                 });
                 const data = await res.json();
                 if (data && data.status === 'success' && data.data && data.data.url) {
@@ -11274,19 +11275,19 @@ table.amort tbody tr { page-break-inside: avoid; }
         // Firestore first (shortest URL), then TmpFiles, then Hash fallback
         async function _uploadStatementForSharing(html, loanName) {
             // Strategy 1: Firestore ultra-short ID (BEST — shortest URL, 30-day validity)
-            try { 
-                const result = await _uploadToSharedStatements(html, loanName); 
+            try {
+                const result = await _uploadToSharedStatements(html, loanName);
                 console.log('[Share] ✅ Firestore upload success:', result.url, '(' + result.url.length + ' chars)');
                 return result;
-            } catch(e) { console.warn('[Share] Firestore failed:', e.message); }
-            
+            } catch (e) { console.warn('[Share] Firestore failed:', e.message); }
+
             // Strategy 2: TmpFiles (no auth needed, but 60-min expiry)
-            try { 
+            try {
                 const result = await _uploadToTmpFiles(html);
                 console.log('[Share] ✅ TmpFiles upload success:', result.url);
                 return result;
-            } catch(e) { console.warn('[Share] TmpFiles failed:', e.message); }
-            
+            } catch (e) { console.warn('[Share] TmpFiles failed:', e.message); }
+
             // Strategy 3: Hash URL (always works — guaranteed, but long URL)
             console.warn('[Share] ⚠️ Using hash URL fallback (URL will be long)');
             return _createHashUrl(html, loanName);
@@ -11303,14 +11304,14 @@ table.amort tbody tr { page-break-inside: avoid; }
         //
         // PRIVACY: Only the raw URL is sent. Zero user data transmitted.
         // =====================================================================
-        
+
         async function _shortenUrl(longUrl) {
             // If URL is already short enough, don't waste time trying to shorten
             if (longUrl.length < 50) {
                 console.log('[Shorten] URL already short enough (' + longUrl.length + ' chars), skipping');
                 return longUrl;
             }
-            
+
             const errors = [];
 
             // Strategy 1: Vercel server-side proxy (most reliable — always uses production API)
@@ -11347,35 +11348,35 @@ table.amort tbody tr { page-break-inside: avoid; }
             // Strategy 3: Direct fetch attempts (work on CORS-friendly APIs)
             const encoded = encodeURIComponent(longUrl);
             const directApis = [
-                { 
-                    name: 'is.gd', 
-                    fn: async () => { 
-                        const r = await _fetchWithTimeout('https://is.gd/create.php?format=json&url=' + encoded, {}, 4000); 
-                        const d = await r.json(); 
-                        return d.shorturl; 
-                    } 
+                {
+                    name: 'is.gd',
+                    fn: async () => {
+                        const r = await _fetchWithTimeout('https://is.gd/create.php?format=json&url=' + encoded, {}, 4000);
+                        const d = await r.json();
+                        return d.shorturl;
+                    }
                 },
-                { 
-                    name: 'v.gd', 
-                    fn: async () => { 
-                        const r = await _fetchWithTimeout('https://v.gd/create.php?format=json&url=' + encoded, {}, 4000); 
-                        const d = await r.json(); 
-                        return d.shorturl; 
-                    } 
+                {
+                    name: 'v.gd',
+                    fn: async () => {
+                        const r = await _fetchWithTimeout('https://v.gd/create.php?format=json&url=' + encoded, {}, 4000);
+                        const d = await r.json();
+                        return d.shorturl;
+                    }
                 },
-                { 
-                    name: 'tinyurl', 
-                    fn: async () => { 
-                        const r = await _fetchWithTimeout('https://tinyurl.com/api-create.php?url=' + encoded, {}, 4000); 
-                        return (await r.text()).trim(); 
-                    } 
+                {
+                    name: 'tinyurl',
+                    fn: async () => {
+                        const r = await _fetchWithTimeout('https://tinyurl.com/api-create.php?url=' + encoded, {}, 4000);
+                        return (await r.text()).trim();
+                    }
                 },
-                { 
-                    name: 'clck.ru', 
-                    fn: async () => { 
-                        const r = await _fetchWithTimeout('https://clck.ru/--?url=' + encoded, {}, 4000); 
-                        return (await r.text()).trim(); 
-                    } 
+                {
+                    name: 'clck.ru',
+                    fn: async () => {
+                        const r = await _fetchWithTimeout('https://clck.ru/--?url=' + encoded, {}, 4000);
+                        return (await r.text()).trim();
+                    }
                 },
                 {
                     name: 'da.gd',
@@ -11426,8 +11427,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     if (script.parentNode) script.parentNode.removeChild(script);
                     reject(new Error('JSONP timeout'));
                 }, 4000);
-                
-                window[callbackName] = function(data) {
+
+                window[callbackName] = function (data) {
                     clearTimeout(timeout);
                     delete window[callbackName];
                     if (script.parentNode) script.parentNode.removeChild(script);
@@ -11437,7 +11438,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         reject(new Error('No shorturl in JSONP response'));
                     }
                 };
-                
+
                 const script = document.createElement('script');
                 script.src = 'https://is.gd/create.php?format=json&callback=' + callbackName + '&url=' + encodeURIComponent(longUrl);
                 script.onerror = () => {
@@ -11486,13 +11487,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>`;
             document.body.appendChild(overlay);
             requestAnimationFrame(() => overlay.classList.add('open'));
-            
+
             const setProgress = (pct, msg) => {
                 const el = overlay.querySelector('#_ash_msg'); if (el && msg) el.textContent = msg;
                 const bar = overlay.querySelector('#_ash_bar'); if (bar) bar.style.width = pct + '%';
                 const pctTxt = overlay.querySelector('#_ash_pct'); if (pctTxt) pctTxt.textContent = pct + '%';
             };
-            
+
             const closeOverlay = () => {
                 overlay.classList.remove('open');
                 setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
@@ -11523,21 +11524,21 @@ table.amort tbody tr { page-break-inside: avoid; }
                         // Puter will prompt login if needed.
                         const shortId = _generateShortId(6).toLowerCase();
                         const siteName = 'stmt-' + shortId;
-                        
+
                         setProgress(75, 'Uploading Secure Document...');
                         await puter.fs.mkdir(siteName);
-                        
+
                         // Write the PDF
                         await puter.fs.write(`${siteName}/statement.pdf`, pdfBlob);
-                        
+
                         // Write an index.html that redirects to the PDF automatically, for better UX
                         const indexHtml = `<!DOCTYPE html><html><head><title>WealthFlow Statement</title><meta http-equiv="refresh" content="0; url=statement.pdf"></head><body style="background:#060a14;color:#fff;font-family:sans-serif;text-align:center;padding:50px;"><h2>Loading Secure Statement...</h2><p>If not redirected automatically, <a href="statement.pdf" style="color:#00f0ff;">click here</a>.</p></body></html>`;
                         await puter.fs.write(`${siteName}/index.html`, indexHtml);
-                        
+
                         // Deploy the site
                         setProgress(85, 'Finalizing Puter deployment...');
                         const site = await puter.hosting.create(siteName, siteName);
-                        
+
                         shareUrl = `https://${site.subdomain}.puter.site/statement.pdf`;
                         console.log('[Share] ✅ Puter upload success:', shareUrl);
                     } else {
@@ -11550,7 +11551,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const result = await _uploadStatementForSharing(statementHTML, l.name);
                     shareUrl = result.url;
                     validityStr = result.expires || '30 days';
-                    
+
                     setProgress(90, 'Shrinking URL...');
                     shareUrl = await _shortenUrl(shareUrl);
                 }
@@ -11603,18 +11604,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.style.zIndex = '999999';
-            
+
             const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=1&color=d4af37&bgcolor=0a0e1a&data=' + encodeURIComponent(url);
             const urlLen = url.length;
             const isShort = urlLen < 40;
-            const urlBadge = isShort 
+            const urlBadge = isShort
                 ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ SHORT URL (' + urlLen + ' chars)</span>'
                 : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🔗 ' + urlLen + ' chars</span>';
-            
+
             const whatsappUrl = 'https://wa.me/?text=' + encodeURIComponent('WealthFlow Loan Statement — ' + (l.name || 'Loan') + '\n\nView online: ' + url);
             const emailUrl = 'mailto:?subject=' + encodeURIComponent('WealthFlow Loan Statement — ' + (l.name || 'Loan')) + '&body=' + encodeURIComponent('View your loan statement online:\n\n' + url + '\n\nGenerated by WealthFlow Elite');
             const telegramUrl = 'https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent('WealthFlow Loan Statement — ' + (l.name || 'Loan'));
-            
+
             overlay.innerHTML = `
                 <style>
                     .btn-3d { position:relative;top:0;transition:all 0.12s cubic-bezier(0.4,0,0.2,1);box-shadow:0 4px 0 rgba(0,0,0,0.2); }
@@ -11644,7 +11645,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <button class="md-x" id="_surl_close">✕</button>
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
-                        Anyone with this link can view the loan statement for <b>${(l.name||'').replace(/</g,'&lt;')}</b>.
+                        Anyone with this link can view the loan statement for <b>${(l.name || '').replace(/</g, '&lt;')}</b>.
                         <span style="color:var(--green);">Link valid for ${validityStr}.</span>
                         ${urlBadge}
                     </div>
@@ -11704,7 +11705,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
             overlay.querySelector('#_surl_close').onclick = close;
             overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-            
+
             // ── COPY LINK BUTTON — Premium "Copied!" Feedback ──
             // When clicked: instantly turns GREEN background with "✓ Copied!" text
             // Stays green for 3 seconds, then smoothly transitions back
@@ -11740,7 +11741,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     // Fallback: select the text in the input field
                     const inp = overlay.querySelector('#_surl_input');
                     if (inp) { inp.select(); inp.setSelectionRange(0, 99999); }
-                    try { document.execCommand('copy'); } catch(e2) {}
+                    try { document.execCommand('copy'); } catch (e2) { }
                     _doCopiedFeedback();
                 }
             };
@@ -11801,7 +11802,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             });
             // Also close if it's an external window
             if (win && win !== window && typeof win.close === 'function') {
-                try { win.close(); } catch(e){}
+                try { win.close(); } catch (e) { }
             }
 
             _generateShareableStatementUrl(l);
@@ -14668,21 +14669,21 @@ table.amort tbody tr { page-break-inside: avoid; }
                         reader.onerror = reject;
                         reader.readAsDataURL(pdfBlob);
                     });
-                    
+
                     const proxyBase = 'https://wealthflow-personal.vercel.app';
                     const resp = await _fetchWithTimeout(proxyBase + '/api/share-upload', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ base64, fileName: eliteFileName })
                     }, 12000);
-                    
+
                     if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
                     const res = await resp.json();
                     let downloadURL = res.url;
-                    
+
                     // Shorten the URL
                     downloadURL = await _shortenUrl(downloadURL);
-                    
+
                     try {
                         const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
                         hist.unshift({ url: downloadURL, loanName: 'Elite Report — ' + MONTHS[month] + ' ' + year, createdAt: new Date().toISOString() });
@@ -14690,7 +14691,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
                     } catch (e) { /* silent */ }
 
-                    navigator.clipboard.writeText(downloadURL).catch(() => {});
+                    navigator.clipboard.writeText(downloadURL).catch(() => { });
                     notify('✨ Shareable link ready and copied to clipboard!', 'success');
 
                     // Direct native share without popup box
@@ -15170,25 +15171,27 @@ Be direct and use real numbers. Avoid generic advice.`;
         // ==================== DEBT DEMOLISHER (UPGRADED — Issue 3) ====================
         // Now properly simulates each strategy month-by-month with amortization,
         // computes total interest paid, payoff date, and ranks strategies.
-        // ==================== DEBT DEMOLISHER (UPGRADED — Issue 3) ====================
-        // Now properly simulates each strategy month-by-month with amortization,
-        // computes total interest paid, payoff date, and ranks strategies.
         function _amortizeStrategy(loans, extraPayment, strategy) {
             // strategy: 'avalanche' (highest rate first) or 'snowball' (smallest balance first)
             // Returns { months, totalInterest, payoffDate, perLoanMonths, history }
             const work = loans.map(l => ({
                 id: l.id, name: l.name, rate: (l.rate || 0) / 100 / 12,
-                bal: l.amount, monthly: l.monthly, paidMonths: 0, totalInterest: 0, paidOff: false,
-                isNegativeAmortization: false
+                bal: l.amount, monthly: l.monthly, paidMonths: 0, totalInterest: 0, paidOff: false
             }));
 
             let month = 0;
             const maxMonths = 600; // 50 years cap
-            const history = [work.reduce((s, w) => s + w.bal, 0)]; // Initial total balance
+            const history = [];
+
+            // Initial state
+            history.push({
+                month: 0,
+                totalBalance: work.reduce((s, w) => s + w.bal, 0)
+            });
 
             while (work.some(w => !w.paidOff) && month < maxMonths) {
                 month++;
-                
+
                 let pool = extraPayment;
                 // Add the minimums of already paid off loans to the pool
                 work.filter(w => w.paidOff).forEach(w => {
@@ -15200,22 +15203,15 @@ Be direct and use real numbers. Avoid generic advice.`;
                     const interest = w.bal * w.rate;
                     w.totalInterest += interest;
                     w.bal += interest;
-                    
-                    // Fix negative amortization
-                    let effectiveMonthly = w.monthly;
-                    if (effectiveMonthly <= interest && interest > 0) {
-                        effectiveMonthly = interest + (w.bal * 0.01); // Force at least 1% principal reduction
-                        w.isNegativeAmortization = true;
-                    }
 
-                    let pay = Math.min(effectiveMonthly, w.bal);
+                    let pay = Math.min(w.monthly, w.bal);
                     w.bal -= pay;
                     w.paidMonths++;
-                    
+
                     if (w.bal <= 0.01) {
                         w.bal = 0; w.paidOff = true;
                         // Add the leftover part of the minimum payment to the pool
-                        pool += (effectiveMonthly - pay);
+                        pool += (w.monthly - pay);
                     }
                 });
 
@@ -15230,15 +15226,16 @@ Be direct and use real numbers. Avoid generic advice.`;
                     const dump = Math.min(pool, focus.bal);
                     focus.bal -= dump;
                     pool -= dump;
-                    
-                    if (focus.bal <= 0.01) { 
-                        focus.bal = 0; 
-                        focus.paidOff = true; 
+
+                    if (focus.bal <= 0.01) {
+                        focus.bal = 0;
+                        focus.paidOff = true;
                     }
                 }
 
-                // Record total balance for this month for the chart
-                history.push(work.reduce((s, w) => s + w.bal, 0));
+                // Record balance after this month's payments
+                const currentTotal = work.reduce((s, w) => s + w.bal, 0);
+                history.push({ month, totalBalance: currentTotal });
             }
 
             return {
@@ -15246,255 +15243,277 @@ Be direct and use real numbers. Avoid generic advice.`;
                 totalInterest: work.reduce((s, w) => s + w.totalInterest, 0),
                 payoffDate: new Date(Date.now() + month * 30.44 * 86400000),
                 perLoan: work.map(w => ({ id: w.id, name: w.name, months: w.paidMonths, interest: w.totalInterest })),
-                hasNegativeAmortization: work.some(w => w.isNegativeAmortization),
-                history: history
+                history
             };
         }
 
-        let debtDemoChartInstance = null;
-        let debtDemoBaseExtra = 0;
-        let debtDemoItems = [];
+        let debtDemoChartInst = null;
+        function drawDebtDemoChart(baseHist, avHist, snHist) {
+            const chartEl = $('debtDemoChart');
+            if(!chartEl) return;
+            if(debtDemoChartInst) {
+                debtDemoChartInst.destroy();
+            }
 
-        function renderDebtDemolisher() {
+            const maxLen = Math.max(baseHist.length, avHist.length, snHist.length);
+            const labels = [];
+            for(let i=0; i<maxLen; i++) {
+                // If it's too many months, label by year
+                if (maxLen > 60 && i % 12 === 0) {
+                    labels.push(`Year ${Math.floor(i/12)}`);
+                } else {
+                    labels.push(`M${i}`);
+                }
+            }
+
+            const getBal = (hist, idx) => {
+                if(idx < hist.length) return hist[idx].totalBalance;
+                return 0; // paid off
+            };
+
+            const dataBase = labels.map((_, i) => getBal(baseHist, i));
+            const dataAv = labels.map((_, i) => getBal(avHist, i));
+            const dataSn = labels.map((_, i) => getBal(snHist, i));
+
+            debtDemoChartInst = new Chart(chartEl, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Baseline (Min Payments)',
+                            data: dataBase,
+                            borderColor: '#ef4444',
+                            borderDash: [5, 5],
+                            backgroundColor: 'transparent',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2
+                        },
+                        {
+                            label: '🏔️ Avalanche',
+                            data: dataAv,
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16,185,129,0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 3
+                        },
+                        {
+                            label: '⛄ Snowball',
+                            data: dataSn,
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'transparent',
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8', font: { family: 'Inter', size: 11 } } },
+                        tooltip: {
+                            backgroundColor: 'rgba(15,23,42,0.9)',
+                            titleColor: '#d4af37',
+                            bodyColor: '#e2e8f0',
+                            borderColor: 'rgba(212,175,55,0.3)',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed.y !== null) {
+                                        label += 'LKR ' + Math.round(context.parsed.y).toLocaleString();
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', maxTicksLimit: 12 } },
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', callback: v => 'LKR ' + (v/1000) + 'k' } }
+                    }
+                }
+            });
+        }
+
+        function renderDebtDemolisher(customExtra = null) {
             const rawLoans = DB.get('loans').filter(l => loanEndDate(l) > new Date() && loanCurrentBalance(l) > 0);
             const ccInstalls = DB.get('ccinstall').filter(c => !c.completed);
-            
-            debtDemoItems = [];
-            
+
+            const debtItems = [];
+
             rawLoans.forEach(l => {
                 const bal = loanCurrentBalance(l);
-                debtDemoItems.push({
-                    id: l.id, name: l.name, bank: l.bank,
-                    amount: bal, monthly: l.monthly, rate: l.rate || 0, type: 'loan'
+                debtItems.push({
+                    id: l.id,
+                    name: l.name,
+                    bank: l.bank,
+                    amount: bal, // use current balance
+                    monthly: l.monthly,
+                    rate: l.rate || 0,
+                    type: 'loan'
                 });
             });
-            
+
             ccInstalls.forEach(c => {
                 const prog = cciProgress(c);
                 const remainingMonths = c.duration - prog.paid;
                 const bal = remainingMonths > 0 ? (c.monthly * remainingMonths) : 0;
-                
+
                 if (bal > 0) {
-                    debtDemoItems.push({
-                        id: c.id, name: c.product, bank: c.bank,
-                        amount: bal, monthly: c.monthly, rate: c.rate || 0, type: 'cc'
+                    debtItems.push({
+                        id: c.id,
+                        name: c.product,
+                        bank: c.bank,
+                        amount: bal,
+                        monthly: c.monthly,
+                        rate: c.rate || 0,
+                        type: 'cc'
                     });
                 }
             });
 
             const wrap = $('debtDemoContent');
             if (!wrap) return;
-            if (!debtDemoItems.length) { wrap.innerHTML = emptyState('🎉', 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
+            if (!debtItems.length) { wrap.innerHTML = emptyState('🎉', 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
 
+            const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);
+            const totalMonthly = debtItems.reduce((s, d) => s + d.monthly, 0);
+
+            // Find user's free cashflow that could go to extra payments
             const ctx = buildFinancialContext();
-            debtDemoBaseExtra = Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
+            const maxExtra = Math.max(10000, Math.round(ctx.netMonthlyCashFlow));
+            const suggestedExtra = customExtra !== null ? parseInt(customExtra) : Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
 
-            wrap.innerHTML = `
-                <!-- Educational Intro -->
-                <div style="background:linear-gradient(135deg, rgba(212,175,55,0.08), rgba(59,130,246,0.08)); border:1px solid var(--border2); border-radius:12px; padding:16px; margin-bottom:16px;">
-                    <div style="font-size:14px; font-weight:800; margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:18px;">🎓</span> How Debt Demolisher Works
-                    </div>
-                    <div style="font-size:12px; color:var(--text2); line-height:1.6; margin-bottom:12px;">
-                        This tool simulates the exact date you will be debt-free. By paying a little extra each month, you can save millions in interest. We use two proven strategies:
-                        <br><br>
-                        <strong style="color:var(--green);">🏔️ Avalanche:</strong> Pays off the highest interest rate first. Mathematically saves the most money.
-                        <br>
-                        <strong style="color:var(--blue);">⛄ Snowball:</strong> Pays off the smallest balance first. Great for quick psychological wins.
-                    </div>
-                </div>
+            const sortedAvalanche = [...debtItems].sort((a, b) => b.rate - a.rate);
+            const sortedSnowball = [...debtItems].sort((a, b) => a.amount - b.amount);
 
-                <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header">
-                        <div class="card-title">🎚️ Interactive Payoff Sandbox</div>
-                        <div class="card-sub">Drag the slider to see how extra payments accelerate your payoff date.</div>
-                    </div>
-                    <div style="padding:20px 10px;">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-                            <span style="font-size:12px; font-weight:700; color:var(--text2);">Extra Monthly Payment</span>
-                            <span style="font-size:18px; font-weight:800; font-family:var(--mono); color:var(--accent);" id="debtDemoSliderVal">${fmt(debtDemoBaseExtra)}</span>
+            const renderDebtList = (ordered, plan) => ordered.map((loan, i) => {
+                const plMonths = plan.perLoan.find(p => p.id === loan.id)?.months || 0;
+                return `
+                    <div class="debt-item ${i === 0 ? 'focus' : ''}">
+                        <div class="debt-priority" style="background:${i === 0 ? 'var(--accent)' : i === 1 ? 'var(--blue)' : 'var(--text3)'};">${i + 1}</div>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:700;">${loan.name}</div>
+                            <div style="font-size:11px;color:var(--text3);">${loan.bank} · ${loan.rate}% APR · pays off in ${plMonths} mo</div>
                         </div>
-                        <input type="range" id="debtDemoSlider" min="0" max="${Math.max(debtDemoBaseExtra * 3, 500000)}" step="5000" value="${debtDemoBaseExtra}" style="width:100%; accent-color:var(--accent); cursor:pointer;" oninput="updateDebtDemoSlider(this.value)">
-                        <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:10px; color:var(--text3);">
-                            <span>LKR 0</span>
-                            <span>LKR ${fmt(Math.max(debtDemoBaseExtra * 3, 500000))}</span>
+                        <div style="text-align:right;">
+                            <div style="font-size:14px;font-weight:800;font-family:var(--mono);">${fmt(loan.monthly)}/mo</div>
+                            <div style="font-size:10px;color:var(--text3);">Balance: ${fmt(loan.amount)}</div>
                         </div>
+                        ${i === 0 ? '<div style="background:var(--accent);color:#000;padding:4px 10px;border-radius:6px;font-size:10px;font-weight:800;">PAY NEXT</div>' : ''}
                     </div>
-                </div>
+                `;
+            }).join('');
 
-                <div class="g2" style="margin-bottom:16px;" id="debtDemoResultsBoxes">
-                    <!-- Dynamic Boxes injected here -->
-                </div>
-
-                <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header">
-                        <div class="card-title">📉 Balance Trajectory</div>
-                        <div class="card-sub">Visualizing your path to zero debt</div>
+            if (!$('debtDemoSlider')) {
+                wrap.innerHTML = `
+                    <div class="g3" style="margin-bottom:16px;">
+                        <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${debtItems.length} accounts</div></div>
+                        <div class="stat-card sc-gold"><div class="stat-label">Monthly Minimums</div><div class="stat-val">${fmtS(totalMonthly)}</div><div class="stat-meta">Required</div></div>
+                        <div class="stat-card sc-green"><div class="stat-label">Extra Payment Pool</div><div class="stat-val" id="ddExtraVal">${fmtS(suggestedExtra)}</div><div class="stat-meta">Available: ${fmtS(ctx.netMonthlyCashFlow)}</div></div>
                     </div>
-                    <div style="height:280px; position:relative;">
-                        <canvas id="debtDemoChart"></canvas>
-                    </div>
-                </div>
 
-                <div class="g2" id="debtDemoLists">
-                     <!-- Dynamic Lists injected here -->
-                </div>
-
-                <!-- Deep AI debt analysis -->
-                <div class="card" style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
-                    <div class="card-header">
-                        <div class="card-title">🧠 AI Debt Strategist</div>
-                        <div class="card-sub">Get a deeply personalized debt-elimination plan from our AI engine</div>
-                    </div>
-                    <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">⚡ Generate Deep AI Strategy</button>
-                    <div id="debtAIInsight" style="margin-top:14px;"></div>
-                </div>
-            `;
-
-            // Initial Update
-            updateDebtDemoData(debtDemoBaseExtra);
-        }
-
-        function updateDebtDemoSlider(val) {
-            const num = parseInt(val, 10);
-            $('debtDemoSliderVal').innerText = fmt(num);
-            updateDebtDemoData(num);
-        }
-
-        function updateDebtDemoData(extraPayment) {
-            const baseline = _amortizeStrategy(debtDemoItems, 0, 'avalanche');
-            const avalanche = _amortizeStrategy(debtDemoItems, extraPayment, 'avalanche');
-            const snowball = _amortizeStrategy(debtDemoItems, extraPayment, 'snowball');
-
-            const interestSavedAvalanche = baseline.totalInterest - avalanche.totalInterest;
-            const monthsSavedAvalanche = baseline.months - avalanche.months;
-            const interestSavedSnowball = baseline.totalInterest - snowball.totalInterest;
-            const monthsSavedSnowball = baseline.months - snowball.months;
-
-            // Render Result Boxes
-            const boxesWrap = $('debtDemoResultsBoxes');
-            if (boxesWrap) {
-                let negWarn = baseline.hasNegativeAmortization ? `<div style="grid-column:1/-1; background:rgba(239,68,68,0.1); border:1px solid var(--red); padding:10px; border-radius:8px; font-size:12px; color:var(--red); text-align:center; margin-bottom:10px;">⚠️ Warning: Your minimum payments do not cover the interest on some loans. Your debt is growing! The simulation has artificially boosted minimums to calculate a projection.</div>` : '';
-                
-                boxesWrap.innerHTML = negWarn + `
-                    <div style="padding:16px;background:rgba(16,185,129,0.06);border-radius:12px;border:1px solid rgba(16,185,129,0.2);transition:all 0.3s;">
-                        <div style="font-size:14px;font-weight:800;color:var(--green);margin-bottom:10px;display:flex;align-items:center;gap:6px;">🏔️ Avalanche</div>
-                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Payoff Date</div>
-                        <div style="font-size:22px;font-weight:900;font-family:var(--mono);color:var(--text);margin-bottom:12px;">${avalanche.payoffDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</div>
-                        <div style="border-top:1px dashed rgba(16,185,129,0.3);padding-top:10px;">
-                            <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">vs minimum payments</div>
-                            <div style="font-size:14px;color:var(--green);font-weight:700;font-family:var(--mono);">+${fmt(interestSavedAvalanche)} saved</div>
-                            <div style="font-size:12px;color:var(--green);font-weight:600;margin-top:2px;">${monthsSavedAvalanche} months earlier</div>
+                    <div class="card" style="margin-bottom:16px;">
+                        <div class="card-header">
+                            <div class="card-title">🎛️ Interactive Payoff Simulator</div>
+                            <div class="card-sub">Slide to see how extra monthly payments demolish your debt faster!</div>
                         </div>
-                    </div>
-                    <div style="padding:16px;background:rgba(59,130,246,0.06);border-radius:12px;border:1px solid rgba(59,130,246,0.2);transition:all 0.3s;">
-                        <div style="font-size:14px;font-weight:800;color:var(--blue);margin-bottom:10px;display:flex;align-items:center;gap:6px;">⛄ Snowball</div>
-                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Payoff Date</div>
-                        <div style="font-size:22px;font-weight:900;font-family:var(--mono);color:var(--text);margin-bottom:12px;">${snowball.payoffDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</div>
-                        <div style="border-top:1px dashed rgba(59,130,246,0.3);padding-top:10px;">
-                            <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">vs minimum payments</div>
-                            <div style="font-size:14px;color:var(--blue);font-weight:700;font-family:var(--mono);">+${fmt(interestSavedSnowball)} saved</div>
-                            <div style="font-size:12px;color:var(--blue);font-weight:600;margin-top:2px;">${monthsSavedSnowball} months earlier</div>
+                        <div style="padding:10px 0 20px;">
+                            <input type="range" id="debtDemoSlider" min="0" max="${maxExtra}" step="1000" value="${suggestedExtra}" 
+                                style="width:100%; cursor:pointer; accent-color: var(--accent);"
+                                oninput="document.getElementById('ddExtraVal').innerText = fmtS(this.value); updateDebtDemoCards(this.value);"
+                                onchange="updateDebtDemoCards(this.value);">
+                            <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text3); margin-top:4px;">
+                                <span>LKR 0</span>
+                                <span>LKR ${maxExtra.toLocaleString()}</span>
+                            </div>
                         </div>
+                        <div style="height:280px; position:relative; margin-top:10px;"><canvas id="debtDemoChart"></canvas></div>
                     </div>
+
+                    <div id="debtDemoResultCards"></div>
                 `;
             }
 
-            // Render Chart
-            renderDebtDemoChart(baseline.history, avalanche.history, snowball.history);
+            window.updateDebtDemoCards = function(newExtra) {
+                const ex = parseInt(newExtra);
+                const baseline = _amortizeStrategy(debtItems, 0, 'avalanche');
+                const avalanche = _amortizeStrategy(debtItems, ex, 'avalanche');
+                const snowball = _amortizeStrategy(debtItems, ex, 'snowball');
 
-            // Render Lists
-            const sortedAvalanche = [...debtDemoItems].sort((a, b) => b.rate - a.rate);
-            const sortedSnowball = [...debtDemoItems].sort((a, b) => a.amount - b.amount);
+                const interestSavedAvalanche = baseline.totalInterest - avalanche.totalInterest;
+                const monthsSavedAvalanche = baseline.months - avalanche.months;
+                const interestSavedSnowball = baseline.totalInterest - snowball.totalInterest;
+                const monthsSavedSnowball = baseline.months - snowball.months;
 
-            const renderDebtList = (ordered, strat, plan) => ordered.map((loan, i) => {
-                const plMonths = plan.perLoan.find(p => p.id === loan.id)?.months || 0;
-                return \`
-                    <div class="debt-item \${i === 0 ? 'focus' : ''}">
-                        <div class="debt-priority" style="background:\${i === 0 ? 'var(--accent)' : i === 1 ? 'var(--blue)' : 'var(--text3)'};">\${i + 1}</div>
-                        <div style="flex:1;">
-                            <div style="font-size:13px;font-weight:700;">\${loan.name}</div>
-                            <div style="font-size:11px;color:var(--text3);">\${loan.bank} · \${loan.rate}% APR · \${plMonths} mo to zero</div>
+                const resWrap = $('debtDemoResultCards');
+                if(resWrap) {
+                    resWrap.innerHTML = `
+                        <div class="card" style="margin-bottom:16px;">
+                            <div class="card-header"><div class="card-title">🎯 Your Personalized Payoff Plan</div><div class="card-sub">Based on adding ${fmt(ex)}/month to your highest-priority loan</div></div>
+                            <div class="g2">
+                                <div style="padding:14px;background:rgba(16,185,129,0.06);border-radius:12px; border:1px solid rgba(16,185,129,0.2);">
+                                    <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🏔️ Avalanche</div>
+                                    <div style="font-size:11px;color:var(--text3);">Payoff date</div>
+                                    <div style="font-size:18px;font-weight:800;font-family:var(--mono);">${avalanche.payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div>
+                                    <div style="margin-top:10px;font-size:11px;color:var(--text3);">vs minimum payments</div>
+                                    <div style="font-size:14px;color:var(--green);font-weight:700;font-family:var(--mono);">${fmt(interestSavedAvalanche)} saved · ${monthsSavedAvalanche} mo earlier</div>
+                                </div>
+                                <div style="padding:14px;background:rgba(59,130,246,0.06);border-radius:12px; border:1px solid rgba(59,130,246,0.2);">
+                                    <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:10px;">⛄ Snowball</div>
+                                    <div style="font-size:11px;color:var(--text3);">Payoff date</div>
+                                    <div style="font-size:18px;font-weight:800;font-family:var(--mono);">${snowball.payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div>
+                                    <div style="margin-top:10px;font-size:11px;color:var(--text3);">vs minimum payments</div>
+                                    <div style="font-size:14px;color:var(--green);font-weight:700;font-family:var(--mono);">${fmt(interestSavedSnowball)} saved · ${monthsSavedSnowball} mo earlier</div>
+                                </div>
+                            </div>
+                            <div style="margin-top:14px;padding:12px;background:rgba(212,175,55,0.06);border-radius:10px;font-size:12px;color:var(--accent);text-align:center;font-weight:600;">
+                                🏆 Recommendation: ${interestSavedAvalanche > interestSavedSnowball ? 'Avalanche method saves ' + fmt(interestSavedAvalanche - interestSavedSnowball) + ' more in interest' : 'Both strategies produce similar results — pick what motivates you'}
+                            </div>
                         </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:14px;font-weight:800;font-family:var(--mono);">\${fmt(loan.monthly)}/mo</div>
-                            <div style="font-size:10px;color:var(--text3);">Bal: \${fmt(loan.amount)}</div>
+
+                        <div class="g2">
+                            <div class="card">
+                                <div class="card-header"><div class="card-title">🏔️ Avalanche Method</div><div class="card-sub">Pay highest interest rate first — saves the most money</div></div>
+                                ${renderDebtList(sortedAvalanche, avalanche)}
+                                <div style="margin-top:12px;padding:10px;background:rgba(16,185,129,0.08);border-radius:8px;font-size:12px;color:var(--green);text-align:center;font-weight:600;">✨ Mathematically optimal — saves maximum interest</div>
+                            </div>
+                            <div class="card">
+                                <div class="card-header"><div class="card-title">⛄ Snowball Method</div><div class="card-sub">Pay smallest balance first — builds momentum</div></div>
+                                ${renderDebtList(sortedSnowball, snowball)}
+                                <div style="margin-top:12px;padding:10px;background:rgba(59,130,246,0.08);border-radius:8px;font-size:12px;color:var(--blue);text-align:center;font-weight:600;">💪 Psychologically motivating — quick wins</div>
+                            </div>
                         </div>
-                        \${i === 0 && extraPayment > 0 ? \`<div style="background:var(--accent);color:#000;padding:4px 8px;border-radius:6px;font-size:10px;font-weight:800;">+\${fmt(extraPayment)} NEXT</div>\` : ''}
-                    </div>
-                \`;
-            }).join('');
 
-            const listsWrap = $('debtDemoLists');
-            if (listsWrap) {
-                listsWrap.innerHTML = \`
-                    <div class="card" style="padding:0; overflow:hidden;">
-                        <div class="card-header" style="background:rgba(16,185,129,0.05); padding:16px;"><div class="card-title">🏔️ Avalanche Order</div><div class="card-sub">Optimized for maximum savings</div></div>
-                        <div style="padding:12px;">\${renderDebtList(sortedAvalanche, 'avalanche', avalanche)}</div>
-                    </div>
-                    <div class="card" style="padding:0; overflow:hidden;">
-                        <div class="card-header" style="background:rgba(59,130,246,0.05); padding:16px;"><div class="card-title">⛄ Snowball Order</div><div class="card-sub">Optimized for quick psychological wins</div></div>
-                        <div style="padding:12px;">\${renderDebtList(sortedSnowball, 'snowball', snowball)}</div>
-                    </div>
-                \`;
-            }
-        }
-
-        function renderDebtDemoChart(baseHist, avaHist, snowHist) {
-            const canvas = document.getElementById('debtDemoChart');
-            if (!canvas) return;
-            
-            const maxLen = Math.max(baseHist.length, avaHist.length, snowHist.length);
-            const labels = Array.from({length: maxLen}, (_, i) => \`Mo \${i}\`);
-
-            // Pad the histories with 0 if they finished early
-            const pad = (arr, len) => {
-                const res = [...arr];
-                while(res.length < len) res.push(0);
-                return res;
+                        <!-- Deep AI debt analysis -->
+                        <div class="card" style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
+                            <div class="card-header">
+                                <div class="card-title">🧠 AI Debt Strategist</div>
+                                <div class="card-sub">Get a deeply personalized debt-elimination plan from our AI engine</div>
+                            </div>
+                            <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">⚡ Generate Deep AI Strategy</button>
+                            <div id="debtAIInsight" style="margin-top:14px;"></div>
+                        </div>
+                    `;
+                }
+                
+                drawDebtDemoChart(baseline.history, avalanche.history, snowball.history);
             };
 
-            const pBase = pad(baseHist, maxLen);
-            const pAva = pad(avaHist, maxLen);
-            const pSnow = pad(snowHist, maxLen);
-
-            if (debtDemoChartInstance) {
-                debtDemoChartInstance.data.labels = labels;
-                debtDemoChartInstance.data.datasets[0].data = pBase;
-                debtDemoChartInstance.data.datasets[1].data = pAva;
-                debtDemoChartInstance.data.datasets[2].data = pSnow;
-                debtDemoChartInstance.update('none'); // Update without animation for smooth sliding
-                return;
-            }
-
-            debtDemoChartInstance = new Chart(canvas, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Minimums Only', data: pBase, borderColor: '#ef4444', borderDash: [5, 5], borderWidth: 2, pointRadius: 0, tension: 0.4 },
-                        { label: 'Avalanche', data: pAva, borderColor: '#10b981', borderWidth: 3, backgroundColor: 'rgba(16,185,129,0.1)', fill: true, pointRadius: 0, tension: 0.4 },
-                        { label: 'Snowball', data: pSnow, borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0, tension: 0.4 }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
-                    plugins: {
-                        legend: { labels: { color: '#8892b0', font: { family: 'Inter', size: 11 } } },
-                        tooltip: {
-                            backgroundColor: 'rgba(13, 29, 60, 0.9)', titleColor: '#fff', bodyColor: '#fff',
-                            borderColor: 'rgba(212,175,55,0.3)', borderWidth: 1, padding: 10,
-                            callbacks: { label: (ctx) => ctx.dataset.label + ': LKR ' + Math.round(ctx.raw).toLocaleString() }
-                        }
-                    },
-                    scales: {
-                        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8892b0', maxTicksLimit: 10 } },
-                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8892b0', callback: (v) => 'LKR ' + (v/1000).toFixed(0) + 'k' } }
-                    }
-                }
-            });
+            window.updateDebtDemoCards(suggestedExtra);
         }
 
         async function generateDebtAIInsight() {
@@ -15505,7 +15524,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 const rawLoans = DB.get('loans').filter(l => loanEndDate(l) > new Date() && loanCurrentBalance(l) > 0);
                 const ccInstalls = DB.get('ccinstall').filter(c => !c.completed);
                 const ctx = buildFinancialContext();
-                
+
                 const loanDetails = rawLoans.map(l => {
                     const bal = loanCurrentBalance(l);
                     const intPaid = loanTotalInterestPaid(l);
