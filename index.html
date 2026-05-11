@@ -11228,19 +11228,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             return { url: appUrl + '?s=' + shortId, days: 30, shortId: shortId };
         }
 
-        // Get clean base URL (no query params, no hash, no trailing slashes)
+        // Get clean base URL for sharing — ALWAYS use the Vercel production URL
+        // This guarantees:
+        //   1. Privacy: No GitHub username or personal domain exposed
+        //   2. Reliability: Vercel URL has the API routes for server-side shortening
+        //   3. Consistency: Shared links always point to the canonical deployment
         function _getCleanAppUrl() {
-            // For deployed apps, use origin + pathname
-            if (window.location.protocol.startsWith('http')) {
-                let base = window.location.origin + window.location.pathname;
-                // Remove trailing index.html if present
-                base = base.replace(/\/index\.html$/i, '/');
-                // Ensure single trailing slash
-                if (!base.endsWith('/')) base += '/';
-                return base;
-            }
-            // For file:// protocol (local dev), use full path
-            return window.location.origin + window.location.pathname;
+            // CANONICAL production URL — change this if your deployment URL changes
+            return 'https://wealthflow-personal.vercel.app/';
         }
 
         // Strategy 2: TmpFiles.org (no auth needed, 60-min expiry)
@@ -11317,28 +11312,26 @@ table.amort tbody tr { page-break-inside: avoid; }
             
             const errors = [];
 
-            // Strategy 1: Vercel server-side proxy (most reliable when deployed)
+            // Strategy 1: Vercel server-side proxy (most reliable — always uses production API)
             try {
-                const proxyBase = window.location.origin;
-                if (proxyBase.startsWith('http')) {
-                    const controller = new AbortController();
-                    const timer = setTimeout(() => controller.abort(), 4000);
-                    try {
-                        const resp = await fetch(proxyBase + '/api/shorten', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ url: longUrl }),
-                            signal: controller.signal
-                        });
-                        if (resp.ok) {
-                            const data = await resp.json();
-                            if (data.short && data.short.startsWith('http') && data.short.length < longUrl.length) {
-                                console.log('[Shorten] ✅ Server proxy (' + data.service + '):', data.short);
-                                return data.short;
-                            }
+                const proxyBase = 'https://wealthflow-personal.vercel.app';
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 5000);
+                try {
+                    const resp = await fetch(proxyBase + '/api/shorten', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url: longUrl }),
+                        signal: controller.signal
+                    });
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data.short && data.short.startsWith('http') && data.short.length < longUrl.length) {
+                            console.log('[Shorten] ✅ Server proxy (' + data.service + '):', data.short);
+                            return data.short;
                         }
-                    } finally { clearTimeout(timer); }
-                }
+                    }
+                } finally { clearTimeout(timer); }
             } catch (e) { errors.push('proxy: ' + e.message); }
 
             // Strategy 2: JSONP-based shortening via is.gd (bypasses CORS completely)
@@ -14644,7 +14637,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         reader.readAsDataURL(pdfBlob);
                     });
                     
-                    const proxyBase = window.location.origin;
+                    const proxyBase = 'https://wealthflow-personal.vercel.app';
                     const resp = await _fetchWithTimeout(proxyBase + '/api/share-upload', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
