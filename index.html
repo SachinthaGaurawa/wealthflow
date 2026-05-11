@@ -15258,12 +15258,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             const maxLen = Math.max(baseHist.length, avHist.length, snHist.length);
             const labels = [];
             for(let i=0; i<maxLen; i++) {
-                // If it's too many months, label by year
-                if (maxLen > 60 && i % 12 === 0) {
-                    labels.push(`Year ${Math.floor(i/12)}`);
-                } else {
-                    labels.push(`M${i}`);
-                }
+                labels.push(`Month ${i}`);
             }
 
             const getBal = (hist, idx) => {
