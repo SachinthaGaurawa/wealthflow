@@ -8473,6 +8473,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     isSyncingFromCloud = true;
                                                     const cloudData = snap.data();
                                                     let changed = false;
+                                                    let onlySessionsChanged = true;
 
                                                     // Check if PIN was changed on another device
                                                     const newAuth = cloudData.auth;
@@ -8502,18 +8503,32 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             appData[key] = cloudData[key];
                                                             localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                                                             changed = true;
+                                                            if (key !== 'sessions') {
+                                                                onlySessionsChanged = false;
+                                                            }
                                                         }
                                                     });
                                                     isSyncingFromCloud = false;
                                                     lastSyncTime = Date.now();
 
                                                     if (changed) {
-                                                        console.log('[SYNC] 🔄 Data changed — re-rendering UI');
-                                                        if ($('app') && $('app').classList.contains('show')) {
-                                                            const active = document.querySelector('.page.active');
-                                                            if (active) renderPage(active.id.replace('page-', ''));
-                                                            try { updateCCOTBadge(); } catch (e) { }
-                                                            try { updateChequeBadge(); } catch (e) { }
+                                                        if (onlySessionsChanged) {
+                                                            console.log('[SYNC] 🔄 Only sessions changed — updating sessions UI if active');
+                                                            if (document.getElementById('page-sessions')?.classList.contains('active')) {
+                                                                if (typeof _renderSessionsDebounced === 'function') {
+                                                                    _renderSessionsDebounced();
+                                                                } else if (typeof renderSessions === 'function') {
+                                                                    renderSessions();
+                                                                }
+                                                            }
+                                                        } else {
+                                                            console.log('[SYNC] 🔄 Data changed — re-rendering UI');
+                                                            if ($('app') && $('app').classList.contains('show')) {
+                                                                const active = document.querySelector('.page.active');
+                                                                if (active) renderPage(active.id.replace('page-', ''));
+                                                                try { updateCCOTBadge(); } catch (e) { }
+                                                                try { updateChequeBadge(); } catch (e) { }
+                                                            }
                                                         }
                                                     }
                                                 }
