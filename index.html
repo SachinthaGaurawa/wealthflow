@@ -11122,19 +11122,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             return { url: downloadURL, permanent: true };
         }
 
-        // Master upload function — tries all strategies in order
+        // Master upload function — tries all strategies in order for maximum speed
         async function _uploadToFastShareNetwork(pdfBlob, fileName, statementHTML, loanName) {
             const errors = [];
 
-            // Strategy 1: Server-side proxy (most reliable — zero CORS)
-            try {
-                return await _uploadViaServerProxy(pdfBlob, fileName);
-            } catch (e) {
-                errors.push('Proxy: ' + e.message);
-                console.warn('[Share] Server proxy failed:', e.message);
-            }
-
-            // Strategy 2: Firestore HTML (instant — only if HTML provided)
+            // Strategy 1: Firestore HTML (INSTANT ~1s, 90-day expiry)
             if (statementHTML) {
                 try {
                     return await _uploadHtmlToFirestore(statementHTML, loanName);
@@ -11144,12 +11136,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             }
 
-            // Strategy 3: Firebase Storage (direct SDK, no CORS)
+            // Strategy 2: Firebase Storage (SDK upload, permanent)
             try {
                 return await _uploadToFirebaseStorage(pdfBlob, fileName);
             } catch (e) {
                 errors.push('Storage: ' + e.message);
                 console.warn('[Share] Firebase Storage failed:', e.message);
+            }
+
+            // Strategy 3: Server-side proxy (Fallback, 14-day to permanent)
+            try {
+                return await _uploadViaServerProxy(pdfBlob, fileName);
+            } catch (e) {
+                errors.push('Proxy: ' + e.message);
+                console.warn('[Share] Server proxy failed:', e.message);
             }
 
             throw new Error('All sharing methods failed (' + errors.join(', ') + ')');
@@ -11225,7 +11225,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 } catch (e) { /* silent */ }
 
                 closeOverlay();
-                _showShareableUrlDialog(l, shareUrl, isPermanent, outPdfBlob);
+                navigator.clipboard.writeText(shareUrl).catch(() => {});
+                notify('✨ Shareable link ready and copied to clipboard!', 'success');
+
+                if (navigator.share) {
+                    navigator.share({
+                        title: 'WealthFlow Statement — ' + l.name,
+                        text: 'Here is your secure loan account statement from WealthFlow. URL: ' + shareUrl,
+                        url: shareUrl
+                    }).catch(e => console.log('Share failed:', e));
+                }
             } catch (e) {
                 closeOverlay();
                 console.error('[Share] Error:', e);
@@ -14218,11 +14227,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                 navigator.clipboard.writeText(downloadURL).catch(() => {});
                 notify('✨ Shareable link ready and copied to clipboard!', 'success');
 
-                // Show the full share dialog (copy link, open, Web Share)
-                _showShareableUrlDialog(
-                    { name: 'Elite Report — ' + MONTHS[month] + ' ' + year, bank: 'WealthFlow Analytics' },
-                    downloadURL, res.permanent, pdfBlob
-                );
+                // Direct native share without popup box
+                if (navigator.share) {
+                    navigator.share({
+                        title: 'WealthFlow Elite Statement',
+                        text: 'Here is your generated financial statement from WealthFlow. URL: ' + downloadURL,
+                        url: downloadURL
+                    }).catch(e => console.log('Share failed:', e));
+                }
             }).catch(err => {
                 console.error('[Elite Report Share]', err);
                 notify('PDF saved locally. Could not generate cloud link — check internet.', 'warning');
