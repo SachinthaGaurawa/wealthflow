@@ -6153,7 +6153,7 @@
         // ISSUE 3 FIX — Language map for AI responses (60+ languages, BCP-47 codes)
         // Used by buildSystemPrompt + the language picker in Settings.
         const WF_LANG_NAMES = {
-            'auto': 'Auto (browser default)',
+            'auto': '🌐 Auto-Detect (All Languages)',
             'en': 'English',
             'si': 'Sinhala (සිංහල)',
             'ta': 'Tamil (தமிழ்)',
@@ -7113,12 +7113,13 @@ YOUR PERSONALITY & CRITICAL RULES:
             el.style.height = Math.min(el.scrollHeight, 120) + 'px';
         }
 
-        // ==================== ULTRA-ROBUST VOICE INPUT ENGINE v2 ====================
-        // Fixes: network error, auto-retry, mobile compat, silence detection
+        // ==================== VOICE INPUT ENGINE v3 ====================
+        // v3 fixes: multi-lang auto-detect, desktop flashing, mobile compat
         let _aiVoiceTimer = null;
         let _aiVoiceSeconds = 0;
         let _aiVoiceRetries = 0;
         let _aiVoiceWantStop = false;
+        let _aiVoiceRestartLock = false;  // prevents rapid restart loops
         const _AI_VOICE_MAX_RETRIES = 3;
 
         function _stopVoiceUI() {
@@ -7130,6 +7131,7 @@ YOUR PERSONALITY & CRITICAL RULES:
             window._wfAIVoiceRec = null;
             _aiVoiceRetries = 0;
             _aiVoiceWantStop = false;
+            _aiVoiceRestartLock = false;
         }
 
         async function toggleAIChatVoice() {
@@ -7151,30 +7153,32 @@ YOUR PERSONALITY & CRITICAL RULES:
                 return;
             }
 
-            // Request microphone permission first (critical for mobile)
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                try {
+            // Request microphone permission first
+            try {
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
-                } catch (e) {
-                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                        notify('🎤 Microphone permission denied. Go to browser Settings → Site Settings → Microphone → Allow.', 'error');
-                    } else if (e.name === 'NotFoundError') {
-                        notify('🎤 No microphone found on this device.', 'error');
-                    } else {
-                        notify('🎤 Microphone error: ' + e.message, 'error');
-                    }
-                    return;
                 }
+            } catch (e) {
+                notify('🎤 Microphone access denied. Please allow microphone in your browser settings and try again.', 'error');
+                return;
             }
 
             // Start voice recognition
             _aiVoiceWantStop = false;
             _aiVoiceRetries = 0;
+            _aiVoiceRestartLock = false;
             _startVoiceRecognition(inp, btn);
         }
 
         function _startVoiceRecognition(inp, btn) {
+            // Guard: prevent rapid restart loops (the "flashing" bug)
+            if (_aiVoiceRestartLock) return;
+            _aiVoiceRestartLock = true;
+            setTimeout(() => { _aiVoiceRestartLock = false; }, 400);
+
+            if (_aiVoiceWantStop) { _stopVoiceUI(); return; }
+
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
             const recBar = document.getElementById('aiVoiceRecordingBar');
             const timerEl = document.getElementById('aiVoiceTimer');
@@ -7182,80 +7186,83 @@ YOUR PERSONALITY & CRITICAL RULES:
             const langPref = settings.aiVoiceLang || 'auto';
 
             const rec = new SR();
-            // Language setup
+
+            // *** LANGUAGE FIX ***
+            // When 'auto': do NOT set rec.lang at all — lets browser auto-detect
+            // any language including Sinhala, Tamil, Hindi, mixed languages etc.
+            // When specific: set the exact BCP-47 tag for that language.
             if (langPref !== 'auto') {
                 rec.lang = langPref;
-            } else {
-                // Auto-detect: set to user's browser language for better accuracy
-                rec.lang = navigator.language || 'en-US';
             }
+            // If auto, we intentionally skip setting rec.lang
 
-            // Mobile-friendly: use continuous=false with auto-restart for reliability
-            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-            rec.continuous = !isMobile; // Desktop: continuous. Mobile: single utterance + auto-restart
+            // Desktop: use continuous=true (one long session)
+            // Mobile: use continuous=false (single utterance, we auto-restart)
+            const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent);
+            rec.continuous = !isMobile;
             rec.interimResults = true;
             rec.maxAlternatives = 3;
 
             let finalText = inp.value ? inp.value + ' ' : '';
             let silenceTimer = null;
-            let hasReceivedSpeech = false;
+            let gotSpeech = false;
 
             rec.onresult = (e) => {
-                hasReceivedSpeech = true;
+                gotSpeech = true;
                 let interim = '';
                 for (let i = e.resultIndex; i < e.results.length; i++) {
-                    const transcript = e.results[i][0].transcript;
+                    const t = e.results[i][0].transcript;
                     if (e.results[i].isFinal) {
-                        finalText += transcript + ' ';
+                        finalText += t + ' ';
                     } else {
-                        interim += transcript;
+                        interim += t;
                     }
                 }
                 inp.value = (finalText + interim).trim();
                 autoResizeAIInput(inp);
 
-                // Reset silence timer — auto-stop after 6 seconds of silence
+                // Auto-stop after 8 seconds of silence
                 if (silenceTimer) clearTimeout(silenceTimer);
                 silenceTimer = setTimeout(() => {
                     _aiVoiceWantStop = true;
-                    try { rec.stop(); } catch(e) {}
-                }, 6000);
+                    try { rec.stop(); } catch(ex) {}
+                }, 8000);
             };
 
             rec.onerror = (e) => {
                 const err = e.error;
+                if (silenceTimer) clearTimeout(silenceTimer);
 
-                // NETWORK ERROR — auto-retry up to 3 times
+                // NETWORK ERROR — retry up to 3 times
                 if (err === 'network') {
                     _aiVoiceRetries++;
                     if (_aiVoiceRetries <= _AI_VOICE_MAX_RETRIES && !_aiVoiceWantStop) {
-                        console.warn('[Voice] Network error, retry ' + _aiVoiceRetries + '/' + _AI_VOICE_MAX_RETRIES);
-                        notify('🎤 Network issue — retrying... (' + _aiVoiceRetries + '/' + _AI_VOICE_MAX_RETRIES + ')', 'warn');
+                        console.warn('[Voice] Network retry ' + _aiVoiceRetries);
                         setTimeout(() => {
                             if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
-                        }, 800);
-                        return;
-                    } else {
-                        notify('🎤 Voice requires internet. Check your connection and try again.', 'error');
-                        _stopVoiceUI();
+                        }, 1000);
                         return;
                     }
-                }
-
-                // NO SPEECH — restart silently (user might just be thinking)
-                if (err === 'no-speech') {
-                    if (!_aiVoiceWantStop) {
-                        // Auto-restart without notifying
-                        setTimeout(() => {
-                            if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
-                        }, 300);
-                        return;
-                    }
+                    notify('🎤 Voice requires internet connection. Check your network.', 'error');
                     _stopVoiceUI();
                     return;
                 }
 
-                // ABORTED — user or system stopped, not an error
+                // NO SPEECH — only restart on mobile, max 2 times
+                if (err === 'no-speech') {
+                    if (isMobile && !_aiVoiceWantStop && _aiVoiceRetries < 2) {
+                        _aiVoiceRetries++;
+                        setTimeout(() => {
+                            if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
+                        }, 500);
+                        return;
+                    }
+                    // On desktop or max retries reached — just stop silently
+                    _stopVoiceUI();
+                    return;
+                }
+
+                // ABORTED — user stopped, clean exit
                 if (err === 'aborted') {
                     _stopVoiceUI();
                     return;
@@ -7263,19 +7270,25 @@ YOUR PERSONALITY & CRITICAL RULES:
 
                 // PERMISSION ERRORS
                 if (err === 'not-allowed' || err === 'service-not-allowed') {
-                    notify('🎤 Microphone blocked. Allow microphone in browser settings.', 'error');
+                    notify('🎤 Microphone blocked by browser. Go to Settings → Site Settings → Microphone → Allow for this site.', 'error');
                     _stopVoiceUI();
                     return;
                 }
 
                 // AUDIO CAPTURE
                 if (err === 'audio-capture') {
-                    notify('🎤 No microphone detected. Connect a mic and try again.', 'error');
+                    notify('🎤 No microphone found. Please connect a mic.', 'error');
                     _stopVoiceUI();
                     return;
                 }
 
-                // GENERIC ERROR
+                // LANGUAGE NOT SUPPORTED
+                if (err === 'language-not-supported') {
+                    notify('🎤 This language is not supported for voice input. Try setting voice language to Auto.', 'warn');
+                    _stopVoiceUI();
+                    return;
+                }
+
                 notify('🎤 Voice error: ' + err, 'error');
                 _stopVoiceUI();
             };
@@ -7283,29 +7296,25 @@ YOUR PERSONALITY & CRITICAL RULES:
             rec.onend = () => {
                 if (silenceTimer) clearTimeout(silenceTimer);
 
-                // If we want to stop, clean up
+                // User requested stop
                 if (_aiVoiceWantStop) {
                     _stopVoiceUI();
                     return;
                 }
 
-                // Auto-restart for mobile (continuous=false) or unexpected stops
-                if (!_aiVoiceWantStop && hasReceivedSpeech) {
-                    // Brief pause then restart
-                    setTimeout(() => {
-                        if (!_aiVoiceWantStop && window._wfAIVoiceRec) {
-                            _startVoiceRecognition(inp, btn);
-                        }
-                    }, 300);
+                // *** DESKTOP FIX: Do NOT auto-restart continuous mode ***
+                // On desktop (continuous=true), onend means the session truly ended.
+                // Restarting it causes the "flashing" loop bug.
+                if (!isMobile) {
+                    _stopVoiceUI();
                     return;
                 }
 
-                // If no speech was ever received and we ended, try restart once
-                if (!_aiVoiceWantStop && !hasReceivedSpeech && _aiVoiceRetries < _AI_VOICE_MAX_RETRIES) {
-                    _aiVoiceRetries++;
+                // MOBILE ONLY: auto-restart if we got speech (continuous=false ends after each utterance)
+                if (isMobile && gotSpeech && !_aiVoiceWantStop) {
                     setTimeout(() => {
                         if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
-                    }, 500);
+                    }, 400);
                     return;
                 }
 
@@ -7315,9 +7324,9 @@ YOUR PERSONALITY & CRITICAL RULES:
             try {
                 rec.start();
                 window._wfAIVoiceRec = rec;
-                _aiVoiceRetries = 0; // Reset retries on successful start
                 btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
                 if (recBar) recBar.style.display = 'block';
+                // Only create timer once (not on restarts)
                 if (!_aiVoiceTimer) {
                     _aiVoiceSeconds = 0;
                     if (timerEl) timerEl.textContent = '0:00';
@@ -7328,9 +7337,8 @@ YOUR PERSONALITY & CRITICAL RULES:
                 }
                 triggerHaptic('light');
             } catch (e) {
-                // InvalidStateError means it's already running — ignore
-                if (e.name === 'InvalidStateError') return;
-                notify('🎤 Could not start voice: ' + e.message, 'error');
+                if (e.name === 'InvalidStateError') return; // already running
+                notify('🎤 Could not start voice input. Try refreshing the page.', 'error');
                 _stopVoiceUI();
             }
         }
@@ -7438,19 +7446,87 @@ YOUR PERSONALITY & CRITICAL RULES:
         // ==================== TEXT-TO-SPEECH (Read Aloud) ====================
         function _readAIAloud(btn) {
             if (!('speechSynthesis' in window)) { notify('🔊 Text-to-speech not supported.', 'warn'); return; }
-            if (window.speechSynthesis.speaking) {
+
+            // Toggle off if already speaking
+            if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
                 window.speechSynthesis.cancel();
-                btn.classList.remove('active'); btn.textContent = '🔊 Read'; return;
+                btn.classList.remove('active'); btn.textContent = '🔊 Read';
+                return;
             }
-            const rawText = btn.getAttribute('data-text') || btn.closest('.ai-bubble')?.innerText || '';
-            if (!rawText) return;
+
+            // Get text from the AI bubble
+            const bubble = btn.closest('.ai-msg-wrap');
+            const rawText = btn.getAttribute('data-text')
+                || (bubble ? bubble.querySelector('.ai-bubble')?.innerText : '')
+                || '';
+            if (!rawText || rawText.length < 2) { notify('🔊 No text to read.', 'info'); return; }
+
+            // Clean markdown artifacts
+            const cleanText = rawText.replace(/[*#_~`|]/g, '').replace(/\s+/g, ' ').trim();
+
             const s = DB.getObj('settings', {});
-            const utt = new SpeechSynthesisUtterance(rawText.replace(/[*#_~`]/g, ''));
-            utt.lang = s.aiResponseLang || 'en'; utt.rate = 0.95; utt.pitch = 1;
-            btn.classList.add('active'); btn.textContent = '⏹ Stop';
-            utt.onend = () => { btn.classList.remove('active'); btn.textContent = '🔊 Read'; };
-            utt.onerror = () => { btn.classList.remove('active'); btn.textContent = '🔊 Read'; };
-            window.speechSynthesis.speak(utt);
+            const lang = s.aiResponseLang || 'en';
+
+            // Chrome bug workaround: voices may not be loaded yet
+            function _doSpeak() {
+                // Split long text into chunks (Chrome cuts off at ~15 seconds)
+                const chunks = [];
+                const sentences = cleanText.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleanText];
+                let current = '';
+                for (const sentence of sentences) {
+                    if ((current + sentence).length > 200) {
+                        if (current) chunks.push(current.trim());
+                        current = sentence;
+                    } else {
+                        current += sentence;
+                    }
+                }
+                if (current) chunks.push(current.trim());
+
+                // Find best voice for the language
+                const voices = window.speechSynthesis.getVoices();
+                let bestVoice = null;
+                if (voices.length > 0) {
+                    // Try exact match first
+                    bestVoice = voices.find(v => v.lang === lang || v.lang.startsWith(lang + '-'));
+                    // Fallback to any voice for that language family
+                    if (!bestVoice) bestVoice = voices.find(v => v.lang.substring(0,2) === lang.substring(0,2));
+                }
+
+                btn.classList.add('active'); btn.textContent = '⏹ Stop';
+                let chunkIndex = 0;
+
+                function speakNext() {
+                    if (chunkIndex >= chunks.length || !btn.classList.contains('active')) {
+                        btn.classList.remove('active'); btn.textContent = '🔊 Read';
+                        return;
+                    }
+                    const utt = new SpeechSynthesisUtterance(chunks[chunkIndex]);
+                    utt.lang = lang;
+                    utt.rate = 0.92;
+                    utt.pitch = 1;
+                    if (bestVoice) utt.voice = bestVoice;
+                    utt.onend = () => { chunkIndex++; speakNext(); };
+                    utt.onerror = () => { btn.classList.remove('active'); btn.textContent = '🔊 Read'; };
+                    window.speechSynthesis.speak(utt);
+                }
+                speakNext();
+            }
+
+            // Handle Chrome's async voice loading
+            const voices = window.speechSynthesis.getVoices();
+            if (voices.length === 0) {
+                window.speechSynthesis.onvoiceschanged = () => {
+                    window.speechSynthesis.onvoiceschanged = null;
+                    _doSpeak();
+                };
+                // Fallback: if voices never load, speak anyway after 500ms
+                setTimeout(() => {
+                    if (!btn.classList.contains('active')) _doSpeak();
+                }, 500);
+            } else {
+                _doSpeak();
+            }
         }
 
         // ==================== LANGUAGE PICKER MODAL ====================
@@ -15133,9 +15209,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             showPage('ai', document.getElementById('aiNavItem'));
             setTimeout(() => sendAIMessage(msg), 300);
         }
-        // ROBUST FLOATING AI VOICE — uses same retry engine
+        // FLOATING AI VOICE v3 — same fixes as main voice
         let _floatVoiceRetries = 0;
         let _floatVoiceWantStop = false;
+        let _floatVoiceLock = false;
         async function toggleFloatingAIVoice() {
             const inp = $('floatingAIInput');
             const btn = $('floatingAIVoiceBtn');
@@ -15149,37 +15226,47 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { window._wfVoiceRec.stop(); } catch (e) { }
                 window._wfVoiceRec = null;
                 btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
+                _floatVoiceLock = false;
                 return;
             }
 
             // Request mic permission
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                try {
+            try {
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
-                } catch (e) {
-                    notify('🎤 Microphone permission denied. Allow mic in browser settings.', 'error');
-                    return;
                 }
+            } catch (e) {
+                notify('🎤 Microphone access denied. Allow mic in browser settings.', 'error');
+                return;
             }
 
             _floatVoiceWantStop = false;
             _floatVoiceRetries = 0;
+            _floatVoiceLock = false;
             _startFloatingVoice(inp, btn);
         }
 
         function _startFloatingVoice(inp, btn) {
+            // Anti-flashing guard
+            if (_floatVoiceLock) return;
+            _floatVoiceLock = true;
+            setTimeout(() => { _floatVoiceLock = false; }, 400);
+            if (_floatVoiceWantStop) { btn.style.background = 'var(--card2)'; btn.textContent = '🎤'; window._wfVoiceRec = null; return; }
+
             const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
             const rec = new SR();
             const langPref = (DB.getObj('settings', {}).aiVoiceLang) || 'auto';
+            // *** LANGUAGE FIX: auto = do NOT set rec.lang ***
             if (langPref !== 'auto') rec.lang = langPref;
-            else rec.lang = navigator.language || 'en-US';
             rec.interimResults = true;
             rec.continuous = false;
             rec.maxAlternatives = 3;
             let finalText = inp.value ? inp.value + ' ' : '';
+            let gotSpeech = false;
 
             rec.onresult = (e) => {
+                gotSpeech = true;
                 let interim = '';
                 for (let i = e.resultIndex; i < e.results.length; i++) {
                     if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
@@ -15190,22 +15277,23 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             rec.onerror = (e) => {
                 const err = e.error;
-                // Network error — retry
+                // Network — retry
                 if (err === 'network' && _floatVoiceRetries < 3 && !_floatVoiceWantStop) {
                     _floatVoiceRetries++;
-                    notify('🎤 Network issue — retrying (' + _floatVoiceRetries + '/3)...', 'warn');
-                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 800);
+                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 1000);
                     return;
                 }
-                // No speech — restart silently
-                if (err === 'no-speech' && !_floatVoiceWantStop) {
-                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 300);
+                // No speech — limited restart
+                if (err === 'no-speech' && !_floatVoiceWantStop && _floatVoiceRetries < 2) {
+                    _floatVoiceRetries++;
+                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 500);
                     return;
                 }
-                if (err === 'aborted') { /* user stopped */ }
-                else if (err === 'network') notify('🎤 Voice needs internet connection.', 'error');
-                else if (err === 'not-allowed') notify('🎤 Microphone blocked. Allow in settings.', 'error');
-                else notify('🎤 Voice error: ' + err, 'error');
+                if (err !== 'aborted') {
+                    if (err === 'network') notify('🎤 Voice needs internet.', 'error');
+                    else if (err === 'not-allowed') notify('🎤 Microphone blocked. Allow in settings.', 'error');
+                    else if (err !== 'no-speech') notify('🎤 Voice error: ' + err, 'error');
+                }
                 btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
                 window._wfVoiceRec = null;
             };
@@ -15216,11 +15304,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                     window._wfVoiceRec = null;
                     return;
                 }
-                // Auto-restart on mobile
-                if (!_floatVoiceWantStop && inp.value.trim()) {
+                // Auto-restart ONLY if we got speech (for next utterance)
+                if (gotSpeech && !_floatVoiceWantStop) {
                     setTimeout(() => {
                         if (!_floatVoiceWantStop && window._wfVoiceRec) _startFloatingVoice(inp, btn);
-                    }, 300);
+                    }, 400);
                     return;
                 }
                 btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
@@ -15230,11 +15318,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 rec.start();
                 window._wfVoiceRec = rec;
-                _floatVoiceRetries = 0;
                 btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
                 triggerHaptic('light');
             } catch (e) {
-                if (e.name !== 'InvalidStateError') notify('🎤 Could not start: ' + e.message, 'error');
+                if (e.name !== 'InvalidStateError') notify('🎤 Could not start voice.', 'error');
                 btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
             }
         }
