@@ -11157,11 +11157,30 @@ table.amort tbody tr { page-break-inside: avoid; }
             return _createHashUrl(html, loanName);
         }
 
+        // Helper: Shorten URL using public APIs (CORS-friendly, no auth needed)
+        async function _shortenUrl(longUrl) {
+            try {
+                const res = await fetch('https://is.gd/create.php?format=json&url=' + encodeURIComponent(longUrl));
+                const data = await res.json();
+                if (data && data.shorturl) return data.shorturl;
+            } catch (e) {
+                console.warn('[Shorten] is.gd failed, trying tinyurl', e);
+                try {
+                    const res2 = await fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(longUrl));
+                    const text = await res2.text();
+                    if (text && text.startsWith('http')) return text;
+                } catch(e2) {
+                    console.warn('[Shorten] all shorteners failed', e2);
+                }
+            }
+            return longUrl; // Fallback to original
+        }
+
         // Generate shareable URL — Firestore-first, instant, bulletproof
         async function _generateShareableStatementUrl(l) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
-            overlay.style.zIndex = '10000';
+            overlay.style.zIndex = '999999'; // Fixed z-index to sit on top of statement modal
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:420px;text-align:center;">
                     <div class="md-hdr" style="justify-content:center;border-bottom:0;">
@@ -11198,7 +11217,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const result = await _uploadStatementForSharing(statementHTML, l.name);
                 if (cancelled) return;
 
-                const shareUrl = result.url;
+                let shareUrl = result.url;
+                
+                // Shorten URL if it's a hash URL or very long
+                if (shareUrl.length > 100) {
+                    setMsg('Shortening URL for easy sharing…');
+                    shareUrl = await _shortenUrl(shareUrl);
+                }
 
                 // Save to history
                 try {
@@ -11239,33 +11264,45 @@ table.amort tbody tr { page-break-inside: avoid; }
                 'Generated: ' + new Date().toLocaleString();
         }
 
-        // Rich share URL dialog with copy / open / share / download
+        // Rich share URL dialog with copy / open / share / download + QR Code
         function _showShareableUrlDialog(l, url) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
-            overlay.style.zIndex = '10000';
+            overlay.style.zIndex = '999999'; // Ensure it's above the statement overlay
+            
+            const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&margin=1&data=' + encodeURIComponent(url);
+            
             overlay.innerHTML = `
-                <div class="md md-sm" style="max-width:500px;">
+                <div class="md md-sm" style="max-width:540px;">
                     <div class="md-hdr">
                         <div class="md-title">✅ Shareable Link Ready</div>
                         <button class="md-x" id="_surl_close">✕</button>
                     </div>
-                    <div style="padding:8px 0;font-size:12.5px;color:var(--text2);line-height:1.55;">
+                    <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
                         Anyone with this link can view the loan statement for <b>${(l.name||'').replace(/</g,'&lt;')}</b>.
                         <span style="color:var(--green);">Link valid for 30 days.</span>
                     </div>
-                    <div class="fg" style="margin-top:6px;">
-                        <label class="fl">Shareable URL</label>
-                        <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
-                            style="font-family:var(--mono);font-size:11px;color:var(--accent);background:var(--bg2);cursor:text;">
+                    
+                    <div style="display:flex;gap:16px;margin-top:8px;align-items:center;">
+                        <div style="flex:1;">
+                            <div class="fg" style="margin:0;">
+                                <label class="fl">Short Shareable URL</label>
+                                <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
+                                    style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--bg2);cursor:text;padding-right:40px;">
+                            </div>
+                            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+                                <button class="btn btn-primary btn-sm" id="_surl_copy" style="flex:1;">📋 Copy Link</button>
+                                <button class="btn btn-ghost btn-sm" id="_surl_open" style="flex:1;">🔗 Open</button>
+                                <button class="btn btn-ghost btn-sm" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share…</button>
+                            </div>
+                        </div>
+                        <div style="width:110px;height:110px;background:#fff;border-radius:8px;padding:5px;flex-shrink:0;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+                            <img src="${qrUrl}" alt="QR Code" style="width:100%;height:100%;display:block;border-radius:4px;">
+                        </div>
                     </div>
-                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
-                        <button class="btn btn-primary btn-sm" id="_surl_copy">📋 Copy Link</button>
-                        <button class="btn btn-ghost btn-sm" id="_surl_open">🔗 Open in New Tab</button>
-                        <button class="btn btn-ghost btn-sm" id="_surl_native" style="display:${navigator.share ? 'inline-flex' : 'none'};">📤 Share via…</button>
-                    </div>
-                    <div style="margin-top:14px;padding:10px 12px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text3);line-height:1.55;border-left:3px solid var(--green);">
-                        ✅ Link copied to clipboard! Powered by Google Firebase. Works on any device — no app required.
+
+                    <div style="margin-top:16px;padding:12px;background:rgba(46,204,113,0.1);border-radius:8px;font-size:11.5px;color:var(--green);line-height:1.5;border-left:3px solid var(--green);">
+                        <b>Success:</b> Link copied to clipboard! Share it via WhatsApp, email, or scan the QR code to open instantly on another device.
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
