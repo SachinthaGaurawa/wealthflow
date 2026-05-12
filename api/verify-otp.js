@@ -1,4 +1,13 @@
+// ==================== WealthFlow OTP Verification ====================
+// Stateless OTP verification using HMAC hash comparison.
+// REQUIRED ENV VAR: OTP_SECRET
+// =====================================================================
+
 import crypto from 'crypto';
+
+export const config = {
+    maxDuration: 10
+};
 
 export default async function handler(req, res) {
     // CORS configuration
@@ -15,7 +24,7 @@ export default async function handler(req, res) {
     }
 
     const { email, otp, hash, expiresAt } = req.body;
-    
+
     if (!email || !otp || !hash || !expiresAt) {
         return res.status(400).json({ error: 'Missing required fields (email, otp, hash, expiresAt)' });
     }
@@ -26,11 +35,22 @@ export default async function handler(req, res) {
     }
 
     try {
-        const secret = process.env.OTP_SECRET || 'wealthflow_default_secret_998877';
+        const secret = process.env.OTP_SECRET;
+        if (!secret) {
+            return res.status(503).json({
+                error: 'OTP service not configured. Set OTP_SECRET in Vercel environment variables.',
+                configured: false
+            });
+        }
+
         const dataToHash = `${email}:${otp}:${expiresAt}:${secret}`;
         const calculatedHash = crypto.createHash('sha256').update(dataToHash).digest('hex');
 
-        if (calculatedHash === hash) {
+        // Constant-time comparison to prevent timing attacks
+        const hashBuffer = Buffer.from(calculatedHash, 'hex');
+        const providedBuffer = Buffer.from(hash, 'hex');
+
+        if (hashBuffer.length === providedBuffer.length && crypto.timingSafeEqual(hashBuffer, providedBuffer)) {
             return res.status(200).json({ success: true, message: 'OTP verified successfully' });
         } else {
             return res.status(400).json({ error: 'Invalid OTP code' });
