@@ -5930,7 +5930,13 @@
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
-            getObj(k, def = {}) { return appData[k] !== undefined ? appData[k] : def; },
+            getObj(k, def = {}) { 
+                if (appData[k] === undefined) return def;
+                if (typeof appData[k] === 'object' && !Array.isArray(appData[k]) && appData[k] !== null) {
+                    return Object.assign({}, def, appData[k]);
+                }
+                return appData[k];
+            },
             set(k, v) {
                 // ISSUE 5 FIX — Decoy/Panic Mode is READ-ONLY. Never persists or syncs anywhere.
                 if (window._isDecoyMode === true) {
@@ -8414,19 +8420,21 @@ YOUR PERSONALITY & CRITICAL RULES:
                                 console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
 
                                 try {
-                                    // Force server fetch to always get latest data
+                                    // 1. ALWAYS load from localStorage first!
+                                    // This preserves unsynced local mutations (e.g. settings changes) before we hit the cloud.
+                                    Object.keys(appData).forEach(k => {
+                                        try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                                    });
+
+                                    // 2. Fetch from Firestore (no {source:'server'} bypass)
+                                    // This ensures we get the latest cloud data merged with our pending local mutations.
                                     let doc;
                                     try {
-                                        doc = await userDocRef.get({ source: 'server' });
-                                        console.log('[SYNC] ✅ Got data from SERVER');
+                                        doc = await userDocRef.get();
+                                        console.log('[SYNC] ✅ Got data from Firestore (merged with local mutations)');
                                     } catch (serverErr) {
-                                        console.warn('[SYNC] ⚠️ Server unreachable, using cache:', serverErr.message);
-                                        try {
-                                            doc = await userDocRef.get(); // Falls back to cache
-                                        } catch (cacheErr) {
-                                            console.error('[SYNC] ❌ Cache also failed:', cacheErr.message);
-                                            doc = null;
-                                        }
+                                        console.warn('[SYNC] ⚠️ Firestore unreachable, relying on local cache:', serverErr.message);
+                                        doc = null;
                                     }
 
                                     if (doc && doc.exists) {
@@ -8449,11 +8457,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                             console.error('[SYNC] Failed to create cloud profile:', setErr);
                                         }
                                     } else {
-                                        // doc is null — both server and cache failed, use localStorage
-                                        console.warn('[SYNC] ⚠️ Using localStorage fallback');
-                                        Object.keys(appData).forEach(k => {
-                                            try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
-                                        });
+                                        console.warn('[SYNC] ⚠️ Offline mode active.');
                                     }
 
                                     clearInterval(pInt);
