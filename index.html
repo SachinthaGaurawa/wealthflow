@@ -6401,7 +6401,7 @@
                 const message = { role: 'user', content: prompt };
                 if (image) message.images = [image];
 
-                const r = await fetch('https://api.ollama.com/api/chat', {
+                const r = await fetch('https://ollama.com/api/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -6917,8 +6917,8 @@ Be conversational and precise.`;
                 if (isExpense) _showScanOverlay('📊 Processing Results…', 'Validating extracted data', 85);
                 const result = _parseAIJson(reply);
 
-                // Validation: Ensure amount was extracted
-                if (result && result.amount > 0 && _populateExpenseFromScan(result)) {
+                // Validation: Ensure amount was extracted (allow strings with commas)
+                if (result && result.amount && _populateExpenseFromScan(result)) {
                     triggerHaptic('success');
                     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                     const itemList = result.items && result.items.length ? ` · 📦 ${result.items.slice(0, 4).join(', ')}` : '';
@@ -6940,7 +6940,7 @@ Be conversational and precise.`;
                         const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}`;
                         const retry = await callAI(simplePrompt, smaller);
                         const r2 = _parseAIJson(retry);
-                        if (r2 && r2.amount > 0 && _populateExpenseFromScan(r2)) {
+                        if (r2 && r2.amount && _populateExpenseFromScan(r2)) {
                             _hideScanOverlay();
                             triggerHaptic('success');
                             notify('✅ Receipt scanned (quick mode)!', 'success');
@@ -6967,7 +6967,7 @@ Be conversational and precise.`;
                             if (ocrText) {
                                 _showScanOverlay('📊 Parsing Cloud OCR…', 'Extracting exact numbers', 75);
                                 const parsed = _extractFromOCRText(ocrText);
-                                if (parsed && parsed.amount > 0 && _populateExpenseFromScan(parsed)) {
+                                if (parsed && parsed.amount && _populateExpenseFromScan(parsed)) {
                                     _hideScanOverlay();
                                     triggerHaptic('success');
                                     notify('✅ Scanned via Cloud OCR!', 'success');
