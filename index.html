@@ -6001,6 +6001,7 @@
         let isSyncingFromCloud = false;
         let syncDebounceTimer = null;
         let lastSyncTime = 0;
+        let _lastLocalWriteTs = 0;  // Timestamp of last local DB.set() — used to suppress onSnapshot echo
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
@@ -6014,6 +6015,7 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
+                _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
                 if (!isSyncingFromCloud) {
                     isDirty = true;
                     debouncedSync();
@@ -6035,15 +6037,19 @@
 
             setSyncStatus('syncing');
 
-            // Add sync metadata
+            // Add sync metadata — include a device-level write stamp to identify our own echoes
             const syncPayload = Object.assign({}, appData, {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                _lastModifiedBy: currentUser ? currentUser.uid : 'unknown'
+                _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
+                _writeDeviceId: _getDeviceId(),
+                _writeTs: Date.now()
             });
 
-            userDocRef.set(syncPayload).then(() => {
+            // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
+            userDocRef.set(syncPayload, { merge: true }).then(() => {
                 isDirty = false;
                 lastSyncTime = Date.now();
+                _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
             }).catch(err => {
@@ -6063,10 +6069,19 @@
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
                     Object.keys(cloudData).forEach(key => {
-                        if (key !== '_lastModified' && key !== '_lastModifiedBy') {
-                            appData[key] = cloudData[key];
-                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
+                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
+
+                        if (key === 'settings') {
+                            // Deep-merge settings: cloud fills gaps, local wins for existing keys
+                            const cloudSettings = cloudData.settings || {};
+                            const localSettings = appData.settings || {};
+                            appData.settings = Object.assign({}, cloudSettings, localSettings);
+                            localStorage.setItem('wf2_settings', JSON.stringify(appData.settings));
+                            return;
                         }
+
+                        appData[key] = cloudData[key];
+                        localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                     });
                     isSyncingFromCloud = false;
                     lastSyncTime = Date.now();
@@ -8817,12 +8832,27 @@ YOUR PERSONALITY & CRITICAL RULES:
 
                                     if (doc && doc.exists) {
                                         const cloudData = doc.data();
+                                        // First load local storage values so we have any offline changes
+                                        Object.keys(appData).forEach(k => {
+                                            try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                                        });
+                                        // Then merge cloud data on top, with special handling for settings
                                         Object.keys(cloudData).forEach(key => {
-                                            if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                            if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
+
+                                            if (key === 'settings') {
+                                                // Deep-merge: cloud provides base, local overrides
+                                                const cloudSettings = cloudData.settings || {};
+                                                const localSettings = appData.settings || {};
+                                                appData.settings = Object.assign({}, cloudSettings, localSettings);
+                                                localStorage.setItem('wf2_settings', JSON.stringify(appData.settings));
+                                                return;
+                                            }
+
                                             appData[key] = cloudData[key];
                                             localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                                         });
-                                        console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud');
+                                        console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud (settings merged)');
                                     } else if (doc && !doc.exists) {
                                         // First time — create cloud document
                                         console.log('[SYNC] 📝 Creating new cloud profile');
@@ -8869,11 +8899,25 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     setSyncStatus(navigator.onLine ? 'online' : 'offline');
                                                 }
 
+                                                // SETTINGS FIX: Suppress echo — if this snapshot is just our own write bouncing back,
+                                                // skip the overwrite. This prevents the race condition where:
+                                                //   1. User changes setting → DB.set() → syncToCloud()
+                                                //   2. Cloud echoes back → onSnapshot fires → overwrites appData with stale/echo data
+                                                // We suppress for 3 seconds after any local write.
                                                 if (!hasPending && source === 'server') {
-                                                    console.log('[SYNC] 📥 Received cloud update from server');
-                                                    isSyncingFromCloud = true;
                                                     const cloudData = snap.data();
-                                                    let changed = false;
+                                                    const msSinceLastWrite = Date.now() - _lastLocalWriteTs;
+                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() && msSinceLastWrite < 3000;
+
+                                                    if (isOwnEcho) {
+                                                        console.log('[SYNC] ⏭️ Suppressed own echo (written ' + msSinceLastWrite + 'ms ago)');
+                                                        // Still update sync status and timestamp
+                                                        lastSyncTime = Date.now();
+                                                        return;
+                                                    }
+
+                                                    console.log('[SYNC] 📥 Received cloud update from ANOTHER device');
+                                                    isSyncingFromCloud = true;
 
                                                     // Check if PIN was changed on another device
                                                     const newAuth = cloudData.auth;
@@ -8909,8 +8953,27 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         return false;
                                                     };
 
+                                                    // SETTINGS FIX: Deep-merge 'settings' instead of full replacement.
+                                                    // This ensures cloud data fills in missing keys but never wipes
+                                                    // keys that the user just changed locally.
                                                     Object.keys(cloudData).forEach(key => {
-                                                        if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
+
+                                                        if (key === 'settings') {
+                                                            // Merge strategy: cloud fills gaps, but local wins for existing keys
+                                                            const cloudSettings = cloudData.settings || {};
+                                                            const localSettings = appData.settings || {};
+                                                            const merged = Object.assign({}, cloudSettings, localSettings);
+                                                            // Only update if the merged result differs from current
+                                                            if (!_isEq(merged, localSettings)) {
+                                                                appData.settings = merged;
+                                                                localStorage.setItem('wf2_settings', JSON.stringify(merged));
+                                                                nonSessionChanged = true;
+                                                                console.log('[SYNC] 🔧 Settings merged (cloud filled gaps, local preserved)');
+                                                            }
+                                                            return;
+                                                        }
+
                                                         if (!_isEq(cloudData[key], appData[key])) {
                                                             appData[key] = cloudData[key];
                                                             localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
