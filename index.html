@@ -7179,21 +7179,33 @@ YOUR PERSONALITY & CRITICAL RULES:
                 return;
             }
 
-            // Request microphone permission first
+            // Pre-check microphone permission (NON-BLOCKING on mobile)
+            // On Android WebView/Appilix, getUserMedia may fail even when mic IS available
+            // to SpeechRecognition (they use different permission systems).
+            let micPreGranted = false;
             try {
                 if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
+                    micPreGranted = true;
                 }
             } catch (e) {
-                notify('🎤 Microphone access denied. Please allow microphone in your browser settings and try again.', 'error');
-                return;
+                const isMobileOrWebView = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent)
+                    || typeof appilix !== 'undefined';
+                if (!isMobileOrWebView) {
+                    // On desktop, getUserMedia failure = real mic block
+                    notify('🎤 Microphone access denied. Please allow microphone in your browser settings and try again.', 'error');
+                    return;
+                }
+                // On mobile/WebView: continue anyway — SpeechRecognition has its own mic access
+                console.warn('[Voice] getUserMedia failed on mobile, proceeding with SpeechRecognition:', e.message);
             }
 
             // Start voice recognition
             _aiVoiceWantStop = false;
             _aiVoiceRetries = 0;
             _aiVoiceRestartLock = false;
+            window._wfMicPreGranted = micPreGranted; // Pass to error handler
             _startVoiceRecognition(inp, btn);
         }
 
@@ -7296,9 +7308,28 @@ YOUR PERSONALITY & CRITICAL RULES:
                     return;
                 }
 
-                // PERMISSION ERRORS
-                if (err === 'not-allowed' || err === 'service-not-allowed') {
-                    notify('🎤 Microphone blocked by browser. Go to Settings → Site Settings → Microphone → Allow for this site.', 'error');
+                // SERVICE NOT ALLOWED — speech service unavailable (NOT mic permission)
+                // Common on Android WebView, Appilix wrappers, older Samsung Internet
+                if (err === 'service-not-allowed') {
+                    if (window._wfMicPreGranted || isMobile) {
+                        // Mic IS granted — the speech service itself is blocked
+                        notify('🎤 Voice service unavailable on this browser. Try opening in Chrome or update your Google app.', 'warn');
+                    } else {
+                        notify('🎤 Microphone or speech service blocked. Go to Settings → Site Settings → Microphone → Allow.', 'error');
+                    }
+                    _stopVoiceUI();
+                    return;
+                }
+
+                // NOT ALLOWED — actual mic permission denial
+                if (err === 'not-allowed') {
+                    if (window._wfMicPreGranted) {
+                        // Mic WAS granted but SpeechRecognition still says not-allowed
+                        // This means the speech service is the problem, not the mic
+                        notify('🎤 Speech recognition denied. Try: 1) Update Google app, 2) Open in Chrome browser, 3) Check Speech → Voice input in phone settings.', 'warn');
+                    } else {
+                        notify('🎤 Microphone blocked. Go to browser Settings → Site Settings → Microphone → Allow for this site.', 'error');
+                    }
                     _stopVoiceUI();
                     return;
                 }
@@ -14221,13 +14252,21 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify('🎤 Voice input not supported on this browser. Use Chrome / Edge / Safari.', 'error');
                 return;
             }
+            // Non-blocking mic precheck on mobile
+            let micOk = false;
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
+                    micOk = true;
                 } catch (e) {
-                    notify('🎤 Microphone access denied. Please allow it in your browser settings.', 'error');
-                    return;
+                    const isMobileOrWebView = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent)
+                        || typeof appilix !== 'undefined';
+                    if (!isMobileOrWebView) {
+                        notify('🎤 Microphone access denied. Please allow it in your browser settings.', 'error');
+                        return;
+                    }
+                    console.warn('[VoiceTest] getUserMedia failed on mobile, proceeding:', e.message);
                 }
             }
             const s = DB.getObj('settings', {});
@@ -14243,7 +14282,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify(`✅ Heard: "${txt}" — Voice is working!`, 'success');
             };
             rec.onerror = (e) => {
-                notify('🎤 Test failed: ' + e.error + (e.error === 'not-allowed' ? ' — please grant microphone permission' : ''), 'error');
+                if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+                    if (micOk) {
+                        notify('🎤 Speech service unavailable. Try opening in Chrome or update your Google app.', 'warn');
+                    } else {
+                        notify('🎤 Test failed: Microphone or speech permission denied. Allow mic in browser settings.', 'error');
+                    }
+                } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
+                    notify('🎤 Test failed: ' + e.error, 'error');
+                }
             };
             try { rec.start(); } catch (e) { notify('🎤 ' + e.message, 'error'); }
         }
@@ -15421,16 +15468,24 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return;
             }
 
-            // Request mic permission
+            // Request mic permission (NON-BLOCKING on mobile/WebView)
+            let micOk = false;
             try {
                 if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     stream.getTracks().forEach(t => t.stop());
+                    micOk = true;
                 }
             } catch (e) {
-                notify('🎤 Microphone access denied. Allow mic in browser settings.', 'error');
-                return;
+                const isMobileOrWebView = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent)
+                    || typeof appilix !== 'undefined';
+                if (!isMobileOrWebView) {
+                    notify('🎤 Microphone access denied. Allow mic in browser settings.', 'error');
+                    return;
+                }
+                console.warn('[FloatVoice] getUserMedia failed on mobile, proceeding:', e.message);
             }
+            window._wfFloatMicOk = micOk;
 
             _floatVoiceWantStop = false;
             _floatVoiceRetries = 0;
@@ -15497,7 +15552,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
                 if (err !== 'aborted') {
                     if (err === 'network') notify('🎤 Voice needs internet.', 'error');
-                    else if (err === 'not-allowed') notify('🎤 Microphone blocked. Allow in settings.', 'error');
+                    else if (err === 'not-allowed' || err === 'service-not-allowed') {
+                        if (window._wfFloatMicOk || isMobile) {
+                            notify('🎤 Speech service unavailable. Try Chrome or update Google app.', 'warn');
+                        } else {
+                            notify('🎤 Microphone blocked. Allow in browser settings.', 'error');
+                        }
+                    }
                     else if (err !== 'no-speech') notify('🎤 Voice error: ' + err, 'error');
                 }
                 btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
