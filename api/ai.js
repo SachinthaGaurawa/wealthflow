@@ -44,7 +44,7 @@ export default async function handler(req, res) {
     // ---------- ENGINE 1: GEMINI (Primary, supports vision) ----------
     async function fetchGemini() {
         if (!geminiKey) throw new Error('Gemini key not configured');
-        const model = image ? 'gemini-2.0-flash' : 'gemini-2.0-flash';
+        const model = 'gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
         const parts = [{ text: prompt }];
