@@ -4917,10 +4917,8 @@
                                     👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — I understand <em>your</em> unique financial patterns and learn from every conversation.<br><br>
                                     💡 Ask me about your spending, savings goals, loan strategies, investments, or even just chat — I'm friendly!<br><br>
                                     <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--text2);margin-top:8px;">
-                                        <span style="background:rgba(212,175,55,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(212,175,55,0.25);">🎤 Voice — any language</span>
                                         <span style="background:rgba(66,133,244,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">🌐 70+ languages</span>
                                         <span style="background:rgba(16,185,129,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸 Scan receipts</span>
-                                        <span style="background:rgba(139,92,246,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(139,92,246,0.25);">🔊 Read aloud</span>
                                         <span style="background:rgba(236,72,153,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(236,72,153,0.25);">☁️ Synced across devices</span>
                                     </div>
                                 </div>
@@ -4929,26 +4927,11 @@
                         <!-- Scroll-to-bottom FAB -->
                         <button class="ai-scroll-bottom" id="aiScrollBottom" onclick="document.getElementById('aiChatMessages').scrollTop=document.getElementById('aiChatMessages').scrollHeight" title="Jump to latest">↓</button>
 
-                        <!-- Voice Recording UI (hidden by default) -->
-                        <div id="aiVoiceRecordingBar" style="display:none;padding:0 16px;">
-                            <div class="ai-voice-recording">
-                                <div class="ai-voice-wave">
-                                    <div class="ai-voice-wave-bar"></div><div class="ai-voice-wave-bar"></div>
-                                    <div class="ai-voice-wave-bar"></div><div class="ai-voice-wave-bar"></div>
-                                    <div class="ai-voice-wave-bar"></div>
-                                </div>
-                                <span class="ai-voice-timer" id="aiVoiceTimer">0:00</span>
-                                <span class="ai-voice-label">Listening — speak in any language...</span>
-                                <button class="btn btn-sm" style="background:var(--red);color:#fff;padding:4px 12px;border-radius:8px;" onclick="toggleAIChatVoice()">⏹ Stop</button>
-                            </div>
-                        </div>
-
                         <!-- Typing Bar -->
                         <div style="border-top:1px solid var(--border);padding:14px 16px;background:var(--bg2);">
                             <div style="display:flex;gap:10px;align-items:flex-end;">
                                 <div style="flex:1;position:relative;">
-                                    <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:80px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
-                                    <button id="aiVoiceBtn" type="button" onclick="toggleAIChatVoice()" title="Voice input (multi-lingual)" aria-label="Voice input" style="position:absolute;right:42px;bottom:7px;width:32px;height:32px;border-radius:50%;background:var(--card2);border:1px solid var(--border2);color:var(--accent);cursor:pointer;font-size:14px;transition:all .2s;">🎤</button>
+                                    <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:40px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
                                     <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Scan receipt with AI">
                                         📸
                                         <input type="file" accept="image/*" capture="environment" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
@@ -5180,8 +5163,6 @@
             aria-label="Close AI bar">✕</button>
         <input class="floating-ai-input" id="floatingAIInput" placeholder="Ask AI anything..."
             onkeydown="if(event.key==='Enter'){sendFloatingAI();event.preventDefault();}">
-        <button class="floating-ai-send" id="floatingAIVoiceBtn" onclick="toggleFloatingAIVoice()" title="Voice input"
-            style="border-radius:0;background:var(--card2);color:var(--accent);border-left:1px solid var(--border2);min-width:44px;">🎤</button>
         <button class="floating-ai-send" onclick="sendFloatingAI()">➤</button>
     </div>
 
@@ -6833,8 +6814,8 @@ Rules:
             const langCode = s.aiResponseLang || 'en';
             const langName = WF_LANG_NAMES[langCode] || 'English';
             const langDirective = langCode === 'en'
-                ? 'Respond in clear, natural English.'
-                : `CRITICAL LANGUAGE INSTRUCTION: Always respond in ${langName} (language code: ${langCode}). All financial terms, numbers, and explanations must be in ${langName}. If the user writes in another language, you may briefly acknowledge it but your full reply MUST be in ${langName}. Use the native script of ${langName}, not transliteration.`;
+                ? 'CRITICAL LANGUAGE INSTRUCTION: You MUST respond entirely in English.'
+                : `CRITICAL LANGUAGE INSTRUCTION: You MUST respond entirely in ${langName} (Language Code: ${langCode}). DO NOT use English for your response. All financial terms, numbers, explanations, and advice MUST be translated to and written in ${langName}. If the user writes in English or another language, you must still respond strictly in ${langName}. Do NOT use English under any circumstances.`;
 
             const hist = getAIHistory();
             const recentUserMsgs = hist.filter(m => m.role === 'user').slice(-5).map(m => m.content);
@@ -7145,228 +7126,6 @@ YOUR PERSONALITY & CRITICAL RULES:
         let _aiVoiceRestartLock = false;  // prevents rapid restart loops
         const _AI_VOICE_MAX_RETRIES = 3;
 
-        function _stopVoiceUI() {
-            const btn = $('aiVoiceBtn');
-            const recBar = document.getElementById('aiVoiceRecordingBar');
-            if (btn) { btn.style.background = 'var(--card2)'; btn.style.color = 'var(--accent)'; btn.textContent = '🎤'; }
-            if (recBar) recBar.style.display = 'none';
-            if (_aiVoiceTimer) { clearInterval(_aiVoiceTimer); _aiVoiceTimer = null; }
-            window._wfAIVoiceRec = null;
-            _aiVoiceRetries = 0;
-            _aiVoiceWantStop = false;
-            _aiVoiceRestartLock = false;
-        }
-
-        async function toggleAIChatVoice() {
-            const inp = $('aiChatInput');
-            const btn = $('aiVoiceBtn');
-            if (!inp || !btn) return;
-
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) {
-                notify('🎤 Voice not supported. Use Chrome, Edge, or Safari.', 'warn');
-                return;
-            }
-
-            // Toggle OFF if currently recording
-            if (window._wfAIVoiceRec) {
-                _aiVoiceWantStop = true;
-                try { window._wfAIVoiceRec.stop(); } catch (e) { }
-                _stopVoiceUI();
-                return;
-            }
-
-            // Request microphone permission first
-            try {
-                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(t => t.stop());
-                }
-            } catch (e) {
-                notify('🎤 Microphone access denied. Please allow microphone in your browser settings and try again.', 'error');
-                return;
-            }
-
-            // Start voice recognition
-            _aiVoiceWantStop = false;
-            _aiVoiceRetries = 0;
-            _aiVoiceRestartLock = false;
-            _startVoiceRecognition(inp, btn);
-        }
-
-        function _startVoiceRecognition(inp, btn) {
-            // Guard: prevent rapid restart loops (the "flashing" bug)
-            if (_aiVoiceRestartLock) return;
-            _aiVoiceRestartLock = true;
-            setTimeout(() => { _aiVoiceRestartLock = false; }, 400);
-
-            if (_aiVoiceWantStop) { _stopVoiceUI(); return; }
-
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            const recBar = document.getElementById('aiVoiceRecordingBar');
-            const timerEl = document.getElementById('aiVoiceTimer');
-            const settings = DB.getObj('settings', {});
-            let langPref = settings.aiVoiceLang || 'auto';
-
-            // *** LANGUAGE FIX v4 ***
-            // If voice input is "Auto", inherit the language the user is chatting in!
-            // This is the ONLY way to do "Auto" across 60+ languages in Web Speech API
-            if (langPref === 'auto') {
-                langPref = settings.aiResponseLang || 'en';
-            }
-
-            const rec = new SR();
-            
-            // Map the short lang code (e.g., 'si') to the BCP-47 tag (e.g., 'si-LK')
-            // Fallback to the short code if not in our map
-            rec.lang = WF_VOICE_MAP[langPref] || langPref;
-
-            // Desktop: use continuous=true (one long session)
-            // Mobile: use continuous=false (single utterance, we auto-restart)
-            const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent);
-            rec.continuous = !isMobile;
-            rec.interimResults = true;
-            rec.maxAlternatives = 3;
-
-            let finalText = inp.value ? inp.value + ' ' : '';
-            let silenceTimer = null;
-            let gotSpeech = false;
-
-            rec.onresult = (e) => {
-                gotSpeech = true;
-                let interim = '';
-                for (let i = e.resultIndex; i < e.results.length; i++) {
-                    const t = e.results[i][0].transcript;
-                    if (e.results[i].isFinal) {
-                        finalText += t + ' ';
-                    } else {
-                        interim += t;
-                    }
-                }
-                inp.value = (finalText + interim).trim();
-                autoResizeAIInput(inp);
-
-                // Auto-stop after 8 seconds of silence
-                if (silenceTimer) clearTimeout(silenceTimer);
-                silenceTimer = setTimeout(() => {
-                    _aiVoiceWantStop = true;
-                    try { rec.stop(); } catch(ex) {}
-                }, 8000);
-            };
-
-            rec.onerror = (e) => {
-                const err = e.error;
-                if (silenceTimer) clearTimeout(silenceTimer);
-
-                // NETWORK ERROR — retry up to 3 times
-                if (err === 'network') {
-                    _aiVoiceRetries++;
-                    if (_aiVoiceRetries <= _AI_VOICE_MAX_RETRIES && !_aiVoiceWantStop) {
-                        console.warn('[Voice] Network retry ' + _aiVoiceRetries);
-                        setTimeout(() => {
-                            if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
-                        }, 1000);
-                        return;
-                    }
-                    notify('🎤 Voice requires internet connection. Check your network.', 'error');
-                    _stopVoiceUI();
-                    return;
-                }
-
-                // NO SPEECH — only restart on mobile, max 2 times
-                if (err === 'no-speech') {
-                    if (isMobile && !_aiVoiceWantStop && _aiVoiceRetries < 2) {
-                        _aiVoiceRetries++;
-                        setTimeout(() => {
-                            if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
-                        }, 500);
-                        return;
-                    }
-                    // On desktop or max retries reached — just stop silently
-                    _stopVoiceUI();
-                    return;
-                }
-
-                // ABORTED — user stopped, clean exit
-                if (err === 'aborted') {
-                    _stopVoiceUI();
-                    return;
-                }
-
-                // PERMISSION ERRORS
-                if (err === 'not-allowed' || err === 'service-not-allowed') {
-                    notify('🎤 Microphone blocked by browser. Go to Settings → Site Settings → Microphone → Allow for this site.', 'error');
-                    _stopVoiceUI();
-                    return;
-                }
-
-                // AUDIO CAPTURE
-                if (err === 'audio-capture') {
-                    notify('🎤 No microphone found. Please connect a mic.', 'error');
-                    _stopVoiceUI();
-                    return;
-                }
-
-                // LANGUAGE NOT SUPPORTED
-                if (err === 'language-not-supported') {
-                    notify('🎤 This language is not supported for voice input. Try setting voice language to Auto.', 'warn');
-                    _stopVoiceUI();
-                    return;
-                }
-
-                notify('🎤 Voice error: ' + err, 'error');
-                _stopVoiceUI();
-            };
-
-            rec.onend = () => {
-                if (silenceTimer) clearTimeout(silenceTimer);
-
-                // User requested stop
-                if (_aiVoiceWantStop) {
-                    _stopVoiceUI();
-                    return;
-                }
-
-                // *** DESKTOP FIX: Do NOT auto-restart continuous mode ***
-                // On desktop (continuous=true), onend means the session truly ended.
-                // Restarting it causes the "flashing" loop bug.
-                if (!isMobile) {
-                    _stopVoiceUI();
-                    return;
-                }
-
-                // MOBILE ONLY: auto-restart if we got speech (continuous=false ends after each utterance)
-                if (isMobile && gotSpeech && !_aiVoiceWantStop) {
-                    setTimeout(() => {
-                        if (!_aiVoiceWantStop) _startVoiceRecognition(inp, btn);
-                    }, 400);
-                    return;
-                }
-
-                _stopVoiceUI();
-            };
-
-            try {
-                rec.start();
-                window._wfAIVoiceRec = rec;
-                btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
-                if (recBar) recBar.style.display = 'block';
-                // Only create timer once (not on restarts)
-                if (!_aiVoiceTimer) {
-                    _aiVoiceSeconds = 0;
-                    if (timerEl) timerEl.textContent = '0:00';
-                    _aiVoiceTimer = setInterval(() => {
-                        _aiVoiceSeconds++;
-                        if (timerEl) timerEl.textContent = Math.floor(_aiVoiceSeconds/60) + ':' + String(_aiVoiceSeconds%60).padStart(2,'0');
-                    }, 1000);
-                }
-                triggerHaptic('light');
-            } catch (e) {
-                if (e.name === 'InvalidStateError') return; // already running
-                notify('🎤 Could not start voice input. Try refreshing the page.', 'error');
-                _stopVoiceUI();
-            }
-        }
 
         function clearAIChat() {
             localStorage.removeItem(AI_HISTORY_KEY);
@@ -13727,19 +13486,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <span style="font-size:11px; color:var(--accent); background:rgba(212,175,55,0.1); padding:4px 8px; border-radius:8px;">Change</span>
                 </button>
             </div>
-            <div class="setting-row" style="margin-top:14px;">
-                <div class="setting-info">
-                    <div class="setting-label">🎤 Voice Input Language</div>
-                    <div class="setting-desc">Speech-recognition language for the microphone button. <b>Auto</b> uses your browser default and can transcribe mixed languages on most browsers (Chrome / Edge / Safari).</div>
-                </div>
-                <select class="fi" id="aiVoiceLangSelect" style="width:170px;" onchange="updateAIVoiceLang(this.value)"></select>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <div class="setting-label">Voice-to-Text Test</div>
-                    <div class="setting-desc">Tap to test that your microphone and language settings work properly.</div>
-                </div>
-                <button class="btn btn-secondary btn-sm" onclick="testVoiceInput()">🎤 Test Voice</button>
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
+                <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
             </div>
         </div>
 
@@ -13812,10 +13561,6 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:var(--purple);">🤖 AI Advisor Preferences</div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
-            </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Categorize Expenses</div><div class="setting-desc">AI automatically assigns categories to new expenses based on the title entered.</div></div>
                 <div class="toggle ${s.autoCategory !== false ? 'on' : ''}" onclick="toggleSetting('autoCategory', ${s.autoCategory === false})"></div>
@@ -14038,9 +13783,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function populateAILanguagePickers() {
             const s = DB.getObj('settings', {});
             const respLang = s.aiResponseLang || 'en';
-            const voiceLang = s.aiVoiceLang || 'auto';
             const sel = $('aiLangSelect');
-            const vsel = $('aiVoiceLangSelect');
             if (sel) {
                 sel.innerHTML = Object.entries(WF_LANG_NAMES)
                     .filter(([code]) => code !== 'auto')
@@ -14050,16 +13793,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const lbl = $('aiLangSelected');
                 if (lbl) lbl.textContent = `Currently: ${WF_LANG_NAMES[respLang] || 'English'} (${respLang})`;
             }
-            if (vsel) {
-                vsel.innerHTML = Object.entries(WF_LANG_NAMES)
-                    .sort((a, b) => {
-                        if (a[0] === 'auto') return -1;
-                        if (b[0] === 'auto') return 1;
-                        return a[1].localeCompare(b[1]);
-                    })
-                    .map(([code, name]) => `<option value="${code}" ${code === voiceLang ? 'selected' : ''}>${name}</option>`)
-                    .join('');
-            }
+            const btnText = $('aiLangBtnText');
+            if (btnText) btnText.textContent = `${WF_LANG_NAMES[respLang] || 'English'} (${respLang})`;
         }
 
         function filterAILanguageList() {
@@ -14085,51 +13820,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             DB.set('settings', s);
             const lbl = $('aiLangSelected');
             if (lbl) lbl.textContent = `Currently: ${WF_LANG_NAMES[val] || val} (${val})`;
+            const btnText = $('aiLangBtnText');
+            if (btnText) btnText.textContent = `${WF_LANG_NAMES[val] || 'English'} (${val})`;
             const langName = WF_LANG_NAMES[val] || val;
             notify(`✓ AI will now respond in ${langName}`, 'success');
             triggerHaptic('toggle');
         }
 
-        function updateAIVoiceLang(val) {
-            const s = DB.getObj('settings', {});
-            s.aiVoiceLang = val;
-            DB.set('settings', s);
-            notify(`🎤 Voice input language set to ${WF_LANG_NAMES[val] || val}`, 'success');
-            triggerHaptic('toggle');
-        }
 
-        async function testVoiceInput() {
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) {
-                notify('🎤 Voice input not supported on this browser. Use Chrome / Edge / Safari.', 'error');
-                return;
-            }
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(t => t.stop());
-                } catch (e) {
-                    notify('🎤 Microphone access denied. Please allow it in your browser settings.', 'error');
-                    return;
-                }
-            }
-            const s = DB.getObj('settings', {});
-            let langPref = s.aiVoiceLang || 'auto';
-            if (langPref === 'auto') langPref = s.aiResponseLang || 'en';
-            const rec = new SR();
-            rec.lang = WF_VOICE_MAP[langPref] || langPref;
-            rec.interimResults = false;
-            rec.continuous = false;
-            notify('🎤 Listening — say a few words…', 'info');
-            rec.onresult = (e) => {
-                const txt = e.results[0][0].transcript;
-                notify(`✅ Heard: "${txt}" — Voice is working!`, 'success');
-            };
-            rec.onerror = (e) => {
-                notify('🎤 Test failed: ' + e.error + (e.error === 'not-allowed' ? ' — please grant microphone permission' : ''), 'error');
-            };
-            try { rec.start(); } catch (e) { notify('🎤 ' + e.message, 'error'); }
-        }
 
         function updateAutoLock(val) {
             const s = DB.getObj('settings', {});
@@ -15283,125 +14981,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             showPage('ai', document.getElementById('aiNavItem'));
             setTimeout(() => sendAIMessage(msg), 300);
         }
-        // FLOATING AI VOICE v3 — same fixes as main voice
-        let _floatVoiceRetries = 0;
-        let _floatVoiceWantStop = false;
-        let _floatVoiceLock = false;
-        async function toggleFloatingAIVoice() {
-            const inp = $('floatingAIInput');
-            const btn = $('floatingAIVoiceBtn');
-            if (!inp || !btn) return;
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) { notify('🎤 Voice not supported. Use Chrome, Edge, or Safari.', 'warn'); return; }
 
-            // Toggle OFF
-            if (window._wfVoiceRec) {
-                _floatVoiceWantStop = true;
-                try { window._wfVoiceRec.stop(); } catch (e) { }
-                window._wfVoiceRec = null;
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                _floatVoiceLock = false;
-                return;
-            }
-
-            // Request mic permission
-            try {
-                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(t => t.stop());
-                }
-            } catch (e) {
-                notify('🎤 Microphone access denied. Allow mic in browser settings.', 'error');
-                return;
-            }
-
-            _floatVoiceWantStop = false;
-            _floatVoiceRetries = 0;
-            _floatVoiceLock = false;
-            _startFloatingVoice(inp, btn);
-        }
-
-        function _startFloatingVoice(inp, btn) {
-            // Anti-flashing guard
-            if (_floatVoiceLock) return;
-            _floatVoiceLock = true;
-            setTimeout(() => { _floatVoiceLock = false; }, 400);
-            if (_floatVoiceWantStop) { btn.style.background = 'var(--card2)'; btn.textContent = '🎤'; window._wfVoiceRec = null; return; }
-
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            const rec = new SR();
-            const settings = DB.getObj('settings', {});
-            let langPref = settings.aiVoiceLang || 'auto';
-            if (langPref === 'auto') {
-                langPref = settings.aiResponseLang || 'en';
-            }
-            rec.lang = WF_VOICE_MAP[langPref] || langPref;
-            rec.interimResults = true;
-            rec.continuous = false;
-            rec.maxAlternatives = 3;
-            let finalText = inp.value ? inp.value + ' ' : '';
-            let gotSpeech = false;
-
-            rec.onresult = (e) => {
-                gotSpeech = true;
-                let interim = '';
-                for (let i = e.resultIndex; i < e.results.length; i++) {
-                    if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
-                    else interim += e.results[i][0].transcript;
-                }
-                inp.value = (finalText + interim).trim();
-            };
-
-            rec.onerror = (e) => {
-                const err = e.error;
-                // Network — retry
-                if (err === 'network' && _floatVoiceRetries < 3 && !_floatVoiceWantStop) {
-                    _floatVoiceRetries++;
-                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 1000);
-                    return;
-                }
-                // No speech — limited restart
-                if (err === 'no-speech' && !_floatVoiceWantStop && _floatVoiceRetries < 2) {
-                    _floatVoiceRetries++;
-                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 500);
-                    return;
-                }
-                if (err !== 'aborted') {
-                    if (err === 'network') notify('🎤 Voice needs internet.', 'error');
-                    else if (err === 'not-allowed') notify('🎤 Microphone blocked. Allow in settings.', 'error');
-                    else if (err !== 'no-speech') notify('🎤 Voice error: ' + err, 'error');
-                }
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                window._wfVoiceRec = null;
-            };
-
-            rec.onend = () => {
-                if (_floatVoiceWantStop) {
-                    btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                    window._wfVoiceRec = null;
-                    return;
-                }
-                // Auto-restart ONLY if we got speech (for next utterance)
-                if (gotSpeech && !_floatVoiceWantStop) {
-                    setTimeout(() => {
-                        if (!_floatVoiceWantStop && window._wfVoiceRec) _startFloatingVoice(inp, btn);
-                    }, 400);
-                    return;
-                }
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                window._wfVoiceRec = null;
-            };
-
-            try {
-                rec.start();
-                window._wfVoiceRec = rec;
-                btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
-                triggerHaptic('light');
-            } catch (e) {
-                if (e.name !== 'InvalidStateError') notify('🎤 Could not start voice.', 'error');
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-            }
-        }
 
         // ==================== DYNAMIC SOUNDSCAPES ====================
         function playUISound(type) {
@@ -17282,8 +16862,17 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             s.aiAdvisorPersona = persona;
             DB.set('settings', s);
             document.querySelectorAll('.ai-persona-card').forEach(c => c.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-            notify(`AI persona set to ${persona}!`, 'success');
+            if (event && event.currentTarget) {
+                event.currentTarget.classList.add('active');
+            }
+            
+            // Update button text in settings and chat UI
+            const personaLabel = persona.charAt(0).toUpperCase() + persona.slice(1);
+            document.querySelectorAll('.ai-persona-btn, button[onclick="openModal(\'mdAIPersona\')"]').forEach(btn => {
+                btn.innerHTML = `🎭 ${personaLabel}`;
+            });
+
+            notify(`AI persona set to ${personaLabel}!`, 'success');
             playUISound('success');
         }
 
