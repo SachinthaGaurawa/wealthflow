@@ -5588,13 +5588,25 @@
 
     <div class="mo" id="mdExpense">
         <div class="md md-sm">
-            <div class="md-hdr">
+            <!-- Scanning Progress Overlay (shown during AI scan) -->
+            <div id="aiScanOverlay" style="display:none; position:absolute; inset:0; z-index:50; background:rgba(10,10,15,0.92); backdrop-filter:blur(12px); border-radius:inherit; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px;">
+                <div id="aiScanSpinner" style="width:64px; height:64px; border-radius:50%; border:3px solid rgba(212,175,55,0.15); border-top-color:var(--accent); animation:spin 0.8s linear infinite;"></div>
+                <div id="aiScanStage" style="font-size:15px; font-weight:700; color:var(--accent); text-align:center; letter-spacing:0.3px;">📸 Optimizing Image…</div>
+                <div id="aiScanDetail" style="font-size:12px; color:var(--text3); text-align:center; max-width:260px; line-height:1.5;">Compressing and enhancing for AI vision</div>
+                <div style="width:80%; max-width:240px; height:4px; background:var(--bg2); border-radius:4px; overflow:hidden; margin-top:4px;">
+                    <div id="aiScanBar" style="height:100%; width:0%; background:linear-gradient(90deg,var(--accent),#f5c542); border-radius:4px; transition:width 0.5s ease;"></div>
+                </div>
+            </div>
+
+            <div class="md-hdr" style="position:relative;">
                 <div class="md-title" id="mdExpenseTitle">Add Monthly Expense</div>
-                <div style="display:flex;gap:8px;">
-                    <label class="btn btn-secondary btn-sm" style="cursor:pointer; padding:4px 8px; font-size:11px; border: 1px solid var(--accent); background: linear-gradient(135deg, rgba(212,175,55,0.1), rgba(212,175,55,0.02)); box-shadow: 0 0 10px rgba(212,175,55,0.2); transition: all 0.3s ease;">
-                        📎 / 📸 Deep AI Scan
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <!-- AI Scan Button — Premium Design -->
+                    <label id="aiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan receipt with AI Vision">
+                        <span style="position:relative;z-index:1;">📸 AI Scan</span>
                         <input type="file" accept="image/*" id="e_ai_scan" style="display:none;"
                             onchange="handleAIScan(event, 'expense')">
+                        <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(212,175,55,0.08),transparent);opacity:0;transition:opacity 0.3s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"></div>
                     </label>
                     <button class="md-x" onclick="closeModal('mdExpense')">✕</button>
                 </div>
@@ -6322,12 +6334,23 @@
             const parts = [{ text: prompt }];
             if (image) parts.push({ inline_data: { mime_type: "image/jpeg", data: image } });
 
+            // Vision/OCR needs deterministic output (low temp) and more tokens
+            const isVision = !!image;
+            const genConfig = {
+                temperature: isVision ? 0.1 : 0.7,
+                maxOutputTokens: isVision ? 4096 : 1200
+            };
+            // Force native JSON mode for OCR expense scans
+            if (isVision && prompt.includes('"vendor"')) {
+                genConfig.responseMimeType = 'application/json';
+            }
+
             const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
             for (const model of models) {
                 try {
                     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.7, maxOutputTokens: 1200 } })
+                        body: JSON.stringify({ contents: [{ parts }], generationConfig: genConfig })
                     });
                     if (r.status === 429 || r.status === 503) continue;
                     if (!r.ok) { if (r.status === 404) continue; throw new Error('Gemini ' + r.status); }
@@ -6497,10 +6520,48 @@ Keep total under 200 words. No markdown, no asterisks.`;
             }
         }
 
-        // ==================== AI RECEIPT SCANNING (UPGRADED — Issue 4) ====================
-        // Compresses images BEFORE sending so the AI responds 5-10x faster.
-        // Original 4MB photo → ~150KB compressed JPEG before upload.
+        // ==================== AI RECEIPT SCANNING — v3 (Nuclear-Grade) ====================
+        // Pipeline: Image → Enhance (contrast/sharpen) → Compress → AI Vision → Parse → Populate
 
+        // --- Scan Overlay UI Helpers ---
+        function _showScanOverlay(stage, detail, pct) {
+            const ov = $('aiScanOverlay');
+            if (!ov) return;
+            ov.style.display = 'flex';
+            if ($('aiScanStage')) $('aiScanStage').textContent = stage;
+            if ($('aiScanDetail')) $('aiScanDetail').textContent = detail;
+            if ($('aiScanBar')) $('aiScanBar').style.width = pct + '%';
+        }
+        function _hideScanOverlay() {
+            const ov = $('aiScanOverlay');
+            if (ov) ov.style.display = 'none';
+        }
+
+        // --- Image Enhancement for OCR ---
+        function _enhanceForOCR(canvas) {
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            const imgData = ctx.getImageData(0, 0, w, h);
+            const d = imgData.data;
+            // Auto-levels: find min/max luminance then stretch
+            let minL = 255, maxL = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                const lum = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+                if (lum < minL) minL = lum;
+                if (lum > maxL) maxL = lum;
+            }
+            const range = maxL - minL || 1;
+            // Contrast stretch + slight brightness boost
+            for (let i = 0; i < d.length; i += 4) {
+                d[i]   = Math.min(255, Math.max(0, ((d[i]   - minL) / range) * 265));
+                d[i+1] = Math.min(255, Math.max(0, ((d[i+1] - minL) / range) * 265));
+                d[i+2] = Math.min(255, Math.max(0, ((d[i+2] - minL) / range) * 265));
+            }
+            ctx.putImageData(imgData, 0, 0);
+            return canvas;
+        }
+
+        // --- Compress + Enhance Pipeline ---
         function _compressImageToBase64(file, maxDim = 1024, quality = 0.78) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
@@ -6513,10 +6574,11 @@ Keep total under 200 words. No markdown, no asterisks.`;
                         const canvas = document.createElement('canvas');
                         canvas.width = w; canvas.height = h;
                         const ctx = canvas.getContext('2d');
-                        // White background to handle PNG transparency
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, w, h);
                         ctx.drawImage(img, 0, 0, w, h);
+                        // Enhance contrast for better OCR
+                        _enhanceForOCR(canvas);
                         const dataUrl = canvas.toDataURL('image/jpeg', quality);
                         const base64 = dataUrl.split(',')[1];
                         resolve({ base64, kb: Math.round(base64.length * 0.75 / 1024) });
@@ -6529,137 +6591,185 @@ Keep total under 200 words. No markdown, no asterisks.`;
             });
         }
 
+        // --- Triple-Layer JSON Parser (never fails) ---
+        function _parseAIJson(raw) {
+            // Layer 1: Strip markdown fences and try direct parse
+            let clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+            try { return JSON.parse(clean); } catch(_) {}
+
+            // Layer 2: Extract JSON object via regex, clean common LLM quirks
+            const m = clean.match(/\{[\s\S]*\}/);
+            if (m) {
+                let j = m[0];
+                j = j.replace(/,\s*([\}\]])/g, '$1');        // trailing commas
+                j = j.replace(/'/g, '"');                     // single quotes → double
+                j = j.replace(/(\w+)\s*:/g, '"$1":');        // unquoted keys
+                j = j.replace(/""+/g, '"');                   // doubled quotes
+                j = j.replace(/:\s*"([^"]*?)"\s*"([^"]*?)"/g, ': "$1$2"'); // split strings
+                try { return JSON.parse(j); } catch(_) {}
+            }
+
+            // Layer 3: Ultimate fallback — extract fields via regex
+            const result = {};
+            const vendorM = raw.match(/vendor["\s:]+["']?([^"'\n,\}]+)/i);
+            if (vendorM) result.vendor = vendorM[1].trim();
+            const amtM = raw.match(/amount["\s:]+["']?([\d,.\s]+)/i);
+            if (amtM) result.amount = parseFloat(amtM[1].replace(/[,\s]/g, '')) || 0;
+            const dateM = raw.match(/date["\s:]+["']?(\d{4}-\d{2}-\d{2})/i);
+            if (dateM) result.date = dateM[1];
+            const catM = raw.match(/category["\s:]+["']?([^"'\n,\}]+)/i);
+            if (catM) result.category = catM[1].trim();
+            const itemsM = raw.match(/items["\s:]+\[([\s\S]*?)\]/i);
+            if (itemsM) {
+                try { result.items = JSON.parse('[' + itemsM[1] + ']'); }
+                catch(_) { result.items = itemsM[1].split(',').map(s => s.replace(/["\s]/g, '').trim()).filter(Boolean); }
+            }
+            return Object.keys(result).length ? result : null;
+        }
+
+        // --- Populate Expense Form from scan result ---
+        function _populateExpenseFromScan(result) {
+            if (!result) return false;
+            let filled = false;
+            if (result.vendor) { $('e_desc').value = result.vendor; filled = true; }
+            if (result.amount) {
+                const cleanAmt = String(result.amount).replace(/[^0-9.-]/g, '');
+                if (parseFloat(cleanAmt) > 0) { $('e_amount').value = fmtN(cleanAmt); filled = true; }
+            }
+            if (result.date) {
+                const dateStr = String(result.date).trim();
+                if (/^\d{4}-\d{2}/.test(dateStr)) { $('e_month').value = dateStr.substr(0, 7); filled = true; }
+            }
+            if (result.category) {
+                const catSel = $('e_cat');
+                const target = (result.category || '').toLowerCase();
+                for (let opt of catSel.options) {
+                    if (opt.value.toLowerCase() === target || opt.text.toLowerCase() === target ||
+                        opt.value.toLowerCase().includes(target.split(' ')[0]) ||
+                        target.includes(opt.value.toLowerCase().split(' ')[0])) {
+                        catSel.value = opt.value; filled = true; break;
+                    }
+                }
+            }
+            // Auto-populate notes with scanned items
+            if (result.items && result.items.length && $('e_notes')) {
+                const cur = $('e_notes').value;
+                const itemStr = '📦 ' + result.items.slice(0, 6).join(', ');
+                $('e_notes').value = cur ? cur + ' | ' + itemStr : itemStr;
+            }
+            return filled;
+        }
+
         async function handleAIScan(e, type) {
             const file = e.target.files[0];
             if (!file) return;
 
             const startTime = Date.now();
-            // Show progress notification
             const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-            notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
             triggerHaptic('medium');
 
+            // Show in-modal overlay for expense scans
+            const isExpense = type === 'expense';
+            if (isExpense) _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
+            else notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
+
             try {
-                // Step 1 — Compress aggressively for speed
-                const { base64: base64Img, kb } = await _compressImageToBase64(file, 1024, 0.78);
-                console.log(`[AI Scan] Compressed: ${sizeMB}MB → ${kb}KB`);
-                notify(`🔍 Reading receipt with AI Vision…`, 'info');
+                // Step 1 — Compress + Enhance
+                const { base64: base64Img, kb } = await _compressImageToBase64(file, 1200, 0.82);
+                console.log(`[AI Scan v3] Compressed: ${sizeMB}MB → ${kb}KB`);
+                if (isExpense) _showScanOverlay('🧠 AI Vision Analyzing…', 'Reading text, numbers, and layout', 35);
+                else notify('🔍 Reading document with AI Vision…', 'info');
 
-                let prompt = "";
-                if (type === 'expense') {
-                    prompt = `You are an elite financial auditor and expert OCR scanner. Perform a DEEP SCAN of this receipt, invoice, or document.
+                // Step 2 — Build prompt
+                let prompt = '';
+                if (isExpense) {
+                    const today = new Date().toISOString().split('T')[0];
+                    prompt = `You are an expert OCR receipt scanner. Extract data from this receipt/invoice image.
 
-CRITICAL INSTRUCTION: Return ONLY a strictly valid JSON object. Do NOT include any markdown, commentary, or code blocks (\`\`\`).
-
-The JSON MUST exactly match this structure:
-{
-  "vendor": "Extract the exact store, merchant, or business name",
-  "amount": 0.00,
-  "date": "YYYY-MM-DD",
-  "category": "Pick best fit: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Personal Care, Home, Other",
-  "items": ["Item 1", "Item 2"]
-}
+Return ONLY a valid JSON object with these exact fields:
+{"vendor":"store name","amount":1500.50,"date":"${today}","category":"Food & Groceries","items":["item1","item2"]}
 
 RULES:
-1. 'amount' MUST be a pure number (e.g., 1500.50). NO commas, NO currency symbols, NO strings.
-2. 'date' MUST be YYYY-MM-DD. If missing, default to ${new Date().toISOString().split('T')[0]}.
-3. Output ONLY the raw JSON object starting with { and ending with }.`;
+- "vendor": exact business/store name from the receipt
+- "amount": the TOTAL/GRAND TOTAL as a pure number (no currency symbols, no commas, no quotes). Example: 1500.50
+- "date": in YYYY-MM-DD format. If not visible, use "${today}"
+- "category": pick the best fit from: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Other
+- "items": array of up to 5 main purchased items. If no items visible, use empty array []
+
+CRITICAL: Output ONLY the JSON object. No markdown. No explanation. Start with { end with }.`;
                 } else if (type === 'ai_chat') {
-                    prompt = `You are a world-class financial advisor and document analyst. The user has attached an image (receipt, invoice, bill, bank statement, or financial document).
+                    prompt = `You are a world-class financial advisor. The user attached a financial document (receipt, invoice, bill, bank statement).
 
-Perform a DEEP SCAN of the image. 
-1. Identify EXACTLY what the document is.
-2. Extract the most critical financial data (Grand totals, taxes, dates, vendor names, specific line items, account numbers if safe).
-3. Provide a highly professional, accurate, and deeply personalized financial breakdown of the document.
-4. Give actionable advice based on what you see (e.g., "I noticed you spent a lot on X, here is how you might optimize...").
+Perform a DEEP SCAN:
+1. Identify what the document is
+2. Extract key financial data (totals, taxes, dates, vendor, line items)
+3. Provide a professional financial breakdown
+4. Give actionable advice based on what you see
 
-Be conversational, extremely intelligent, and highly precise. Break down the numbers clearly.`;
+Be conversational, precise, and break down the numbers clearly.`;
                     const reply = await callAI(prompt, base64Img);
                     appendAIMessage('bot', reply);
                     e.target.value = '';
                     return;
                 }
 
-                // Step 2 — Send to AI
+                // Step 3 — Send to AI
+                if (isExpense) _showScanOverlay('🔬 Deep Scanning Receipt…', 'Extracting vendor, amount, items', 60);
                 const reply = await callAI(prompt, base64Img);
+                console.log('[AI Scan v3] Raw reply:', reply.substring(0, 300));
 
-                // Step 3 — Parse aggressively
-                let cleanJson = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
-                const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
-                if (jsonMatch) cleanJson = jsonMatch[0];
-                
-                // Extra safety: remove trailing commas before closing braces/brackets which breaks standard JSON.parse
-                cleanJson = cleanJson.replace(/,\s*([\}\]])/g, '$1');
-                
-                let result;
-                try {
-                    result = JSON.parse(cleanJson);
-                } catch(e) {
-                    throw new Error("Failed to parse JSON: " + cleanJson);
-                }
+                // Step 4 — Parse with triple-layer parser
+                if (isExpense) _showScanOverlay('📊 Processing Results…', 'Validating extracted data', 85);
+                const result = _parseAIJson(reply);
 
-                if (type === 'expense') {
-                    if (result.vendor) $('e_desc').value = result.vendor;
-                    if (result.amount) {
-                        // Ensure amount is clean even if LLM returned a string
-                        const cleanAmt = String(result.amount).replace(/[^0-9.-]/g, '');
-                        $('e_amount').value = fmtN(cleanAmt);
-                    }
-                    if (result.date) $('e_month').value = result.date.substr(0, 7);
-                    if (result.category) {
-                        const catSel = $('e_cat');
-                        for (let opt of catSel.options) {
-                            if (opt.value === result.category || opt.text === result.category ||
-                                opt.value.toLowerCase().includes((result.category || '').toLowerCase().split(' ')[0])) {
-                                catSel.value = opt.value; break;
-                            }
-                        }
-                    }
+                if (result && _populateExpenseFromScan(result)) {
                     triggerHaptic('success');
                     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                    const itemList = result.items && result.items.length ? `\n📦 ${result.items.slice(0, 4).join(', ')}` : '';
-                    notify(`✅ Scanned in ${elapsed}s · ${result.vendor || 'Vendor'} — LKR ${fmtN(result.amount || 0)}${itemList}`, 'success');
+                    const itemList = result.items && result.items.length ? ` · 📦 ${result.items.slice(0, 4).join(', ')}` : '';
+                    _hideScanOverlay();
+                    notify(`✅ Scanned in ${elapsed}s · ${result.vendor || 'Receipt'} — LKR ${fmtN(result.amount || 0)}${itemList}`, 'success');
+                } else {
+                    throw new Error('Could not extract data from receipt');
                 }
+
             } catch (err) {
-                console.error("AI Scan Error:", err);
-                // Retry with simpler prompt + smaller image
+                console.error('[AI Scan v3] Primary failed:', err.message);
+
+                // ---- RETRY with simpler prompt + smaller image ----
                 try {
-                    notify('⚠️ Retrying with quick mode…', 'info');
-                    const { base64: smaller } = await _compressImageToBase64(file, 700, 0.65);
-                    
-                    if (type === 'expense') {
-                        const simplePrompt = `OCR this receipt. Return ONLY raw JSON without markdown. Format exactly like this:
-{
-  "vendor": "Store Name",
-  "amount": 1500.50,
-  "date": "${new Date().toISOString().split('T')[0]}"
-}
-CRITICAL: 'amount' MUST be a pure number without quotes or commas.`;
+                    if (isExpense) _showScanOverlay('⚡ Quick Mode Retry…', 'Using simplified extraction', 50);
+                    else notify('⚠️ Retrying with quick mode…', 'info');
+
+                    const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65);
+
+                    if (isExpense) {
+                        const simplePrompt = `Read this receipt image. Return ONLY valid JSON:
+{"vendor":"Store Name","amount":1500.50,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}
+Rules: amount must be a number, no currency symbols.`;
                         const retry = await callAI(simplePrompt, smaller);
-                        let cleanRetry = retry.replace(/```json/gi, '').replace(/```/g, '').trim();
-                        const jMatch = cleanRetry.match(/\{[\s\S]*\}/);
-                        if (jMatch) {
-                            cleanRetry = jMatch[0].replace(/,\s*([\}\]])/g, '$1');
-                            const r2 = JSON.parse(cleanRetry);
-                            if (r2.vendor) $('e_desc').value = r2.vendor;
-                            if (r2.amount) {
-                                const cleanAmt = String(r2.amount).replace(/[^0-9.-]/g, '');
-                                $('e_amount').value = fmtN(cleanAmt);
-                            }
+                        const r2 = _parseAIJson(retry);
+
+                        if (r2 && _populateExpenseFromScan(r2)) {
+                            _hideScanOverlay();
+                            triggerHaptic('success');
                             notify('✅ Receipt scanned (quick mode)!', 'success');
                         } else {
-                            notify('⚠️ Could not parse receipt. Try a clearer, well-lit photo.', 'error');
+                            _hideScanOverlay();
+                            notify('⚠️ Could not read receipt. Try a clearer, well-lit photo.', 'error');
+                            triggerHaptic('error');
                         }
                     } else if (type === 'ai_chat') {
-                        const simplePrompt = `Please look at this document and describe the most important financial details (Total amount, vendor, date) in a few sentences.`;
+                        const simplePrompt = `Describe the key financial details in this document (total amount, vendor, date) in a few sentences.`;
                         const retry = await callAI(simplePrompt, smaller);
                         appendAIMessage('bot', retry);
                         notify('✅ Scanned (quick mode)', 'success');
                     }
                 } catch (e2) {
-                    notify('⚠️ Scan failed: Try a clearer photo', 'error');
+                    console.error('[AI Scan v3] Retry also failed:', e2.message);
+                    _hideScanOverlay();
+                    notify('⚠️ Scan failed. Please try a clearer photo or enter manually.', 'error');
+                    triggerHaptic('error');
                 }
-                triggerHaptic('error');
             }
             e.target.value = '';
         }
