@@ -52,11 +52,8 @@ export default async function handler(req, res) {
         const parts = [{ text: prompt }];
         if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
 
-        // Build generation config — for vision OCR we force JSON response mode
+        // Build generation config
         const generationConfig = { temperature: temp, maxOutputTokens: tokens };
-        if (isVision && prompt.includes('"vendor"')) {
-            generationConfig.responseMimeType = 'application/json';
-        }
 
         const response = await fetchWithTimeout(url, {
             method: 'POST',
