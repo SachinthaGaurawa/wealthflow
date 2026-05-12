@@ -52,6 +52,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://js.puter.com/v2/"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
     <style>
         /* ================== THEME VARIABLES ================== */
@@ -6340,10 +6341,6 @@
                 temperature: isVision ? 0.1 : 0.7,
                 maxOutputTokens: isVision ? 4096 : 1200
             };
-            // Force native JSON mode for OCR expense scans
-            if (isVision && prompt.includes('"vendor"')) {
-                genConfig.responseMimeType = 'application/json';
-            }
 
             const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
             for (const model of models) {
@@ -6660,6 +6657,72 @@ Keep total under 200 words. No markdown, no asterisks.`;
             return filled;
         }
 
+        // --- Tesseract.js OCR Fallback (runs 100% in browser, no API needed) ---
+        async function _ocrWithTesseract(file) {
+            if (typeof Tesseract === 'undefined') throw new Error('Tesseract not loaded');
+            const result = await Tesseract.recognize(file, 'eng', {
+                logger: m => {
+                    if (m.status === 'recognizing text') {
+                        const pct = Math.round((m.progress || 0) * 100);
+                        _showScanOverlay('🔤 Reading Text (Tesseract)…', `OCR progress: ${pct}%`, 30 + pct * 0.5);
+                    }
+                }
+            });
+            return result.data.text || '';
+        }
+
+        // --- Extract expense data from raw OCR text ---
+        function _extractFromOCRText(text) {
+            if (!text || text.length < 5) return null;
+            const result = {};
+            const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+            // Vendor: usually first non-empty meaningful line
+            for (const line of lines.slice(0, 5)) {
+                if (line.length > 2 && !/^\d+$/.test(line) && !/^[\-=*]+$/.test(line) && !/^(tel|phone|fax|date|time)/i.test(line)) {
+                    result.vendor = line.replace(/[^a-zA-Z0-9\s&'.,-]/g, '').trim();
+                    if (result.vendor.length > 2) break;
+                }
+            }
+
+            // Amount: find the largest number (likely grand total)
+            const amountMatches = text.match(/[\d,]+\.?\d{0,2}/g) || [];
+            const amounts = amountMatches.map(s => parseFloat(s.replace(/,/g, ''))).filter(n => n > 0 && n < 10000000);
+            if (amounts.length) result.amount = Math.max(...amounts);
+
+            // Date
+            const datePatterns = [
+                /(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/,
+                /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/,
+                /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})/
+            ];
+            for (const pat of datePatterns) {
+                const dm = text.match(pat);
+                if (dm) {
+                    let y, m, d;
+                    if (dm[1].length === 4) { y = dm[1]; m = dm[2]; d = dm[3]; }
+                    else if (dm[3].length === 4) { d = dm[1]; m = dm[2]; y = dm[3]; }
+                    else { d = dm[1]; m = dm[2]; y = '20' + dm[3]; }
+                    result.date = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                    break;
+                }
+            }
+            if (!result.date) result.date = new Date().toISOString().split('T')[0];
+
+            // Category: keyword detection
+            const txt = text.toLowerCase();
+            if (/food|grocer|supermarket|restaurant|cafe|bakery|pizza|burger|rice|chicken|milk/i.test(txt)) result.category = 'Food & Groceries';
+            else if (/fuel|petrol|gas|uber|taxi|bus|transport|parking/i.test(txt)) result.category = 'Transport';
+            else if (/electric|water|internet|phone|mobile|bill|utility|wifi/i.test(txt)) result.category = 'Utilities';
+            else if (/hospital|pharmacy|doctor|medical|health|clinic/i.test(txt)) result.category = 'Medical';
+            else if (/school|university|tuition|course|education|book/i.test(txt)) result.category = 'Education';
+            else if (/movie|cinema|game|netflix|spotify|entertainment/i.test(txt)) result.category = 'Entertainment';
+            else if (/cloth|shirt|pant|shoe|dress|fashion/i.test(txt)) result.category = 'Clothing';
+            else result.category = 'Other';
+
+            return (result.vendor || result.amount) ? result : null;
+        }
+
         async function handleAIScan(e, type) {
             const file = e.target.files[0];
             if (!file) return;
@@ -6668,7 +6731,6 @@ Keep total under 200 words. No markdown, no asterisks.`;
             const sizeMB = (file.size / 1024 / 1024).toFixed(2);
             triggerHaptic('medium');
 
-            // Show in-modal overlay for expense scans
             const isExpense = type === 'expense';
             if (isExpense) _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
             else notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
@@ -6676,9 +6738,9 @@ Keep total under 200 words. No markdown, no asterisks.`;
             try {
                 // Step 1 — Compress + Enhance
                 const { base64: base64Img, kb } = await _compressImageToBase64(file, 1200, 0.82);
-                console.log(`[AI Scan v3] Compressed: ${sizeMB}MB → ${kb}KB`);
-                if (isExpense) _showScanOverlay('🧠 AI Vision Analyzing…', 'Reading text, numbers, and layout', 35);
-                else notify('🔍 Reading document with AI Vision…', 'info');
+                console.log(`[AI Scan v4] Compressed: ${sizeMB}MB → ${kb}KB`);
+                if (isExpense) _showScanOverlay('🧠 AI Vision Analyzing…', 'Sending to AI for deep analysis', 35);
+                else notify('🔍 Reading with AI Vision…', 'info');
 
                 // Step 2 — Build prompt
                 let prompt = '';
@@ -6691,34 +6753,28 @@ Return ONLY a valid JSON object with these exact fields:
 
 RULES:
 - "vendor": exact business/store name from the receipt
-- "amount": the TOTAL/GRAND TOTAL as a pure number (no currency symbols, no commas, no quotes). Example: 1500.50
+- "amount": the TOTAL/GRAND TOTAL as a pure number. Example: 1500.50
 - "date": in YYYY-MM-DD format. If not visible, use "${today}"
-- "category": pick the best fit from: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Other
-- "items": array of up to 5 main purchased items. If no items visible, use empty array []
+- "category": best fit from: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Other
+- "items": up to 5 main items. If none visible, use []
 
-CRITICAL: Output ONLY the JSON object. No markdown. No explanation. Start with { end with }.`;
+CRITICAL: Output ONLY the JSON. No markdown. No explanation.`;
                 } else if (type === 'ai_chat') {
-                    prompt = `You are a world-class financial advisor. The user attached a financial document (receipt, invoice, bill, bank statement).
-
-Perform a DEEP SCAN:
-1. Identify what the document is
-2. Extract key financial data (totals, taxes, dates, vendor, line items)
-3. Provide a professional financial breakdown
-4. Give actionable advice based on what you see
-
-Be conversational, precise, and break down the numbers clearly.`;
+                    prompt = `You are a world-class financial advisor. The user attached a financial document.
+Perform a DEEP SCAN: identify the document, extract key data, provide a breakdown, and give advice.
+Be conversational and precise.`;
                     const reply = await callAI(prompt, base64Img);
                     appendAIMessage('bot', reply);
                     e.target.value = '';
                     return;
                 }
 
-                // Step 3 — Send to AI
+                // Step 3 — Send to AI Vision
                 if (isExpense) _showScanOverlay('🔬 Deep Scanning Receipt…', 'Extracting vendor, amount, items', 60);
                 const reply = await callAI(prompt, base64Img);
-                console.log('[AI Scan v3] Raw reply:', reply.substring(0, 300));
+                console.log('[AI Scan v4] Raw reply:', reply.substring(0, 300));
 
-                // Step 4 — Parse with triple-layer parser
+                // Step 4 — Parse
                 if (isExpense) _showScanOverlay('📊 Processing Results…', 'Validating extracted data', 85);
                 const result = _parseAIJson(reply);
 
@@ -6729,46 +6785,76 @@ Be conversational, precise, and break down the numbers clearly.`;
                     _hideScanOverlay();
                     notify(`✅ Scanned in ${elapsed}s · ${result.vendor || 'Receipt'} — LKR ${fmtN(result.amount || 0)}${itemList}`, 'success');
                 } else {
-                    throw new Error('Could not extract data from receipt');
+                    throw new Error('AI could not extract data');
                 }
 
             } catch (err) {
-                console.error('[AI Scan v3] Primary failed:', err.message);
+                console.error('[AI Scan v4] Tier 1 failed:', err.message);
 
-                // ---- RETRY with simpler prompt + smaller image ----
+                // ===== TIER 2: Simplified AI retry =====
                 try {
-                    if (isExpense) _showScanOverlay('⚡ Quick Mode Retry…', 'Using simplified extraction', 50);
-                    else notify('⚠️ Retrying with quick mode…', 'info');
-
+                    if (isExpense) _showScanOverlay('⚡ Quick AI Retry…', 'Simplified extraction', 40);
                     const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65);
 
                     if (isExpense) {
-                        const simplePrompt = `Read this receipt image. Return ONLY valid JSON:
-{"vendor":"Store Name","amount":1500.50,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}
-Rules: amount must be a number, no currency symbols.`;
+                        const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}`;
                         const retry = await callAI(simplePrompt, smaller);
                         const r2 = _parseAIJson(retry);
-
                         if (r2 && _populateExpenseFromScan(r2)) {
                             _hideScanOverlay();
                             triggerHaptic('success');
                             notify('✅ Receipt scanned (quick mode)!', 'success');
-                        } else {
-                            _hideScanOverlay();
-                            notify('⚠️ Could not read receipt. Try a clearer, well-lit photo.', 'error');
-                            triggerHaptic('error');
+                            e.target.value = '';
+                            return;
                         }
                     } else if (type === 'ai_chat') {
-                        const simplePrompt = `Describe the key financial details in this document (total amount, vendor, date) in a few sentences.`;
-                        const retry = await callAI(simplePrompt, smaller);
+                        const retry = await callAI('Describe financial details in this document briefly.', smaller);
                         appendAIMessage('bot', retry);
                         notify('✅ Scanned (quick mode)', 'success');
+                        e.target.value = '';
+                        return;
                     }
+                    throw new Error('Quick AI also failed');
                 } catch (e2) {
-                    console.error('[AI Scan v3] Retry also failed:', e2.message);
-                    _hideScanOverlay();
-                    notify('⚠️ Scan failed. Please try a clearer photo or enter manually.', 'error');
-                    triggerHaptic('error');
+                    console.warn('[AI Scan v4] Tier 2 failed:', e2.message);
+
+                    // ===== TIER 3: Tesseract.js — runs 100% in browser, no API =====
+                    if (isExpense) {
+                        try {
+                            _showScanOverlay('🔤 Tesseract OCR Engine…', 'Reading text directly from image (offline)', 25);
+                            console.log('[AI Scan v4] Falling back to Tesseract.js OCR');
+                            const ocrText = await _ocrWithTesseract(file);
+                            console.log('[AI Scan v4] Tesseract text:', ocrText.substring(0, 200));
+
+                            _showScanOverlay('📊 Parsing OCR Results…', 'Extracting amounts and vendor', 85);
+                            const ocrResult = _extractFromOCRText(ocrText);
+
+                            if (ocrResult && _populateExpenseFromScan(ocrResult)) {
+                                _hideScanOverlay();
+                                triggerHaptic('success');
+                                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                                // Also put the raw OCR text in notes for reference
+                                const notes = $('e_notes');
+                                if (notes && !notes.value) notes.value = '🔤 OCR: ' + ocrText.substring(0, 100).replace(/\n/g, ' ');
+                                notify(`✅ Scanned in ${elapsed}s via Tesseract OCR · ${ocrResult.vendor || 'Receipt'}`, 'success');
+                                e.target.value = '';
+                                return;
+                            } else {
+                                _hideScanOverlay();
+                                notify('⚠️ Could not read receipt. Try a clearer, well-lit photo.', 'error');
+                                triggerHaptic('error');
+                            }
+                        } catch (e3) {
+                            console.error('[AI Scan v4] Tesseract also failed:', e3.message);
+                            _hideScanOverlay();
+                            notify('⚠️ All scan methods failed. Please enter manually.', 'error');
+                            triggerHaptic('error');
+                        }
+                    } else {
+                        _hideScanOverlay();
+                        notify('⚠️ Scan failed. Please try again.', 'error');
+                        triggerHaptic('error');
+                    }
                 }
             }
             e.target.value = '';
