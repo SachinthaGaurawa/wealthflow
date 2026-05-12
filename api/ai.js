@@ -38,24 +38,32 @@ export default async function handler(req, res) {
     const deepseekKey = process.env.DEEPSEEK_API_KEY;
     const groqKey = process.env.GROQ_API_KEY;
 
-    const temp = (typeof temperature === 'number') ? temperature : 0.7;
-    const tokens = (typeof maxTokens === 'number') ? maxTokens : 2500;
+    // Vision/OCR requests need deterministic output (low temp) and more room for detail
+    const isVision = !!image;
+    const temp = (typeof temperature === 'number') ? temperature : (isVision ? 0.1 : 0.7);
+    const tokens = (typeof maxTokens === 'number') ? maxTokens : (isVision ? 4096 : 2500);
 
     // ---------- ENGINE 1: GEMINI (Primary, supports vision) ----------
     async function fetchGemini() {
         if (!geminiKey) throw new Error('Gemini key not configured');
-        const model = image ? 'gemini-2.0-flash' : 'gemini-2.0-flash';
+        const model = 'gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
         const parts = [{ text: prompt }];
         if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
+
+        // Build generation config — for vision OCR we force JSON response mode
+        const generationConfig = { temperature: temp, maxOutputTokens: tokens };
+        if (isVision && prompt.includes('"vendor"')) {
+            generationConfig.responseMimeType = 'application/json';
+        }
 
         const response = await fetchWithTimeout(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts }],
-                generationConfig: { temperature: temp, maxOutputTokens: tokens },
+                generationConfig,
                 safetySettings: [
                     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
                     { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
