@@ -142,7 +142,7 @@ export default async function handler(req, res) {
         const message = { role: 'user', content: prompt };
         if (image) message.images = [image];
 
-        const response = await fetchWithTimeout('https://api.ollama.com/api/chat', {
+        const response = await fetchWithTimeout('https://ollama.com/api/chat', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
