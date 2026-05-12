@@ -6547,27 +6547,23 @@ Keep total under 200 words. No markdown, no asterisks.`;
 
                 let prompt = "";
                 if (type === 'expense') {
-                    prompt = `You are an elite, world-class financial auditor and OCR specialist. Perform a DEEP SCAN of this receipt, invoice, or financial document. 
+                    prompt = `You are an elite financial auditor and expert OCR scanner. Perform a DEEP SCAN of this receipt, invoice, or document.
 
-Extract the data with 100% mathematical accuracy.
-Return ONLY valid JSON, no markdown, no commentary.
+CRITICAL INSTRUCTION: Return ONLY a strictly valid JSON object. Do NOT include any markdown, commentary, or code blocks (\`\`\`).
 
+The JSON MUST exactly match this structure:
 {
-  "vendor": "Exact Store/Merchant Name",
-  "amount": <final_grand_total_number_only>,
+  "vendor": "Extract the exact store, merchant, or business name",
+  "amount": 0.00,
   "date": "YYYY-MM-DD",
-  "category": "<best_fit_category>",
-  "items": ["Item 1", "Item 2", "Item 3", "..."]
+  "category": "Pick best fit: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Personal Care, Home, Other",
+  "items": ["Item 1", "Item 2"]
 }
 
-Categories to choose from (pick the single best fit): Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Personal Care, Home, Other.
-
-Rules for extraction:
-1. 'amount' MUST be the absolute final total paid (number only, do not include currency symbols). If there are multiple totals, find the ultimate 'Grand Total' or 'Amount Charged'.
-2. 'date' MUST be formatted YYYY-MM-DD. Look carefully for timestamps. If absolutely not visible, use ${new Date().toISOString().split('T')[0]}.
-3. 'vendor' MUST be the main business name, usually at the very top.
-4. 'items' MUST be an array of the most expensive or notable line items. Include up to 10 items if visible.
-5. Provide ONLY the raw JSON string. Do not wrap in markdown or backticks.`;
+RULES:
+1. 'amount' MUST be a pure number (e.g., 1500.50). NO commas, NO currency symbols, NO strings.
+2. 'date' MUST be YYYY-MM-DD. If missing, default to ${new Date().toISOString().split('T')[0]}.
+3. Output ONLY the raw JSON object starting with { and ending with }.`;
                 } else if (type === 'ai_chat') {
                     prompt = `You are a world-class financial advisor and document analyst. The user has attached an image (receipt, invoice, bill, bank statement, or financial document).
 
@@ -6591,11 +6587,24 @@ Be conversational, extremely intelligent, and highly precise. Break down the num
                 let cleanJson = reply.replace(/```json/gi, '').replace(/```/g, '').trim();
                 const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
                 if (jsonMatch) cleanJson = jsonMatch[0];
-                const result = JSON.parse(cleanJson);
+                
+                // Extra safety: remove trailing commas before closing braces/brackets which breaks standard JSON.parse
+                cleanJson = cleanJson.replace(/,\s*([\}\]])/g, '$1');
+                
+                let result;
+                try {
+                    result = JSON.parse(cleanJson);
+                } catch(e) {
+                    throw new Error("Failed to parse JSON: " + cleanJson);
+                }
 
                 if (type === 'expense') {
                     if (result.vendor) $('e_desc').value = result.vendor;
-                    if (result.amount) $('e_amount').value = fmtN(result.amount);
+                    if (result.amount) {
+                        // Ensure amount is clean even if LLM returned a string
+                        const cleanAmt = String(result.amount).replace(/[^0-9.-]/g, '');
+                        $('e_amount').value = fmtN(cleanAmt);
+                    }
                     if (result.date) $('e_month').value = result.date.substr(0, 7);
                     if (result.category) {
                         const catSel = $('e_cat');
@@ -6619,13 +6628,24 @@ Be conversational, extremely intelligent, and highly precise. Break down the num
                     const { base64: smaller } = await _compressImageToBase64(file, 700, 0.65);
                     
                     if (type === 'expense') {
-                        const simplePrompt = `Perform a high-accuracy OCR scan on this receipt. Output ONLY raw JSON: {"vendor":"Business Name","amount":<final_total>,"date":"${new Date().toISOString().split('T')[0]}"}. Do NOT include any markdown or text outside the JSON.`;
+                        const simplePrompt = `OCR this receipt. Return ONLY raw JSON without markdown. Format exactly like this:
+{
+  "vendor": "Store Name",
+  "amount": 1500.50,
+  "date": "${new Date().toISOString().split('T')[0]}"
+}
+CRITICAL: 'amount' MUST be a pure number without quotes or commas.`;
                         const retry = await callAI(simplePrompt, smaller);
-                        const jMatch = retry.match(/\{[\s\S]*\}/);
+                        let cleanRetry = retry.replace(/```json/gi, '').replace(/```/g, '').trim();
+                        const jMatch = cleanRetry.match(/\{[\s\S]*\}/);
                         if (jMatch) {
-                            const r2 = JSON.parse(jMatch[0]);
+                            cleanRetry = jMatch[0].replace(/,\s*([\}\]])/g, '$1');
+                            const r2 = JSON.parse(cleanRetry);
                             if (r2.vendor) $('e_desc').value = r2.vendor;
-                            if (r2.amount) $('e_amount').value = fmtN(r2.amount);
+                            if (r2.amount) {
+                                const cleanAmt = String(r2.amount).replace(/[^0-9.-]/g, '');
+                                $('e_amount').value = fmtN(cleanAmt);
+                            }
                             notify('✅ Receipt scanned (quick mode)!', 'success');
                         } else {
                             notify('⚠️ Could not parse receipt. Try a clearer, well-lit photo.', 'error');
@@ -6637,7 +6657,7 @@ Be conversational, extremely intelligent, and highly precise. Break down the num
                         notify('✅ Scanned (quick mode)', 'success');
                     }
                 } catch (e2) {
-                    notify('⚠️ Scan failed: ' + (e2.message || 'Try a clearer photo'), 'error');
+                    notify('⚠️ Scan failed: Try a clearer photo', 'error');
                 }
                 triggerHaptic('error');
             }
