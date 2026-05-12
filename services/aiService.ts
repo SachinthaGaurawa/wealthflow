@@ -25,7 +25,7 @@ export class AIService {
 
     // Add current message to context
     try {
-      const modelName = "gemini-1.5-flash"; // Revert to stable model to fix 404 errors
+      const modelName = "gemini-2.0-flash";
       const response = await ai.models.generateContent({
         model: modelName,
         contents: [
@@ -60,8 +60,9 @@ export class AIService {
     const totalExp = curExpenses.reduce((s, e) => s + e.amount, 0);
     const activeLoans = data.loans.filter(l => {
       const start = new Date(l.start);
-      const end = new Date(start.setMonth(start.getMonth() + l.duration));
-      return end > now;
+      // FIX: Don't mutate start — create a new Date for the end calculation
+      const endDate = new Date(start.getFullYear(), start.getMonth() + l.duration, start.getDate());
+      return endDate > now;
     });
     const totalLoanPay = activeLoans.reduce((s, l) => s + l.monthly, 0);
     const balanceOnHand = data.balance.total;
