@@ -6873,6 +6873,13 @@ YOUR PERSONALITY & CRITICAL RULES:
                 });
                 conversationText += `${ctx.userName}: ${msg}\nAI:`;
 
+                // ISSUE FIX: Forcibly inject the response language instruction at the very end of the prompt
+                const langCode = DB.getObj('settings', {}).aiResponseLang || 'en';
+                if (langCode !== 'en') {
+                    const langName = WF_LANG_NAMES[langCode] || langCode;
+                    conversationText += `\n[SYSTEM: You MUST write your response entirely in ${langName}. Do NOT use English.]`;
+                }
+
                 _lastAIProvider = null;
                 let rawReply = await callAI(conversationText);
 
@@ -7194,6 +7201,8 @@ YOUR PERSONALITY & CRITICAL RULES:
             closeLangModal();
             const badge = document.getElementById('aiLangBadge');
             if (badge) badge.textContent = code.toUpperCase().split('-')[0];
+            const btnTxt = document.getElementById('aiLangBtnText');
+            if (btnTxt) btnTxt.textContent = langName;
         }
 
         // ==================== SCROLL-TO-BOTTOM HANDLER ====================
@@ -13272,18 +13281,22 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(245, 166, 35, 0.06), var(--card)); border: 1px solid var(--accent);">
-            <div class="settings-title" style="color:var(--accent);">🌐 AI Language &amp; Voice</div>
+            <div class="settings-title" style="color:var(--accent);">🌐 AI Language &amp; Personality</div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
                     <div class="setting-label">AI Response Language</div>
                     <div class="setting-desc">The AI replies in this language regardless of what language you write. 70+ languages supported. The AI also understands mixed-language input.</div>
                 </div>
             </div>
-            <div style="margin-top:6px;">
+            <div style="margin-top:6px; margin-bottom:14px;">
                 <button class="btn btn-secondary" style="width:100%; justify-content:space-between; background:var(--bg2); padding:12px 16px; border:1px solid var(--border2); text-align:left;" onclick="openLangModal()">
-                    <span id="aiLangBtnText" style="font-weight:600; color:var(--text);">Loading...</span> 
+                    <span id="aiLangBtnText" style="font-weight:600; color:var(--text);">${WF_LANG_NAMES[s.aiResponseLang || 'en'] || 'English'}</span> 
                     <span style="font-size:11px; color:var(--accent); background:rgba(212,175,55,0.1); padding:4px 8px; border-radius:8px;">Change</span>
                 </button>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
             </div>
         </div>
 
@@ -13356,10 +13369,6 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:var(--purple);">🤖 AI Advisor Preferences</div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
-            </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Categorize Expenses</div><div class="setting-desc">AI automatically assigns categories to new expenses based on the title entered.</div></div>
                 <div class="toggle ${s.autoCategory !== false ? 'on' : ''}" onclick="toggleSetting('autoCategory', ${s.autoCategory === false})"></div>
