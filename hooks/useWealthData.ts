@@ -85,14 +85,14 @@ export function useWealthData() {
 
   const updateData = useCallback(async (updates: Partial<AppData>) => {
     if (!user) return;
-    const newData = { ...data, ...updates };
-    setData(newData);
+    // FIX: Use functional update to avoid stale closure on `data`
+    setData(prev => ({ ...prev, ...updates }));
     try {
       await setDoc(doc(db, 'users', user.uid), updates, { merge: true });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `users/${user.uid}`);
     }
-  }, [data, user]);
+  }, [user]);
 
   const saveAIMessage = useCallback(async (msg: AIMessage) => {
     if (!user) return;
