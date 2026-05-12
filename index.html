@@ -6151,13 +6151,28 @@
 
         // ISSUE 3 FIX — Language map for AI responses (60+ languages, BCP-47 codes)
         // Used by buildSystemPrompt + the language picker in Settings.
+        // Complete BCP-47 mapping for ALL supported languages (voice input + TTS)
         const WF_VOICE_MAP = {
             'en': 'en-US', 'si': 'si-LK', 'ta': 'ta-LK', 'hi': 'hi-IN',
             'ar': 'ar-SA', 'bn': 'bn-IN', 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW',
             'fr': 'fr-FR', 'de': 'de-DE', 'ja': 'ja-JP', 'ko': 'ko-KR',
             'es': 'es-ES', 'pt': 'pt-PT', 'ru': 'ru-RU', 'it': 'it-IT',
             'nl': 'nl-NL', 'pl': 'pl-PL', 'tr': 'tr-TR', 'vi': 'vi-VN',
-            'th': 'th-TH', 'id': 'id-ID', 'ms': 'ms-MY', 'ur': 'ur-PK'
+            'th': 'th-TH', 'id': 'id-ID', 'ms': 'ms-MY', 'ur': 'ur-PK',
+            // Extended coverage — all languages in WF_LANG_NAMES
+            'fa': 'fa-IR', 'he': 'he-IL', 'sv': 'sv-SE', 'no': 'nb-NO',
+            'da': 'da-DK', 'fi': 'fi-FI', 'cs': 'cs-CZ', 'sk': 'sk-SK',
+            'hu': 'hu-HU', 'ro': 'ro-RO', 'bg': 'bg-BG', 'uk': 'uk-UA',
+            'el': 'el-GR', 'sr': 'sr-RS', 'hr': 'hr-HR', 'sl': 'sl-SI',
+            'lt': 'lt-LT', 'lv': 'lv-LV', 'et': 'et-EE', 'is': 'is-IS',
+            'mt': 'mt-MT', 'ga': 'ga-IE', 'cy': 'cy-GB', 'eu': 'eu-ES',
+            'ca': 'ca-ES', 'gl': 'gl-ES', 'sw': 'sw-KE', 'zu': 'zu-ZA',
+            'af': 'af-ZA', 'am': 'am-ET', 'my': 'my-MM', 'km': 'km-KH',
+            'lo': 'lo-LA', 'ne': 'ne-NP', 'pa': 'pa-IN', 'gu': 'gu-IN',
+            'mr': 'mr-IN', 'te': 'te-IN', 'kn': 'kn-IN', 'ml': 'ml-IN',
+            'or': 'or-IN', 'as': 'as-IN', 'fil': 'fil-PH', 'mn': 'mn-MN',
+            'kk': 'kk-KZ', 'uz': 'uz-UZ', 'az': 'az-AZ', 'hy': 'hy-AM',
+            'ka': 'ka-GE'
         };
         const WF_LANG_NAMES = {
             'auto': '🌐 Auto-Detect (All Languages)',
@@ -7456,7 +7471,57 @@ YOUR PERSONALITY & CRITICAL RULES:
             ).join('');
         }
 
-        // ==================== TEXT-TO-SPEECH (Read Aloud) ====================
+        // ==================== TEXT-TO-SPEECH ENGINE v4 — Gender-Aware ====================
+        // Supports: Male/Female voice selection, speed control, intelligent voice scoring,
+        // Chrome 15-second workaround, and visual speaking indicator.
+
+        // Intelligent voice scorer — picks the BEST voice for a given language + gender
+        function _scoreVoice(voice, lang, preferGender) {
+            const bcp = WF_VOICE_MAP[lang] || lang;
+            let score = 0;
+
+            // Language match
+            if (voice.lang === bcp) score += 100;
+            else if (voice.lang.startsWith(lang + '-')) score += 80;
+            else if (voice.lang.substring(0,2) === lang.substring(0,2)) score += 50;
+            else return 0; // Wrong language entirely
+
+            // Gender detection from voice name (works on Chrome, Edge, Safari, Firefox)
+            const nameLower = voice.name.toLowerCase();
+            const femaleIndicators = ['female', 'woman', 'zira', 'hazel', 'samantha', 'karen', 'moira', 'tessa', 'fiona', 'victoria', 'alice', 'amelie', 'anna', 'lekha', 'meijia', 'helena', 'catherine', 'paulina', 'kanya', 'damayanti', 'yelda', 'ioana', 'milena', 'zosia', 'luciana', 'sara', 'yuna', 'satu', 'ellen', 'nora', 'kyoko', 'miren'];
+            const maleIndicators = ['male', 'man', 'david', 'mark', 'daniel', 'james', 'thomas', 'alex', 'jorge', 'luca', 'rishi', 'aaron', 'albert', 'oliver', 'oskar', 'reed', 'evan', 'martin', 'yuri', 'filiz', 'andrei', 'liam', 'grandpa', 'jacques', 'xander'];
+
+            let voiceGender = null;
+            if (femaleIndicators.some(f => nameLower.includes(f))) voiceGender = 'female';
+            else if (maleIndicators.some(m => nameLower.includes(m))) voiceGender = 'male';
+
+            // Gender match bonus
+            if (preferGender && voiceGender === preferGender) score += 40;
+            else if (preferGender && voiceGender && voiceGender !== preferGender) score -= 30;
+
+            // Quality bonuses: premium / neural voices are MUCH better
+            if (nameLower.includes('neural') || nameLower.includes('wavenet')) score += 25;
+            if (nameLower.includes('google')) score += 20;
+            if (nameLower.includes('microsoft') && nameLower.includes('online')) score += 18;
+            if (nameLower.includes('enhanced') || nameLower.includes('premium')) score += 15;
+            if (!voice.localService) score += 5; // Cloud voices tend to be higher quality
+
+            return score;
+        }
+
+        function _getBestVoice(lang, preferGender) {
+            const voices = window.speechSynthesis.getVoices();
+            if (!voices.length) return null;
+
+            let bestVoice = null;
+            let bestScore = 0;
+            for (const v of voices) {
+                const s = _scoreVoice(v, lang, preferGender);
+                if (s > bestScore) { bestScore = s; bestVoice = v; }
+            }
+            return bestVoice;
+        }
+
         function _readAIAloud(btn) {
             if (!('speechSynthesis' in window)) { notify('🔊 Text-to-speech not supported.', 'warn'); return; }
 
@@ -7479,15 +7544,16 @@ YOUR PERSONALITY & CRITICAL RULES:
 
             const s = DB.getObj('settings', {});
             const lang = s.aiResponseLang || 'en';
+            const gender = s.aiVoiceGender || 'female';
+            const speed = parseFloat(s.aiVoiceSpeed) || 0.92;
 
-            // Chrome bug workaround: voices may not be loaded yet
             function _doSpeak() {
-                // Split long text into chunks (Chrome cuts off at ~15 seconds)
+                // Split long text into chunks — Chrome cuts off at ~15 seconds
                 const chunks = [];
                 const sentences = cleanText.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [cleanText];
                 let current = '';
                 for (const sentence of sentences) {
-                    if ((current + sentence).length > 200) {
+                    if ((current + sentence).length > 180) {
                         if (current) chunks.push(current.trim());
                         current = sentence;
                     } else {
@@ -7496,32 +7562,38 @@ YOUR PERSONALITY & CRITICAL RULES:
                 }
                 if (current) chunks.push(current.trim());
 
-                // Find best voice for the language
-                const voices = window.speechSynthesis.getVoices();
-                let bestVoice = null;
-                if (voices.length > 0) {
-                    // Try exact match first
-                    bestVoice = voices.find(v => v.lang === lang || v.lang.startsWith(lang + '-'));
-                    // Fallback to any voice for that language family
-                    if (!bestVoice) bestVoice = voices.find(v => v.lang.substring(0,2) === lang.substring(0,2));
-                }
+                // Find best voice using intelligent scoring
+                const bestVoice = _getBestVoice(lang, gender);
 
-                btn.classList.add('active'); btn.textContent = '⏹ Stop';
+                btn.classList.add('active');
+                btn.innerHTML = '⏹ Stop';
                 let chunkIndex = 0;
 
                 function speakNext() {
                     if (chunkIndex >= chunks.length || !btn.classList.contains('active')) {
-                        btn.classList.remove('active'); btn.textContent = '🔊 Read';
+                        btn.classList.remove('active'); btn.innerHTML = '🔊 Read';
                         return;
                     }
                     const utt = new SpeechSynthesisUtterance(chunks[chunkIndex]);
                     utt.lang = WF_VOICE_MAP[lang] || lang;
-                    utt.rate = 0.92;
-                    utt.pitch = 1;
+                    utt.rate = speed;
+                    utt.pitch = gender === 'female' ? 1.05 : 0.92;
                     if (bestVoice) utt.voice = bestVoice;
                     utt.onend = () => { chunkIndex++; speakNext(); };
-                    utt.onerror = () => { btn.classList.remove('active'); btn.textContent = '🔊 Read'; };
+                    utt.onerror = (e) => {
+                        console.warn('[TTS] Chunk error:', e.error);
+                        btn.classList.remove('active'); btn.innerHTML = '🔊 Read';
+                    };
+                    // Chrome pause/resume workaround — prevents cutting off after 15s
                     window.speechSynthesis.speak(utt);
+                    // Chrome workaround: periodically pause/resume to prevent timeout
+                    const chromeTimer = setInterval(() => {
+                        if (!window.speechSynthesis.speaking) { clearInterval(chromeTimer); return; }
+                        window.speechSynthesis.pause();
+                        window.speechSynthesis.resume();
+                    }, 14000);
+                    utt.onend = () => { clearInterval(chromeTimer); chunkIndex++; speakNext(); };
+                    utt.onerror = () => { clearInterval(chromeTimer); btn.classList.remove('active'); btn.innerHTML = '🔊 Read'; };
                 }
                 speakNext();
             }
@@ -7533,12 +7605,70 @@ YOUR PERSONALITY & CRITICAL RULES:
                     window.speechSynthesis.onvoiceschanged = null;
                     _doSpeak();
                 };
-                // Fallback: if voices never load, speak anyway after 500ms
+                // Fallback if voices never load
                 setTimeout(() => {
                     if (!btn.classList.contains('active')) _doSpeak();
                 }, 500);
             } else {
                 _doSpeak();
+            }
+        }
+
+        // Voice settings helpers
+        function updateAIVoiceGender(val) {
+            const s = DB.getObj('settings', {});
+            s.aiVoiceGender = val;
+            DB.set('settings', s);
+            notify(`🔊 AI voice set to ${val === 'female' ? '👩 Female' : '👨 Male'}`, 'success');
+            triggerHaptic('toggle');
+        }
+
+        function updateAIVoiceSpeed(val) {
+            const s = DB.getObj('settings', {});
+            s.aiVoiceSpeed = val;
+            DB.set('settings', s);
+            const label = val === '0.8' ? 'Slow' : val === '1.1' ? 'Fast' : 'Normal';
+            notify(`🔊 Voice speed: ${label}`, 'success');
+            triggerHaptic('toggle');
+        }
+
+        function testReadAloud() {
+            if (!('speechSynthesis' in window)) { notify('🔊 Text-to-speech not available.', 'warn'); return; }
+            window.speechSynthesis.cancel();
+            const s = DB.getObj('settings', {});
+            const lang = s.aiResponseLang || 'en';
+            const gender = s.aiVoiceGender || 'female';
+            const speed = parseFloat(s.aiVoiceSpeed) || 0.92;
+
+            function doTest() {
+                const voice = _getBestVoice(lang, gender);
+                const sampleTexts = {
+                    'en': 'Hello! I am your WealthFlow AI advisor. Your finances are looking great this month.',
+                    'si': 'ආයුබෝවන්! මම ඔබගේ WealthFlow මූල්‍ය උපදේශකයා. ඔබගේ මුල්‍ය තත්ත්වය මෙම මාසයේ ඉතා හොඳයි.',
+                    'ta': 'வணக்கம்! நான் உங்கள் WealthFlow நிதி ஆலோசகர். இந்த மாதம் உங்கள் நிதி நிலைமை மிகவும் நன்றாக இருக்கிறது.',
+                    'hi': 'नमस्ते! मैं आपकी WealthFlow वित्तीय सलाहकार हूँ। इस महीने आपकी वित्तीय स्थिति बहुत अच्छी है।'
+                };
+                const text = sampleTexts[lang] || sampleTexts['en'];
+                const utt = new SpeechSynthesisUtterance(text);
+                utt.lang = WF_VOICE_MAP[lang] || lang;
+                utt.rate = speed;
+                utt.pitch = gender === 'female' ? 1.05 : 0.92;
+                if (voice) utt.voice = voice;
+                notify(`🔊 Playing ${gender} voice in ${WF_LANG_NAMES[lang] || 'English'}...`, 'info');
+                utt.onend = () => notify('✅ Voice test complete!', 'success');
+                utt.onerror = (e) => notify('🔊 Voice test failed: ' + e.error, 'error');
+                window.speechSynthesis.speak(utt);
+            }
+
+            const voices = window.speechSynthesis.getVoices();
+            if (voices.length === 0) {
+                window.speechSynthesis.onvoiceschanged = () => {
+                    window.speechSynthesis.onvoiceschanged = null;
+                    doTest();
+                };
+                setTimeout(doTest, 500);
+            } else {
+                doTest();
             }
         }
 
@@ -13690,12 +13820,36 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>
                 <select class="fi" id="aiVoiceLangSelect" style="width:170px;" onchange="updateAIVoiceLang(this.value)"></select>
             </div>
+            <div class="setting-row" style="margin-top:14px;">
+                <div class="setting-info">
+                    <div class="setting-label">🔊 AI Read-Aloud Voice</div>
+                    <div class="setting-desc">Choose a <b>female</b> or <b>male</b> voice for the AI to read responses aloud. The system will pick the clearest, most natural voice available on your device.</div>
+                </div>
+                <select class="fi" id="aiVoiceGenderSelect" style="width:140px;" onchange="updateAIVoiceGender(this.value)">
+                    <option value="female">👩 Female</option>
+                    <option value="male">👨 Male</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info">
+                    <div class="setting-label">🔊 AI Voice Speed</div>
+                    <div class="setting-desc">Adjust the speed of the read-aloud voice. Slower is clearer for non-native speakers.</div>
+                </div>
+                <select class="fi" id="aiVoiceSpeedSelect" style="width:130px;" onchange="updateAIVoiceSpeed(this.value)">
+                    <option value="0.8">🐢 Slow</option>
+                    <option value="0.92">⚡ Normal</option>
+                    <option value="1.1">🚀 Fast</option>
+                </select>
+            </div>
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">Voice-to-Text Test</div>
                     <div class="setting-desc">Tap to test that your microphone and language settings work properly.</div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="testVoiceInput()">🎤 Test Voice</button>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary btn-sm" onclick="testVoiceInput()">🎤 Test Mic</button>
+                    <button class="btn btn-secondary btn-sm" onclick="testReadAloud()">🔊 Test Voice</button>
+                </div>
             </div>
         </div>
 
@@ -13995,8 +14149,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             const s = DB.getObj('settings', {});
             const respLang = s.aiResponseLang || 'en';
             const voiceLang = s.aiVoiceLang || 'auto';
+            const voiceGender = s.aiVoiceGender || 'female';
+            const voiceSpeed = s.aiVoiceSpeed || '0.92';
             const sel = $('aiLangSelect');
             const vsel = $('aiVoiceLangSelect');
+            const gsel = $('aiVoiceGenderSelect');
+            const ssel = $('aiVoiceSpeedSelect');
             if (sel) {
                 sel.innerHTML = Object.entries(WF_LANG_NAMES)
                     .filter(([code]) => code !== 'auto')
@@ -14016,6 +14174,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     .map(([code, name]) => `<option value="${code}" ${code === voiceLang ? 'selected' : ''}>${name}</option>`)
                     .join('');
             }
+            // Populate voice gender & speed selectors
+            if (gsel) gsel.value = voiceGender;
+            if (ssel) ssel.value = voiceSpeed;
         }
 
         function filterAILanguageList() {
@@ -15293,10 +15454,15 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
             rec.lang = WF_VOICE_MAP[langPref] || langPref;
             rec.interimResults = true;
-            rec.continuous = false;
             rec.maxAlternatives = 3;
+
+            // Desktop: continuous=true (one long session), Mobile: continuous=false (we restart)
+            const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent);
+            rec.continuous = !isMobile;
+
             let finalText = inp.value ? inp.value + ' ' : '';
             let gotSpeech = false;
+            let silenceTimer = null;
 
             rec.onresult = (e) => {
                 gotSpeech = true;
@@ -15306,18 +15472,25 @@ table.amort tbody tr { page-break-inside: avoid; }
                     else interim += e.results[i][0].transcript;
                 }
                 inp.value = (finalText + interim).trim();
+                // Auto-stop after 8s silence
+                if (silenceTimer) clearTimeout(silenceTimer);
+                silenceTimer = setTimeout(() => {
+                    _floatVoiceWantStop = true;
+                    try { rec.stop(); } catch(ex) {}
+                }, 8000);
             };
 
             rec.onerror = (e) => {
                 const err = e.error;
+                if (silenceTimer) clearTimeout(silenceTimer);
                 // Network — retry
                 if (err === 'network' && _floatVoiceRetries < 3 && !_floatVoiceWantStop) {
                     _floatVoiceRetries++;
                     setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 1000);
                     return;
                 }
-                // No speech — limited restart
-                if (err === 'no-speech' && !_floatVoiceWantStop && _floatVoiceRetries < 2) {
+                // No speech — limited restart (mobile only)
+                if (err === 'no-speech' && isMobile && !_floatVoiceWantStop && _floatVoiceRetries < 2) {
                     _floatVoiceRetries++;
                     setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 500);
                     return;
@@ -15332,15 +15505,22 @@ table.amort tbody tr { page-break-inside: avoid; }
             };
 
             rec.onend = () => {
+                if (silenceTimer) clearTimeout(silenceTimer);
                 if (_floatVoiceWantStop) {
                     btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
                     window._wfVoiceRec = null;
                     return;
                 }
-                // Auto-restart ONLY if we got speech (for next utterance)
-                if (gotSpeech && !_floatVoiceWantStop) {
+                // Desktop: do NOT restart (prevents flashing loop)
+                if (!isMobile) {
+                    btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
+                    window._wfVoiceRec = null;
+                    return;
+                }
+                // Mobile only: auto-restart if we got speech
+                if (isMobile && gotSpeech && !_floatVoiceWantStop) {
                     setTimeout(() => {
-                        if (!_floatVoiceWantStop && window._wfVoiceRec) _startFloatingVoice(inp, btn);
+                        if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn);
                     }, 400);
                     return;
                 }
