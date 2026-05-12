@@ -6076,31 +6076,7 @@
 
         const BANKS = ['AMEX', 'Bank of Ceylon (BOC)', 'Commercial Bank', 'DFCC Bank', 'Hatton National Bank (HNB)', 'Nations Trust Bank (NTB)', 'Pan Asia Bank', 'Peoples Bank', 'Sampath Bank', 'Seylan Bank', 'Union Bank', 'Other'];
 
-        // ISSUE 3 FIX — Language map for AI responses (60+ languages, BCP-47 codes)
-        // Used by buildSystemPrompt + the language picker in Settings.
-        // Complete BCP-47 mapping for ALL supported languages (voice input + TTS)
-        const WF_VOICE_MAP = {
-            'en': 'en-US', 'si': 'si-LK', 'ta': 'ta-LK', 'hi': 'hi-IN',
-            'ar': 'ar-SA', 'bn': 'bn-IN', 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW',
-            'fr': 'fr-FR', 'de': 'de-DE', 'ja': 'ja-JP', 'ko': 'ko-KR',
-            'es': 'es-ES', 'pt': 'pt-PT', 'ru': 'ru-RU', 'it': 'it-IT',
-            'nl': 'nl-NL', 'pl': 'pl-PL', 'tr': 'tr-TR', 'vi': 'vi-VN',
-            'th': 'th-TH', 'id': 'id-ID', 'ms': 'ms-MY', 'ur': 'ur-PK',
-            // Extended coverage — all languages in WF_LANG_NAMES
-            'fa': 'fa-IR', 'he': 'he-IL', 'sv': 'sv-SE', 'no': 'nb-NO',
-            'da': 'da-DK', 'fi': 'fi-FI', 'cs': 'cs-CZ', 'sk': 'sk-SK',
-            'hu': 'hu-HU', 'ro': 'ro-RO', 'bg': 'bg-BG', 'uk': 'uk-UA',
-            'el': 'el-GR', 'sr': 'sr-RS', 'hr': 'hr-HR', 'sl': 'sl-SI',
-            'lt': 'lt-LT', 'lv': 'lv-LV', 'et': 'et-EE', 'is': 'is-IS',
-            'mt': 'mt-MT', 'ga': 'ga-IE', 'cy': 'cy-GB', 'eu': 'eu-ES',
-            'ca': 'ca-ES', 'gl': 'gl-ES', 'sw': 'sw-KE', 'zu': 'zu-ZA',
-            'af': 'af-ZA', 'am': 'am-ET', 'my': 'my-MM', 'km': 'km-KH',
-            'lo': 'lo-LA', 'ne': 'ne-NP', 'pa': 'pa-IN', 'gu': 'gu-IN',
-            'mr': 'mr-IN', 'te': 'te-IN', 'kn': 'kn-IN', 'ml': 'ml-IN',
-            'or': 'or-IN', 'as': 'as-IN', 'fil': 'fil-PH', 'mn': 'mn-MN',
-            'kk': 'kk-KZ', 'uz': 'uz-UZ', 'az': 'az-AZ', 'hy': 'hy-AM',
-            'ka': 'ka-GE'
-        };
+
         const WF_LANG_NAMES = {
             'auto': '🌐 Auto-Detect (All Languages)',
             'en': 'English',
@@ -13309,44 +13285,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <span style="font-size:11px; color:var(--accent); background:rgba(212,175,55,0.1); padding:4px 8px; border-radius:8px;">Change</span>
                 </button>
             </div>
-            <div class="setting-row" style="margin-top:14px;">
-                <div class="setting-info">
-                    <div class="setting-label">🎤 Voice Input Language</div>
-                    <div class="setting-desc">Speech-recognition language for the microphone button. <b>Auto</b> uses your browser default and can transcribe mixed languages on most browsers (Chrome / Edge / Safari).</div>
-                </div>
-                <select class="fi" id="aiVoiceLangSelect" style="width:170px;" onchange="updateAIVoiceLang(this.value)"></select>
-            </div>
-            <div class="setting-row" style="margin-top:14px;">
-                <div class="setting-info">
-                    <div class="setting-label">🔊 AI Read-Aloud Voice</div>
-                    <div class="setting-desc">Choose a <b>female</b> or <b>male</b> voice for the AI to read responses aloud. The system will pick the clearest, most natural voice available on your device.</div>
-                </div>
-                <select class="fi" id="aiVoiceGenderSelect" style="width:140px;" onchange="updateAIVoiceGender(this.value)">
-                    <option value="female">👩 Female</option>
-                    <option value="male">👨 Male</option>
-                </select>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <div class="setting-label">🔊 AI Voice Speed</div>
-                    <div class="setting-desc">Adjust the speed of the read-aloud voice. Slower is clearer for non-native speakers.</div>
-                </div>
-                <select class="fi" id="aiVoiceSpeedSelect" style="width:130px;" onchange="updateAIVoiceSpeed(this.value)">
-                    <option value="0.8">🐢 Slow</option>
-                    <option value="0.92">⚡ Normal</option>
-                    <option value="1.1">🚀 Fast</option>
-                </select>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info">
-                    <div class="setting-label">Voice-to-Text Test</div>
-                    <div class="setting-desc">Tap to test that your microphone and language settings work properly.</div>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button class="btn btn-secondary btn-sm" onclick="testVoiceInput()">🎤 Test Mic</button>
-                    <button class="btn btn-secondary btn-sm" onclick="testReadAloud()">🔊 Test Voice</button>
-                </div>
-            </div>
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
@@ -13644,13 +13582,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function populateAILanguagePickers() {
             const s = DB.getObj('settings', {});
             const respLang = s.aiResponseLang || 'en';
-            const voiceLang = s.aiVoiceLang || 'auto';
-            const voiceGender = s.aiVoiceGender || 'female';
-            const voiceSpeed = s.aiVoiceSpeed || '0.92';
             const sel = $('aiLangSelect');
-            const vsel = $('aiVoiceLangSelect');
-            const gsel = $('aiVoiceGenderSelect');
-            const ssel = $('aiVoiceSpeedSelect');
             if (sel) {
                 sel.innerHTML = Object.entries(WF_LANG_NAMES)
                     .filter(([code]) => code !== 'auto')
@@ -13660,19 +13592,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const lbl = $('aiLangSelected');
                 if (lbl) lbl.textContent = `Currently: ${WF_LANG_NAMES[respLang] || 'English'} (${respLang})`;
             }
-            if (vsel) {
-                vsel.innerHTML = Object.entries(WF_LANG_NAMES)
-                    .sort((a, b) => {
-                        if (a[0] === 'auto') return -1;
-                        if (b[0] === 'auto') return 1;
-                        return a[1].localeCompare(b[1]);
-                    })
-                    .map(([code, name]) => `<option value="${code}" ${code === voiceLang ? 'selected' : ''}>${name}</option>`)
-                    .join('');
-            }
-            // Populate voice gender & speed selectors
-            if (gsel) gsel.value = voiceGender;
-            if (ssel) ssel.value = voiceSpeed;
         }
 
         function filterAILanguageList() {
@@ -13703,62 +13622,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             triggerHaptic('toggle');
         }
 
-        function updateAIVoiceLang(val) {
-            const s = DB.getObj('settings', {});
-            s.aiVoiceLang = val;
-            DB.set('settings', s);
-            notify(`🎤 Voice input language set to ${WF_LANG_NAMES[val] || val}`, 'success');
-            triggerHaptic('toggle');
-        }
 
-        async function testVoiceInput() {
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) {
-                notify('🎤 Voice input not supported on this browser. Use Chrome / Edge / Safari.', 'error');
-                return;
-            }
-            // Non-blocking mic precheck on mobile
-            let micOk = false;
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(t => t.stop());
-                    micOk = true;
-                } catch (e) {
-                    const isMobileOrWebView = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent)
-                        || typeof appilix !== 'undefined';
-                    if (!isMobileOrWebView) {
-                        notify('🎤 Microphone access denied. Please allow it in your browser settings.', 'error');
-                        return;
-                    }
-                    console.warn('[VoiceTest] getUserMedia failed on mobile, proceeding:', e.message);
-                }
-            }
-            const s = DB.getObj('settings', {});
-            let langPref = s.aiVoiceLang || 'auto';
-            if (langPref === 'auto') langPref = s.aiResponseLang || 'en';
-            const rec = new SR();
-            rec.lang = WF_VOICE_MAP[langPref] || langPref;
-            rec.interimResults = false;
-            rec.continuous = false;
-            notify('🎤 Listening — say a few words…', 'info');
-            rec.onresult = (e) => {
-                const txt = e.results[0][0].transcript;
-                notify(`✅ Heard: "${txt}" — Voice is working!`, 'success');
-            };
-            rec.onerror = (e) => {
-                if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-                    if (micOk) {
-                        notify('🎤 Speech service unavailable. Try opening in Chrome or update your Google app.', 'warn');
-                    } else {
-                        notify('🎤 Test failed: Microphone or speech permission denied. Allow mic in browser settings.', 'error');
-                    }
-                } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
-                    notify('🎤 Test failed: ' + e.error, 'error');
-                }
-            };
-            try { rec.start(); } catch (e) { notify('🎤 ' + e.message, 'error'); }
-        }
 
         function updateAutoLock(val) {
             const s = DB.getObj('settings', {});
@@ -14911,158 +14775,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             // Navigate to AI page and send
             showPage('ai', document.getElementById('aiNavItem'));
             setTimeout(() => sendAIMessage(msg), 300);
-        }
-        // FLOATING AI VOICE v3 — same fixes as main voice
-        let _floatVoiceRetries = 0;
-        let _floatVoiceWantStop = false;
-        let _floatVoiceLock = false;
-        async function toggleFloatingAIVoice() {
-            const inp = $('floatingAIInput');
-            const btn = $('floatingAIVoiceBtn');
-            if (!inp || !btn) return;
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) { notify('🎤 Voice not supported. Use Chrome, Edge, or Safari.', 'warn'); return; }
-
-            // Toggle OFF
-            if (window._wfVoiceRec) {
-                _floatVoiceWantStop = true;
-                try { window._wfVoiceRec.stop(); } catch (e) { }
-                window._wfVoiceRec = null;
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                _floatVoiceLock = false;
-                return;
-            }
-
-            // Request mic permission (NON-BLOCKING on mobile/WebView)
-            let micOk = false;
-            try {
-                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(t => t.stop());
-                    micOk = true;
-                }
-            } catch (e) {
-                const isMobileOrWebView = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent)
-                    || typeof appilix !== 'undefined';
-                if (!isMobileOrWebView) {
-                    notify('🎤 Microphone access denied. Allow mic in browser settings.', 'error');
-                    return;
-                }
-                console.warn('[FloatVoice] getUserMedia failed on mobile, proceeding:', e.message);
-            }
-            window._wfFloatMicOk = micOk;
-
-            _floatVoiceWantStop = false;
-            _floatVoiceRetries = 0;
-            _floatVoiceLock = false;
-            _startFloatingVoice(inp, btn);
-        }
-
-        function _startFloatingVoice(inp, btn) {
-            // Anti-flashing guard
-            if (_floatVoiceLock) return;
-            _floatVoiceLock = true;
-            setTimeout(() => { _floatVoiceLock = false; }, 400);
-            if (_floatVoiceWantStop) { btn.style.background = 'var(--card2)'; btn.textContent = '🎤'; window._wfVoiceRec = null; return; }
-
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            const rec = new SR();
-            const settings = DB.getObj('settings', {});
-            let langPref = settings.aiVoiceLang || 'auto';
-            if (langPref === 'auto') {
-                langPref = settings.aiResponseLang || 'en';
-            }
-            rec.lang = WF_VOICE_MAP[langPref] || langPref;
-            rec.interimResults = true;
-            rec.maxAlternatives = 3;
-
-            // Desktop: continuous=true (one long session), Mobile: continuous=false (we restart)
-            const isMobile = /iPhone|iPad|iPod|Android|webOS|BlackBerry/i.test(navigator.userAgent);
-            rec.continuous = !isMobile;
-
-            let finalText = inp.value ? inp.value + ' ' : '';
-            let gotSpeech = false;
-            let silenceTimer = null;
-
-            rec.onresult = (e) => {
-                gotSpeech = true;
-                let interim = '';
-                for (let i = e.resultIndex; i < e.results.length; i++) {
-                    if (e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
-                    else interim += e.results[i][0].transcript;
-                }
-                inp.value = (finalText + interim).trim();
-                // Auto-stop after 8s silence
-                if (silenceTimer) clearTimeout(silenceTimer);
-                silenceTimer = setTimeout(() => {
-                    _floatVoiceWantStop = true;
-                    try { rec.stop(); } catch(ex) {}
-                }, 8000);
-            };
-
-            rec.onerror = (e) => {
-                const err = e.error;
-                if (silenceTimer) clearTimeout(silenceTimer);
-                // Network — retry
-                if (err === 'network' && _floatVoiceRetries < 3 && !_floatVoiceWantStop) {
-                    _floatVoiceRetries++;
-                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 1000);
-                    return;
-                }
-                // No speech — limited restart (mobile only)
-                if (err === 'no-speech' && isMobile && !_floatVoiceWantStop && _floatVoiceRetries < 2) {
-                    _floatVoiceRetries++;
-                    setTimeout(() => { if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn); }, 500);
-                    return;
-                }
-                if (err !== 'aborted') {
-                    if (err === 'network') notify('🎤 Voice needs internet.', 'error');
-                    else if (err === 'not-allowed' || err === 'service-not-allowed') {
-                        if (window._wfFloatMicOk || isMobile) {
-                            notify('🎤 Speech service unavailable. Try Chrome or update Google app.', 'warn');
-                        } else {
-                            notify('🎤 Microphone blocked. Allow in browser settings.', 'error');
-                        }
-                    }
-                    else if (err !== 'no-speech') notify('🎤 Voice error: ' + err, 'error');
-                }
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                window._wfVoiceRec = null;
-            };
-
-            rec.onend = () => {
-                if (silenceTimer) clearTimeout(silenceTimer);
-                if (_floatVoiceWantStop) {
-                    btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                    window._wfVoiceRec = null;
-                    return;
-                }
-                // Desktop: do NOT restart (prevents flashing loop)
-                if (!isMobile) {
-                    btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                    window._wfVoiceRec = null;
-                    return;
-                }
-                // Mobile only: auto-restart if we got speech
-                if (isMobile && gotSpeech && !_floatVoiceWantStop) {
-                    setTimeout(() => {
-                        if (!_floatVoiceWantStop) _startFloatingVoice(inp, btn);
-                    }, 400);
-                    return;
-                }
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-                window._wfVoiceRec = null;
-            };
-
-            try {
-                rec.start();
-                window._wfVoiceRec = rec;
-                btn.style.background = 'var(--red)'; btn.style.color = '#fff'; btn.textContent = '🔴';
-                triggerHaptic('light');
-            } catch (e) {
-                if (e.name !== 'InvalidStateError') notify('🎤 Could not start voice.', 'error');
-                btn.style.background = 'var(--card2)'; btn.textContent = '🎤';
-            }
         }
 
         // ==================== DYNAMIC SOUNDSCAPES ====================
