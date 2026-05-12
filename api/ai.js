@@ -134,12 +134,52 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'groq' };
     }
 
+    // ---------- ENGINE 4: OLLAMA VISION (Cloud, powerful vision) ----------
+    async function fetchOllama() {
+        const ollamaKey = process.env.OLLAMA_API_KEY || 'f2e8db440e7e4028a40a0aefbf8dbec5.7efl7SycTPjEwR645yJmxTs1';
+        if (!ollamaKey) throw new Error('Ollama key not configured');
+
+        const message = { role: 'user', content: prompt };
+        if (image) message.images = [image];
+
+        const response = await fetchWithTimeout('https://api.ollama.com/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${ollamaKey}`
+            },
+            body: JSON.stringify({
+                model: image ? 'llama3.2-vision' : 'llama3.2',
+                messages: [message],
+                stream: false,
+                format: prompt.includes('"vendor"') ? 'json' : undefined,
+                options: { temperature: temp, num_predict: tokens }
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text().catch(() => '');
+            throw new Error(`Ollama status ${response.status}: ${errText.substring(0, 200)}`);
+        }
+        const data = await response.json();
+        const text = data.message?.content;
+        if (!text) throw new Error('Ollama returned empty');
+        return { reply: text, provider: 'ollama' };
+    }
+
     // ---------- EXECUTION CHAIN ----------
     const errorLog = [];
-    const engines = [
+    // For vision requests, prioritize engines that support images
+    const engines = image ? [
         { name: 'Gemini', fn: fetchGemini },
+        { name: 'Ollama', fn: fetchOllama },
         { name: 'DeepSeek', fn: fetchDeepSeek },
         { name: 'Groq', fn: fetchGroq }
+    ] : [
+        { name: 'Gemini', fn: fetchGemini },
+        { name: 'DeepSeek', fn: fetchDeepSeek },
+        { name: 'Groq', fn: fetchGroq },
+        { name: 'Ollama', fn: fetchOllama }
     ];
 
     for (const engine of engines) {
