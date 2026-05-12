@@ -4932,9 +4932,9 @@
                             <div style="display:flex;gap:10px;align-items:flex-end;">
                                 <div style="flex:1;position:relative;">
                                     <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:40px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
-                                    <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Scan receipt with AI">
-                                        📸
-                                        <input type="file" accept="image/*" capture="environment" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
+                                    <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Attach file or Scan receipt with AI">
+                                        📎 📸
+                                        <input type="file" accept="image/*" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
                                     </label>
                                 </div>
                                 <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
@@ -5591,9 +5591,9 @@
             <div class="md-hdr">
                 <div class="md-title" id="mdExpenseTitle">Add Monthly Expense</div>
                 <div style="display:flex;gap:8px;">
-                    <label class="btn btn-secondary btn-sm" style="cursor:pointer; padding:4px 8px; font-size:11px;">
-                        📸 AI Scan
-                        <input type="file" accept="image/*" capture="environment" id="e_ai_scan" style="display:none;"
+                    <label class="btn btn-secondary btn-sm" style="cursor:pointer; padding:4px 8px; font-size:11px; border: 1px solid var(--accent); background: linear-gradient(135deg, rgba(212,175,55,0.1), rgba(212,175,55,0.02)); box-shadow: 0 0 10px rgba(212,175,55,0.2); transition: all 0.3s ease;">
+                        📎 / 📸 Deep AI Scan
+                        <input type="file" accept="image/*" id="e_ai_scan" style="display:none;"
                             onchange="handleAIScan(event, 'expense')">
                     </label>
                     <button class="md-x" onclick="closeModal('mdExpense')">✕</button>
@@ -6547,20 +6547,37 @@ Keep total under 200 words. No markdown, no asterisks.`;
 
                 let prompt = "";
                 if (type === 'expense') {
-                    prompt = `You are an OCR receipt scanner. Read this receipt image and extract data.
+                    prompt = `You are an elite, world-class financial auditor and OCR specialist. Perform a DEEP SCAN of this receipt, invoice, or financial document. 
 
-Return ONLY valid JSON, no markdown, no commentary:
-{"vendor":"store name","amount":<grand_total_number>,"date":"YYYY-MM-DD","category":"<best fit>","items":["item1","item2","item3"]}
+Extract the data with 100% mathematical accuracy.
+Return ONLY valid JSON, no markdown, no commentary.
 
-Categories (pick best): Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Personal Care, Home, Other
+{
+  "vendor": "Exact Store/Merchant Name",
+  "amount": <final_grand_total_number_only>,
+  "date": "YYYY-MM-DD",
+  "category": "<best_fit_category>",
+  "items": ["Item 1", "Item 2", "Item 3", "..."]
+}
 
-Rules:
-- amount = the FINAL grand total (number, no currency symbol)
-- date format YYYY-MM-DD; if not visible use ${new Date().toISOString().split('T')[0]}
-- list 2-5 main items if visible
-- ONLY raw JSON in response`;
+Categories to choose from (pick the single best fit): Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Personal Care, Home, Other.
+
+Rules for extraction:
+1. 'amount' MUST be the absolute final total paid (number only, do not include currency symbols). If there are multiple totals, find the ultimate 'Grand Total' or 'Amount Charged'.
+2. 'date' MUST be formatted YYYY-MM-DD. Look carefully for timestamps. If absolutely not visible, use ${new Date().toISOString().split('T')[0]}.
+3. 'vendor' MUST be the main business name, usually at the very top.
+4. 'items' MUST be an array of the most expensive or notable line items. Include up to 10 items if visible.
+5. Provide ONLY the raw JSON string. Do not wrap in markdown or backticks.`;
                 } else if (type === 'ai_chat') {
-                    prompt = `Analyze this image in the context of personal finance. Describe what you see (receipt, bill, statement, etc), extract key financial details like amounts, dates, vendors. Then provide personalized advice. Be conversational and friendly.`;
+                    prompt = `You are a world-class financial advisor and document analyst. The user has attached an image (receipt, invoice, bill, bank statement, or financial document).
+
+Perform a DEEP SCAN of the image. 
+1. Identify EXACTLY what the document is.
+2. Extract the most critical financial data (Grand totals, taxes, dates, vendor names, specific line items, account numbers if safe).
+3. Provide a highly professional, accurate, and deeply personalized financial breakdown of the document.
+4. Give actionable advice based on what you see (e.g., "I noticed you spent a lot on X, here is how you might optimize...").
+
+Be conversational, extremely intelligent, and highly precise. Break down the numbers clearly.`;
                     const reply = await callAI(prompt, base64Img);
                     appendAIMessage('bot', reply);
                     e.target.value = '';
@@ -6600,18 +6617,24 @@ Rules:
                 try {
                     notify('⚠️ Retrying with quick mode…', 'info');
                     const { base64: smaller } = await _compressImageToBase64(file, 700, 0.65);
-                    const simplePrompt = `Read this receipt. Output ONLY this JSON: {"vendor":"name","amount":<number>,"date":"${new Date().toISOString().split('T')[0]}"}`;
-                    const retry = await callAI(simplePrompt, smaller);
-                    const jMatch = retry.match(/\{[\s\S]*\}/);
-                    if (jMatch) {
-                        const r2 = JSON.parse(jMatch[0]);
-                        if (type === 'expense') {
+                    
+                    if (type === 'expense') {
+                        const simplePrompt = `Perform a high-accuracy OCR scan on this receipt. Output ONLY raw JSON: {"vendor":"Business Name","amount":<final_total>,"date":"${new Date().toISOString().split('T')[0]}"}. Do NOT include any markdown or text outside the JSON.`;
+                        const retry = await callAI(simplePrompt, smaller);
+                        const jMatch = retry.match(/\{[\s\S]*\}/);
+                        if (jMatch) {
+                            const r2 = JSON.parse(jMatch[0]);
                             if (r2.vendor) $('e_desc').value = r2.vendor;
                             if (r2.amount) $('e_amount').value = fmtN(r2.amount);
                             notify('✅ Receipt scanned (quick mode)!', 'success');
+                        } else {
+                            notify('⚠️ Could not parse receipt. Try a clearer, well-lit photo.', 'error');
                         }
-                    } else {
-                        notify('⚠️ Could not parse receipt. Try a clearer, well-lit photo.', 'error');
+                    } else if (type === 'ai_chat') {
+                        const simplePrompt = `Please look at this document and describe the most important financial details (Total amount, vendor, date) in a few sentences.`;
+                        const retry = await callAI(simplePrompt, smaller);
+                        appendAIMessage('bot', retry);
+                        notify('✅ Scanned (quick mode)', 'success');
                     }
                 } catch (e2) {
                     notify('⚠️ Scan failed: ' + (e2.message || 'Try a clearer photo'), 'error');
@@ -7141,6 +7164,26 @@ YOUR PERSONALITY & CRITICAL RULES:
             }
             notify('Chat history cleared.', 'info');
             initAISuggestionPills();
+        }
+
+        function confirmResetAIMemory() {
+            if(confirm("Are you sure you want to permanently erase the AI's memory and chat history? This action cannot be undone.")) {
+                localStorage.removeItem(AI_HISTORY_KEY);
+                localStorage.removeItem(WF2_AI_PERSONA);
+                
+                // Clear chat UI if we are on the AI page
+                const container = $('aiChatMessages');
+                if (container) {
+                    container.innerHTML = '';
+                    const welcome = document.createElement('div');
+                    welcome.id = 'aiWelcomeBlock';
+                    welcome.className = 'ai-welcome-msg';
+                    welcome.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal financial advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">👋 Hello! My memory has been completely reset. I am ready to start fresh! 💡</div>`;
+                    container.appendChild(welcome);
+                }
+                notify('AI Memory and History fully reset.', 'success');
+                triggerHaptic('heavy');
+            }
         }
 
         function updateAIPersona(userMsg, aiReply) {
@@ -13473,7 +13516,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(245, 166, 35, 0.06), var(--card)); border: 1px solid var(--accent);">
-            <div class="settings-title" style="color:var(--accent);">🌐 AI Language &amp; Voice</div>
+            <div class="settings-title" style="color:var(--accent);">🌐 AI Intelligence &amp; Language</div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
                     <div class="setting-label">AI Response Language</div>
@@ -13489,6 +13532,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
                 <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
                 <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
+            </div>
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info"><div class="setting-label" style="color:var(--red);">🧠 Reset AI Memory</div><div class="setting-desc">Permanently erase the AI's memory of your conversation patterns and chat history.</div></div>
+                <button class="btn btn-secondary btn-sm" style="color:var(--red); border-color:var(--red);" onclick="confirmResetAIMemory()">Reset</button>
             </div>
         </div>
 
