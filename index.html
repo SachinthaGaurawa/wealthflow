@@ -6424,6 +6424,26 @@
             return null;
         }
 
+        // --- OCR.space Third-Party API Fallback ---
+        async function _tryOCRSpace(base64Img) {
+            try {
+                const formData = new FormData();
+                formData.append('apikey', 'helloworld');
+                formData.append('base64Image', 'data:image/jpeg;base64,' + base64Img);
+                formData.append('OCREngine', '2'); // Engine 2 is better for receipts/numbers
+
+                const r = await fetch('https://api.ocr.space/parse/image', {
+                    method: 'POST',
+                    body: formData
+                });
+                const d = await r.json();
+                if (d && !d.IsErroredOnProcessing && d.ParsedResults && d.ParsedResults.length > 0) {
+                    return d.ParsedResults[0].ParsedText;
+                }
+            } catch (e) { console.warn('[OCR.space] error:', e.message); }
+            return null;
+        }
+
         async function callAI(prompt, image = null) {
             let errorLogs = [];
 
@@ -6628,7 +6648,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
         }
 
         // --- Ultra-HD Compress + Enhance Pipeline ---
-        function _compressImageToBase64(file, maxDim = 1600, quality = 0.88) {
+        function _compressImageToBase64(file, maxDim = 1600, quality = 0.88, applyEnhancement = false) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 const reader = new FileReader();
@@ -6643,8 +6663,11 @@ Keep total under 200 words. No markdown, no asterisks.`;
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, w, h);
                         ctx.drawImage(img, 0, 0, w, h);
-                        // GPU-accelerated enhancement for OCR
-                        _enhanceForOCR(canvas);
+                        // ONLY apply GPU-accelerated enhancement for Tesseract.
+                        // AI models (Gemini/Ollama) need the natural, unadulterated image.
+                        if (applyEnhancement) {
+                            _enhanceForOCR(canvas);
+                        }
                         const dataUrl = canvas.toDataURL('image/jpeg', quality);
                         const base64 = dataUrl.split(',')[1];
                         resolve({ base64, kb: Math.round(base64.length * 0.75 / 1024) });
@@ -6730,7 +6753,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
         async function _ocrWithTesseract(file) {
             if (typeof Tesseract === 'undefined') throw new Error('Tesseract not loaded');
             // Use enhanced image from canvas for better results
-            const { base64 } = await _compressImageToBase64(file, 2000, 0.95);
+            const { base64 } = await _compressImageToBase64(file, 2000, 0.95, true);
             const enhancedDataUrl = 'data:image/jpeg;base64,' + base64;
             const result = await Tesseract.recognize(enhancedDataUrl, 'eng', {
                 logger: m => {
@@ -6869,7 +6892,7 @@ Return ONLY a valid JSON object with these exact fields:
 
 RULES:
 - "vendor": exact business/store name from the receipt
-- "amount": the TOTAL/GRAND TOTAL as a pure number. Example: 1500.50
+- "amount": The final TOTAL, GRAND TOTAL, or AMOUNT DUE. Look carefully at the bottom of the receipt. Do not use sub-totals. Must be a pure number. Example: 1500.50
 - "date": in YYYY-MM-DD format. If not visible, use "${today}"
 - "category": best fit from: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Other
 - "items": up to 5 main items. If none visible, use []
@@ -6894,14 +6917,15 @@ Be conversational and precise.`;
                 if (isExpense) _showScanOverlay('📊 Processing Results…', 'Validating extracted data', 85);
                 const result = _parseAIJson(reply);
 
-                if (result && _populateExpenseFromScan(result)) {
+                // Validation: Ensure amount was extracted
+                if (result && result.amount > 0 && _populateExpenseFromScan(result)) {
                     triggerHaptic('success');
                     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                     const itemList = result.items && result.items.length ? ` · 📦 ${result.items.slice(0, 4).join(', ')}` : '';
                     _hideScanOverlay();
                     notify(`✅ Scanned in ${elapsed}s · ${result.vendor || 'Receipt'} — LKR ${fmtN(result.amount || 0)}${itemList}`, 'success');
                 } else {
-                    throw new Error('AI could not extract data');
+                    throw new Error('AI could not extract valid amount');
                 }
 
             } catch (err) {
@@ -6910,13 +6934,13 @@ Be conversational and precise.`;
                 // ===== TIER 2: Simplified AI retry =====
                 try {
                     if (isExpense) _showScanOverlay('⚡ Quick AI Retry…', 'Simplified extraction', 40);
-                    const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65);
+                    const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65, false);
 
                     if (isExpense) {
                         const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}`;
                         const retry = await callAI(simplePrompt, smaller);
                         const r2 = _parseAIJson(retry);
-                        if (r2 && _populateExpenseFromScan(r2)) {
+                        if (r2 && r2.amount > 0 && _populateExpenseFromScan(r2)) {
                             _hideScanOverlay();
                             triggerHaptic('success');
                             notify('✅ Receipt scanned (quick mode)!', 'success');
@@ -6930,9 +6954,29 @@ Be conversational and precise.`;
                         e.target.value = '';
                         return;
                     }
-                    throw new Error('Quick AI also failed');
+                    throw new Error('Quick AI failed to extract amount');
                 } catch (e2) {
                     console.warn('[AI Scan v4] Tier 2 failed:', e2.message);
+
+                    // ===== TIER 2b: OCR.space (Dedicated 3rd Party API) =====
+                    try {
+                        if (isExpense) {
+                            _showScanOverlay('☁️ Cloud OCR API…', 'Querying 3rd party OCR.space', 50);
+                            const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, false);
+                            const ocrText = await _tryOCRSpace(ocrImg);
+                            if (ocrText) {
+                                _showScanOverlay('📊 Parsing Cloud OCR…', 'Extracting exact numbers', 75);
+                                const parsed = _extractFromOCRText(ocrText);
+                                if (parsed && parsed.amount > 0 && _populateExpenseFromScan(parsed)) {
+                                    _hideScanOverlay();
+                                    triggerHaptic('success');
+                                    notify('✅ Scanned via Cloud OCR!', 'success');
+                                    e.target.value = '';
+                                    return;
+                                }
+                            }
+                        }
+                    } catch (e3) { console.warn('Cloud OCR failed', e3.message); }
 
                     // ===== TIER 3: Tesseract.js — runs 100% in browser, no API =====
                     if (isExpense) {
