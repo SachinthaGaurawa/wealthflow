@@ -2162,216 +2162,733 @@
             display: flex;
             gap: 12px;
             align-items: flex-start;
-            animation: aiMsgSlide .35s cubic-bezier(.22,1,.36,1);
+            animation: aiMsgSlide .35s cubic-bezier(.22, 1, .36, 1);
         }
-        @keyframes aiMsgSlide { from { opacity:0; transform:translateY(14px) scale(.97); } to { opacity:1; transform:translateY(0) scale(1); } }
-        .ai-msg-wrap.user-msg { flex-direction: row-reverse; }
+
+        @keyframes aiMsgSlide {
+            from {
+                opacity: 0;
+                transform: translateY(14px) scale(.97);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .ai-msg-wrap.user-msg {
+            flex-direction: row-reverse;
+        }
 
         .ai-avatar {
-            width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            font-size: 17px; flex-shrink: 0; border: 1.5px solid var(--border2); position: relative;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 17px;
+            flex-shrink: 0;
+            border: 1.5px solid var(--border2);
+            position: relative;
         }
+
         .ai-avatar.bot {
-            background: linear-gradient(135deg, #0a1628, #162544); border-color: var(--accent);
-            box-shadow: 0 0 12px rgba(212,175,55,.15);
+            background: linear-gradient(135deg, #0a1628, #162544);
+            border-color: var(--accent);
+            box-shadow: 0 0 12px rgba(212, 175, 55, .15);
         }
+
         .ai-avatar.bot::after {
-            content:''; position:absolute; bottom:1px; right:1px; width:9px; height:9px; border-radius:50%;
-            background:var(--green); border:2px solid var(--bg); box-shadow:0 0 6px var(--green);
+            content: '';
+            position: absolute;
+            bottom: 1px;
+            right: 1px;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--green);
+            border: 2px solid var(--bg);
+            box-shadow: 0 0 6px var(--green);
         }
-        .ai-avatar.user { background: linear-gradient(135deg, var(--card2), var(--card3)); }
+
+        .ai-avatar.user {
+            background: linear-gradient(135deg, var(--card2), var(--card3));
+        }
 
         .ai-bubble {
-            max-width: 82%; padding: 14px 18px; border-radius: 18px; font-size: 13.5px;
-            line-height: 1.8; word-break: break-word; position: relative;
+            max-width: 82%;
+            padding: 14px 18px;
+            border-radius: 18px;
+            font-size: 13.5px;
+            line-height: 1.8;
+            word-break: break-word;
+            position: relative;
         }
+
         .ai-bubble.bot {
-            background: linear-gradient(145deg, var(--card2), rgba(26,45,76,.35));
-            border: 1px solid rgba(212,175,55,.1); border-radius: 4px 18px 18px 18px; color: var(--text);
+            background: linear-gradient(145deg, var(--card2), rgba(26, 45, 76, .35));
+            border: 1px solid rgba(212, 175, 55, .1);
+            border-radius: 4px 18px 18px 18px;
+            color: var(--text);
         }
 
         /* Rich markdown rendering */
-        .ai-bubble strong { color: var(--accent); font-weight: 700; }
-        .ai-bubble em { color: var(--text2); font-style: italic; }
+        .ai-bubble strong {
+            color: var(--accent);
+            font-weight: 700;
+        }
 
-        .ai-bubble .ai-paragraph { margin: 0 0 12px 0; line-height: 1.85; }
-        .ai-bubble .ai-paragraph:last-of-type { margin-bottom: 4px; }
+        .ai-bubble em {
+            color: var(--text2);
+            font-style: italic;
+        }
+
+        .ai-bubble .ai-paragraph {
+            margin: 0 0 12px 0;
+            line-height: 1.85;
+        }
+
+        .ai-bubble .ai-paragraph:last-of-type {
+            margin-bottom: 4px;
+        }
 
         .ai-bubble .ai-bullet {
-            padding: 4px 0 4px 14px; line-height: 1.7; position: relative;
-            border-left: 2px solid rgba(212,175,55,.2); margin-left: 4px; margin-bottom: 2px;
+            padding: 4px 0 4px 14px;
+            line-height: 1.7;
+            position: relative;
+            border-left: 2px solid rgba(212, 175, 55, .2);
+            margin-left: 4px;
+            margin-bottom: 2px;
         }
-        .ai-bubble .ai-bullet::before { content:''; position:absolute; left:-4px; top:12px; width:6px; height:6px; border-radius:50%; background:var(--accent); }
+
+        .ai-bubble .ai-bullet::before {
+            content: '';
+            position: absolute;
+            left: -4px;
+            top: 12px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+        }
 
         .ai-bubble .ai-numbered {
-            padding: 5px 0 5px 6px; line-height: 1.7; display: flex; gap: 10px; align-items: flex-start;
+            padding: 5px 0 5px 6px;
+            line-height: 1.7;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
         }
+
         .ai-bubble .ai-numbered .ai-num {
-            color: #000; font-weight: 800; min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
-            background: var(--accent); border-radius: 50%; font-size: 11px; flex-shrink: 0; margin-top: 1px;
+            color: #000;
+            font-weight: 800;
+            min-width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent);
+            border-radius: 50%;
+            font-size: 11px;
+            flex-shrink: 0;
+            margin-top: 1px;
         }
 
         .ai-bubble .ai-money {
-            color: var(--accent); font-weight: 700; background: rgba(212,175,55,.1);
-            padding: 2px 7px; border-radius: 6px; font-family: var(--mono); font-size: 12.5px;
-            border: 1px solid rgba(212,175,55,.15); display: inline-block;
+            color: var(--accent);
+            font-weight: 700;
+            background: rgba(212, 175, 55, .1);
+            padding: 2px 7px;
+            border-radius: 6px;
+            font-family: var(--mono);
+            font-size: 12.5px;
+            border: 1px solid rgba(212, 175, 55, .15);
+            display: inline-block;
         }
 
         .ai-bubble .ai-takeaway {
-            background: linear-gradient(135deg, rgba(212,175,55,.12), rgba(16,185,129,.08));
-            border-left: 3px solid var(--accent); padding: 10px 14px; margin: 10px 0 6px;
-            border-radius: 0 10px 10px 0; font-weight: 600; color: var(--text); font-size: 13px;
-            box-shadow: 0 2px 8px rgba(0,0,0,.1);
+            background: linear-gradient(135deg, rgba(212, 175, 55, .12), rgba(16, 185, 129, .08));
+            border-left: 3px solid var(--accent);
+            padding: 10px 14px;
+            margin: 10px 0 6px;
+            border-radius: 0 10px 10px 0;
+            font-weight: 600;
+            color: var(--text);
+            font-size: 13px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
         }
 
         .ai-bubble .ai-callout {
-            padding: 10px 14px; margin: 8px 0; border-radius: 10px; font-size: 13px; line-height: 1.7;
-            display: flex; gap: 10px; align-items: flex-start;
+            padding: 10px 14px;
+            margin: 8px 0;
+            border-radius: 10px;
+            font-size: 13px;
+            line-height: 1.7;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
         }
-        .ai-bubble .ai-callout-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
-        .ai-bubble .ai-callout.warning { background: rgba(245,166,35,.1); border: 1px solid rgba(245,166,35,.2); }
-        .ai-bubble .ai-callout.success { background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.2); }
-        .ai-bubble .ai-callout.info { background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.2); }
 
-        .ai-bubble .ai-spacer { height: 12px; }
+        .ai-bubble .ai-callout-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .ai-bubble .ai-callout.warning {
+            background: rgba(245, 166, 35, .1);
+            border: 1px solid rgba(245, 166, 35, .2);
+        }
+
+        .ai-bubble .ai-callout.success {
+            background: rgba(16, 185, 129, .1);
+            border: 1px solid rgba(16, 185, 129, .2);
+        }
+
+        .ai-bubble .ai-callout.info {
+            background: rgba(59, 130, 246, .1);
+            border: 1px solid rgba(59, 130, 246, .2);
+        }
+
+        .ai-bubble .ai-spacer {
+            height: 12px;
+        }
 
         .ai-bubble .ai-section-header {
-            font-size: 14px; font-weight: 700; color: var(--text); margin: 14px 0 6px; display: flex;
-            align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid rgba(212,175,55,.1);
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text);
+            margin: 14px 0 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid rgba(212, 175, 55, .1);
         }
-        .ai-bubble .ai-section-header:first-child { margin-top: 2px; }
+
+        .ai-bubble .ai-section-header:first-child {
+            margin-top: 2px;
+        }
 
         .ai-bubble .ai-code-block {
-            background: rgba(0,0,0,.3); border: 1px solid var(--border); border-radius: 10px;
-            padding: 12px 14px; font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
-            overflow-x: auto; margin: 8px 0; white-space: pre-wrap; color: var(--text2);
+            background: rgba(0, 0, 0, .3);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            line-height: 1.6;
+            overflow-x: auto;
+            margin: 8px 0;
+            white-space: pre-wrap;
+            color: var(--text2);
         }
 
-        .ai-bubble .ai-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
-        .ai-bubble .ai-table th { background: rgba(212,175,55,.1); color: var(--accent); font-weight: 700; text-align: left; padding: 8px 10px; border-bottom: 2px solid rgba(212,175,55,.2); }
-        .ai-bubble .ai-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
-        .ai-bubble .ai-table tr:last-child td { border-bottom: none; }
+        .ai-bubble .ai-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 8px 0;
+            font-size: 12.5px;
+        }
 
-        .ai-bubble p { margin: 0 0 8px 0; }
+        .ai-bubble .ai-table th {
+            background: rgba(212, 175, 55, .1);
+            color: var(--accent);
+            font-weight: 700;
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 2px solid rgba(212, 175, 55, .2);
+        }
+
+        .ai-bubble .ai-table td {
+            padding: 7px 10px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .ai-bubble .ai-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .ai-bubble p {
+            margin: 0 0 8px 0;
+        }
 
         .ai-bubble.user {
-            background: linear-gradient(135deg, rgba(212,175,55,.18), rgba(245,166,35,.1));
-            border: 1px solid rgba(212,175,55,.25); border-radius: 18px 4px 18px 18px; color: var(--text);
+            background: linear-gradient(135deg, rgba(212, 175, 55, .18), rgba(245, 166, 35, .1));
+            border: 1px solid rgba(212, 175, 55, .25);
+            border-radius: 18px 4px 18px 18px;
+            color: var(--text);
         }
 
         /* Bot message action buttons (copy, read aloud) */
         .ai-msg-actions {
-            display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity .2s;
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+            opacity: 0;
+            transition: opacity .2s;
         }
-        .ai-msg-wrap:hover .ai-msg-actions { opacity: 1; }
+
+        .ai-msg-wrap:hover .ai-msg-actions {
+            opacity: 1;
+        }
+
         .ai-msg-action-btn {
-            background: rgba(212,175,55,.08); border: 1px solid rgba(212,175,55,.15); border-radius: 8px;
-            padding: 4px 10px; font-size: 10px; color: var(--text3); cursor: pointer; transition: all .15s;
-            display: flex; align-items: center; gap: 4px;
+            background: rgba(212, 175, 55, .08);
+            border: 1px solid rgba(212, 175, 55, .15);
+            border-radius: 8px;
+            padding: 4px 10px;
+            font-size: 10px;
+            color: var(--text3);
+            cursor: pointer;
+            transition: all .15s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
         }
-        .ai-msg-action-btn:hover { background: rgba(212,175,55,.18); color: var(--accent); }
-        .ai-msg-action-btn.active { background: var(--accent); color: #000; }
+
+        .ai-msg-action-btn:hover {
+            background: rgba(212, 175, 55, .18);
+            color: var(--accent);
+        }
+
+        .ai-msg-action-btn.active {
+            background: var(--accent);
+            color: #000;
+        }
 
         .ai-bubble-meta {
-            font-size: 10px; color: var(--text3); margin-top: 6px; display: flex; align-items: center; gap: 6px;
+            font-size: 10px;
+            color: var(--text3);
+            margin-top: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
-        .ai-followup-pills { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
-        .ai-followup-pill {
-            padding: 6px 14px; border-radius: 20px; font-size: 11.5px; font-weight: 600;
-            background: rgba(212,175,55,.06); border: 1px solid rgba(212,175,55,.2); color: var(--accent);
-            cursor: pointer; transition: all .2s; white-space: nowrap;
+        .ai-followup-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+            margin-top: 12px;
         }
-        .ai-followup-pill:hover { background: rgba(212,175,55,.18); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(212,175,55,.15); }
+
+        .ai-followup-pill {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 11.5px;
+            font-weight: 600;
+            background: rgba(212, 175, 55, .06);
+            border: 1px solid rgba(212, 175, 55, .2);
+            color: var(--accent);
+            cursor: pointer;
+            transition: all .2s;
+            white-space: nowrap;
+        }
+
+        .ai-followup-pill:hover {
+            background: rgba(212, 175, 55, .18);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(212, 175, 55, .15);
+        }
 
         .ai-suggestion-pill {
-            padding: 7px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
-            background: var(--card2); border: 1px solid var(--border); color: var(--text2);
-            cursor: pointer; transition: all .2s; white-space: nowrap;
+            padding: 7px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            background: var(--card2);
+            border: 1px solid var(--border);
+            color: var(--text2);
+            cursor: pointer;
+            transition: all .2s;
+            white-space: nowrap;
             animation: aiPillIn .4s ease backwards;
         }
-        .ai-suggestion-pill:nth-child(1) { animation-delay: .05s; }
-        .ai-suggestion-pill:nth-child(2) { animation-delay: .1s; }
-        .ai-suggestion-pill:nth-child(3) { animation-delay: .15s; }
-        .ai-suggestion-pill:nth-child(4) { animation-delay: .2s; }
-        .ai-suggestion-pill:nth-child(5) { animation-delay: .25s; }
-        @keyframes aiPillIn { from { opacity:0; transform:translateY(8px) scale(.9); } }
-        .ai-suggestion-pill:hover { background: var(--card3); border-color: var(--accent); color: var(--accent); transform: translateY(-2px); }
 
-        .ai-nav-pulse { position: relative; }
+        .ai-suggestion-pill:nth-child(1) {
+            animation-delay: .05s;
+        }
+
+        .ai-suggestion-pill:nth-child(2) {
+            animation-delay: .1s;
+        }
+
+        .ai-suggestion-pill:nth-child(3) {
+            animation-delay: .15s;
+        }
+
+        .ai-suggestion-pill:nth-child(4) {
+            animation-delay: .2s;
+        }
+
+        .ai-suggestion-pill:nth-child(5) {
+            animation-delay: .25s;
+        }
+
+        @keyframes aiPillIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px) scale(.9);
+            }
+        }
+
+        .ai-suggestion-pill:hover {
+            background: var(--card3);
+            border-color: var(--accent);
+            color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .ai-nav-pulse {
+            position: relative;
+        }
 
         /* Typing indicator */
-        .ai-typing-dots span { display: inline-block; animation: aiDot 1.2s infinite; }
-        .ai-typing-dots span:nth-child(2) { animation-delay: .2s; }
-        .ai-typing-dots span:nth-child(3) { animation-delay: .4s; }
-        @keyframes aiDot { 0%,80%,100% { opacity:.2; transform:scale(.8) } 40% { opacity:1; transform:scale(1.1) } }
+        .ai-typing-dots span {
+            display: inline-block;
+            animation: aiDot 1.2s infinite;
+        }
+
+        .ai-typing-dots span:nth-child(2) {
+            animation-delay: .2s;
+        }
+
+        .ai-typing-dots span:nth-child(3) {
+            animation-delay: .4s;
+        }
+
+        @keyframes aiDot {
+
+            0%,
+            80%,
+            100% {
+                opacity: .2;
+                transform: scale(.8)
+            }
+
+            40% {
+                opacity: 1;
+                transform: scale(1.1)
+            }
+        }
 
         .ai-welcome-msg {
-            background: linear-gradient(135deg, rgba(212,175,55,.06), rgba(59,130,246,.04));
-            border: 1px solid rgba(212,175,55,.15); border-radius: 16px; padding: 20px;
+            background: linear-gradient(135deg, rgba(212, 175, 55, .06), rgba(59, 130, 246, .04));
+            border: 1px solid rgba(212, 175, 55, .15);
+            border-radius: 16px;
+            padding: 20px;
         }
 
         /* Chat date separator */
-        .ai-date-sep { text-align:center; padding:8px 0; font-size:10px; color:var(--text3); position:relative; }
-        .ai-date-sep span { background:var(--bg2); padding:0 12px; position:relative; z-index:1; }
-        .ai-date-sep::before { content:''; position:absolute; left:10%; right:10%; top:50%; height:1px; background:var(--border); }
+        .ai-date-sep {
+            text-align: center;
+            padding: 8px 0;
+            font-size: 10px;
+            color: var(--text3);
+            position: relative;
+        }
+
+        .ai-date-sep span {
+            background: var(--bg2);
+            padding: 0 12px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .ai-date-sep::before {
+            content: '';
+            position: absolute;
+            left: 10%;
+            right: 10%;
+            top: 50%;
+            height: 1px;
+            background: var(--border);
+        }
 
         /* Scroll-to-bottom FAB */
         .ai-scroll-bottom {
-            position:absolute; bottom:80px; right:16px; width:36px; height:36px; border-radius:50%;
-            background:var(--accent); color:#000; border:none; cursor:pointer; font-size:16px;
-            display:none; align-items:center; justify-content:center; z-index:5;
-            box-shadow:0 4px 14px rgba(212,175,55,.3); transition:all .2s;
+            position: absolute;
+            bottom: 80px;
+            right: 16px;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--accent);
+            color: #000;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 5;
+            box-shadow: 0 4px 14px rgba(212, 175, 55, .3);
+            transition: all .2s;
         }
-        .ai-scroll-bottom:hover { transform:scale(1.1); }
-        .ai-scroll-bottom.show { display:flex; }
+
+        .ai-scroll-bottom:hover {
+            transform: scale(1.1);
+        }
+
+        .ai-scroll-bottom.show {
+            display: flex;
+        }
 
 
 
         /* Sync status badge */
-        .ai-sync-badge { font-size:10px; padding:3px 8px; border-radius:10px; font-family:var(--mono); display:inline-flex; align-items:center; gap:4px; }
-        .ai-sync-badge.synced { background:rgba(16,185,129,.1); color:var(--green); }
-        .ai-sync-badge.syncing { background:rgba(245,166,35,.1); color:var(--amber); }
-        .ai-sync-badge.offline { background:rgba(239,68,68,.1); color:var(--red); }
+        .ai-sync-badge {
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-family: var(--mono);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .ai-sync-badge.synced {
+            background: rgba(16, 185, 129, .1);
+            color: var(--green);
+        }
+
+        .ai-sync-badge.syncing {
+            background: rgba(245, 166, 35, .1);
+            color: var(--amber);
+        }
+
+        .ai-sync-badge.offline {
+            background: rgba(239, 68, 68, .1);
+            color: var(--red);
+        }
 
         /* Language picker modal */
-        .ai-lang-modal { position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(8px); z-index:10000; display:none; align-items:center; justify-content:center; }
-        .ai-lang-modal.show { display:flex; }
-        .ai-lang-modal-content { background:var(--card); border:1px solid var(--border2); border-radius:20px; width:92%; max-width:480px; max-height:80vh; display:flex; flex-direction:column; overflow:hidden; animation:mdIn .3s ease; }
-        .ai-lang-search { padding:16px; border-bottom:1px solid var(--border); }
-        .ai-lang-search input { width:100%; padding:12px 16px; border:1px solid var(--border2); border-radius:12px; background:var(--bg2); color:var(--text); font-size:14px; outline:none; }
-        .ai-lang-search input:focus { border-color:var(--accent); }
-        .ai-lang-search input::placeholder { color:var(--text3); }
-        .ai-lang-list { flex:1; overflow-y:auto; padding:8px 12px; }
-        .ai-lang-group-title { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:1px; padding:8px 8px 4px; font-weight:700; }
-        .ai-lang-item { display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:12px; cursor:pointer; transition:all .15s; }
-        .ai-lang-item:hover { background:rgba(212,175,55,.08); }
-        .ai-lang-item.active { background:rgba(212,175,55,.12); border:1px solid rgba(212,175,55,.3); }
-        .ai-lang-item-name { font-size:14px; color:var(--text); font-weight:500; flex:1; }
-        .ai-lang-item-code { font-size:11px; color:var(--text3); font-family:var(--mono); }
-        .ai-lang-item-check { color:var(--accent); font-size:16px; display:none; }
-        .ai-lang-item.active .ai-lang-item-check { display:block; }
-        .ai-lang-modal-hdr { display:flex; align-items:center; justify-content:space-between; padding:18px 20px 0; }
-        .ai-lang-modal-title { font-size:17px; font-weight:700; color:var(--text); }
-        .ai-lang-modal-close { background:none; border:none; color:var(--text3); font-size:22px; cursor:pointer; padding:4px 8px; border-radius:8px; }
-        .ai-lang-modal-close:hover { background:var(--card2); color:var(--text); }
+        .ai-lang-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .7);
+            backdrop-filter: blur(8px);
+            z-index: 10000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .ai-lang-modal.show {
+            display: flex;
+        }
+
+        .ai-lang-modal-content {
+            background: var(--card);
+            border: 1px solid var(--border2);
+            border-radius: 20px;
+            width: 92%;
+            max-width: 480px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            animation: mdIn .3s ease;
+        }
+
+        .ai-lang-search {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .ai-lang-search input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border2);
+            border-radius: 12px;
+            background: var(--bg2);
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+        }
+
+        .ai-lang-search input:focus {
+            border-color: var(--accent);
+        }
+
+        .ai-lang-search input::placeholder {
+            color: var(--text3);
+        }
+
+        .ai-lang-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 12px;
+        }
+
+        .ai-lang-group-title {
+            font-size: 10px;
+            color: var(--text3);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 8px 8px 4px;
+            font-weight: 700;
+        }
+
+        .ai-lang-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all .15s;
+        }
+
+        .ai-lang-item:hover {
+            background: rgba(212, 175, 55, .08);
+        }
+
+        .ai-lang-item.active {
+            background: rgba(212, 175, 55, .12);
+            border: 1px solid rgba(212, 175, 55, .3);
+        }
+
+        .ai-lang-item-name {
+            font-size: 14px;
+            color: var(--text);
+            font-weight: 500;
+            flex: 1;
+        }
+
+        .ai-lang-item-code {
+            font-size: 11px;
+            color: var(--text3);
+            font-family: var(--mono);
+        }
+
+        .ai-lang-item-check {
+            color: var(--accent);
+            font-size: 16px;
+            display: none;
+        }
+
+        .ai-lang-item.active .ai-lang-item-check {
+            display: block;
+        }
+
+        .ai-lang-modal-hdr {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 18px 20px 0;
+        }
+
+        .ai-lang-modal-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .ai-lang-modal-close {
+            background: none;
+            border: none;
+            color: var(--text3);
+            font-size: 22px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 8px;
+        }
+
+        .ai-lang-modal-close:hover {
+            background: var(--card2);
+            color: var(--text);
+        }
 
         /* AI context pills row */
-        .ai-context-pills { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
-        .ai-context-pill { font-size:10px; padding:4px 10px; border-radius:10px; background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.15); color:var(--blue); font-weight:600; }
+        .ai-context-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+
+        .ai-context-pill {
+            font-size: 10px;
+            padding: 4px 10px;
+            border-radius: 10px;
+            background: rgba(59, 130, 246, .08);
+            border: 1px solid rgba(59, 130, 246, .15);
+            color: var(--blue);
+            font-weight: 600;
+        }
 
         /* AI Callout boxes */
-        .ai-callout { display:flex; align-items:flex-start; gap:10px; padding:12px 16px; border-radius:12px; margin:8px 0; font-size:13px; line-height:1.6; }
-        .ai-callout.warning { background:rgba(245,166,35,.08); border:1px solid rgba(245,166,35,.2); color:var(--amber); }
-        .ai-callout.success { background:rgba(16,185,129,.08); border:1px solid rgba(16,185,129,.2); color:var(--green); }
-        .ai-callout.info { background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.2); color:var(--blue); }
-        .ai-callout-icon { font-size:16px; flex-shrink:0; margin-top:1px; }
+        .ai-callout {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin: 8px 0;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .ai-callout.warning {
+            background: rgba(245, 166, 35, .08);
+            border: 1px solid rgba(245, 166, 35, .2);
+            color: var(--amber);
+        }
+
+        .ai-callout.success {
+            background: rgba(16, 185, 129, .08);
+            border: 1px solid rgba(16, 185, 129, .2);
+            color: var(--green);
+        }
+
+        .ai-callout.info {
+            background: rgba(59, 130, 246, .08);
+            border: 1px solid rgba(59, 130, 246, .2);
+            color: var(--blue);
+        }
+
+        .ai-callout-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
 
         /* AI Table */
-        .ai-table { width:100%; border-collapse:collapse; margin:10px 0; font-size:12px; border-radius:8px; overflow:hidden; }
-        .ai-table th { background:rgba(212,175,55,.1); color:var(--accent); text-align:left; padding:8px 12px; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
-        .ai-table td { padding:8px 12px; border-top:1px solid var(--border); color:var(--text2); }
-        .ai-table tr:hover td { background:rgba(212,175,55,.04); }
+        .ai-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 12px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .ai-table th {
+            background: rgba(212, 175, 55, .1);
+            color: var(--accent);
+            text-align: left;
+            padding: 8px 12px;
+            font-weight: 700;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+        }
+
+        .ai-table td {
+            padding: 8px 12px;
+            border-top: 1px solid var(--border);
+            color: var(--text2);
+        }
+
+        .ai-table tr:hover td {
+            background: rgba(212, 175, 55, .04);
+        }
 
         /* ================== HAPTIC RIPPLE (visual feedback for all OS) ================== */
         @keyframes hapticRipple {
@@ -4821,19 +5338,25 @@
                     <div class="sh" style="margin-bottom:12px;">
                         <div>
                             <div class="sh-title">🤖 AI Financial Advisor</div>
-                            <div style="font-size:11px;color:var(--text3);margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <div
+                                style="font-size:11px;color:var(--text3);margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                                 <span>Your personalized, always-learning wealth companion</span>
                                 <span class="ai-sync-badge synced" id="aiSyncBadge">● Synced</span>
                             </div>
                         </div>
                         <div class="sh-actions" style="gap:8px;flex-wrap:wrap;">
-                            <div id="aiPersonaStatus" style="font-size:11px;color:var(--accent);font-family:var(--mono);display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.2);border-radius:20px;">
-                                <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:luxuryBlink 3s infinite;display:inline-block;"></span>
+                            <div id="aiPersonaStatus"
+                                style="font-size:11px;color:var(--accent);font-family:var(--mono);display:flex;align-items:center;gap:6px;padding:5px 12px;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.2);border-radius:20px;">
+                                <span
+                                    style="width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:luxuryBlink 3s infinite;display:inline-block;"></span>
                                 <span id="aiPersonaLabel">Learning your style...</span>
                             </div>
-                            <button class="btn btn-secondary btn-sm" onclick="openLangModal()" title="AI language">🌐 <span id="aiLangBadge">EN</span></button>
-                            <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')" title="Change AI personality">🎭 Persona</button>
-                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history">🗑️</button>
+                            <button class="btn btn-secondary btn-sm" onclick="openLangModal()" title="AI language">🌐
+                                <span id="aiLangBadge">EN</span></button>
+                            <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')"
+                                title="Change AI personality">🎭 Persona</button>
+                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()"
+                                title="Clear chat history">🗑️</button>
                         </div>
                     </div>
 
@@ -4844,29 +5367,48 @@
                     <div id="aiSuggestionPills" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
 
                     <!-- Chat Area -->
-                    <div class="card" style="padding:0;overflow:hidden;border:1px solid var(--border2);margin-bottom:0;position:relative;">
-                        <div id="aiChatMessages" style="height:480px;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth;" onscroll="_handleAIChatScroll()">
+                    <div class="card"
+                        style="padding:0;overflow:hidden;border:1px solid var(--border2);margin-bottom:0;position:relative;">
+                        <div id="aiChatMessages"
+                            style="height:480px;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth;"
+                            onscroll="_handleAIChatScroll()">
                             <div class="ai-welcome-msg" id="aiWelcomeBlock">
                                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-                                    <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#0a1628,#162544);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;box-shadow:0 0 12px rgba(212,175,55,.15);">🤖</div>
+                                    <div
+                                        style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#0a1628,#162544);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;box-shadow:0 0 12px rgba(212,175,55,.15);">
+                                        🤖</div>
                                     <div>
-                                        <div style="font-size:14px;font-weight:700;color:var(--accent);">WealthFlow AI</div>
-                                        <div style="font-size:10px;color:var(--text3);">Triple-Engine · Gemini · DeepSeek · Groq</div>
+                                        <div style="font-size:14px;font-weight:700;color:var(--accent);">WealthFlow AI
+                                        </div>
+                                        <div style="font-size:10px;color:var(--text3);">Triple-Engine · Gemini ·
+                                            DeepSeek · Groq</div>
                                     </div>
                                 </div>
                                 <div style="font-size:14px;color:var(--text);line-height:1.8;">
-                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — I understand <em>your</em> unique financial patterns and learn from every conversation.<br><br>
-                                    💡 Ask me about your spending, savings goals, loan strategies, investments, or even just chat — I'm friendly!<br><br>
-                                    <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--text2);margin-top:8px;">
-                                        <span style="background:rgba(66,133,244,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">🌐 70+ languages</span>
-                                        <span style="background:rgba(16,185,129,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸 Scan receipts</span>
-                                        <span style="background:rgba(236,72,153,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(236,72,153,0.25);">☁️ Synced across devices</span>
+                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI
+                                        Advisor</strong> — I understand <em>your</em> unique financial patterns and
+                                    learn from every conversation.<br><br>
+                                    💡 Ask me about your spending, savings goals, loan strategies, investments, or even
+                                    just chat — I'm friendly!<br><br>
+                                    <div
+                                        style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--text2);margin-top:8px;">
+                                        <span
+                                            style="background:rgba(66,133,244,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">🌐
+                                            70+ languages</span>
+                                        <span
+                                            style="background:rgba(16,185,129,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸
+                                            Scan receipts</span>
+                                        <span
+                                            style="background:rgba(236,72,153,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(236,72,153,0.25);">☁️
+                                            Synced across devices</span>
                                     </div>
                                 </div>
                             </div>
                         </div>
                         <!-- Scroll-to-bottom FAB -->
-                        <button class="ai-scroll-bottom" id="aiScrollBottom" onclick="document.getElementById('aiChatMessages').scrollTop=document.getElementById('aiChatMessages').scrollHeight" title="Jump to latest">↓</button>
+                        <button class="ai-scroll-bottom" id="aiScrollBottom"
+                            onclick="document.getElementById('aiChatMessages').scrollTop=document.getElementById('aiChatMessages').scrollHeight"
+                            title="Jump to latest">↓</button>
 
 
 
@@ -4874,20 +5416,28 @@
                         <div style="border-top:1px solid var(--border);padding:14px 16px;background:var(--bg2);">
                             <div style="display:flex;gap:10px;align-items:flex-end;">
                                 <div style="flex:1;position:relative;">
-                                    <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:80px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
+                                    <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1"
+                                        style="resize:none;padding-right:80px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;"
+                                        onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
 
-                                    <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Scan receipt with AI">
+                                    <label
+                                        style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;"
+                                        title="Scan receipt with AI">
                                         📸
-                                        <input type="file" accept="image/*" capture="environment" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
+                                        <input type="file" accept="image/*" capture="environment" id="ai_chat_scan"
+                                            style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
                                     </label>
                                 </div>
-                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
+                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()"
+                                    style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
                                 <div id="aiTypingIndicator" style="font-size:11px;color:var(--text3);display:none;">
-                                    <span style="color:var(--accent);">●</span><span style="opacity:0.5;">●</span><span style="opacity:0.2;">●</span> AI is thinking...
+                                    <span style="color:var(--accent);">●</span><span style="opacity:0.5;">●</span><span
+                                        style="opacity:0.2;">●</span> AI is thinking...
                                 </div>
-                                <div style="font-size:10px;color:var(--text3);margin-left:auto;font-family:var(--mono);" id="aiProviderInfo">Gemini · DeepSeek · Groq</div>
+                                <div style="font-size:10px;color:var(--text3);margin-left:auto;font-family:var(--mono);"
+                                    id="aiProviderInfo">Gemini · DeepSeek · Groq</div>
                             </div>
                         </div>
                     </div>
@@ -5829,7 +6379,8 @@
                 <button class="ai-lang-modal-close" onclick="closeLangModal()">✕</button>
             </div>
             <div class="ai-lang-search">
-                <input type="text" id="aiLangModalSearch" placeholder="Search languages..." oninput="_filterLangModal()">
+                <input type="text" id="aiLangModalSearch" placeholder="Search languages..."
+                    oninput="_filterLangModal()">
             </div>
             <div class="ai-lang-list" id="aiLangModalList"></div>
         </div>
@@ -5930,10 +6481,15 @@
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
-            getObj(k, def = {}) { 
-                if (appData[k] === undefined) return def;
+            getObj(k, def = {}) {
+                if (appData[k] === undefined) {
+                    appData[k] = def;
+                    return appData[k];
+                }
                 if (typeof appData[k] === 'object' && !Array.isArray(appData[k]) && appData[k] !== null) {
-                    return Object.assign({}, def, appData[k]);
+                    // Merge defaults directly into appData to ensure schema requirements for cloud sync
+                    appData[k] = Object.assign({}, def, appData[k]);
+                    return appData[k];
                 }
                 return appData[k];
             },
@@ -6041,8 +6597,13 @@
             }
         }
 
-        // ==================== UTILITIES ====================
         const $ = id => document.getElementById(id);
+
+        window.addEventListener('beforeunload', () => {
+            if (isDirty) {
+                syncToCloud();
+            }
+        });
         const uid = () => '_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
         const sleep = ms => new Promise(r => setTimeout(r, ms));
         const today = () => { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
@@ -6757,7 +7318,7 @@ Rules:
             // Time-of-day awareness
             const hour = new Date().getHours();
             const timeGreeting = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
-            const dayOfWeek = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+            const dayOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
 
             return `You are WealthFlow AI — a friendly, knowledgeable financial advisor and conversation partner for ${ctx.userName} in Sri Lanka.
 Current time context: ${dayOfWeek} ${timeGreeting}. Use this to personalize greetings naturally (e.g., "Good ${timeGreeting}!" for first message, or reference the day when relevant).
@@ -7011,7 +7572,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                 const actions = document.createElement('div');
                 actions.className = 'ai-msg-actions';
                 const rawText = text;
-                actions.innerHTML = `<button class="ai-msg-action-btn" onclick="this.textContent='✓ Copied';navigator.clipboard.writeText(this.closest('.ai-msg-wrap').querySelector('.ai-bubble').innerText);setTimeout(()=>this.textContent='📋 Copy',1500)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button>`;
+                actions.innerHTML = `<button class="ai-msg-action-btn" onclick="this.textContent='✓ Copied';navigator.clipboard.writeText(this.closest('.ai-msg-wrap').querySelector('.ai-bubble').innerText);setTimeout(()=>this.textContent='📋 Copy',1500)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g, '&quot;')}">🔊 Read</button>`;
                 bubble.appendChild(actions);
             } else {
                 meta.innerHTML = `<span>${timeStr}</span>`;
@@ -7176,7 +7737,7 @@ YOUR PERSONALITY & CRITICAL RULES:
             const s = DB.getObj('settings', {});
             const current = s.aiResponseLang || 'en';
             const q = query.toLowerCase().trim();
-            const popular = ['en','si','ta','hi','zh-CN','ja','ko','es','fr','de','ar','pt','ru'];
+            const popular = ['en', 'si', 'ta', 'hi', 'zh-CN', 'ja', 'ko', 'es', 'fr', 'de', 'ar', 'pt', 'ru'];
             const entries = Object.entries(WF_LANG_NAMES).filter(([code]) => code !== 'auto');
             const filtered = q ? entries.filter(([code, name]) => name.toLowerCase().includes(q) || code.toLowerCase().includes(q)) : entries;
             let html = '';
@@ -7184,14 +7745,14 @@ YOUR PERSONALITY & CRITICAL RULES:
                 html += '<div class="ai-lang-group-title">⭐ Popular</div>';
                 popular.forEach(code => {
                     const name = WF_LANG_NAMES[code] || code;
-                    html += '<div class="ai-lang-item ' + (code===current?'active':'') + '" onclick="selectAILanguage(\'' + code + '\')"><span class="ai-lang-item-name">' + name + '</span><span class="ai-lang-item-code">' + code + '</span><span class="ai-lang-item-check">✓</span></div>';
+                    html += '<div class="ai-lang-item ' + (code === current ? 'active' : '') + '" onclick="selectAILanguage(\'' + code + '\')"><span class="ai-lang-item-name">' + name + '</span><span class="ai-lang-item-code">' + code + '</span><span class="ai-lang-item-check">✓</span></div>';
                 });
                 html += '<div class="ai-lang-group-title">🌍 All Languages</div>';
             }
-            const sorted = filtered.sort((a,b) => a[1].localeCompare(b[1]));
+            const sorted = filtered.sort((a, b) => a[1].localeCompare(b[1]));
             sorted.forEach(([code, name]) => {
                 if (!q && popular.includes(code)) return;
-                html += '<div class="ai-lang-item ' + (code===current?'active':'') + '" onclick="selectAILanguage(\'' + code + '\')"><span class="ai-lang-item-name">' + name + '</span><span class="ai-lang-item-code">' + code + '</span><span class="ai-lang-item-check">✓</span></div>';
+                html += '<div class="ai-lang-item ' + (code === current ? 'active' : '') + '" onclick="selectAILanguage(\'' + code + '\')"><span class="ai-lang-item-name">' + name + '</span><span class="ai-lang-item-code">' + code + '</span><span class="ai-lang-item-check">✓</span></div>';
             });
             if (sorted.length === 0) html = '<div style="text-align:center;padding:30px;color:var(--text3);">No languages match</div>';
             list.innerHTML = html;
@@ -7226,16 +7787,16 @@ YOUR PERSONALITY & CRITICAL RULES:
             try {
                 const ctx = buildFinancialContext();
                 const pills = [];
-                if (ctx.incomeSources > 0) pills.push('💰 ' + ctx.incomeSources + ' income source' + (ctx.incomeSources>1?'s':''));
-                if (ctx.activeLoans > 0) pills.push('🏦 ' + ctx.activeLoans + ' loan' + (ctx.activeLoans>1?'s':''));
-                if (ctx.savingsTargets > 0) pills.push('🎯 ' + ctx.savingsTargets + ' goal' + (ctx.savingsTargets>1?'s':''));
+                if (ctx.incomeSources > 0) pills.push('💰 ' + ctx.incomeSources + ' income source' + (ctx.incomeSources > 1 ? 's' : ''));
+                if (ctx.activeLoans > 0) pills.push('🏦 ' + ctx.activeLoans + ' loan' + (ctx.activeLoans > 1 ? 's' : ''));
+                if (ctx.savingsTargets > 0) pills.push('🎯 ' + ctx.savingsTargets + ' goal' + (ctx.savingsTargets > 1 ? 's' : ''));
                 const st = DB.getObj('settings', {});
                 const lang = WF_LANG_NAMES[st.aiResponseLang || 'en'] || 'English';
                 pills.push('🌐 ' + lang.split('(')[0].trim());
                 const persona = getAIPersona();
                 if (persona && persona.questionCount > 5) pills.push('🧠 ' + persona.questionCount + ' chats');
-                el.innerHTML = pills.map(function(p){ return '<span class="ai-context-pill">' + p + '</span>'; }).join('');
-            } catch(e) { el.innerHTML = ''; }
+                el.innerHTML = pills.map(function (p) { return '<span class="ai-context-pill">' + p + '</span>'; }).join('');
+            } catch (e) { el.innerHTML = ''; }
         }
 
         // ==================== AI PAGE INIT ====================
@@ -7252,7 +7813,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                 var label = document.getElementById('aiPersonaLabel');
                 if (label) {
                     var c = persona.questionCount || 0;
-                    label.textContent = c < 3 ? 'Learning your style...' : c < 8 ? 'Getting to know you...' : c < 20 ? 'Personalized ✓ (' + (persona.style||'balanced') + ')' : 'Fully personalized ✓';
+                    label.textContent = c < 3 ? 'Learning your style...' : c < 8 ? 'Getting to know you...' : c < 20 ? 'Personalized ✓ (' + (persona.style || 'balanced') + ')' : 'Fully personalized ✓';
                 }
             }
         }
@@ -8553,7 +9114,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     } else if (sessionsChanged) {
                                                         console.log('[SYNC] 🔄 Sessions updated — localized render');
                                                         if ($('app') && $('app').classList.contains('show') && document.getElementById('page-sessions')?.classList.contains('active')) {
-                                                            try { _renderSessionsDebounced(); } catch(e) {}
+                                                            try { _renderSessionsDebounced(); } catch (e) { }
                                                         }
                                                     }
                                                 }
@@ -15182,19 +15743,19 @@ Be direct and use real numbers. Avoid generic advice.`;
         let debtDemoChartInst = null;
         function drawDebtDemoChart(baseHist, avHist, snHist) {
             const chartEl = $('debtDemoChart');
-            if(!chartEl) return;
-            if(debtDemoChartInst) {
+            if (!chartEl) return;
+            if (debtDemoChartInst) {
                 debtDemoChartInst.destroy();
             }
 
             const maxLen = Math.max(baseHist.length, avHist.length, snHist.length);
             const labels = [];
-            for(let i=0; i<maxLen; i++) {
+            for (let i = 0; i < maxLen; i++) {
                 labels.push(`Month ${i}`);
             }
 
             const getBal = (hist, idx) => {
-                if(idx < hist.length) return hist[idx].totalBalance;
+                if (idx < hist.length) return hist[idx].totalBalance;
                 return 0; // paid off
             };
 
@@ -15254,7 +15815,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                             borderColor: 'rgba(212,175,55,0.3)',
                             borderWidth: 1,
                             callbacks: {
-                                label: function(context) {
+                                label: function (context) {
                                     let label = context.dataset.label || '';
                                     if (label) {
                                         label += ': ';
@@ -15269,7 +15830,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     },
                     scales: {
                         x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', maxTicksLimit: 12 } },
-                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', callback: v => 'LKR ' + (v/1000) + 'k' } }
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#64748b', callback: v => 'LKR ' + (v / 1000) + 'k' } }
                     }
                 }
             });
@@ -15385,7 +15946,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div id="debtDemoResultCards"></div>
                 `;
 
-            window.updateDebtDemoCards = function(newExtra) {
+            window.updateDebtDemoCards = function (newExtra) {
                 const ex = parseInt(newExtra);
                 const baseline = _amortizeStrategy(debtItems, 0, 'avalanche');
                 const avalanche = _amortizeStrategy(debtItems, ex, 'avalanche');
@@ -15397,7 +15958,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 const monthsSavedSnowball = baseline.months - snowball.months;
 
                 const resWrap = $('debtDemoResultCards');
-                if(resWrap) {
+                if (resWrap) {
                     if (debtItems.length === 1) {
                         resWrap.innerHTML = `
                             <div class="card" style="margin-bottom:16px;">
@@ -15474,7 +16035,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                         `;
                     }
                 }
-                
+
                 drawDebtDemoChart(baseline.history, avalanche.history, snowball.history);
             };
 
@@ -16203,7 +16764,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 sessions[idx].lastActive = new Date().toISOString();
                 DB.set('sessions', sessions);
                 if (currentUser && firebase.firestore && userDocRef) {
-                    try { await userDocRef.set({ sessions }, { merge: true }); } catch(e) {}
+                    try { await userDocRef.set({ sessions }, { merge: true }); } catch (e) { }
                 }
                 if (document.getElementById('page-sessions')?.classList.contains('active')) {
                     _renderSessionsDebounced();
@@ -16232,7 +16793,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         if (c) brand = c.brand;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
 
             let deviceType = '🌐 Device';
             if (/iPhone/.test(ua)) deviceType = '📱 iPhone';
@@ -16289,7 +16850,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const res = await fetch(api, { signal: controller.signal });
                         clearTimeout(timeoutId);
                         const data = await res.json();
-                        
+
                         if (data.ip || (data.success && data.ip)) {
                             ip = data.ip;
                             location = `${data.city || 'Unknown City'}, ${data.country_name || data.country || 'Unknown Country'}`;
@@ -16297,7 +16858,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             success = true;
                             break;
                         }
-                    } catch(e) {}
+                    } catch (e) { }
                 }
                 if (!success) throw new Error("All APIs failed");
             } catch (e) {
@@ -16328,7 +16889,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             if (currentUser && firebase.firestore && userDocRef) {
                 try {
                     await userDocRef.set({ sessions }, { merge: true });
-                } catch(e) {}
+                } catch (e) { }
             }
 
             if (document.getElementById('page-sessions')?.classList.contains('active')) {
@@ -16337,8 +16898,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             // Start background heartbeat pulse EVERY 60 SECONDS
             if (_sessionPulseInterval) clearInterval(_sessionPulseInterval);
-            _sessionPulseInterval = setInterval(_pulseSessionHeartbeat, 60000); 
-            
+            _sessionPulseInterval = setInterval(_pulseSessionHeartbeat, 60000);
+
             // Listen to visibility to immediately pulse on return
             if (!window._sessionVisListenerAdded) {
                 document.addEventListener('visibilitychange', () => {
@@ -16365,12 +16926,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         <div class="card-sub">${sessions.length} session(s) active · Auto-revoked: ${revoked.length}</div>
                     </div>
                     ${sessions.map(s => {
-                        const isCurrent = s.id === sessionId;
-                        const lastPulse = new Date(s.lastActive).getTime();
-                        // 75-second threshold for online status (since heartbeat is 60s)
-                        const isOnline = (Date.now() - lastPulse) <= 75000; 
-                        
-                        return `
+                const isCurrent = s.id === sessionId;
+                const lastPulse = new Date(s.lastActive).getTime();
+                // 75-second threshold for online status (since heartbeat is 60s)
+                const isOnline = (Date.now() - lastPulse) <= 75000;
+
+                return `
                         <div class="session-card ${isCurrent ? 'session-current' : ''}" style="align-items:flex-start; flex-direction:column;">
                             <div style="display:flex; width:100%; justify-content:space-between; align-items:flex-start;">
                                 <div style="display:flex; flex:1;">
@@ -16385,8 +16946,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 </div>
                                 <div style="margin-left:12px; display:flex; flex-direction:column; justify-content:center;">
                                     ${!isCurrent
-                            ? `<button class="btn btn-danger btn-sm" onclick="revokeSession('${s.id}')" style="padding:8px 14px; border-radius:8px; font-weight:700;">🚫 Revoke</button>`
-                            : `<button class="btn btn-ghost btn-sm" onclick="revokeSession('${s.id}', true)" title="Sign out this device" style="padding:8px 14px; border-radius:8px; font-weight:700; color:var(--text3);">⏻ Sign Out</button>`}
+                        ? `<button class="btn btn-danger btn-sm" onclick="revokeSession('${s.id}')" style="padding:8px 14px; border-radius:8px; font-weight:700;">🚫 Revoke</button>`
+                        : `<button class="btn btn-ghost btn-sm" onclick="revokeSession('${s.id}', true)" title="Sign out this device" style="padding:8px 14px; border-radius:8px; font-weight:700; color:var(--text3);">⏻ Sign Out</button>`}
                                 </div>
                             </div>
                             
