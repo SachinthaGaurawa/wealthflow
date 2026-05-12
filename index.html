@@ -53,6 +53,7 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://js.puter.com/v2/"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 
     <style>
         /* ================== THEME VARIABLES ================== */
@@ -6393,12 +6394,41 @@
             return null;
         }
 
+        // --- Ollama Vision Fallback (Cloud API with vision support) ---
+        async function _tryOllama(prompt, image) {
+            try {
+                const ollamaKey = 'f2e8db440e7e4028a40a0aefbf8dbec5.7efl7SycTPjEwR645yJmxTs1';
+                const message = { role: 'user', content: prompt };
+                if (image) message.images = [image];
+
+                const r = await fetch('https://api.ollama.com/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${ollamaKey}`
+                    },
+                    body: JSON.stringify({
+                        model: image ? 'llama3.2-vision' : 'llama3.2',
+                        messages: [message],
+                        stream: false,
+                        options: { temperature: image ? 0.1 : 0.7, num_predict: image ? 4096 : 1200 }
+                    })
+                });
+                if (!r.ok) throw new Error('Ollama ' + r.status);
+                const d = await r.json();
+                if (d.message?.content) {
+                    _lastAIProvider = 'ollama';
+                    return d.message.content;
+                }
+            } catch (e) { console.warn('[AI] Ollama error:', e.message); }
+            return null;
+        }
+
         async function callAI(prompt, image = null) {
             let errorLogs = [];
 
-            // 1. Try Vercel Backend First (Handles Triple-Engine securely)
+            // 1. Try Vercel Backend First (Handles multi-engine securely)
             try {
-                // Determine absolute URL to avoid GitHub pages 404 HTML response
                 const isLocalOrGitHub = window.location.hostname.includes('github.io') || window.location.hostname === 'localhost';
                 const vercelUrl = isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api/ai' : '/api/ai';
 
@@ -6414,7 +6444,7 @@
                 if (r.ok) {
                     const d = await r.json();
                     if (d.reply) {
-                        _lastAIProvider = 'gemini';
+                        _lastAIProvider = d.provider || 'gemini';
                         return d.reply;
                     }
                 } else {
@@ -6425,12 +6455,17 @@
                 errorLogs.push(`Vercel Backend: ${e.message}`);
             }
 
-            // 2. Direct Frontend Fallbacks (if Vercel is completely unreachable/CORS blocked)
+            // 2. Direct Frontend Fallbacks
             console.log('[AI] Backend failed. Engaging frontend fallbacks...');
 
             const geminiReply = await _tryGemini(prompt, image);
             if (geminiReply) return geminiReply;
             errorLogs.push('Frontend Gemini Failed');
+
+            // 3. Ollama Vision (supports images)
+            const ollamaReply = await _tryOllama(prompt, image);
+            if (ollamaReply) return ollamaReply;
+            errorLogs.push('Frontend Ollama Failed');
 
             if (!image) {
                 const groqReply = await _tryGroq(prompt);
@@ -6534,13 +6569,48 @@ Keep total under 200 words. No markdown, no asterisks.`;
             if (ov) ov.style.display = 'none';
         }
 
-        // --- Image Enhancement for OCR ---
+        // --- TensorFlow.js GPU-Accelerated Image Enhancement for OCR ---
         function _enhanceForOCR(canvas) {
+            // If TensorFlow.js is available, use GPU-accelerated processing
+            if (typeof tf !== 'undefined') {
+                try {
+                    return tf.tidy(() => {
+                        const tensor = tf.browser.fromPixels(canvas);
+                        // Convert to float [0,1]
+                        let enhanced = tensor.toFloat().div(255);
+                        
+                        // 1. Auto-levels contrast stretch
+                        const minVal = enhanced.min();
+                        const maxVal = enhanced.max();
+                        const range = maxVal.sub(minVal).maximum(0.01);
+                        enhanced = enhanced.sub(minVal).div(range);
+                        
+                        // 2. Slight gamma correction for dark receipts (gamma=0.85 brightens)
+                        enhanced = enhanced.pow(0.85);
+                        
+                        // 3. Sharpen: unsharp mask (original + alpha * (original - blurred))
+                        // We approximate blur with avg pool
+                        const expanded = enhanced.expandDims(0);
+                        const blurred = tf.avgPool(expanded, 3, 1, 'same').squeeze(0);
+                        const detail = enhanced.sub(blurred);
+                        enhanced = enhanced.add(detail.mul(1.5)).clipByValue(0, 1);
+                        
+                        // Scale back to [0,255] and write to canvas
+                        const result = enhanced.mul(255).cast('int32');
+                        const ctx = canvas.getContext('2d');
+                        tf.browser.toPixels(result, canvas);
+                        return canvas;
+                    });
+                } catch (e) {
+                    console.warn('[OCR] TF.js enhancement failed, using fallback:', e.message);
+                }
+            }
+            
+            // Fallback: canvas-based auto-levels
             const ctx = canvas.getContext('2d');
             const w = canvas.width, h = canvas.height;
             const imgData = ctx.getImageData(0, 0, w, h);
             const d = imgData.data;
-            // Auto-levels: find min/max luminance then stretch
             let minL = 255, maxL = 0;
             for (let i = 0; i < d.length; i += 4) {
                 const lum = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
@@ -6548,18 +6618,17 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 if (lum > maxL) maxL = lum;
             }
             const range = maxL - minL || 1;
-            // Contrast stretch + slight brightness boost
             for (let i = 0; i < d.length; i += 4) {
-                d[i]   = Math.min(255, Math.max(0, ((d[i]   - minL) / range) * 265));
-                d[i+1] = Math.min(255, Math.max(0, ((d[i+1] - minL) / range) * 265));
-                d[i+2] = Math.min(255, Math.max(0, ((d[i+2] - minL) / range) * 265));
+                d[i]   = Math.min(255, Math.max(0, ((d[i]   - minL) / range) * 270));
+                d[i+1] = Math.min(255, Math.max(0, ((d[i+1] - minL) / range) * 270));
+                d[i+2] = Math.min(255, Math.max(0, ((d[i+2] - minL) / range) * 270));
             }
             ctx.putImageData(imgData, 0, 0);
             return canvas;
         }
 
-        // --- Compress + Enhance Pipeline ---
-        function _compressImageToBase64(file, maxDim = 1024, quality = 0.78) {
+        // --- Ultra-HD Compress + Enhance Pipeline ---
+        function _compressImageToBase64(file, maxDim = 1600, quality = 0.88) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 const reader = new FileReader();
@@ -6574,7 +6643,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, w, h);
                         ctx.drawImage(img, 0, 0, w, h);
-                        // Enhance contrast for better OCR
+                        // GPU-accelerated enhancement for OCR
                         _enhanceForOCR(canvas);
                         const dataUrl = canvas.toDataURL('image/jpeg', quality);
                         const base64 = dataUrl.split(',')[1];
@@ -6660,7 +6729,10 @@ Keep total under 200 words. No markdown, no asterisks.`;
         // --- Tesseract.js OCR Fallback (runs 100% in browser, no API needed) ---
         async function _ocrWithTesseract(file) {
             if (typeof Tesseract === 'undefined') throw new Error('Tesseract not loaded');
-            const result = await Tesseract.recognize(file, 'eng', {
+            // Use enhanced image from canvas for better results
+            const { base64 } = await _compressImageToBase64(file, 2000, 0.95);
+            const enhancedDataUrl = 'data:image/jpeg;base64,' + base64;
+            const result = await Tesseract.recognize(enhancedDataUrl, 'eng', {
                 logger: m => {
                     if (m.status === 'recognizing text') {
                         const pct = Math.round((m.progress || 0) * 100);
@@ -6671,36 +6743,69 @@ Keep total under 200 words. No markdown, no asterisks.`;
             return result.data.text || '';
         }
 
-        // --- Extract expense data from raw OCR text ---
+        // --- Extract expense data from raw OCR text (Smart AI-grade parsing) ---
         function _extractFromOCRText(text) {
             if (!text || text.length < 5) return null;
             const result = {};
             const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-            // Vendor: usually first non-empty meaningful line
-            for (const line of lines.slice(0, 5)) {
-                if (line.length > 2 && !/^\d+$/.test(line) && !/^[\-=*]+$/.test(line) && !/^(tel|phone|fax|date|time)/i.test(line)) {
-                    result.vendor = line.replace(/[^a-zA-Z0-9\s&'.,-]/g, '').trim();
-                    if (result.vendor.length > 2) break;
+            // Vendor: first meaningful text line (not a number, separator, or metadata)
+            for (const line of lines.slice(0, 8)) {
+                const cleaned = line.replace(/[^a-zA-Z0-9\s&'.,-]/g, '').trim();
+                if (cleaned.length > 2 && !/^\d+$/.test(cleaned) && !/^[\-=*_]+$/.test(cleaned) &&
+                    !/^(tel|phone|fax|date|time|receipt|invoice|bill|tax|gst|vat|no|number|cashier)/i.test(cleaned) &&
+                    /[a-zA-Z]{2,}/.test(cleaned)) {
+                    result.vendor = cleaned;
+                    break;
                 }
             }
 
-            // Amount: find the largest number (likely grand total)
-            const amountMatches = text.match(/[\d,]+\.?\d{0,2}/g) || [];
-            const amounts = amountMatches.map(s => parseFloat(s.replace(/,/g, ''))).filter(n => n > 0 && n < 10000000);
-            if (amounts.length) result.amount = Math.max(...amounts);
+            // Amount: Smart detection — prioritize amounts near TOTAL/GRAND keywords
+            let bestAmount = 0;
+            const totalPatterns = /(?:grand\s*total|total\s*(?:due|amount|payable)?|net\s*(?:total|amount|payable)|amount\s*(?:due|payable)|balance\s*(?:due)?|subtotal|sub\s*total)\s*[:\-]?\s*(?:(?:LKR|Rs\.?|USD|\$|€|£)\s*)?([0-9,]+\.?\d{0,2})/gi;
+            let totalMatch;
+            while ((totalMatch = totalPatterns.exec(text)) !== null) {
+                const amt = parseFloat(totalMatch[1].replace(/,/g, ''));
+                if (amt > bestAmount && amt < 10000000) bestAmount = amt;
+            }
+            // Also check for lines with just "TOTAL" followed by a number
+            for (const line of lines) {
+                if (/total/i.test(line)) {
+                    const nums = line.match(/[\d,]+\.?\d{0,2}/g);
+                    if (nums) {
+                        for (const n of nums) {
+                            const val = parseFloat(n.replace(/,/g, ''));
+                            if (val > bestAmount && val < 10000000) bestAmount = val;
+                        }
+                    }
+                }
+            }
+            // Fallback: largest number in the text
+            if (bestAmount === 0) {
+                const allNums = text.match(/[\d,]+\.?\d{0,2}/g) || [];
+                const amounts = allNums.map(s => parseFloat(s.replace(/,/g, ''))).filter(n => n > 1 && n < 10000000);
+                if (amounts.length) bestAmount = Math.max(...amounts);
+            }
+            if (bestAmount > 0) result.amount = bestAmount;
 
-            // Date
+            // Date: multi-format detection
             const datePatterns = [
                 /(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/,
                 /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/,
-                /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})/
+                /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})/,
+                /(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{4})/i,
+                /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2}),?\s+(\d{4})/i
             ];
+            const monthNames = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
             for (const pat of datePatterns) {
                 const dm = text.match(pat);
                 if (dm) {
                     let y, m, d;
-                    if (dm[1].length === 4) { y = dm[1]; m = dm[2]; d = dm[3]; }
+                    if (/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(dm[2] || '')) {
+                        d = dm[1]; m = monthNames[dm[2].substring(0, 3).toLowerCase()]; y = dm[3];
+                    } else if (/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(dm[1] || '')) {
+                        m = monthNames[dm[1].substring(0, 3).toLowerCase()]; d = dm[2]; y = dm[3];
+                    } else if (dm[1].length === 4) { y = dm[1]; m = dm[2]; d = dm[3]; }
                     else if (dm[3].length === 4) { d = dm[1]; m = dm[2]; y = dm[3]; }
                     else { d = dm[1]; m = dm[2]; y = '20' + dm[3]; }
                     result.date = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -6709,16 +6814,27 @@ Keep total under 200 words. No markdown, no asterisks.`;
             }
             if (!result.date) result.date = new Date().toISOString().split('T')[0];
 
-            // Category: keyword detection
+            // Category: comprehensive keyword detection (Sri Lankan focus)
             const txt = text.toLowerCase();
-            if (/food|grocer|supermarket|restaurant|cafe|bakery|pizza|burger|rice|chicken|milk/i.test(txt)) result.category = 'Food & Groceries';
-            else if (/fuel|petrol|gas|uber|taxi|bus|transport|parking/i.test(txt)) result.category = 'Transport';
-            else if (/electric|water|internet|phone|mobile|bill|utility|wifi/i.test(txt)) result.category = 'Utilities';
-            else if (/hospital|pharmacy|doctor|medical|health|clinic/i.test(txt)) result.category = 'Medical';
-            else if (/school|university|tuition|course|education|book/i.test(txt)) result.category = 'Education';
-            else if (/movie|cinema|game|netflix|spotify|entertainment/i.test(txt)) result.category = 'Entertainment';
-            else if (/cloth|shirt|pant|shoe|dress|fashion/i.test(txt)) result.category = 'Clothing';
+            if (/food|grocer|supermarket|restaurant|cafe|bakery|pizza|burger|rice|chicken|milk|keells|cargills|arpico|spar|laugfs|laughs|sathosa|dine|meal/i.test(txt)) result.category = 'Food & Groceries';
+            else if (/fuel|petrol|diesel|gas|uber|taxi|bus|train|transport|parking|ceypetco|ioc|laugfs fuel|highway|toll/i.test(txt)) result.category = 'Transport';
+            else if (/electric|ceb|leco|water|nwsdb|internet|slt|dialog|mobitel|hutch|airtel|phone|mobile|bill|utility|wifi/i.test(txt)) result.category = 'Utilities';
+            else if (/hospital|pharmacy|doctor|medical|health|clinic|nawaloka|asiri|durdans|lanka hospital/i.test(txt)) result.category = 'Medical';
+            else if (/school|university|tuition|course|education|book|stationery|library/i.test(txt)) result.category = 'Education';
+            else if (/movie|cinema|game|netflix|spotify|entertainment|scope|liberty|arcade/i.test(txt)) result.category = 'Entertainment';
+            else if (/cloth|shirt|pant|shoe|dress|fashion|odel|nolimit|cool planet|cotton collection/i.test(txt)) result.category = 'Clothing';
             else result.category = 'Other';
+
+            // Items: extract line items that look like products
+            const items = [];
+            for (const line of lines) {
+                // Lines with both text and a number at end (typical receipt line items)
+                const itemMatch = line.match(/^([a-zA-Z][a-zA-Z\s&'.,-]{2,})\s+[\d,]+\.?\d{0,2}$/);
+                if (itemMatch && items.length < 5) {
+                    items.push(itemMatch[1].trim());
+                }
+            }
+            if (items.length) result.items = items;
 
             return (result.vendor || result.amount) ? result : null;
         }
@@ -6736,8 +6852,8 @@ Keep total under 200 words. No markdown, no asterisks.`;
             else notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
 
             try {
-                // Step 1 — Compress + Enhance
-                const { base64: base64Img, kb } = await _compressImageToBase64(file, 1200, 0.82);
+                // Step 1 — Compress + Enhance (Ultra-HD for maximum accuracy)
+                const { base64: base64Img, kb } = await _compressImageToBase64(file, 1600, 0.88);
                 console.log(`[AI Scan v4] Compressed: ${sizeMB}MB → ${kb}KB`);
                 if (isExpense) _showScanOverlay('🧠 AI Vision Analyzing…', 'Sending to AI for deep analysis', 35);
                 else notify('🔍 Reading with AI Vision…', 'info');
