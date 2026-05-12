@@ -1,26 +1,46 @@
 {
-  "name": "wealthflow",
-  "version": "6.4.0",
-  "description": "WealthFlow Elite Financial System — Sri Lankan personal finance management with AI advisor (multi-lingual + voice), real-time session security, smart actionable notifications, and 3D cash flow visualization.",
-  "type": "module",
+  "name": "react-example",
   "private": true,
-  "engines": {
-    "node": "20.x"
-  },
+  "version": "0.0.0",
+  "type": "module",
   "scripts": {
-    "dev": "vercel dev",
-    "deploy": "vercel --prod"
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit"
   },
-  "keywords": [
-    "finance",
-    "personal-finance",
-    "wealth-management",
-    "ai-advisor",
-    "pwa",
-    "sri-lanka"
-  ],
-  "license": "UNLICENSED",
   "dependencies": {
-    "nodemailer": "^6.9.13"
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
+    "@google/genai": "^1.52.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "chart.js": "^4.5.1",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.2.3",
+    "eslint": "^10.3.0",
+    "express": "^4.21.2",
+    "firebase": "^12.13.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.38.0",
+    "react": "^19.0.1",
+    "react-chartjs-2": "^5.3.1",
+    "react-dom": "^19.0.1",
+    "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.6.0",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "autoprefixer": "^10.4.21",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
   }
 }
