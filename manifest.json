@@ -1,0 +1,59 @@
+{
+  "name": "WealthFlow Elite — Personal Finance Engine",
+  "short_name": "WealthFlow",
+  "description": "Elite Sri Lankan personal finance system with AI advisor, smart notifications, and 3D cash flow visualization.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#060a14",
+  "theme_color": "#d4af37",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["finance", "productivity", "utilities", "business"],
+  "icons": [
+    {
+      "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Open the financial overview",
+      "url": "/?page=dashboard",
+      "icons": [{ "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "AI Advisor",
+      "short_name": "AI",
+      "description": "Chat with your AI financial advisor",
+      "url": "/?page=ai",
+      "icons": [{ "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Add Expense",
+      "short_name": "+ Expense",
+      "description": "Quickly log an expense",
+      "url": "/?action=addExpense",
+      "icons": [{ "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png", "sizes": "192x192" }]
+    }
+  ],
+  "prefer_related_applications": false
+}
