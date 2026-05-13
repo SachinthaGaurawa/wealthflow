@@ -4940,7 +4940,7 @@
                                     <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:40px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
                                     <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Attach file or Scan receipt with AI">
                                         📎 📸
-                                        <input type="file" accept="image/*" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
+                                        <input type="file" accept="image/*,application/pdf" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
                                     </label>
                                 </div>
                                 <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
@@ -5610,7 +5610,7 @@
                     <!-- AI Scan Button — Premium Design -->
                     <label id="aiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan receipt with AI Vision">
                         <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                        <input type="file" accept="image/*" id="e_ai_scan" style="display:none;"
+                        <input type="file" accept="image/*,application/pdf" id="e_ai_scan" style="display:none;"
                             onchange="handleAIScan(event, 'expense')">
                         <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(212,175,55,0.08),transparent);opacity:0;transition:opacity 0.3s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"></div>
                     </label>
@@ -6334,11 +6334,13 @@
         // ==================== AI ENGINE (Multi-Provider: Vercel → Gemini → Groq → DeepSeek) ====================
         let _lastAIProvider = null;
 
-        async function _tryGemini(prompt, image) {
+        async function _tryGemini(prompt, fileData) {
+            let image = typeof fileData === 'string' ? fileData : (fileData?.base64 || null);
+            let mimeType = fileData?.mimeType || 'image/jpeg';
             const s = DB.getObj('settings', {});
             const apiKey = s.geminiKey || 'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ';
             const parts = [{ text: prompt }];
-            if (image) parts.push({ inline_data: { mime_type: "image/jpeg", data: image } });
+            if (image) parts.push({ inline_data: { mime_type: mimeType, data: image } });
 
             // Vision/OCR needs deterministic output (low temp) and more tokens
             const isVision = !!image;
@@ -6448,8 +6450,10 @@
             return null;
         }
 
-        async function callAI(prompt, image = null) {
+        async function callAI(prompt, fileData = null) {
             let errorLogs = [];
+            let image = typeof fileData === 'string' ? fileData : (fileData?.base64 || null);
+            let mimeType = fileData?.mimeType || 'image/jpeg';
 
             // 1. Try Vercel Backend First (Handles multi-engine securely)
             try {
@@ -6457,7 +6461,7 @@
                 const vercelUrl = isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api/ai' : '/api/ai';
 
                 const body = { prompt };
-                if (image) body.image = image;
+                if (image) { body.image = image; body.mimeType = mimeType; }
 
                 const r = await fetch(vercelUrl, {
                     method: 'POST',
@@ -6482,7 +6486,7 @@
             // 2. Direct Frontend Fallbacks
             console.log('[AI] Backend failed. Engaging frontend fallbacks...');
 
-            const geminiReply = await _tryGemini(prompt, image);
+            const geminiReply = await _tryGemini(prompt, fileData);
             if (geminiReply) return geminiReply;
             errorLogs.push('Frontend Gemini Failed');
 
@@ -6870,18 +6874,43 @@ Keep total under 200 words. No markdown, no asterisks.`;
             const file = e.target.files[0];
             if (!file) return;
 
+            const isExpense = type === 'expense';
+            
+            // Clear previous form fields to prevent appending to old data
+            if (isExpense) {
+                if ($('e_desc')) $('e_desc').value = '';
+                if ($('e_amount')) $('e_amount').value = '';
+                if ($('e_notes')) $('e_notes').value = '';
+            }
+
             const startTime = Date.now();
             const sizeMB = (file.size / 1024 / 1024).toFixed(2);
             triggerHaptic('medium');
 
-            const isExpense = type === 'expense';
-            if (isExpense) _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
-            else notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
+            if (isExpense) _showScanOverlay('📸 Optimizing File…', `Processing ${sizeMB}MB file`, 10);
+            else notify(`📸 Optimizing file (${sizeMB}MB)…`, 'info');
 
             try {
-                // Step 1 — Compress + Enhance (Ultra-HD for maximum accuracy)
-                const { base64: base64Img, kb } = await _compressImageToBase64(file, 1600, 0.88);
-                console.log(`[AI Scan v4] Compressed: ${sizeMB}MB → ${kb}KB`);
+                // Step 1 — Compress + Enhance or read PDF
+                let base64Img = null;
+                let kb = 0;
+                let mimeType = file.type || 'image/jpeg';
+                
+                if (file.type === 'application/pdf') {
+                    base64Img = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => resolve(ev.target.result.split(',')[1]);
+                        reader.onerror = () => reject(new Error('PDF read failed'));
+                        reader.readAsDataURL(file);
+                    });
+                    kb = Math.round(base64Img.length * 0.75 / 1024);
+                } else {
+                    const res = await _compressImageToBase64(file, 1600, 0.88);
+                    base64Img = res.base64;
+                    kb = res.kb;
+                }
+                
+                console.log(`[AI Scan v4] Prepared: ${sizeMB}MB → ${kb}KB`);
                 if (isExpense) _showScanOverlay('🧠 AI Vision Analyzing…', 'Sending to AI for deep analysis', 35);
                 else notify('🔍 Reading with AI Vision…', 'info');
 
@@ -6906,7 +6935,7 @@ CRITICAL: Output ONLY the JSON. No markdown. No explanation.`;
                     prompt = `You are a world-class financial advisor. The user attached a financial document.
 Perform a DEEP SCAN: identify the document, extract key data, provide a breakdown, and give advice.
 Be conversational and precise.`;
-                    const reply = await callAI(prompt, base64Img);
+                    const reply = await callAI(prompt, { base64: base64Img, mimeType });
                     appendAIMessage('bot', reply);
                     e.target.value = '';
                     return;
@@ -6914,7 +6943,7 @@ Be conversational and precise.`;
 
                 // Step 3 — Send to AI Vision
                 if (isExpense) _showScanOverlay('🔬 Deep Scanning Receipt…', 'Extracting vendor, amount, items', 60);
-                const reply = await callAI(prompt, base64Img);
+                const reply = await callAI(prompt, { base64: base64Img, mimeType });
                 console.log('[AI Scan v4] Raw reply:', reply.substring(0, 300));
 
                 // Step 4 — Parse
@@ -6938,11 +6967,15 @@ Be conversational and precise.`;
                 // ===== TIER 2: Simplified AI retry =====
                 try {
                     if (isExpense) _showScanOverlay('⚡ Quick AI Retry…', 'Simplified extraction', 40);
-                    const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65, false);
+                    let smaller = base64Img;
+                    if (file.type !== 'application/pdf') {
+                        const res = await _compressImageToBase64(file, 800, 0.65, false);
+                        smaller = res.base64;
+                    }
 
                     if (isExpense) {
                         const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}`;
-                        const retry = await callAI(simplePrompt, smaller);
+                        const retry = await callAI(simplePrompt, { base64: smaller, mimeType });
                         const r2 = _parseAIJson(retry);
                         if (r2 && r2.amount && _populateExpenseFromScan(r2)) {
                             _hideScanOverlay();
@@ -6952,7 +6985,7 @@ Be conversational and precise.`;
                             return;
                         }
                     } else if (type === 'ai_chat') {
-                        const retry = await callAI('Describe financial details in this document briefly.', smaller);
+                        const retry = await callAI('Describe financial details in this document briefly.', { base64: smaller, mimeType });
                         appendAIMessage('bot', retry);
                         notify('✅ Scanned (quick mode)', 'success');
                         e.target.value = '';
