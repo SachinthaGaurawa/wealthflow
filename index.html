@@ -56,6 +56,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 
     <script src="/wealthflow-scanner.js" defer></script>
+    <!-- v3 universal AI upgrade — PDF support, smart-recurring, PIN-gated reset, natural language -->
+    <script src="/wealthflow-ai-v3.js" defer></script>
 
     
 
@@ -4916,15 +4918,15 @@
                                     <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#0a1628,#162544);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;box-shadow:0 0 12px rgba(212,175,55,.15);">🤖</div>
                                     <div>
                                         <div style="font-size:14px;font-weight:700;color:var(--accent);">WealthFlow AI</div>
-                                        <div style="font-size:10px;color:var(--text3);">Triple-Engine · Gemini · DeepSeek · Groq</div>
+                                        <div style="font-size:10px;color:var(--text3);">Multi-Engine · Gemini · Ollama · Vision + PDF</div>
                                     </div>
                                 </div>
                                 <div style="font-size:14px;color:var(--text);line-height:1.8;">
-                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — I understand <em>your</em> unique financial patterns and learn from every conversation.<br><br>
-                                    💡 Ask me about your spending, savings goals, loan strategies, investments, or even just chat — I'm friendly!<br><br>
+                                    👋 Hello! I'm your <strong style="color:var(--accent);">WealthFlow AI Advisor</strong> — I learn from every conversation and remember your style. I'm not just for finance — ask me anything!<br><br>
+                                    💡 Chat about money, life, work, world facts, jokes, recipes — anything. Attach receipts or PDFs for instant deep analysis.<br><br>
                                     <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--text2);margin-top:8px;">
                                         <span style="background:rgba(66,133,244,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(66,133,244,0.25);">🌐 70+ languages</span>
-                                        <span style="background:rgba(16,185,129,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸 Scan receipts</span>
+                                        <span style="background:rgba(16,185,129,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(16,185,129,0.25);">📸 Scan receipts & PDFs</span>
                                         <span style="background:rgba(236,72,153,0.1);padding:5px 12px;border-radius:14px;border:1px solid rgba(236,72,153,0.25);">☁️ Synced across devices</span>
                                     </div>
                                 </div>
@@ -4940,7 +4942,7 @@
                                     <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:40px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
                                     <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Attach file or Scan receipt with AI">
                                         📎 📸
-                                        <input type="file" accept="image/*" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
+                                        <input type="file" accept="image/*,application/pdf,.pdf" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
                                     </label>
                                 </div>
                                 <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
@@ -5610,7 +5612,7 @@
                     <!-- AI Scan Button — Premium Design -->
                     <label id="aiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan receipt with AI Vision">
                         <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                        <input type="file" accept="image/*" id="e_ai_scan" style="display:none;"
+                        <input type="file" accept="image/*,application/pdf,.pdf" id="e_ai_scan" style="display:none;"
                             onchange="handleAIScan(event, 'expense')">
                         <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(212,175,55,0.08),transparent);opacity:0;transition:opacity 0.3s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"></div>
                     </label>
@@ -13918,6 +13920,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
                 <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
                 <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
+            </div>
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info"><div class="setting-label">📸 Receipt Scanner</div><div class="setting-desc">Configure scan mode (Quick / Deep / Ultra), default currency, and image enhancement.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="if(typeof openScannerSettings==='function')openScannerSettings();else notify('Scanner module loading…','info');">⚙️ Configure</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">🧠 Reset AI Memory</div><div class="setting-desc">Permanently erase the AI's memory of your conversation patterns and chat history.</div></div>
