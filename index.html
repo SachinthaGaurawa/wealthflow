@@ -6875,6 +6875,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
             if (!file) return;
 
             const isExpense = type === 'expense';
+            const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
             
             // Clear previous form fields to prevent appending to old data
             if (isExpense) {
@@ -6887,19 +6888,23 @@ Keep total under 200 words. No markdown, no asterisks.`;
             const sizeMB = (file.size / 1024 / 1024).toFixed(2);
             triggerHaptic('medium');
 
-            if (isExpense) _showScanOverlay('📸 Optimizing File…', `Processing ${sizeMB}MB file`, 10);
+            if (isExpense) _showScanOverlay(isPdf ? '📄 Reading PDF…' : '📸 Optimizing File…', `Processing ${sizeMB}MB file`, 10);
             else notify(`📸 Optimizing file (${sizeMB}MB)…`, 'info');
 
             try {
                 // Step 1 — Compress + Enhance or read PDF
                 let base64Img = null;
                 let kb = 0;
-                let mimeType = file.type || 'image/jpeg';
+                let mimeType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
                 
-                if (file.type === 'application/pdf') {
+                if (isPdf) {
                     base64Img = await new Promise((resolve, reject) => {
                         const reader = new FileReader();
-                        reader.onload = (ev) => resolve(ev.target.result.split(',')[1]);
+                        reader.onload = (ev) => {
+                            const res = ev.target.result;
+                            if (res.includes('base64,')) resolve(res.split('base64,')[1]);
+                            else resolve(res);
+                        };
                         reader.onerror = () => reject(new Error('PDF read failed'));
                         reader.readAsDataURL(file);
                     });
@@ -6908,6 +6913,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     const res = await _compressImageToBase64(file, 1600, 0.88);
                     base64Img = res.base64;
                     kb = res.kb;
+                    mimeType = 'image/jpeg';
                 }
                 
                 console.log(`[AI Scan v4] Prepared: ${sizeMB}MB → ${kb}KB`);
@@ -6918,14 +6924,14 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 let prompt = '';
                 if (isExpense) {
                     const today = new Date().toISOString().split('T')[0];
-                    prompt = `You are an expert OCR receipt scanner. Extract data from this receipt/invoice image.
+                    prompt = `You are an expert OCR receipt/document scanner. Extract data from this document image/file.
 
 Return ONLY a valid JSON object with these exact fields:
 {"vendor":"store name","amount":1500.50,"date":"${today}","category":"Food & Groceries","items":["item1","item2"]}
 
 RULES:
-- "vendor": exact business/store name from the receipt
-- "amount": The final TOTAL, GRAND TOTAL, or AMOUNT DUE. Look carefully at the bottom of the receipt. Do not use sub-totals. Must be a pure number. Example: 1500.50
+- "vendor": exact business/store name from the document
+- "amount": The final TOTAL, GRAND TOTAL, or AMOUNT DUE. Look carefully. Do not use sub-totals. Must be a pure number. Example: 1500.50
 - "date": in YYYY-MM-DD format. If not visible, use "${today}"
 - "category": best fit from: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Other
 - "items": up to 5 main items. If none visible, use []
@@ -6968,7 +6974,7 @@ Be conversational and precise.`;
                 try {
                     if (isExpense) _showScanOverlay('⚡ Quick AI Retry…', 'Simplified extraction', 40);
                     let smaller = base64Img;
-                    if (file.type !== 'application/pdf') {
+                    if (!isPdf) {
                         const res = await _compressImageToBase64(file, 800, 0.65, false);
                         smaller = res.base64;
                     }
