@@ -1,7 +1,7 @@
 {
   "name": "wealthflow",
-  "version": "6.4.0",
-  "description": "WealthFlow Elite Financial System — Sri Lankan personal finance management with AI advisor (multi-lingual + voice), real-time session security, smart actionable notifications, and 3D cash flow visualization.",
+  "version": "6.5.0",
+  "description": "WealthFlow Elite Financial System — Sri Lankan personal finance management with multi-engine AI vision (Gemini + Ollama + Groq + OCR.space consensus), AI advisor with multi-lingual + voice support, real-time session security, smart actionable notifications, and 3D cash flow visualization.",
   "type": "module",
   "private": true,
   "engines": {
@@ -16,6 +16,12 @@
     "personal-finance",
     "wealth-management",
     "ai-advisor",
+    "ai-vision",
+    "ocr",
+    "receipt-scanner",
+    "ollama",
+    "gemini",
+    "multi-engine-consensus",
     "pwa",
     "sri-lanka"
   ],

@@ -9,6 +9,13 @@
       ]
     },
     {
+      "source": "/wealthflow-scanner.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
       "source": "/manifest.json",
       "headers": [
         { "key": "Content-Type", "value": "application/manifest+json; charset=utf-8" },
@@ -33,6 +40,10 @@
     {
       "source": "/sw.js",
       "destination": "/sw.js"
+    },
+    {
+      "source": "/wealthflow-scanner.js",
+      "destination": "/wealthflow-scanner.js"
     },
     {
       "source": "/manifest.json",
