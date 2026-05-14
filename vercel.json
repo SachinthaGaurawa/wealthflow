@@ -16,7 +16,7 @@
       ]
     },
     {
-      "source": "/wealthflow-ai-v3.js",
+      "source": "/wealthflow-ai-v4.js",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
         { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
@@ -40,29 +40,11 @@
     }
   ],
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
-    },
-    {
-      "source": "/sw.js",
-      "destination": "/sw.js"
-    },
-    {
-      "source": "/wealthflow-scanner.js",
-      "destination": "/wealthflow-scanner.js"
-    },
-    {
-      "source": "/wealthflow-ai-v3.js",
-      "destination": "/wealthflow-ai-v3.js"
-    },
-    {
-      "source": "/manifest.json",
-      "destination": "/manifest.json"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/sw.js", "destination": "/sw.js" },
+    { "source": "/wealthflow-scanner.js", "destination": "/wealthflow-scanner.js" },
+    { "source": "/wealthflow-ai-v4.js", "destination": "/wealthflow-ai-v4.js" },
+    { "source": "/manifest.json", "destination": "/manifest.json" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
