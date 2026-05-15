@@ -1376,7 +1376,14 @@
 
     function _patchDBset() {
         if (typeof window.DB === 'undefined' || typeof window.DB.set !== 'function') {
-            console.warn('[' + V5 + '] DB.set not found yet, will retry');
+            // Even if DB isn't on window, register the host hook — the v6.9 index.html's
+            // DB.set will call window._wfV5TrackWrite for every write.
+            if (typeof window._wfV5TrackWrite !== 'function') {
+                window._wfV5TrackWrite = function (k, v) {
+                    try { _trackLocalWrite(k, v); } catch (_) {}
+                };
+                console.log('[' + V5 + '] _wfV5TrackWrite hook registered (host will invoke on writes)');
+            }
             return false;
         }
         if (window.DB._v5patched) return true;
@@ -1386,21 +1393,23 @@
             return origSet(k, v);
         };
         window.DB._v5patched = true;
+        // Also register the host hook in case DB.set is called via direct reference (not via window.DB)
+        window._wfV5TrackWrite = function (k, v) {
+            try { _trackLocalWrite(k, v); } catch (_) {}
+        };
         console.log('[' + V5 + '] DB.set guard installed ✓');
         return true;
     }
 
     // The killer: hook into the existing isSyncingFromCloud path to protect arrays
     function _installSnapshotGuard() {
-        // We need to wrap appData[key] = cloudData[key] assignments. The cleanest
-        // intercept point is Object.defineProperty on appData for each protected key.
-        // Instead of trying to hook the snapshot listener (which is buried in closures),
-        // we'll use a different strategy: a periodic comparison.
-        //
-        // Every 800ms, we check if any tracked array IDs have been removed from appData
-        // without the user actually deleting them. If so, we restore them.
+        // If window.appData isn't exposed (old index.html), we install the hook
+        // anyway and rely on _wfV5TrackWrite. We can still do the restore loop
+        // BUT only if appData is reachable — otherwise the guard only protects
+        // via the host-side merge logic.
         if (typeof window.appData === 'undefined') {
-            console.warn('[' + V5 + '] appData not found, retrying...');
+            console.warn('[' + V5 + '] appData not on window — relying on host-side merge fix only');
+            // Still install the hook for future use (eg. SPA navigation)
             return false;
         }
         if (window._wfV5GuardLoop) return true;
@@ -1423,7 +1432,6 @@
                         var restored = current.concat(missingFromCurrent);
                         window.appData[collection] = restored;
                         try { localStorage.setItem('wf2_' + collection, JSON.stringify(restored)); } catch (_) {}
-                        // Re-render the visible page
                         try {
                             var renderFn = {
                                 expenses: window.renderExpenses,
@@ -1438,12 +1446,12 @@
                             if (typeof renderFn === 'function') renderFn();
                             if (typeof window.renderDash === 'function') window.renderDash();
                         } catch (_) {}
-                        // Re-push to cloud to make sure cloud sees them
                         try {
                             if (window.isDirty !== undefined) {
                                 window.isDirty = true;
                                 if (typeof window.debouncedSync === 'function') window.debouncedSync();
                             }
+                            if (typeof window._wfMarkLocalWrite === 'function') window._wfMarkLocalWrite();
                         } catch (_) {}
                         if (typeof window.notify === 'function') {
                             window.notify('🛡️ Restored ' + missingFromCurrent.length + ' entries (cloud sync race protected)', 'info');
@@ -2007,7 +2015,13 @@
 
     // Run install after DOM is ready and the host's globals are present
     whenReady(function () {
-        return typeof window.DB !== 'undefined' && typeof window.appData !== 'undefined';
+        // Three ways the host can expose state, ordered by preference:
+        //   1. window.DB + window.appData (v6.9+ index.html)
+        //   2. window._wfHostState getter (also v6.9+)
+        //   3. notify function as a weak signal that the host has booted
+        return (typeof window.DB !== 'undefined' && typeof window.appData !== 'undefined')
+            || (typeof window._wfHostState === 'object')
+            || (typeof window.notify === 'function' && typeof window.handleAIScan === 'function');
     }, function () {
         _installV5Patches();
         // Re-run patch every 4 seconds for the first 60s in case the host re-renders elements

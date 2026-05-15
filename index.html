@@ -4437,7 +4437,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v6.4 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v6.9 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6023,12 +6023,37 @@
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
                 _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
+                // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
+                try {
+                    if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
+                } catch (_) { /* ignore */ }
                 if (!isSyncingFromCloud) {
                     isDirty = true;
                     debouncedSync();
                 }
             }
         };
+
+        // ============================================================================
+        // CRITICAL FIX v6.9: expose key globals on window for cross-script access
+        // (lexical const/let declarations don't auto-attach to window in browsers)
+        // ============================================================================
+        window.DB = DB;
+        window.appData = appData;
+        Object.defineProperty(window, '_wfHostState', {
+            get() {
+                return {
+                    isSyncingFromCloud: isSyncingFromCloud,
+                    isDirty: isDirty,
+                    isInitialised: isInitialised,
+                    lastLocalWriteTs: _lastLocalWriteTs,
+                    userDocRef: userDocRef,
+                    currentUser: currentUser
+                };
+            }
+        });
+        // Setter so v5 can flag a pending write
+        window._wfMarkLocalWrite = function () { _lastLocalWriteTs = Date.now(); };
 
         function debouncedSync() {
             if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
@@ -9171,8 +9196,50 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         }
 
                                                         if (!_isEq(cloudData[key], appData[key])) {
-                                                            appData[key] = cloudData[key];
-                                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
+                                                            // ============================================================
+                                                            // CRITICAL FIX v6.9: SAVE-DISAPPEAR BUG
+                                                            // ============================================================
+                                                            // Before blindly overwriting appData[key] with the cloud value,
+                                                            // protect against the race where the cloud snapshot arrives
+                                                            // BEFORE our recent local write has been replicated.
+                                                            //
+                                                            // Symptom (verified by user screenshots): user adds an expense,
+                                                            // it appears in the UI, then vanishes a moment later.
+                                                            //
+                                                            // Root cause: Firestore delivers snapshots in this order on a
+                                                            // slow network:
+                                                            //   1. Local cache snapshot (hasPending=true) — ignored ✓
+                                                            //   2. Cloud-server snapshot from BEFORE our write was applied
+                                                            //      (hasPending=false, source=server) — overwrites appData
+                                                            //      with the array that LACKS our new entry. ✗
+                                                            //   3. Cloud-server snapshot AFTER our write was applied —
+                                                            //      would have echo-suppression but we've already lost data
+                                                            //
+                                                            // Defence: for arrays-of-records (with IDs), if the cloud
+                                                            // version lacks any IDs that exist locally AND the local write
+                                                            // is fresh (< 30 seconds old), MERGE instead of REPLACE.
+                                                            const localVal = appData[key];
+                                                            const cloudVal = cloudData[key];
+                                                            const msSinceWrite = Date.now() - _lastLocalWriteTs;
+                                                            let finalVal = cloudVal;
+                                                            if (Array.isArray(localVal) && Array.isArray(cloudVal) && msSinceWrite < 30000) {
+                                                                const cloudIds = new Set(
+                                                                    cloudVal.map(x => x && x.id).filter(Boolean)
+                                                                );
+                                                                const localOnly = localVal.filter(
+                                                                    x => x && x.id && !cloudIds.has(x.id)
+                                                                );
+                                                                if (localOnly.length > 0) {
+                                                                    console.warn('[SYNC] 🛡️ Race detected — merging ' + localOnly.length +
+                                                                        ' local-only items into cloud array "' + key + '"');
+                                                                    finalVal = cloudVal.concat(localOnly);
+                                                                    // Re-push to make cloud authoritative
+                                                                    isDirty = true;
+                                                                    setTimeout(() => debouncedSync(), 50);
+                                                                }
+                                                            }
+                                                            appData[key] = finalVal;
+                                                            localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
                                                             if (key === 'sessions') {
                                                                 sessionsChanged = true;
                                                             } else {
@@ -14203,8 +14270,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.4 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v6.4 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.9 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v6.9 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14213,7 +14280,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v6.4 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v6.9 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
