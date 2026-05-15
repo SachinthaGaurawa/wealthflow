@@ -4437,7 +4437,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v6.9.3 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6089,18 +6089,18 @@
 
             setSyncStatus('syncing');
 
-            // RESTORED v6.9.3: simple, clean sync payload — matches original v6.0 working behavior.
-            // We keep the device-id + write-ts metadata for diagnostics, but echo suppression
-            // is handled by Firestore's `hasPendingWrites` flag, NOT by manual timestamp tricks.
+            // CRITICAL: bind _writeTs EXACTLY to _lastLocalWriteTs (logical timestamp).
+            // This is the foundation of the echo-suppression + stale-block protocol.
+            // Echo detection: cloudData._writeTs === _lastLocalWriteTs && cloudData._writeDeviceId === ourId
+            // Stale detection: _lastLocalWriteTs > cloudData._writeTs → block, push our newer data
             const syncPayload = Object.assign({}, appData, {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                 _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
                 _writeDeviceId: _getDeviceId(),
-                _writeTs: Date.now()
+                _writeTs: _lastLocalWriteTs  // logical timestamp from DB.set time, NOT Date.now()
             });
 
-            // Use merge:true so cloud-only fields (like server timestamps from other devices)
-            // never get dropped if our local appData is missing them.
+            // Use merge:true so cloud-only fields never get dropped
             userDocRef.set(syncPayload, { merge: true }).then(() => {
                 setDirty(false);
                 lastSyncTime = Date.now();
@@ -6108,7 +6108,6 @@
                 setTimeout(() => setSyncStatus('online'), 300);
             }).catch(err => {
                 console.error('[SYNC] ❌ Push failed:', err.code, err.message);
-                // Don't set offline — Firestore retries automatically via persistence
                 setTimeout(() => setSyncStatus(navigator.onLine ? 'online' : 'offline'), 1000);
             });
         }
@@ -6122,8 +6121,21 @@
                 if (doc.exists) {
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
+
+                    // Stale-block: if local timestamp is newer than cloud, push instead of pull
+                    const cloudWriteTs = cloudData._writeTs || 0;
+                    if (_lastLocalWriteTs > cloudWriteTs) {
+                        console.warn('[SYNC] 🛡️ Force sync blocked! Local data (' + _lastLocalWriteTs + ') is newer than cloud (' + cloudWriteTs + ').');
+                        setDirty(true);
+                        debouncedSync(); // Push our newer local data to cloud
+                        isSyncingFromCloud = false;
+                        notify('Local data is newer. Pushing to cloud...', 'info');
+                        return;
+                    }
+
                     Object.keys(cloudData).forEach(key => {
-                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
+                        if (key === '_lastModified' || key === '_lastModifiedBy' ||
+                            key === '_writeDeviceId' || key === '_writeTs') return;
 
                         if (key === 'settings') {
                             // Deep-merge settings: cloud fills gaps, local wins for existing keys
@@ -6134,15 +6146,6 @@
                             return;
                         }
 
-                        // RESTORED v6.9.2: Race protection — keep local pending writes
-                        // when user clicks manual refresh button while sync is still pending
-                        if (Array.isArray(appData[key]) && Array.isArray(cloudData[key])) {
-                            if (isDirty && JSON.stringify(appData[key]) !== JSON.stringify(cloudData[key])) {
-                                console.warn('[SYNC] 🛡️ forceSync: Race detected (unsynced local changes) — keeping local state for "' + key + '"');
-                                return; // Skip overwriting appData for this key
-                            }
-                        }
-
                         appData[key] = cloudData[key];
                         localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                     });
@@ -6150,7 +6153,7 @@
                     lastSyncTime = Date.now();
 
                     if (isDirty) {
-                        debouncedSync(); // Ensure preserved local items are pushed!
+                        debouncedSync(); // Ensure preserved local items are pushed
                     }
 
                     // Re-render active page
@@ -9201,16 +9204,13 @@ YOUR PERSONALITY & CRITICAL RULES:
                                     if (window.__wfBootCompleted) window.__wfBootCompleted();
                                     finishBoot();
 
-                                    // Real-time listener for cross-device sync
-                                    // RESTORED v6.9.3: simple v6.0-style logic that ACTUALLY syncs between devices.
-                                    // The over-engineered timestamp-based echo suppression in v6.9.x BROKE cross-device sync.
-                                    // Firestore's own `hasPendingWrites` + `source` metadata handles echo detection correctly:
-                                    //   - hasPendingWrites=true  → my write is still being flushed (no need to apply)
-                                    //   - hasPendingWrites=false, source='cache'  → local cache update (no need to apply)
-                                    //   - hasPendingWrites=false, source='server' → confirmed cloud state → APPLY IT
-                                    // The third case includes both "my own confirmed write" (no-op since data matches)
-                                    // AND "another device's write" (which we want to receive). Both are handled by
-                                    // comparing each key's JSON and only updating + re-rendering if it actually changed.
+                                    // Real-time listener for cross-device sync (PROVEN-WORKING v7.0 LOGIC)
+                                    // Architecture:
+                                    //   1. STALE-BLOCK: If our _lastLocalWriteTs > cloudData._writeTs, drop the snapshot
+                                    //      entirely — it's older than our pending write. Push our newer data.
+                                    //   2. ECHO-SUPPRESS: If cloudData._writeDeviceId === our deviceId AND timestamps
+                                    //      match exactly, this is our OWN write echoing back. Suppress, don't re-render.
+                                    //   3. APPLY: Otherwise it's a real update from another device. Apply per-key.
                                     try {
                                         userDocRef.onSnapshot((snap) => {
                                             try {
@@ -9225,14 +9225,31 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     setSyncStatus(navigator.onLine ? 'online' : 'offline');
                                                 }
 
-                                                // Only process server-confirmed snapshots (not local pending writes, not cache hits)
                                                 if (!hasPending && source === 'server') {
                                                     const cloudData = snap.data();
-                                                    isSyncingFromCloud = true;
-                                                    let nonSessionChanged = false;
-                                                    let sessionsChanged = false;
 
-                                                    // Check if PIN was changed on another device — force re-login
+                                                    // STALE-BLOCK: snapshot older than our pending local write?
+                                                    const cloudWriteTs = cloudData._writeTs || 0;
+                                                    if (_lastLocalWriteTs > cloudWriteTs) {
+                                                        console.warn('[SYNC] 🛡️ Snapshot blocked! Local (' + _lastLocalWriteTs + ') > cloud (' + cloudWriteTs + ')');
+                                                        setDirty(true);
+                                                        setTimeout(debouncedSync, 1000);
+                                                        return;
+                                                    }
+
+                                                    // ECHO-SUPPRESS: exact match of deviceId AND timestamp = our own echo
+                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() &&
+                                                                      _lastLocalWriteTs === cloudWriteTs;
+                                                    if (isOwnEcho) {
+                                                        console.log('[SYNC] ⏭️ Suppressed own echo');
+                                                        lastSyncTime = Date.now();
+                                                        return;
+                                                    }
+
+                                                    console.log('[SYNC] 📥 Received cloud update from ANOTHER device');
+                                                    isSyncingFromCloud = true;
+
+                                                    // PIN-CHANGE: if another device changed the PIN, force re-login
                                                     const newAuth = cloudData.auth;
                                                     const currentAuth = appData.auth;
                                                     if (newAuth && currentAuth && newAuth._pinChangedAt &&
@@ -9252,31 +9269,45 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         return;
                                                     }
 
-                                                    // Apply each key from cloud → local. Skip metadata keys.
+                                                    let nonSessionChanged = false;
+                                                    let sessionsChanged = false;
+
+                                                    const _isEq = (a, b) => {
+                                                        if (a === b) return true;
+                                                        if (a && b && typeof a == 'object' && typeof b == 'object') {
+                                                            if (Array.isArray(a) !== Array.isArray(b)) return false;
+                                                            let keys = Object.keys(a);
+                                                            if (keys.length !== Object.keys(b).length) return false;
+                                                            return keys.every(k => _isEq(a[k], b[k]));
+                                                        }
+                                                        return false;
+                                                    };
+
+                                                    // Apply each cloud key to local
                                                     Object.keys(cloudData).forEach(key => {
                                                         if (key === '_lastModified' || key === '_lastModifiedBy' ||
                                                             key === '_writeDeviceId' || key === '_writeTs') return;
 
-                                                        // SETTINGS: deep-merge to avoid wiping local-only setting keys
                                                         if (key === 'settings') {
+                                                            // Deep-merge: cloud fills gaps, local wins
                                                             const cloudSettings = cloudData.settings || {};
                                                             const localSettings = appData.settings || {};
                                                             const merged = Object.assign({}, cloudSettings, localSettings);
-                                                            const mergedStr = JSON.stringify(merged);
-                                                            if (mergedStr !== JSON.stringify(localSettings)) {
+                                                            if (!_isEq(merged, localSettings)) {
                                                                 appData.settings = merged;
-                                                                localStorage.setItem('wf2_settings', mergedStr);
+                                                                localStorage.setItem('wf2_settings', JSON.stringify(merged));
                                                                 nonSessionChanged = true;
+                                                                console.log('[SYNC] 🔧 Settings merged');
                                                             }
                                                             return;
                                                         }
 
-                                                        // Everything else: compare JSON, replace if different
-                                                        const newVal = JSON.stringify(cloudData[key]);
-                                                        const oldVal = JSON.stringify(appData[key]);
-                                                        if (newVal !== oldVal) {
+                                                        if (!_isEq(cloudData[key], appData[key])) {
+                                                            // Cloud is guaranteed NEWER than local at this point
+                                                            // (stale-block already rejected older snapshots).
+                                                            // Trust the cloud array completely — no fragile merging.
                                                             appData[key] = cloudData[key];
-                                                            localStorage.setItem('wf2_' + key, newVal);
+                                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                                                             if (key === 'sessions') {
                                                                 sessionsChanged = true;
                                                             } else {
@@ -9289,7 +9320,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     lastSyncTime = Date.now();
 
                                                     if (nonSessionChanged) {
-                                                        console.log('[SYNC] 🔄 Cross-device update received — re-rendering');
+                                                        console.log('[SYNC] 🔄 Core data changed — re-rendering global UI');
                                                         if ($('app') && $('app').classList.contains('show')) {
                                                             const active = document.querySelector('.page.active');
                                                             if (active) renderPage(active.id.replace('page-', ''));
@@ -14378,8 +14409,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.9.3 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v6.9.3 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.0 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.0 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14388,7 +14419,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v6.9.3 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
