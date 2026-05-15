@@ -6004,7 +6004,7 @@
         };
         let isInitialised = false;
         let inactivityTimer = 0;
-        let isDirty = localStorage.getItem('wf2_isDirty') === 'true';
+        let dirtyTs = parseInt(localStorage.getItem('wf2_dirtyTs') || '0', 10);
         let isSyncingFromCloud = false;
         let syncDebounceTimer = null;
         let lastSyncTime = 0;
@@ -6028,8 +6028,8 @@
                 } catch (_) { /* ignore */ }
                 
                 if (!isSyncingFromCloud) {
-                    isDirty = true;
-                    localStorage.setItem('wf2_isDirty', 'true');
+                    dirtyTs = Date.now();
+                    localStorage.setItem('wf2_dirtyTs', dirtyTs.toString());
                     debouncedSync();
                 }
             }
@@ -6045,9 +6045,8 @@
             get() {
                 return {
                     isSyncingFromCloud: isSyncingFromCloud,
-                    isDirty: isDirty,
+                    dirtyTs: dirtyTs,
                     isInitialised: isInitialised,
-                    lastLocalWriteTs: _lastLocalWriteTs,
                     userDocRef: userDocRef,
                     currentUser: currentUser
                 };
@@ -6056,23 +6055,24 @@
         });
         // Setter so v5 can flag a pending write
         window._wfMarkLocalWrite = function () { 
-            isDirty = true; 
-            localStorage.setItem('wf2_isDirty', 'true'); 
+            dirtyTs = Date.now(); 
+            localStorage.setItem('wf2_dirtyTs', dirtyTs.toString()); 
         };
 
         function debouncedSync() {
             if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
             syncDebounceTimer = setTimeout(() => {
-                if (isDirty) syncToCloud();
+                if (dirtyTs > 0) syncToCloud();
             }, 300);
         }
 
         function syncToCloud() {
-            if (!userDocRef) return;
-            if (!navigator.onLine) { setSyncStatus('offline'); return; }
-            if (!isDirty) { setSyncStatus('online'); return; }
+            if (!userDocRef) return Promise.resolve();
+            if (!navigator.onLine) { setSyncStatus('offline'); return Promise.resolve(); }
+            if (dirtyTs === 0) { setSyncStatus('online'); return Promise.resolve(); }
 
             setSyncStatus('syncing');
+            const capturedTs = dirtyTs; // Capture state before async operation
 
             const syncPayload = Object.assign({}, appData, {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
@@ -6083,11 +6083,18 @@
 
             // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
             return userDocRef.set(syncPayload, { merge: true }).then(() => {
-                isDirty = false;
-                localStorage.setItem('wf2_isDirty', 'false');
-                lastSyncTime = Date.now();
-                console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
-                setTimeout(() => setSyncStatus('online'), 300);
+                if (dirtyTs === capturedTs) {
+                    // No new writes happened during the push
+                    dirtyTs = 0;
+                    localStorage.setItem('wf2_dirtyTs', '0');
+                    lastSyncTime = Date.now();
+                    console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
+                    setTimeout(() => setSyncStatus('online'), 300);
+                } else {
+                    // New writes happened while we were pushing, trigger again
+                    console.log('[SYNC] ⚠️ Local writes occurred during push. Triggering re-sync.');
+                    debouncedSync();
+                }
             }).catch(err => {
                 console.error('[SYNC] ❌ Push failed:', err.code, err.message);
                 // Don't set offline — Firestore will retry automatically via persistence
@@ -6099,7 +6106,7 @@
             if (!userDocRef) { notify('Not connected to cloud.', 'error'); return; }
             setSyncStatus('syncing');
             try {
-                if (isDirty) {
+                if (dirtyTs > 0) {
                     console.log('[SYNC] 🛡️ Force sync delayed: pushing local changes first.');
                     notify('Syncing local changes to cloud...', 'info');
                     await syncToCloud(); // Ensure our local data is safely in the cloud before we pull
@@ -6128,7 +6135,7 @@
                     isSyncingFromCloud = false;
                     lastSyncTime = Date.now();
                     
-                    if (isDirty) {
+                    if (dirtyTs > 0) {
                         debouncedSync(); // Ensure preserved local items are pushed!
                     }
 
@@ -9177,10 +9184,10 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     const cloudData = snap.data();
                                                     
                                                     // CRITICAL FIX v7.1: True Real-Time Sync with Offline Protection
-                                                    // We use persisted `isDirty` to know if we have pending local writes.
+                                                    // We use persisted `dirtyTs` to know if we have pending local writes.
                                                     // If we do, we block incoming snapshots so they don't overwrite our offline data,
                                                     // and we immediately push our data to the cloud.
-                                                    if (isDirty) {
+                                                    if (dirtyTs > 0) {
                                                         console.warn('[SYNC] 🛡️ Snapshot blocked! We have unsynced local data. Pushing to cloud instead.');
                                                         setTimeout(debouncedSync, 500);
                                                         return;
