@@ -52,7 +52,7 @@ export default async function handler(req, res) {
     const deepseekKey = process.env.DEEPSEEK_API_KEY;
     const groqKey     = process.env.GROQ_API_KEY;
     const ollamaKey   = process.env.OLLAMA_API_KEY || OLLAMA_FALLBACK_KEY;
-    const hfKey       = process.env.HF_API_KEY;
+    const hfKey       = process.env.HUGGINGFACE_API_KEY || process.env.HF_API_KEY || process.env.HF_TOKEN;
 
     // Vision requests need deterministic output (low temp) and more room for detail
     const isVision = !!image;
