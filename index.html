@@ -56,7 +56,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 
     <script src="/wealthflow-scanner.js" defer></script>
-    <script src="/wealthflow-ai-v4.js" defer></script>
 
     
 
@@ -4437,7 +4436,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v6.9.1 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v6.4 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -4941,7 +4940,7 @@
                                     <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:40px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
                                     <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Attach file or Scan receipt with AI">
                                         📎 📸
-                                        <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
+                                        <input type="file" accept="image/*" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
                                     </label>
                                 </div>
                                 <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
@@ -5611,7 +5610,7 @@
                     <!-- AI Scan Button — Premium Design -->
                     <label id="aiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan receipt with AI Vision">
                         <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="e_ai_scan" style="display:none;"
+                        <input type="file" accept="image/*" id="e_ai_scan" style="display:none;"
                             onchange="handleAIScan(event, 'expense')">
                         <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(212,175,55,0.08),transparent);opacity:0;transition:opacity 0.3s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"></div>
                     </label>
@@ -5808,14 +5807,7 @@
     <div class="mo" id="mdSubscription">
         <div class="md md-sm">
             <div class="md-hdr">
-                <div class="md-title" id="mdSubTitle">Add Subscription / Bill</div>
-                <label id="subAiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden; margin-right:8px;" title="Scan bill with AI Vision">
-                    <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                    <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="sub_ai_scan" style="display:none;"
-                        onchange="handleAIScan(event, 'subscription')">
-                    <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(212,175,55,0.08),transparent);opacity:0;transition:opacity 0.3s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"></div>
-                </label>
-                <button class="md-x"
+                <div class="md-title" id="mdSubTitle">Add Subscription / Bill</div><button class="md-x"
                     onclick="closeModal('mdSubscription')">✕</button>
             </div>
             <div class="fr">
@@ -6005,8 +5997,10 @@
         let isInitialised = false;
         let inactivityTimer = 0;
         let isDirty = false;
-        let lastSyncTime = 0;
         let isSyncingFromCloud = false;
+        let syncDebounceTimer = null;
+        let lastSyncTime = 0;
+        let _lastLocalWriteTs = 0;  // Timestamp of last local DB.set() — used to suppress onSnapshot echo
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
@@ -6020,38 +6014,12 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
-                localStorage.setItem('wf2_hasUnsynced', 'true');
-                // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
-                try {
-                    if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
-                } catch (_) { /* ignore */ }
+                _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
                 if (!isSyncingFromCloud) {
                     isDirty = true;
                     debouncedSync();
                 }
             }
-        };
-
-        // ============================================================================
-        // CRITICAL FIX v6.9: expose key globals on window for cross-script access
-        // (lexical const/let declarations don't auto-attach to window in browsers)
-        // ============================================================================
-        window.DB = DB;
-        window.appData = appData;
-        Object.defineProperty(window, '_wfHostState', {
-            get() {
-                return {
-                    isSyncingFromCloud: isSyncingFromCloud,
-                    isDirty: isDirty,
-                    isInitialised: isInitialised,
-                    lastLocalWriteTs: _lastLocalWriteTs,
-                    userDocRef: userDocRef,
-                    currentUser: currentUser
-                };
-            }
-        });
-        window._wfMarkLocalWrite = function () { 
-            localStorage.setItem('wf2_hasUnsynced', 'true');
         };
 
         function debouncedSync() {
@@ -6061,37 +6029,29 @@
             }, 300);
         }
 
-        let isSyncingToCloud = false;
-
         function syncToCloud() {
             if (!userDocRef) return;
             if (!navigator.onLine) { setSyncStatus('offline'); return; }
-            if (!isDirty || isSyncingToCloud) return;
+            if (!isDirty) { setSyncStatus('online'); return; }
 
             setSyncStatus('syncing');
-            isDirty = false; // Clear BEFORE async starts to catch any new writes that happen during the request
-            isSyncingToCloud = true;
 
-            // Add sync metadata
+            // Add sync metadata — include a device-level write stamp to identify our own echoes
             const syncPayload = Object.assign({}, appData, {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                _lastModifiedBy: currentUser ? currentUser.uid : 'unknown'
+                _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
+                _writeDeviceId: _getDeviceId(),
+                _writeTs: Date.now()
             });
 
-            // Use merge:true to avoid dropping fields
+            // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
             userDocRef.set(syncPayload, { merge: true }).then(() => {
-                isSyncingToCloud = false;
-                localStorage.removeItem('wf2_hasUnsynced');
+                isDirty = false;
                 lastSyncTime = Date.now();
+                _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
-                if (isDirty) {
-                    debouncedSync(); // A new write happened during our network request, push again
-                } else {
-                    setTimeout(() => setSyncStatus('online'), 300);
-                }
+                setTimeout(() => setSyncStatus('online'), 300);
             }).catch(err => {
-                isSyncingToCloud = false;
-                isDirty = true; // Retry on failure
                 console.error('[SYNC] ❌ Push failed:', err.code, err.message);
                 // Don't set offline — Firestore will retry automatically via persistence
                 setTimeout(() => setSyncStatus(navigator.onLine ? 'online' : 'offline'), 1000);
@@ -6107,39 +6067,23 @@
                 if (doc.exists) {
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
-                    
                     Object.keys(cloudData).forEach(key => {
-                        if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
-                        let newVal = cloudData[key];
-                        const oldVal = appData[key];
-
-                        if (JSON.stringify(newVal) === JSON.stringify(oldVal)) return;
-
-                        if (isDirty) {
-                            if (Array.isArray(oldVal) && Array.isArray(newVal)) {
-                                const cloudIds = new Set(newVal.map(x => x && x.id).filter(Boolean));
-                                const localOnly = oldVal.filter(x => x && x.id && !cloudIds.has(x.id));
-                                if (localOnly.length > 0) {
-                                    newVal = newVal.concat(localOnly);
-                                }
-                            } else if (key === 'settings') {
-                                newVal = Object.assign({}, newVal, oldVal);
-                            } else {
-                                newVal = oldVal;
-                            }
+                        if (key === 'settings') {
+                            // Deep-merge settings: cloud fills gaps, local wins for existing keys
+                            const cloudSettings = cloudData.settings || {};
+                            const localSettings = appData.settings || {};
+                            appData.settings = Object.assign({}, cloudSettings, localSettings);
+                            localStorage.setItem('wf2_settings', JSON.stringify(appData.settings));
+                            return;
                         }
 
-                        appData[key] = newVal;
-                        localStorage.setItem('wf2_' + key, JSON.stringify(newVal));
+                        appData[key] = cloudData[key];
+                        localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                     });
-                    
                     isSyncingFromCloud = false;
                     lastSyncTime = Date.now();
-                    
-                    if (isDirty) {
-                        debouncedSync(); // Ensure preserved local items are pushed!
-                    }
 
                     // Re-render active page
                     if ($('app').classList.contains('show')) {
@@ -9076,39 +9020,27 @@ YOUR PERSONALITY & CRITICAL RULES:
 
                                     if (doc && doc.exists) {
                                         const cloudData = doc.data();
-                                        const hasUnsynced = localStorage.getItem('wf2_hasUnsynced') === 'true';
-                                        if (hasUnsynced) isDirty = true; 
-
+                                        // First load local storage values so we have any offline changes
+                                        Object.keys(appData).forEach(k => {
+                                            try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
+                                        });
+                                        // Then merge cloud data on top, with special handling for settings
                                         Object.keys(cloudData).forEach(key => {
-                                            if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                            if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
-                                            let finalVal = cloudData[key];
-                                            const localVal = appData[key];
-
-                                            if (isDirty) {
-                                                if (Array.isArray(localVal) && Array.isArray(finalVal)) {
-                                                    const cloudIds = new Set(finalVal.map(x => x && x.id).filter(Boolean));
-                                                    const localOnly = localVal.filter(x => x && x.id && !cloudIds.has(x.id));
-                                                    if (localOnly.length > 0) {
-                                                        finalVal = finalVal.concat(localOnly);
-                                                    }
-                                                } else if (key === 'settings') {
-                                                    finalVal = Object.assign({}, finalVal, localVal);
-                                                } else {
-                                                    finalVal = localVal;
-                                                }
+                                            if (key === 'settings') {
+                                                // Deep-merge: cloud provides base, local overrides
+                                                const cloudSettings = cloudData.settings || {};
+                                                const localSettings = appData.settings || {};
+                                                appData.settings = Object.assign({}, cloudSettings, localSettings);
+                                                localStorage.setItem('wf2_settings', JSON.stringify(appData.settings));
+                                                return;
                                             }
 
-                                            appData[key] = finalVal;
-                                            localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
+                                            appData[key] = cloudData[key];
+                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                                         });
-
-                                        if (isDirty) {
-                                            console.log('[SYNC] 🛡️ Unsynced changes detected across refresh! Pushing protected data to cloud.');
-                                            debouncedSync();
-                                        }
-
-                                        console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud');
+                                        console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud (settings merged)');
                                     } else if (doc && !doc.exists) {
                                         // First time — create cloud document
                                         console.log('[SYNC] 📝 Creating new cloud profile');
@@ -9149,12 +9081,31 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                 const source = snap.metadata.fromCache ? 'cache' : 'server';
                                                 const hasPending = snap.metadata.hasPendingWrites;
 
+                                                if (hasPending) {
+                                                    setSyncStatus('syncing');
+                                                } else {
+                                                    setSyncStatus(navigator.onLine ? 'online' : 'offline');
+                                                }
+
+                                                // SETTINGS FIX: Suppress echo — if this snapshot is just our own write bouncing back,
+                                                // skip the overwrite. This prevents the race condition where:
+                                                //   1. User changes setting → DB.set() → syncToCloud()
+                                                //   2. Cloud echoes back → onSnapshot fires → overwrites appData with stale/echo data
+                                                // We suppress for 3 seconds after any local write.
                                                 if (!hasPending && source === 'server') {
-                                                    console.log('[SYNC] 📥 Received cloud update from server');
-                                                    isSyncingFromCloud = true;
                                                     const cloudData = snap.data();
-                                                    let nonSessionChanged = false;
-                                                    let sessionsChanged = false;
+                                                    const msSinceLastWrite = Date.now() - _lastLocalWriteTs;
+                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() && msSinceLastWrite < 3000;
+
+                                                    if (isOwnEcho) {
+                                                        console.log('[SYNC] ⏭️ Suppressed own echo (written ' + msSinceLastWrite + 'ms ago)');
+                                                        // Still update sync status and timestamp
+                                                        lastSyncTime = Date.now();
+                                                        return;
+                                                    }
+
+                                                    console.log('[SYNC] 📥 Received cloud update from ANOTHER device');
+                                                    isSyncingFromCloud = true;
 
                                                     // Check if PIN was changed on another device
                                                     const newAuth = cloudData.auth;
@@ -9176,16 +9127,44 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         return;
                                                     }
 
+                                                    let nonSessionChanged = false;
+                                                    let sessionsChanged = false;
+
+                                                    const _isEq = (a, b) => {
+                                                        if (a === b) return true;
+                                                        if (a && b && typeof a == 'object' && typeof b == 'object') {
+                                                            if (Array.isArray(a) !== Array.isArray(b)) return false;
+                                                            let keys = Object.keys(a);
+                                                            if (keys.length !== Object.keys(b).length) return false;
+                                                            return keys.every(k => _isEq(a[k], b[k]));
+                                                        }
+                                                        return false;
+                                                    };
+
+                                                    // SETTINGS FIX: Deep-merge 'settings' instead of full replacement.
+                                                    // This ensures cloud data fills in missing keys but never wipes
+                                                    // keys that the user just changed locally.
                                                     Object.keys(cloudData).forEach(key => {
-                                                        if (key === '_lastModified' || key === '_lastModifiedBy') return;
+                                                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
-                                                        const newValStr = JSON.stringify(cloudData[key]);
-                                                        const oldValStr = JSON.stringify(appData[key]);
+                                                        if (key === 'settings') {
+                                                            // Merge strategy: cloud fills gaps, but local wins for existing keys
+                                                            const cloudSettings = cloudData.settings || {};
+                                                            const localSettings = appData.settings || {};
+                                                            const merged = Object.assign({}, cloudSettings, localSettings);
+                                                            // Only update if the merged result differs from current
+                                                            if (!_isEq(merged, localSettings)) {
+                                                                appData.settings = merged;
+                                                                localStorage.setItem('wf2_settings', JSON.stringify(merged));
+                                                                nonSessionChanged = true;
+                                                                console.log('[SYNC] 🔧 Settings merged (cloud filled gaps, local preserved)');
+                                                            }
+                                                            return;
+                                                        }
 
-                                                        if (newValStr !== oldValStr) {
+                                                        if (!_isEq(cloudData[key], appData[key])) {
                                                             appData[key] = cloudData[key];
                                                             localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                                                            
                                                             if (key === 'sessions') {
                                                                 sessionsChanged = true;
                                                             } else {
@@ -9193,7 +9172,6 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             }
                                                         }
                                                     });
-                                                    
                                                     isSyncingFromCloud = false;
                                                     lastSyncTime = Date.now();
 
@@ -9206,8 +9184,10 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             try { updateChequeBadge(); } catch (e) { }
                                                         }
                                                     } else if (sessionsChanged) {
-                                                        console.log('[SYNC] 🔄 Only sessions changed — updating tracking UI');
-                                                        try { renderSessionsUI(); } catch (e) { }
+                                                        console.log('[SYNC] 🔄 Sessions updated — localized render');
+                                                        if ($('app') && $('app').classList.contains('show') && document.getElementById('page-sessions')?.classList.contains('active')) {
+                                                            try { _renderSessionsDebounced(); } catch(e) {}
+                                                        }
                                                     }
                                                 }
                                             } catch (snapErr) {
@@ -9735,29 +9715,7 @@ YOUR PERSONALITY & CRITICAL RULES:
         // Auto-detect category from expense description
         async function autoDetectCategory(desc) {
             if (!desc || desc.length < 3) return;
-            
-            const s = DB.getObj('settings');
-            let searchDesc = desc;
-            
-            if (s.smartEntry) {
-                // Check if user typed a number at the end, e.g. "Coffee 500" or "Starbucks 12.50"
-                const match = desc.match(/(.+?)\s+([\d,.]+)$/);
-                if (match) {
-                    searchDesc = match[1].trim();
-                    const amtStr = match[2].replace(/,/g, '');
-                    const amt = parseFloat(amtStr);
-                    if (!isNaN(amt)) {
-                        const amtInput = $('e_amount');
-                        if (amtInput && !amtInput.value) { // Only auto-fill if empty
-                            amtInput.value = fmtN(amt);
-                            $('e_desc').value = searchDesc; // Clean up description
-                            triggerHaptic('light');
-                        }
-                    }
-                }
-            }
-
-            const cat = await autoCategorizeExpense(searchDesc);
+            const cat = await autoCategorizeExpense(desc);
             if (cat) {
                 const sel = $('e_cat');
                 if (sel) {
@@ -9894,7 +9852,7 @@ YOUR PERSONALITY & CRITICAL RULES:
         // ==================== SIDEBAR ====================
         const pgTitles = { dashboard: '📊 Dashboard', monthly: '📅 Monthly Plan', income: '💰 Income & Investments', loans: '🏦 Bank Loans', ccinstall: '💳 CC Installments', cconetime: '⏱️ CC One-Time Payments', cheques: '📄 Cheque Tracker', expenses: '🧾 Monthly Expenses', targets: '🎯 Targets & Savings', balance: '⚖️ Balance Tracker', dscr: '📐 DSCR Calculator', settings: '⚙️ System Settings', ai: '🤖 <span style="color:var(--accent)">AI Advisor</span>', score: '🏆 WealthFlow Score', subscriptions: '🔔 Subscriptions', debtdemo: '💣 Debt Demolisher', montecarlo: '🔮 Wealth Simulator', cashflow3d: '🌐 3D Cash Flow', sessions: '📱 Active Sessions' };
 
-        function _proceedShowPage(name, navEl) {
+        function showPage(name, navEl) {
             triggerHaptic('light');
             playUISound('click');
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -9921,42 +9879,6 @@ YOUR PERSONALITY & CRITICAL RULES:
             } else {
                 renderPage(name);
             }
-        }
-
-        async function verifyBiometricZone() {
-            const bio = getDeviceBiometric();
-            if (!bio || !bio.rawId) return true; // Allow if not registered
-            try {
-                const challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
-                const binaryString = atob(bio.rawId);
-                const rawId = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) { rawId[i] = binaryString.charCodeAt(i); }
-                const publicKey = {
-                    challenge, rpId: window.location.hostname,
-                    allowCredentials: [{ type: "public-key", id: rawId }],
-                    userVerification: "required", timeout: 60000
-                };
-                const assertion = await navigator.credentials.get({ publicKey });
-                return !!assertion;
-            } catch (e) {
-                console.error('[BIO]', e);
-                return false;
-            }
-        }
-
-        function showPage(name, navEl) {
-            const s = DB.getObj('settings');
-            if (s.strictBiometrics && (name === 'settings' || name === 'export')) {
-                verifyBiometricZone().then(ok => {
-                    if (ok) _proceedShowPage(name, navEl);
-                    else {
-                        notify('Biometric verification failed. Access Denied.', 'error');
-                        triggerHaptic('error');
-                    }
-                });
-                return;
-            }
-            _proceedShowPage(name, navEl);
         }
 
 
@@ -13487,48 +13409,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             const nowD = new Date();
             const curMonthStr = `${nowD.getFullYear()}-${p2(nowD.getMonth() + 1)}`;
             const curMonthExp = DB.get('expenses').filter(e => e.month === curMonthStr).reduce((s, e) => s + e.amount, 0);
-            
-            const s = DB.getObj('settings');
-            let forexHtml = '';
-            if (s.liveForex) {
-                const usdVal = (yrInc - yrExp) / (window._usdRate || 300); // fallback rate
-                forexHtml = `<div style="font-size:11px;color:var(--text3);margin-top:4px;">≈ USD ${fmtN(usdVal)} (Live)</div>`;
-                if (!window._usdRateLoading) {
-                    window._usdRateLoading = true;
-                    fetch('https://open.er-api.com/v6/latest/USD')
-                        .then(r => r.json())
-                        .then(data => {
-                            const cur = _getCurrency();
-                            if (data.rates[cur] && window._usdRate !== data.rates[cur]) {
-                                window._usdRate = data.rates[cur];
-                                setTimeout(() => { if($('app').classList.contains('show')) renderDash(); }, 100);
-                            }
-                        }).catch(()=>window._usdRateLoading=false);
-                }
-            }
-
-            let predictiveHtml = '';
-            if (s.predictiveCashFlow) {
-                let pastMonthsExp = 0, pastMonthsCount = 0;
-                for (let i = 0; i < nowD.getMonth(); i++) {
-                    const md = getMonthlyData(year, i);
-                    if (md.totalExp > 0) { pastMonthsExp += md.totalExp; pastMonthsCount++; }
-                }
-                const avgExp = pastMonthsCount > 0 ? pastMonthsExp / pastMonthsCount : 0;
-                const daysInMonth = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate();
-                const projectedExp = (curMonthExp / Math.max(1, nowD.getDate())) * daysInMonth;
-
-                if (avgExp > 0 && projectedExp > (avgExp * 1.15)) {
-                    predictiveHtml = `<div style="grid-column: 1 / -1; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--red); color: var(--red); padding: 12px; border-radius: var(--r); font-size: 13px; display: flex; align-items: center; gap: 8px; animation: pulse 2s infinite; margin-bottom: 8px;">
-                        <span>⚠️ <strong>Predictive AI Alert:</strong> Spending velocity is 15%+ higher than average. Projected: ${fmtS(projectedExp)} (Avg: ${fmtS(avgExp)}).</span>
-                    </div>`;
-                }
-            }
-
-            $('dashStats').innerHTML = predictiveHtml + `
+            $('dashStats').innerHTML = `
         <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div></div>
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
-        <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
+        <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">This Month Expenses</div><div class="stat-val">${fmtS(curMonthExp)}</div><div class="stat-meta">${MONTHS[nowD.getMonth()]} ${nowD.getFullYear()}</div></div>
         <div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>
     `;
@@ -13997,34 +13881,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
         </div>
 
-        <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">🚀 Advanced Automation & AI</div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Live Forex Integration</div><div class="setting-desc">Auto-update dashboard balances using real-time exchange rate APIs.</div></div>
-                <div class="toggle ${s.liveForex ? 'on' : ''}" onclick="toggleSetting('liveForex', ${!s.liveForex}); if(!${s.liveForex}){notify('Live Forex enabled. Exchange rates will auto-sync.','success'); triggerHaptic('success');}"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Smart Entry Auto-Complete</div><div class="setting-desc">AI predicts and auto-fills categories and amounts when you type short descriptions.</div></div>
-                <div class="toggle ${s.smartEntry ? 'on' : ''}" onclick="toggleSetting('smartEntry', ${!s.smartEntry});"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Aggressive Background Sync</div><div class="setting-desc">High-frequency syncing for maximum safety. Disable for battery saving.</div></div>
-                <div class="toggle ${s.aggressiveSync ? 'on' : ''}" onclick="toggleSetting('aggressiveSync', ${!s.aggressiveSync});"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Predictive Cash Flow AI</div><div class="setting-desc">Receive proactive warnings about burn rate and potential cash shortages.</div></div>
-                <div class="toggle ${s.predictiveCashFlow ? 'on' : ''}" onclick="toggleSetting('predictiveCashFlow', ${!s.predictiveCashFlow});"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Zone-Based Biometrics</div><div class="setting-desc">Require biometric authentication for sensitive actions (Export, Settings).</div></div>
-                <div class="toggle ${s.strictBiometrics ? 'on' : ''}" onclick="toggleSetting('strictBiometrics', ${!s.strictBiometrics});"></div>
-            </div>
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label" style="color:var(--red);">🚨 Panic / Decoy PIN</div><div class="setting-desc">Set a custom 6-digit PIN. If entered, a fake, untraceable dashboard loads.</div></div>
-                <button class="btn btn-secondary btn-sm" style="color:var(--red); border-color:var(--red);" onclick="setupDecoyMode()">Configure</button>
-            </div>
-        </div>
-
         <!-- System Integration / Gemini API Key removed from UI per security best practice. Backend keys are managed via Vercel ENV. -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(66, 133, 244, 0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:#4285F4;">🔌 AI Engine Status</div>
@@ -14062,10 +13918,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
                 <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
                 <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
-            </div>
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label">📸 AI Scanner Settings</div><div class="setting-desc">Tune scan mode (Quick / Deep / Ultra / Frontier with Gemini 3.1 Pro), TF.js enhancement, and default currency for receipts &amp; PDFs.</div></div>
-                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="if(typeof openScannerSettings==='function'){openScannerSettings()}else{notify('Scanner module still loading…','info')}">⚙️ Configure</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">🧠 Reset AI Memory</div><div class="setting-desc">Permanently erase the AI's memory of your conversation patterns and chat history.</div></div>
@@ -14339,8 +14191,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.9.1 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v6.9.1 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.4 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v6.4 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14349,7 +14201,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v6.9.1 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v6.4 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
