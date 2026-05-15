@@ -6112,11 +6112,25 @@
                             return;
                         }
 
+                        // Protect local pending writes from being wiped by a manual force sync
+                        if (Array.isArray(appData[key]) && Array.isArray(cloudData[key])) {
+                            const msSinceWrite = Date.now() - _lastLocalWriteTs;
+                            if (msSinceWrite < 60000 && JSON.stringify(appData[key]) !== JSON.stringify(cloudData[key])) {
+                                console.warn('[SYNC] 🛡️ forceSync: Race detected — keeping local state for "' + key + '"');
+                                isDirty = true;
+                                return; // Skip overwriting appData for this key
+                            }
+                        }
+
                         appData[key] = cloudData[key];
                         localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                     });
                     isSyncingFromCloud = false;
                     lastSyncTime = Date.now();
+                    
+                    if (isDirty) {
+                        debouncedSync(); // Ensure preserved local items are pushed!
+                    }
 
                     // Re-render active page
                     if ($('app').classList.contains('show')) {
@@ -9250,21 +9264,17 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             const cloudVal = cloudData[key];
                                                             const msSinceWrite = Date.now() - _lastLocalWriteTs;
                                                             let finalVal = cloudVal;
+                                                            // CRITICAL FIX: Preserve ENTIRE local array if written recently.
+                                                            // Prevents edits/deletions from reverting when an old cloud snapshot arrives.
                                                             if (Array.isArray(localVal) && Array.isArray(cloudVal) && msSinceWrite < 60000) {
-                                                                const cloudIds = new Set(
-                                                                    cloudVal.map(x => x && x.id).filter(Boolean)
-                                                                );
-                                                                const localOnly = localVal.filter(
-                                                                    x => x && x.id && !cloudIds.has(x.id)
-                                                                );
-                                                                if (localOnly.length > 0) {
-                                                                    console.warn('[SYNC] 🛡️ Race detected — keeping ' + localOnly.length +
-                                                                        ' local-only items in "' + key + '" (re-push will happen on next legit write)');
-                                                                    finalVal = cloudVal.concat(localOnly);
-                                                                    // Mark dirty so the NEXT debouncedSync (triggered by user action)
-                                                                    // pushes our additions. Do NOT call debouncedSync() here — that
-                                                                    // would cause an infinite loop.
+                                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
+                                                                    console.warn('[SYNC] 🛡️ Race detected — keeping local state for "' + key + '" to prevent revert.');
+                                                                    finalVal = localVal;
                                                                     isDirty = true;
+                                                                    
+                                                                    // We MUST trigger a debounced sync here, otherwise the preserved local 
+                                                                    // state will NEVER push to the cloud until the user manually triggers another save!
+                                                                    setTimeout(debouncedSync, 1000); 
                                                                 }
                                                             }
                                                             appData[key] = finalVal;
@@ -9819,7 +9829,29 @@ YOUR PERSONALITY & CRITICAL RULES:
         // Auto-detect category from expense description
         async function autoDetectCategory(desc) {
             if (!desc || desc.length < 3) return;
-            const cat = await autoCategorizeExpense(desc);
+            
+            const s = DB.getObj('settings');
+            let searchDesc = desc;
+            
+            if (s.smartEntry) {
+                // Check if user typed a number at the end, e.g. "Coffee 500" or "Starbucks 12.50"
+                const match = desc.match(/(.+?)\s+([\d,.]+)$/);
+                if (match) {
+                    searchDesc = match[1].trim();
+                    const amtStr = match[2].replace(/,/g, '');
+                    const amt = parseFloat(amtStr);
+                    if (!isNaN(amt)) {
+                        const amtInput = $('e_amount');
+                        if (amtInput && !amtInput.value) { // Only auto-fill if empty
+                            amtInput.value = fmtN(amt);
+                            $('e_desc').value = searchDesc; // Clean up description
+                            triggerHaptic('light');
+                        }
+                    }
+                }
+            }
+
+            const cat = await autoCategorizeExpense(searchDesc);
             if (cat) {
                 const sel = $('e_cat');
                 if (sel) {
@@ -9956,7 +9988,7 @@ YOUR PERSONALITY & CRITICAL RULES:
         // ==================== SIDEBAR ====================
         const pgTitles = { dashboard: '📊 Dashboard', monthly: '📅 Monthly Plan', income: '💰 Income & Investments', loans: '🏦 Bank Loans', ccinstall: '💳 CC Installments', cconetime: '⏱️ CC One-Time Payments', cheques: '📄 Cheque Tracker', expenses: '🧾 Monthly Expenses', targets: '🎯 Targets & Savings', balance: '⚖️ Balance Tracker', dscr: '📐 DSCR Calculator', settings: '⚙️ System Settings', ai: '🤖 <span style="color:var(--accent)">AI Advisor</span>', score: '🏆 WealthFlow Score', subscriptions: '🔔 Subscriptions', debtdemo: '💣 Debt Demolisher', montecarlo: '🔮 Wealth Simulator', cashflow3d: '🌐 3D Cash Flow', sessions: '📱 Active Sessions' };
 
-        function showPage(name, navEl) {
+        function _proceedShowPage(name, navEl) {
             triggerHaptic('light');
             playUISound('click');
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -9983,6 +10015,42 @@ YOUR PERSONALITY & CRITICAL RULES:
             } else {
                 renderPage(name);
             }
+        }
+
+        async function verifyBiometricZone() {
+            const bio = getDeviceBiometric();
+            if (!bio || !bio.rawId) return true; // Allow if not registered
+            try {
+                const challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
+                const binaryString = atob(bio.rawId);
+                const rawId = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) { rawId[i] = binaryString.charCodeAt(i); }
+                const publicKey = {
+                    challenge, rpId: window.location.hostname,
+                    allowCredentials: [{ type: "public-key", id: rawId }],
+                    userVerification: "required", timeout: 60000
+                };
+                const assertion = await navigator.credentials.get({ publicKey });
+                return !!assertion;
+            } catch (e) {
+                console.error('[BIO]', e);
+                return false;
+            }
+        }
+
+        function showPage(name, navEl) {
+            const s = DB.getObj('settings');
+            if (s.strictBiometrics && (name === 'settings' || name === 'export')) {
+                verifyBiometricZone().then(ok => {
+                    if (ok) _proceedShowPage(name, navEl);
+                    else {
+                        notify('Biometric verification failed. Access Denied.', 'error');
+                        triggerHaptic('error');
+                    }
+                });
+                return;
+            }
+            _proceedShowPage(name, navEl);
         }
 
 
@@ -13513,10 +13581,48 @@ table.amort tbody tr { page-break-inside: avoid; }
             const nowD = new Date();
             const curMonthStr = `${nowD.getFullYear()}-${p2(nowD.getMonth() + 1)}`;
             const curMonthExp = DB.get('expenses').filter(e => e.month === curMonthStr).reduce((s, e) => s + e.amount, 0);
-            $('dashStats').innerHTML = `
+            
+            const s = DB.getObj('settings');
+            let forexHtml = '';
+            if (s.liveForex) {
+                const usdVal = (yrInc - yrExp) / (window._usdRate || 300); // fallback rate
+                forexHtml = `<div style="font-size:11px;color:var(--text3);margin-top:4px;">≈ USD ${fmtN(usdVal)} (Live)</div>`;
+                if (!window._usdRateLoading) {
+                    window._usdRateLoading = true;
+                    fetch('https://open.er-api.com/v6/latest/USD')
+                        .then(r => r.json())
+                        .then(data => {
+                            const cur = _getCurrency();
+                            if (data.rates[cur] && window._usdRate !== data.rates[cur]) {
+                                window._usdRate = data.rates[cur];
+                                setTimeout(() => { if($('app').classList.contains('show')) renderDash(); }, 100);
+                            }
+                        }).catch(()=>window._usdRateLoading=false);
+                }
+            }
+
+            let predictiveHtml = '';
+            if (s.predictiveCashFlow) {
+                let pastMonthsExp = 0, pastMonthsCount = 0;
+                for (let i = 0; i < nowD.getMonth(); i++) {
+                    const md = getMonthlyData(year, i);
+                    if (md.totalExp > 0) { pastMonthsExp += md.totalExp; pastMonthsCount++; }
+                }
+                const avgExp = pastMonthsCount > 0 ? pastMonthsExp / pastMonthsCount : 0;
+                const daysInMonth = new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate();
+                const projectedExp = (curMonthExp / Math.max(1, nowD.getDate())) * daysInMonth;
+
+                if (avgExp > 0 && projectedExp > (avgExp * 1.15)) {
+                    predictiveHtml = `<div style="grid-column: 1 / -1; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--red); color: var(--red); padding: 12px; border-radius: var(--r); font-size: 13px; display: flex; align-items: center; gap: 8px; animation: pulse 2s infinite; margin-bottom: 8px;">
+                        <span>⚠️ <strong>Predictive AI Alert:</strong> Spending velocity is 15%+ higher than average. Projected: ${fmtS(projectedExp)} (Avg: ${fmtS(avgExp)}).</span>
+                    </div>`;
+                }
+            }
+
+            $('dashStats').innerHTML = predictiveHtml + `
         <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div></div>
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
-        <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div></div>
+        <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">This Month Expenses</div><div class="stat-val">${fmtS(curMonthExp)}</div><div class="stat-meta">${MONTHS[nowD.getMonth()]} ${nowD.getFullYear()}</div></div>
         <div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>
     `;
@@ -13982,6 +14088,34 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <option value="AUD" ${s.currency === 'AUD' ? 'selected' : ''}>🇦🇺 AUD</option>
                     <option value="INR" ${s.currency === 'INR' ? 'selected' : ''}>🇮🇳 INR</option>
                 </select>
+            </div>
+        </div>
+
+        <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
+            <div class="settings-title" style="color:var(--accent);">🚀 Advanced Automation & AI</div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Live Forex Integration</div><div class="setting-desc">Auto-update dashboard balances using real-time exchange rate APIs.</div></div>
+                <div class="toggle ${s.liveForex ? 'on' : ''}" onclick="toggleSetting('liveForex', ${!s.liveForex}); if(!${s.liveForex}){notify('Live Forex enabled. Exchange rates will auto-sync.','success'); triggerHaptic('success');}"></div>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Smart Entry Auto-Complete</div><div class="setting-desc">AI predicts and auto-fills categories and amounts when you type short descriptions.</div></div>
+                <div class="toggle ${s.smartEntry ? 'on' : ''}" onclick="toggleSetting('smartEntry', ${!s.smartEntry});"></div>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Aggressive Background Sync</div><div class="setting-desc">High-frequency syncing for maximum safety. Disable for battery saving.</div></div>
+                <div class="toggle ${s.aggressiveSync ? 'on' : ''}" onclick="toggleSetting('aggressiveSync', ${!s.aggressiveSync});"></div>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Predictive Cash Flow AI</div><div class="setting-desc">Receive proactive warnings about burn rate and potential cash shortages.</div></div>
+                <div class="toggle ${s.predictiveCashFlow ? 'on' : ''}" onclick="toggleSetting('predictiveCashFlow', ${!s.predictiveCashFlow});"></div>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Zone-Based Biometrics</div><div class="setting-desc">Require biometric authentication for sensitive actions (Export, Settings).</div></div>
+                <div class="toggle ${s.strictBiometrics ? 'on' : ''}" onclick="toggleSetting('strictBiometrics', ${!s.strictBiometrics});"></div>
+            </div>
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info"><div class="setting-label" style="color:var(--red);">🚨 Panic / Decoy PIN</div><div class="setting-desc">Set a custom 6-digit PIN. If entered, a fake, untraceable dashboard loads.</div></div>
+                <button class="btn btn-secondary btn-sm" style="color:var(--red); border-color:var(--red);" onclick="setupDecoyMode()">Configure</button>
             </div>
         </div>
 
