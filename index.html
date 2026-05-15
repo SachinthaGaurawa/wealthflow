@@ -4437,7 +4437,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v6.9 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v6.9.1 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -9058,6 +9058,18 @@ YOUR PERSONALITY & CRITICAL RULES:
                                             try { const item = localStorage.getItem('wf2_' + k); if (item) appData[k] = JSON.parse(item); } catch (e) { }
                                         });
                                         // Then merge cloud data on top, with special handling for settings
+                                        //
+                                        // CRITICAL FIX v6.9.1: BUG #2 — DATA LOST ON RELOAD
+                                        // ============================================================
+                                        // Symptom: user saves an expense. While "Syncing..." is showing,
+                                        // they reload the page. The cloud write hadn't completed yet, so
+                                        // the cloud still has the OLD (empty) array. Initial load reads
+                                        // cloud and overwrites localStorage → user's expense gone.
+                                        //
+                                        // Defence: for array-of-records keys, MERGE — keep any local
+                                        // items whose IDs are not in cloud (they're queued for sync).
+                                        // Mark dirty so they get pushed to cloud after init completes.
+                                        let _localOnlyCount = 0;
                                         Object.keys(cloudData).forEach(key => {
                                             if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
@@ -9070,10 +9082,37 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                 return;
                                             }
 
-                                            appData[key] = cloudData[key];
-                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
+                                            const localVal = appData[key];
+                                            const cloudVal = cloudData[key];
+                                            let finalVal = cloudVal;
+
+                                            // Array-merge protection: if local has items not in cloud, keep them
+                                            if (Array.isArray(localVal) && Array.isArray(cloudVal)) {
+                                                const cloudIds = new Set(cloudVal.map(x => x && x.id).filter(Boolean));
+                                                const localOnly = localVal.filter(x => x && x.id && !cloudIds.has(x.id));
+                                                if (localOnly.length > 0) {
+                                                    console.warn('[SYNC] 🛡️ INIT — preserving ' + localOnly.length +
+                                                        ' offline-only items in "' + key + '" (will be pushed to cloud)');
+                                                    finalVal = cloudVal.concat(localOnly);
+                                                    _localOnlyCount += localOnly.length;
+                                                }
+                                            }
+
+                                            appData[key] = finalVal;
+                                            localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
                                         });
                                         console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud (settings merged)');
+                                        // If we preserved local-only items, queue a push so cloud catches up
+                                        if (_localOnlyCount > 0) {
+                                            isDirty = true;
+                                            setTimeout(() => {
+                                                try { debouncedSync(); } catch (_) {}
+                                                if (typeof notify === 'function') {
+                                                    notify('🛡️ Restored ' + _localOnlyCount + ' offline change' +
+                                                        (_localOnlyCount > 1 ? 's' : '') + ' — syncing to cloud', 'info');
+                                                }
+                                            }, 1500);
+                                        }
                                     } else if (doc && !doc.exists) {
                                         // First time — create cloud document
                                         console.log('[SYNC] 📝 Creating new cloud profile');
@@ -9197,32 +9236,21 @@ YOUR PERSONALITY & CRITICAL RULES:
 
                                                         if (!_isEq(cloudData[key], appData[key])) {
                                                             // ============================================================
-                                                            // CRITICAL FIX v6.9: SAVE-DISAPPEAR BUG
+                                                            // CRITICAL FIX v6.9.1: SAVE-DISAPPEAR + INFINITE SYNC LOOP
                                                             // ============================================================
                                                             // Before blindly overwriting appData[key] with the cloud value,
                                                             // protect against the race where the cloud snapshot arrives
                                                             // BEFORE our recent local write has been replicated.
                                                             //
-                                                            // Symptom (verified by user screenshots): user adds an expense,
-                                                            // it appears in the UI, then vanishes a moment later.
-                                                            //
-                                                            // Root cause: Firestore delivers snapshots in this order on a
-                                                            // slow network:
-                                                            //   1. Local cache snapshot (hasPending=true) — ignored ✓
-                                                            //   2. Cloud-server snapshot from BEFORE our write was applied
-                                                            //      (hasPending=false, source=server) — overwrites appData
-                                                            //      with the array that LACKS our new entry. ✗
-                                                            //   3. Cloud-server snapshot AFTER our write was applied —
-                                                            //      would have echo-suppression but we've already lost data
-                                                            //
-                                                            // Defence: for arrays-of-records (with IDs), if the cloud
-                                                            // version lacks any IDs that exist locally AND the local write
-                                                            // is fresh (< 30 seconds old), MERGE instead of REPLACE.
+                                                            // v6.9 had a bug: it called debouncedSync() on every merge,
+                                                            // which caused an infinite sync loop ("Syncing..." never clears).
+                                                            // v6.9.1 fix: do NOT auto-re-sync — the user's next legitimate
+                                                            // action will trigger sync. Just protect the local data.
                                                             const localVal = appData[key];
                                                             const cloudVal = cloudData[key];
                                                             const msSinceWrite = Date.now() - _lastLocalWriteTs;
                                                             let finalVal = cloudVal;
-                                                            if (Array.isArray(localVal) && Array.isArray(cloudVal) && msSinceWrite < 30000) {
+                                                            if (Array.isArray(localVal) && Array.isArray(cloudVal) && msSinceWrite < 60000) {
                                                                 const cloudIds = new Set(
                                                                     cloudVal.map(x => x && x.id).filter(Boolean)
                                                                 );
@@ -9230,12 +9258,13 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                                     x => x && x.id && !cloudIds.has(x.id)
                                                                 );
                                                                 if (localOnly.length > 0) {
-                                                                    console.warn('[SYNC] 🛡️ Race detected — merging ' + localOnly.length +
-                                                                        ' local-only items into cloud array "' + key + '"');
+                                                                    console.warn('[SYNC] 🛡️ Race detected — keeping ' + localOnly.length +
+                                                                        ' local-only items in "' + key + '" (re-push will happen on next legit write)');
                                                                     finalVal = cloudVal.concat(localOnly);
-                                                                    // Re-push to make cloud authoritative
+                                                                    // Mark dirty so the NEXT debouncedSync (triggered by user action)
+                                                                    // pushes our additions. Do NOT call debouncedSync() here — that
+                                                                    // would cause an infinite loop.
                                                                     isDirty = true;
-                                                                    setTimeout(() => debouncedSync(), 50);
                                                                 }
                                                             }
                                                             appData[key] = finalVal;
@@ -14270,8 +14299,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.9 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v6.9 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.9.1 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v6.9.1 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14280,7 +14309,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v6.9 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v6.9.1 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
