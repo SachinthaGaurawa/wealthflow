@@ -6008,8 +6008,8 @@
         let isSyncingFromCloud = false;
         let syncDebounceTimer = null;
         let lastSyncTime = 0;
-        // PERSISTENT LOCAL TIMESTAMP: Survives browser refreshes to protect un-synced local data
-        let _lastLocalWriteTs = parseInt(localStorage.getItem('wf2__localWriteTs') || '0', 10);
+        // PERSISTENT LOCAL LOCK: Tracks if we have un-synced local data. Survives browser reloads.
+        let _pendingLocalWrite = parseInt(localStorage.getItem('wf2__pendingLocalWrite') || '0', 10);
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
@@ -6023,8 +6023,10 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
-                _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
-                localStorage.setItem('wf2__localWriteTs', _lastLocalWriteTs.toString());
+                
+                // Acquire Local Write Lock
+                _pendingLocalWrite = Date.now();
+                localStorage.setItem('wf2__pendingLocalWrite', _pendingLocalWrite.toString());
                 // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
                 try {
                     if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
@@ -6071,24 +6073,32 @@
 
             setSyncStatus('syncing');
 
-            // Add sync metadata — include a device-level write stamp to identify our own echoes
+            // Capture the exact lock state we are about to push
+            const currentLockTs = _pendingLocalWrite;
+
             const syncPayload = Object.assign({}, appData, {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                 _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
                 _writeDeviceId: _getDeviceId(),
-                _writeTs: _lastLocalWriteTs // Bind cloud timestamp EXACTLY to our local logical timestamp
+                _writeTs: Date.now()
             });
 
             // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
             userDocRef.set(syncPayload, { merge: true }).then(() => {
                 isDirty = false;
                 lastSyncTime = Date.now();
-                _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
+                
+                // Release the Local Write Lock ONLY IF no new local writes happened during the push
+                if (_pendingLocalWrite === currentLockTs) {
+                    _pendingLocalWrite = 0;
+                    localStorage.removeItem('wf2__pendingLocalWrite');
+                }
+                
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
             }).catch(err => {
                 console.error('[SYNC] ❌ Push failed:', err.code, err.message);
-                // Don't set offline — Firestore will retry automatically via persistence
+                // Lock remains active so local data stays protected!
                 setTimeout(() => setSyncStatus(navigator.onLine ? 'online' : 'offline'), 1000);
             });
         }
@@ -6103,13 +6113,13 @@
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
                     
-                    const cloudWriteTs = cloudData._writeTs || 0;
-                    if (_lastLocalWriteTs > cloudWriteTs) {
-                        console.warn(`[SYNC] 🛡️ Force sync blocked! Local data (${_lastLocalWriteTs}) is newer than cloud (${cloudWriteTs}).`);
+                    // If we have pending local writes, completely block incoming manual syncs to protect our data
+                    if (_pendingLocalWrite > 0) {
+                        console.warn(`[SYNC] 🛡️ Force sync blocked! Local data is locked and pending upload.`);
                         isDirty = true;
-                        debouncedSync(); // Push our newer local data to cloud
+                        debouncedSync(); 
                         isSyncingFromCloud = false;
-                        notify('Local data is newer. Pushing to cloud...', 'info');
+                        notify('Pushing pending local data to cloud...', 'info');
                         return;
                     }
 
@@ -9184,21 +9194,20 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                 if (!hasPending && source === 'server') {
                                                     const cloudData = snap.data();
                                                     
-                                                    // CRITICAL FIX v7.0: Absolute Logical Timestamp Protection
-                                                    // Prevents data disappearance even if the browser is refreshed immediately after adding a record.
-                                                    const cloudWriteTs = cloudData._writeTs || 0;
-                                                    if (_lastLocalWriteTs > cloudWriteTs) {
-                                                        console.warn(`[SYNC] 🛡️ Snapshot blocked! Local data (${_lastLocalWriteTs}) is newer than cloud (${cloudWriteTs}).`);
+                                                    // CRITICAL FIX v8.0: Local Write Lock
+                                                    // If we have pending local changes, completely block incoming cloud snapshots
+                                                    // to ensure our local data is never overwritten by a stale snapshot or concurrent edit.
+                                                    if (_pendingLocalWrite > 0) {
+                                                        console.warn(`[SYNC] 🛡️ Snapshot blocked! Local Write Lock is active.`);
                                                         isDirty = true;
                                                         setTimeout(debouncedSync, 1000);
-                                                        return; // Completely drop this stale snapshot to protect local pending writes
+                                                        return;
                                                     }
 
-                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() && _lastLocalWriteTs === cloudWriteTs;
-
+                                                    // Suppress the echo of our own successful pushes to avoid unnecessary UI renders
+                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId();
                                                     if (isOwnEcho) {
                                                         console.log('[SYNC] ⏭️ Suppressed own echo.');
-                                                        // Still update sync status and timestamp
                                                         lastSyncTime = Date.now();
                                                         return;
                                                     }
