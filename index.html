@@ -6005,11 +6005,9 @@
         let isInitialised = false;
         let inactivityTimer = 0;
         let isDirty = false;
-        let isSyncingFromCloud = false;
-        let syncDebounceTimer = null;
         let lastSyncTime = 0;
-        // PERSISTENT LOCAL TIMESTAMP: Survives browser refreshes to protect un-synced local data
-        let _lastLocalWriteTs = parseInt(localStorage.getItem('wf2__localWriteTs') || '0', 10);
+        // PERSISTENT WRITE ID: Tracks if we have pending local changes to prevent stale cloud overwrites
+        let _localWriteId = localStorage.getItem('wf2__localWriteId') || null;
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
@@ -6023,8 +6021,8 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
-                _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
-                localStorage.setItem('wf2__localWriteTs', _lastLocalWriteTs.toString());
+                _localWriteId = 'w_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+                localStorage.setItem('wf2__localWriteId', _localWriteId);
                 // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
                 try {
                     if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
@@ -6054,8 +6052,10 @@
                 };
             }
         });
-        // Setter so v5 can flag a pending write
-        window._wfMarkLocalWrite = function () { _lastLocalWriteTs = Date.now(); localStorage.setItem('wf2__localWriteTs', _lastLocalWriteTs.toString()); };
+        window._wfMarkLocalWrite = function () { 
+            _localWriteId = 'w_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+            localStorage.setItem('wf2__localWriteId', _localWriteId);
+        };
 
         function debouncedSync() {
             if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
@@ -6076,7 +6076,7 @@
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                 _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
                 _writeDeviceId: _getDeviceId(),
-                _writeTs: _lastLocalWriteTs // Bind cloud timestamp EXACTLY to our local logical timestamp
+                _writeId: _localWriteId // Bind cloud state to our exact write session
             });
 
             // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
@@ -6102,18 +6102,26 @@
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
                     
-                    const cloudWriteTs = cloudData._writeTs || 0;
-                    if (_lastLocalWriteTs > cloudWriteTs) {
-                        console.warn(`[SYNC] 🛡️ Force sync blocked! Local data (${_lastLocalWriteTs}) is newer than cloud (${cloudWriteTs}).`);
+                    const cloudWriteId = cloudData._writeId || null;
+                    const isPending = _localWriteId !== null && _localWriteId !== cloudWriteId;
+
+                    if (isPending) {
+                        console.warn(`[SYNC] 🛡️ Force sync blocked! Local write (${_localWriteId}) is pending (cloud has ${cloudWriteId}).`);
                         isDirty = true;
                         debouncedSync(); // Push our newer local data to cloud
                         isSyncingFromCloud = false;
-                        notify('Local data is newer. Pushing to cloud...', 'info');
+                        notify('Local data is pending sync. Pushing to cloud...', 'info');
                         return;
                     }
 
+                    // Since we successfully matched (or have no pending), clear the local write ID
+                    if (_localWriteId === cloudWriteId) {
+                        _localWriteId = null;
+                        localStorage.removeItem('wf2__localWriteId');
+                    }
+
                     Object.keys(cloudData).forEach(key => {
-                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
+                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs' || key === '_writeId') return;
 
                         if (key === 'settings') {
                             // Deep-merge settings: cloud fills gaps, local wins for existing keys
@@ -9087,7 +9095,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                         // Mark dirty so they get pushed to cloud after init completes.
                                         let _localOnlyCount = 0;
                                         Object.keys(cloudData).forEach(key => {
-                                            if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
+                                            if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs' || key === '_writeId') return;
 
                                             if (key === 'settings') {
                                                 // Deep-merge: cloud provides base, local overrides
@@ -9175,25 +9183,28 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     setSyncStatus(navigator.onLine ? 'online' : 'offline');
                                                 }
 
-                                                // SETTINGS FIX: Suppress echo — if this snapshot is just our own write bouncing back,
-                                                // skip the overwrite. This prevents the race condition where:
-                                                //   1. User changes setting → DB.set() → syncToCloud()
-                                                //   2. Cloud echoes back → onSnapshot fires → overwrites appData with stale/echo data
-                                                // We suppress for 3 seconds after any local write.
                                                 if (!hasPending && source === 'server') {
                                                     const cloudData = snap.data();
                                                     
-                                                    // CRITICAL FIX v7.0: Absolute Logical Timestamp Protection
-                                                    // Prevents data disappearance even if the browser is refreshed immediately after adding a record.
-                                                    const cloudWriteTs = cloudData._writeTs || 0;
-                                                    if (_lastLocalWriteTs > cloudWriteTs) {
-                                                        console.warn(`[SYNC] 🛡️ Snapshot blocked! Local data (${_lastLocalWriteTs}) is newer than cloud (${cloudWriteTs}).`);
+                                                    // CRITICAL FIX v7.1: Exact Write ID Protection
+                                                    // Completely eliminates clock-drift bugs across devices while protecting pending writes.
+                                                    const cloudWriteId = cloudData._writeId || null;
+                                                    const isPending = _localWriteId !== null && _localWriteId !== cloudWriteId;
+
+                                                    if (isPending) {
+                                                        console.warn(`[SYNC] 🛡️ Snapshot blocked! Local write (${_localWriteId}) is pending (cloud has ${cloudWriteId}).`);
                                                         isDirty = true;
                                                         setTimeout(debouncedSync, 1000);
-                                                        return; // Completely drop this stale snapshot to protect local pending writes
+                                                        return; // Completely drop this stale/interrupted snapshot to protect local pending writes
                                                     }
 
-                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() && _lastLocalWriteTs === cloudWriteTs;
+                                                    // We matched! Clear the pending lock so we can accept future snapshots from other devices
+                                                    if (_localWriteId !== null && _localWriteId === cloudWriteId) {
+                                                        _localWriteId = null;
+                                                        localStorage.removeItem('wf2__localWriteId');
+                                                    }
+
+                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId();
 
                                                     if (isOwnEcho) {
                                                         console.log('[SYNC] ⏭️ Suppressed own echo.');
@@ -9243,7 +9254,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     // This ensures cloud data fills in missing keys but never wipes
                                                     // keys that the user just changed locally.
                                                     Object.keys(cloudData).forEach(key => {
-                                                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
+                                                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs' || key === '_writeId') return;
 
                                                         if (key === 'settings') {
                                                             // Merge strategy: cloud fills gaps, but local wins for existing keys
