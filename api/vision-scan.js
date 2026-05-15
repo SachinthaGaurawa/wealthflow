@@ -165,21 +165,23 @@ RULES:
 
 // ==================== ENGINES ====================
 
-async function callGemini31Pro(image, prompt, geminiKey) {
+async function callGemini31Pro(image, prompt, geminiKey, isUniversal) {
     if (!geminiKey) throw new Error('no_key');
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${geminiKey}`;
+    const genConfig = {
+        temperature: isUniversal ? 0.3 : 0.05,
+        maxOutputTokens: isUniversal ? 8192 : 4096,
+        thinkingConfig: { thinkingLevel: isUniversal ? 'high' : 'medium' }
+    };
+    if (!isUniversal) genConfig.responseMimeType = 'application/json';
     const resp = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: 'image/jpeg', data: image } }] }],
-            generationConfig: {
-                temperature: 0.05, maxOutputTokens: 4096,
-                responseMimeType: 'application/json',
-                thinkingConfig: { thinkingLevel: 'medium' }
-            }
+            generationConfig: genConfig
         })
-    }, 45000);
+    }, isUniversal ? 60000 : 45000);
     if (!resp.ok) throw new Error(`status ${resp.status}: ${(await resp.text()).slice(0, 200)}`);
     const data = await resp.json();
     if (data.promptFeedback?.blockReason) throw new Error('blocked');
@@ -744,6 +746,33 @@ function normaliseEngineOutput(parsed, hints) {
 function consensus(engineResults, hints) {
     const successful = engineResults.filter(r => r.fields);
     if (successful.length === 0) return null;
+
+    // UNIVERSAL VISION: pick the most-detailed response, attach all alternatives
+    const isUniversal = hints && (hints.taskType === 'universal_vision' || hints.customPrompt);
+    if (isUniversal) {
+        // Score each by length + structure depth; the longest most-substantive response wins
+        const ranked = successful.map(r => ({
+            engine: r.name,
+            text: (r.fields.raw_text || '').trim(),
+            length: (r.fields.raw_text || '').length
+        })).sort((a, b) => b.length - a.length);
+        const primary = ranked[0];
+        return {
+            result: {
+                vendor: null, amount: null, date: null, category: null,
+                items: [], currency: null, tax: null,
+                payment_method: null, receipt_number: null, time: null,
+                raw_text: primary.text,
+                primary_engine: primary.engine,
+                alternative_responses: ranked.slice(1, 4).map(r => ({ engine: r.engine, length: r.length }))
+            },
+            confidence: {
+                overall: Math.min(0.95, 0.5 + 0.1 * successful.length),
+                engines_agreed: successful.length
+            }
+        };
+    }
+
     if (successful.length === 1) {
         const f = successful[0].fields;
         return { result: f, confidence: {
@@ -821,8 +850,21 @@ function consensus(engineResults, hints) {
 
 async function runEngine(name, fn, hints) {
     const start = Date.now();
+    const isUniversal = hints && (hints.taskType === 'universal_vision' || hints.customPrompt);
     try {
         const raw = await fn();
+        if (isUniversal) {
+            // Universal-vision mode: return raw text — do NOT force receipt JSON
+            return {
+                name, success: true, ms: Date.now() - start,
+                fields: {
+                    raw_text: typeof raw === 'string' ? raw : JSON.stringify(raw),
+                    vendor: null, amount: null, date: null, category: null,
+                    items: [], currency: null, tax: null,
+                    payment_method: null, receipt_number: null, time: null
+                }
+            };
+        }
         const parsed = extractJSON(raw);
         if (!parsed) throw new Error('invalid_json');
         const fields = normaliseEngineOutput(parsed, hints);
@@ -876,7 +918,10 @@ export default async function handler(req, res) {
         hfKey: process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN,
         sambanovaKey: process.env.SAMBANOVA_API_KEY
     };
-    const prompt = buildReceiptPrompt(hints);
+    // If the client provides a customPrompt (e.g. for universal vision tasks like
+    // identifying a car), use that instead of the receipt-specific prompt.
+    const prompt = (hints && hints.customPrompt) ? hints.customPrompt : buildReceiptPrompt(hints);
+    const isUniversal = hints && (hints.taskType === 'universal_vision' || hints.customPrompt);
 
     // ---------- QUICK ----------
     if (mode === 'quick') {
@@ -904,7 +949,7 @@ export default async function handler(req, res) {
     const engines = [];
 
     if (mode === 'frontier' && keys.geminiKey) {
-        engines.push({ name: 'gemini-3.1-pro-preview', fn: () => callGemini31Pro(image, prompt, keys.geminiKey) });
+        engines.push({ name: 'gemini-3.1-pro-preview', fn: () => callGemini31Pro(image, prompt, keys.geminiKey, isUniversal) });
         engines.push({ name: 'gemini-3-flash-preview', fn: () => callGemini3Flash(image, prompt, keys.geminiKey) });
     }
     // Anthropic Claude — premium quality, only in frontier mode
