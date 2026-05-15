@@ -6038,6 +6038,17 @@
             }
         };
 
+        function isDeepEqual(a, b) {
+            if (a === b) return true;
+            if (a && b && typeof a == 'object' && typeof b == 'object') {
+                if (Array.isArray(a) !== Array.isArray(b)) return false;
+                let keys = Object.keys(a);
+                if (keys.length !== Object.keys(b).length) return false;
+                return keys.every(k => isDeepEqual(a[k], b[k]));
+            }
+            return false;
+        }
+
         // ============================================================================
         // CRITICAL FIX v6.9: expose key globals on window for cross-script access
         // (lexical const/let declarations don't auto-attach to window in browsers)
@@ -6118,7 +6129,7 @@
 
                         // Protect local pending writes from being wiped by a manual force sync
                         if (Array.isArray(appData[key]) && Array.isArray(cloudData[key])) {
-                            if (isDirty && JSON.stringify(appData[key]) !== JSON.stringify(cloudData[key])) {
+                            if (isDirty && !isDeepEqual(appData[key], cloudData[key])) {
                                 console.warn('[SYNC] 🛡️ forceSync: Race detected (unsynced local changes) — keeping local state for "' + key + '"');
                                 setDirty(true);
                                 return; // Skip overwriting appData for this key
@@ -9106,7 +9117,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                             // If the local database has pending writes, PRESERVE local state entirely
                                             // to prevent edits/deletions from being overwritten by old cloud data.
                                             if (isDirty) {
-                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
+                                                if (!isDeepEqual(localVal, cloudVal)) {
                                                     console.warn('[SYNC] 🛡️ INIT — Unsynced local changes detected. Preferring local cache over cloud for "' + key + '".');
                                                     finalVal = localVal;
                                                     _localOnlyCount++;
@@ -9229,17 +9240,6 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     let nonSessionChanged = false;
                                                     let sessionsChanged = false;
 
-                                                    const _isEq = (a, b) => {
-                                                        if (a === b) return true;
-                                                        if (a && b && typeof a == 'object' && typeof b == 'object') {
-                                                            if (Array.isArray(a) !== Array.isArray(b)) return false;
-                                                            let keys = Object.keys(a);
-                                                            if (keys.length !== Object.keys(b).length) return false;
-                                                            return keys.every(k => _isEq(a[k], b[k]));
-                                                        }
-                                                        return false;
-                                                    };
-
                                                     // SETTINGS FIX: Deep-merge 'settings' instead of full replacement.
                                                     // This ensures cloud data fills in missing keys but never wipes
                                                     // keys that the user just changed locally.
@@ -9252,7 +9252,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             const localSettings = appData.settings || {};
                                                             const merged = Object.assign({}, cloudSettings, localSettings);
                                                             // Only update if the merged result differs from current
-                                                            if (!_isEq(merged, localSettings)) {
+                                                            if (!isDeepEqual(merged, localSettings)) {
                                                                 appData.settings = merged;
                                                                 localStorage.setItem('wf2_settings', JSON.stringify(merged));
                                                                 nonSessionChanged = true;
@@ -9261,7 +9261,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             return;
                                                         }
 
-                                                        if (!_isEq(cloudData[key], appData[key])) {
+                                                        if (!isDeepEqual(cloudData[key], appData[key])) {
                                                             // ============================================================
                                                             // CRITICAL FIX v6.9.1: SAVE-DISAPPEAR + INFINITE SYNC LOOP
                                                             // ============================================================
@@ -9279,7 +9279,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             // CRITICAL FIX: Preserve ENTIRE local array if we have pending local writes.
                                                             // Prevents edits/deletions from reverting when an old cloud snapshot arrives.
                                                             if (Array.isArray(localVal) && Array.isArray(cloudVal) && isDirty) {
-                                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
+                                                                if (!isDeepEqual(localVal, cloudVal)) {
                                                                     console.warn('[SYNC] 🛡️ Race detected (unsynced local changes) — keeping local state for "' + key + '" to prevent revert.');
                                                                     finalVal = localVal;
                                                                     setDirty(true);
