@@ -6004,20 +6004,17 @@
         };
         let isInitialised = false;
         let inactivityTimer = 0;
-        let isDirty = localStorage.getItem('wf2_isDirty') === 'true';
-        function setDirty(state) {
-            isDirty = state;
-            localStorage.setItem('wf2_isDirty', state ? 'true' : 'false');
-        }
+        let isDirty = false;
         let isSyncingFromCloud = false;
         let syncDebounceTimer = null;
         let lastSyncTime = 0;
-        let _lastLocalWriteTs = 0;  // Timestamp of last local DB.set() — used to suppress onSnapshot echo
+        // PERSISTENT LOCAL TIMESTAMP: Survives browser refreshes to protect un-synced local data
+        let _lastLocalWriteTs = parseInt(localStorage.getItem('wf2__localWriteTs') || '0', 10);
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
             getObj(k, def = {}) { return appData[k] !== undefined ? appData[k] : def; },
-            set(k, v, silent = false) {
+            set(k, v) {
                 // ISSUE 5 FIX — Decoy/Panic Mode is READ-ONLY. Never persists or syncs anywhere.
                 if (window._isDecoyMode === true) {
                     appData[k] = v; // in-memory only; lost on reload
@@ -6026,13 +6023,14 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
-                if (!silent) _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
+                _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
+                localStorage.setItem('wf2__localWriteTs', _lastLocalWriteTs.toString());
                 // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
                 try {
                     if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
                 } catch (_) { /* ignore */ }
-                if (!isSyncingFromCloud && !silent) {
-                    setDirty(true);
+                if (!isSyncingFromCloud) {
+                    isDirty = true;
                     debouncedSync();
                 }
             }
@@ -6078,12 +6076,12 @@
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                 _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
                 _writeDeviceId: _getDeviceId(),
-                _writeTs: Date.now()
+                _writeTs: _lastLocalWriteTs // Bind cloud timestamp EXACTLY to our local logical timestamp
             });
 
             // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
             userDocRef.set(syncPayload, { merge: true }).then(() => {
-                setDirty(false);
+                isDirty = false;
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
@@ -6104,6 +6102,17 @@
                 if (doc.exists) {
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
+                    
+                    const cloudWriteTs = cloudData._writeTs || 0;
+                    if (_lastLocalWriteTs > cloudWriteTs) {
+                        console.warn(`[SYNC] 🛡️ Force sync blocked! Local data (${_lastLocalWriteTs}) is newer than cloud (${cloudWriteTs}).`);
+                        isDirty = true;
+                        debouncedSync(); // Push our newer local data to cloud
+                        isSyncingFromCloud = false;
+                        notify('Local data is newer. Pushing to cloud...', 'info');
+                        return;
+                    }
+
                     Object.keys(cloudData).forEach(key => {
                         if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
@@ -6114,15 +6123,6 @@
                             appData.settings = Object.assign({}, cloudSettings, localSettings);
                             localStorage.setItem('wf2_settings', JSON.stringify(appData.settings));
                             return;
-                        }
-
-                        // Protect local pending writes from being wiped by a manual force sync
-                        if (Array.isArray(appData[key]) && Array.isArray(cloudData[key])) {
-                            if (isDirty && JSON.stringify(appData[key]) !== JSON.stringify(cloudData[key])) {
-                                console.warn('[SYNC] 🛡️ forceSync: Race detected (unsynced local changes) — keeping local state for "' + key + '"');
-                                setDirty(true);
-                                return; // Skip overwriting appData for this key
-                            }
                         }
 
                         appData[key] = cloudData[key];
@@ -8152,12 +8152,12 @@ YOUR PERSONALITY & CRITICAL RULES:
 
                 // Push restored data to Firestore
                 if (userDocRef) {
-                    setDirty(true);
+                    isDirty = true;
                     await userDocRef.set(Object.assign({}, appData, {
                         _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                         _lastModifiedBy: currentUser ? currentUser.uid : 'restore'
                     }));
-                    setDirty(false);
+                    isDirty = false;
                 }
 
                 closeModal('mdRestoreCloud');
@@ -9103,25 +9103,15 @@ YOUR PERSONALITY & CRITICAL RULES:
                                             const cloudVal = cloudData[key];
                                             let finalVal = cloudVal;
 
-                                            // If the local database has pending writes, PRESERVE local state entirely
-                                            // to prevent edits/deletions from being overwritten by old cloud data.
-                                            if (isDirty) {
-                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
-                                                    console.warn('[SYNC] 🛡️ INIT — Unsynced local changes detected. Preferring local cache over cloud for "' + key + '".');
-                                                    finalVal = localVal;
-                                                    _localOnlyCount++;
-                                                }
-                                            } else {
-                                                // Fallback to array-merge if isDirty wasn't properly tracked (legacy protection)
-                                                if (Array.isArray(localVal) && Array.isArray(cloudVal)) {
-                                                    const cloudIds = new Set(cloudVal.map(x => x && x.id).filter(Boolean));
-                                                    const localOnly = localVal.filter(x => x && x.id && !cloudIds.has(x.id));
-                                                    if (localOnly.length > 0) {
-                                                        console.warn('[SYNC] 🛡️ INIT — preserving ' + localOnly.length +
-                                                            ' offline-only items in "' + key + '" (will be pushed to cloud)');
-                                                        finalVal = cloudVal.concat(localOnly);
-                                                        _localOnlyCount += localOnly.length;
-                                                    }
+                                            // Array-merge protection: if local has items not in cloud, keep them
+                                            if (Array.isArray(localVal) && Array.isArray(cloudVal)) {
+                                                const cloudIds = new Set(cloudVal.map(x => x && x.id).filter(Boolean));
+                                                const localOnly = localVal.filter(x => x && x.id && !cloudIds.has(x.id));
+                                                if (localOnly.length > 0) {
+                                                    console.warn('[SYNC] 🛡️ INIT — preserving ' + localOnly.length +
+                                                        ' offline-only items in "' + key + '" (will be pushed to cloud)');
+                                                    finalVal = cloudVal.concat(localOnly);
+                                                    _localOnlyCount += localOnly.length;
                                                 }
                                             }
 
@@ -9131,7 +9121,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                         console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud (settings merged)');
                                         // If we preserved local-only items, queue a push so cloud catches up
                                         if (_localOnlyCount > 0) {
-                                            setDirty(true);
+                                            isDirty = true;
                                             setTimeout(() => {
                                                 try { debouncedSync(); } catch (_) {}
                                                 if (typeof notify === 'function') {
@@ -9193,11 +9183,21 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                 // We suppress for 3 seconds after any local write.
                                                 if (!hasPending && source === 'server') {
                                                     const cloudData = snap.data();
-                                                    const msSinceLastWrite = Date.now() - _lastLocalWriteTs;
-                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() && msSinceLastWrite < 3000;
+                                                    
+                                                    // CRITICAL FIX v7.0: Absolute Logical Timestamp Protection
+                                                    // Prevents data disappearance even if the browser is refreshed immediately after adding a record.
+                                                    const cloudWriteTs = cloudData._writeTs || 0;
+                                                    if (_lastLocalWriteTs > cloudWriteTs) {
+                                                        console.warn(`[SYNC] 🛡️ Snapshot blocked! Local data (${_lastLocalWriteTs}) is newer than cloud (${cloudWriteTs}).`);
+                                                        isDirty = true;
+                                                        setTimeout(debouncedSync, 1000);
+                                                        return; // Completely drop this stale snapshot to protect local pending writes
+                                                    }
+
+                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() && _lastLocalWriteTs === cloudWriteTs;
 
                                                     if (isOwnEcho) {
-                                                        console.log('[SYNC] ⏭️ Suppressed own echo (written ' + msSinceLastWrite + 'ms ago)');
+                                                        console.log('[SYNC] ⏭️ Suppressed own echo.');
                                                         // Still update sync status and timestamp
                                                         lastSyncTime = Date.now();
                                                         return;
@@ -9275,28 +9275,16 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             // action will trigger sync. Just protect the local data.
                                                             const localVal = appData[key];
                                                             const cloudVal = cloudData[key];
+                                                            // Since we now block stale snapshots entirely at the root of onSnapshot,
+                                                            // any data reaching here is guaranteed to be NEWER or EQUAL to our local state.
+                                                            // We can safely accept the cloud arrays without doing fragile array merges.
                                                             let finalVal = cloudVal;
-                                                            // CRITICAL FIX: Preserve ENTIRE local array if we have pending local writes.
-                                                            // Prevents edits/deletions from reverting when an old cloud snapshot arrives.
-                                                            if (Array.isArray(localVal) && Array.isArray(cloudVal) && isDirty) {
-                                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
-                                                                    console.warn('[SYNC] 🛡️ Race detected (unsynced local changes) — keeping local state for "' + key + '" to prevent revert.');
-                                                                    finalVal = localVal;
-                                                                    setDirty(true);
-                                                                    
-                                                                    // We MUST trigger a debounced sync here, otherwise the preserved local 
-                                                                    // state will NEVER push to the cloud until the user manually triggers another save!
-                                                                    setTimeout(debouncedSync, 1000); 
-                                                                }
-                                                            }
-                                                            if (finalVal !== localVal) {
-                                                                appData[key] = finalVal;
-                                                                localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
-                                                                if (key === 'sessions') {
-                                                                    sessionsChanged = true;
-                                                                } else {
-                                                                    nonSessionChanged = true;
-                                                                }
+                                                            appData[key] = finalVal;
+                                                            localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
+                                                            if (key === 'sessions') {
+                                                                sessionsChanged = true;
+                                                            } else {
+                                                                nonSessionChanged = true;
                                                             }
                                                         }
                                                     });
@@ -13643,11 +13631,8 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 
             const ctxC = $('dashChart');
-            if (dashChartInst) {
-                dashChartInst.data.datasets[0].data = incData;
-                dashChartInst.data.datasets[1].data = expData;
-                dashChartInst.update('none');
-            } else if (ctxC) {
+            if (dashChartInst) dashChartInst.destroy();
+            if (ctxC) {
                 dashChartInst = new Chart(ctxC, {
                     type: 'line',
                     data: {
@@ -13664,11 +13649,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             const catMap = {};
             DB.get('expenses').filter(e => e.month.startsWith(year)).forEach(e => { catMap[e.cat] = (catMap[e.cat] || 0) + e.amount; });
             const pCtx = $('dashPie');
-            if (dashPieInst) {
-                dashPieInst.data.labels = Object.keys(catMap);
-                dashPieInst.data.datasets[0].data = Object.values(catMap);
-                dashPieInst.update('none');
-            } else if (pCtx) {
+            if (dashPieInst) dashPieInst.destroy();
+            if (pCtx) {
                 dashPieInst = new Chart(pCtx, {
                     type: 'doughnut',
                     data: {
@@ -17089,7 +17071,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const idx = sessions.findIndex(s => s.id === sessionId);
             if (idx > -1) {
                 sessions[idx].lastActive = new Date().toISOString();
-                DB.set('sessions', sessions, true);
+                DB.set('sessions', sessions);
                 if (currentUser && firebase.firestore && userDocRef) {
                     try { await userDocRef.set({ sessions }, { merge: true }); } catch(e) {}
                 }
@@ -17211,7 +17193,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 sessions.push(currentSession);
             }
 
-            DB.set('sessions', sessions, true);
+            DB.set('sessions', sessions);
 
             if (currentUser && firebase.firestore && userDocRef) {
                 try {
