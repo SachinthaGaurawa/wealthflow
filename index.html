@@ -6017,7 +6017,7 @@
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
             getObj(k, def = {}) { return appData[k] !== undefined ? appData[k] : def; },
-            set(k, v) {
+            set(k, v, silent = false) {
                 // ISSUE 5 FIX — Decoy/Panic Mode is READ-ONLY. Never persists or syncs anywhere.
                 if (window._isDecoyMode === true) {
                     appData[k] = v; // in-memory only; lost on reload
@@ -6026,12 +6026,12 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
-                _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
+                if (!silent) _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
                 // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
                 try {
                     if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
                 } catch (_) { /* ignore */ }
-                if (!isSyncingFromCloud) {
+                if (!isSyncingFromCloud && !silent) {
                     setDirty(true);
                     debouncedSync();
                 }
@@ -17089,7 +17089,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const idx = sessions.findIndex(s => s.id === sessionId);
             if (idx > -1) {
                 sessions[idx].lastActive = new Date().toISOString();
-                DB.set('sessions', sessions);
+                DB.set('sessions', sessions, true);
                 if (currentUser && firebase.firestore && userDocRef) {
                     try { await userDocRef.set({ sessions }, { merge: true }); } catch(e) {}
                 }
@@ -17211,7 +17211,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 sessions.push(currentSession);
             }
 
-            DB.set('sessions', sessions);
+            DB.set('sessions', sessions, true);
 
             if (currentUser && firebase.firestore && userDocRef) {
                 try {
