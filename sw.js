@@ -1,22 +1,18 @@
 // ==================== WealthFlow Infinity Service Worker ====================
 // Handles PWA push notifications, offline caching, and background sync
 
-const CACHE_NAME = 'wealthflow-v7.0';
+const CACHE_NAME = 'wealthflow-v5.2';
 
 // Install event — cache core assets
 self.addEventListener('install', (event) => {
-    console.log('[SW] Installing WealthFlow Service Worker v7.0...');
+    console.log('[SW] Installing WealthFlow Service Worker...');
     self.skipWaiting();
 });
 
-// Activate event — clean old caches and take control
+// Activate event — clean old caches
 self.addEventListener('activate', (event) => {
     console.log('[SW] Service Worker activated');
-    event.waitUntil(
-        caches.keys().then(keys =>
-            Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-        ).then(() => clients.claim())
-    );
+    event.waitUntil(clients.claim());
 });
 
 // Push notification handler
@@ -59,43 +55,23 @@ self.addEventListener('push', (event) => {
     );
 });
 
-// Notification click handler — open the app and forward action to page
+// Notification click handler — open the app
 self.addEventListener('notificationclick', (event) => {
-    console.log('[SW] Notification clicked', event.action);
+    console.log('[SW] Notification clicked');
     event.notification.close();
 
-    const action = event.action || '';
-    const data = event.notification.data || {};
-    const urlToOpen = data.url || '/';
+    const urlToOpen = event.notification.data?.url || '/';
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-            // If app is already open, focus it and forward the action
+            // If app is already open, focus it
             for (const client of clientList) {
-                if (client.url.includes(self.location.origin)) {
-                    if (action && data.actionableId) {
-                        // Forward the action click to the page
-                        client.postMessage({
-                            type: 'WF_NOTIFICATION_ACTION',
-                            action,
-                            actionableId: data.actionableId
-                        });
-                    }
-                    if ('focus' in client) return client.focus();
+                if (client.url.includes(self.location.origin) && 'focus' in client) {
+                    return client.focus();
                 }
             }
             // Otherwise open a new window
-            return clients.openWindow(urlToOpen).then((newClient) => {
-                if (newClient && action && data.actionableId) {
-                    setTimeout(() => {
-                        newClient.postMessage({
-                            type: 'WF_NOTIFICATION_ACTION',
-                            action,
-                            actionableId: data.actionableId
-                        });
-                    }, 1500);
-                }
-            });
+            return clients.openWindow(urlToOpen);
         })
     );
 });
