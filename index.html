@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.0 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.1 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6662,25 +6662,50 @@
                 })();
 
                 // ---- IMAGE GENERATION: short-circuit, return an <img> ----
-                if (!image && _intent === 'image_gen' && _wfAI && _wfAI.buildImageUrl) {
-                    const _g = _wfAI.buildImageUrl(_lastLine);
+                if (!image && _intent === 'image_gen') {
+                    // Self-contained — works even if the v6 helper module hasn't loaded.
+                    let _imgUrl, _imgPrompt;
+                    if (_wfAI && _wfAI.buildImageUrl) {
+                        const _g = _wfAI.buildImageUrl(_lastLine);
+                        _imgUrl = _g.url; _imgPrompt = _g.prompt;
+                    } else {
+                        let _clean = (_lastLine || '').trim()
+                            .replace(/^(please\s+)?(can you\s+|could you\s+)?(pls\s+)?(generate|create|make|draw|design|paint|render|sketch|imagine|give me)\s+(me\s+)?(an?\s+|the\s+)?(image|picture|photo|art|logo|illustration|drawing|wallpaper|poster|icon|pic|painting|portrait|visual)\s*(of|for|showing|with|like|:)?\s*/i, '')
+                            .replace(/\?+$/, '').trim() || _lastLine;
+                        const _seed = Math.floor(Math.random() * 1e9);
+                        _imgPrompt = _clean;
+                        _imgUrl = 'https://image.pollinations.ai/prompt/' +
+                            encodeURIComponent(_clean + ', ultra high quality, highly detailed, professional, sharp focus, 4k') +
+                            '?width=1024&height=1024&seed=' + _seed + '&nologo=true&model=flux';
+                    }
                     try {
                         await new Promise(res => {
                             const im = new Image();
-                            im.onload = res; im.onerror = res; im.src = _g.url;
+                            im.onload = res; im.onerror = res; im.src = _imgUrl;
                             setTimeout(res, 14000);
                         });
                     } catch (_) {}
                     _lastAIProvider = 'pollinations:flux';
-                    return '🎨 Here is the image I generated for "**' + _g.prompt + '**":\n\n' +
-                        '<img src="' + _g.url + '" alt="generated" style="max-width:100%;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.3);cursor:pointer;" onclick="window.open(this.src,\'_blank\')" />\n\n' +
+                    return '🎨 Here is the image I created for "**' + _imgPrompt + '**":\n\n' +
+                        '<img src="' + _imgUrl + '" alt="generated" style="max-width:100%;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.3);cursor:pointer;" onclick="window.open(this.src,\'_blank\')" />\n\n' +
                         '<span style="font-size:11px;opacity:.7;">Tap image to open full size. Ask me to "regenerate" for a new variation.</span>';
                 }
 
                 // ---- NON-FINANCE: replace the forced financial system prompt ----
                 const _isHostFin = /WealthFlow AI|financial advisor|FINANCIAL SNAPSHOT|CURRENT FINANCIAL|ADVISOR STYLE/i.test(prompt || '');
-                if (_lastLine && (_isHostFin || image) && _wfAI && _wfAI.adaptiveSystemPrompt) {
-                    let _sys = _wfAI.adaptiveSystemPrompt(_intent, _lastLine);
+                if (_lastLine && (_isHostFin || image)) {
+                    let _sys;
+                    if (_wfAI && _wfAI.adaptiveSystemPrompt) {
+                        _sys = _wfAI.adaptiveSystemPrompt(_intent, _lastLine);
+                    } else {
+                        // Built-in friend-mode prompt (used if helper module is slow to load)
+                        _sys = 'You are WealthFlow AI — more than an AI, you are this person\'s genuine best friend who is brilliant at everything. ' +
+                            'You are warm, caring, emotionally intelligent and real. You talk like a close friend texting them — natural, warm, human, never robotic or corporate. ' +
+                            'You notice how they feel and respond to the emotion behind their words first. You can talk about anything in the world. ' +
+                            'You are secretly also a financial expert but you NEVER force money talk and never bring up their finances unless they do. ' +
+                            'NEVER say robotic things like "I am a text-based AI", "I do not have the capability", "how can I assist you today". ' +
+                            (_intent === 'finance' ? 'They asked about money — gently bring in financial wisdom as a caring friend. ' : 'Just be their warm friend and answer genuinely. ');
+                    }
                     // Append on-device learned personalization (facts, topics, length pref)
                     try {
                         if (window.WealthFlowML && window.WealthFlowML.personalizationBlock) {
@@ -6691,10 +6716,39 @@
                     const _ci = (prompt || '').indexOf('--- CONVERSATION ---');
                     if (_ci !== -1) _tail = prompt.slice(_ci);
                     else _tail = '--- CONVERSATION ---\nUser: ' + _lastLine + '\nAI:';
+
+                    // Compute the language the reply MUST be in (explicit setting,
+                    // one-time override, or mirror the script the user typed in).
+                    let _replyLang = 'English';
+                    try {
+                        const _st = (window.DB && window.DB.getObj) ? window.DB.getObj('settings', {}) : {};
+                        const _names = window.WF_LANG_NAMES || {};
+                        const _ovr = (_lastLine || '').match(/\b(?:in|reply in|answer in|respond in|write in|speak in)\s+(english|sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic|korean|russian|portuguese|italian)\b/i);
+                        if (_ovr) {
+                            _replyLang = _ovr[1].charAt(0).toUpperCase() + _ovr[1].slice(1);
+                        } else if (_st.aiResponseLang && _st.aiResponseLang !== 'en') {
+                            _replyLang = _names[_st.aiResponseLang] || _st.aiResponseLang;
+                        } else {
+                            // Mirror the user's script if they wrote non-Latin
+                            if (/[\u0d80-\u0dff]/.test(_lastLine)) _replyLang = 'Sinhala';
+                            else if (/[\u0b80-\u0bff]/.test(_lastLine)) _replyLang = 'Tamil';
+                            else if (/[\u0900-\u097f]/.test(_lastLine)) _replyLang = 'Hindi';
+                            else if (/[\u0600-\u06ff]/.test(_lastLine)) _replyLang = 'Arabic';
+                        }
+                    } catch (_) {}
+
+                    // Insert the unmissable final instruction immediately before "AI:".
+                    const _langGate = '\n\n[REPLY NOW — in ' + _replyLang +
+                        ' only, as their warm caring best friend. No English unless ' + _replyLang +
+                        ' IS English. No "language mix-up" talk. Just reply naturally in ' + _replyLang + '.]\nAI:';
+                    _tail = _tail.replace(/\nAI:\s*$/, _langGate);
+                    if (_tail.indexOf(_langGate) === -1) _tail += _langGate;
+
                     prompt = _sys + '\n\n' + _tail;
                     window._wfLastIntent = _intent;
                     window._wfLastUserLine = _lastLine;
-                    console.log('[AI v6.2] intent=' + _intent + ' → prompt rewritten + personalized');
+                    window._wfReplyLang = _replyLang;
+                    console.log('[AI v6.2] intent=' + _intent + ' lang=' + _replyLang + ' → rewritten');
                 }
             } catch (_e) { console.warn('[AI v6.2] intent engine skipped:', _e && _e.message); }
             // ═══════════════════════════════════════════════════════════════
@@ -8157,18 +8211,50 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const el = document.getElementById('aiContextPills');
             if (!el) return;
             try {
-                const ctx = buildFinancialContext();
+                // Pull LIVE data directly from the DB every time (real-time).
+                const income = DB.get('income') || [];
+                const loans = DB.get('loans') || [];
+                const targets = DB.get('targets') || [];
+                const now = new Date();
+                const activeIncome = income.filter(s => {
+                    try {
+                        const st = new Date((s.start || '2000-01-01') + 'T00:00:00');
+                        const en = s.end ? new Date(s.end + 'T00:00:00') : null;
+                        return st <= now && (!en || en >= now);
+                    } catch (_) { return true; }
+                });
+                const activeLoans = loans.filter(l => {
+                    try { return (typeof loanEndDate === 'function' ? loanEndDate(l) : now) >= now; }
+                    catch (_) { return true; }
+                });
                 const pills = [];
-                if (ctx.incomeSources > 0) pills.push('💰 ' + ctx.incomeSources + ' income source' + (ctx.incomeSources>1?'s':''));
-                if (ctx.activeLoans > 0) pills.push('🏦 ' + ctx.activeLoans + ' loan' + (ctx.activeLoans>1?'s':''));
-                if (ctx.savingsTargets > 0) pills.push('🎯 ' + ctx.savingsTargets + ' goal' + (ctx.savingsTargets>1?'s':''));
+                const incCount = activeIncome.length || income.length;
+                if (incCount > 0) pills.push('💰 ' + incCount + ' income source' + (incCount > 1 ? 's' : ''));
+                if (activeLoans.length > 0) pills.push('🏦 ' + activeLoans.length + ' loan' + (activeLoans.length > 1 ? 's' : ''));
+                if (targets.length > 0) pills.push('🎯 ' + targets.length + ' goal' + (targets.length > 1 ? 's' : ''));
+
                 const st = DB.getObj('settings', {});
-                const lang = WF_LANG_NAMES[st.aiResponseLang || 'en'] || 'English';
-                pills.push('🌐 ' + lang.split('(')[0].trim());
-                const persona = getAIPersona();
-                if (persona && persona.questionCount > 5) pills.push('🧠 ' + persona.questionCount + ' chats');
-                el.innerHTML = pills.map(function(p){ return '<span class="ai-context-pill">' + p + '</span>'; }).join('');
-            } catch(e) { el.innerHTML = ''; }
+                const langName = (WF_LANG_NAMES[st.aiResponseLang || 'en'] || 'English').split('(')[0].trim();
+                pills.push('🌐 ' + langName);
+
+                // Real chat count = actual stored history exchanges
+                let chatCount = 0;
+                try {
+                    const hist = (typeof getAIHistory === 'function') ? getAIHistory() : [];
+                    chatCount = hist.filter(m => m.role === 'user').length;
+                } catch (_) {}
+                if (chatCount > 0) pills.push('💬 ' + chatCount + ' message' + (chatCount > 1 ? 's' : ''));
+
+                // ML learning indicator (shows the AI is training on this user)
+                try {
+                    if (window.WealthFlowML && window.WealthFlowML.stats) {
+                        const ms = window.WealthFlowML.stats();
+                        if (ms.facts > 0) pills.push('🧠 remembers ' + ms.facts + ' thing' + (ms.facts > 1 ? 's' : '') + ' about you');
+                    }
+                } catch (_) {}
+
+                el.innerHTML = pills.map(function (p) { return '<span class="ai-context-pill">' + p + '</span>'; }).join('');
+            } catch (e) { /* leave previous pills intact on error */ }
         }
 
         // ==================== AI PAGE INIT ====================
@@ -14791,8 +14877,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.0 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.0 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.1 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.1 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14801,7 +14887,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.1 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>

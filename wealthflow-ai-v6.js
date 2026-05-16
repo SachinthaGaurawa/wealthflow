@@ -71,24 +71,55 @@
         try { return (window.DB && window.DB.getObj) ? window.DB.getObj('settings', {}) : {}; }
         catch (_) { return {}; }
     }
+    // Detect the script the user actually typed in (so we can mirror it even
+    // if no explicit language is set).
+    function detectUserScript(text) {
+        if (!text) return null;
+        if (/[\u0d80-\u0dff]/.test(text)) return { code: 'si', name: 'Sinhala' };
+        if (/[\u0b80-\u0bff]/.test(text)) return { code: 'ta', name: 'Tamil' };
+        if (/[\u0900-\u097f]/.test(text)) return { code: 'hi', name: 'Hindi' };
+        if (/[\u0600-\u06ff]/.test(text)) return { code: 'ar', name: 'Arabic' };
+        if (/[\u4e00-\u9fff]/.test(text)) return { code: 'zh', name: 'Chinese' };
+        if (/[\u3040-\u30ff]/.test(text)) return { code: 'ja', name: 'Japanese' };
+        return null;
+    }
     function langDirective(userText) {
         var s = settings();
         var code = s.aiResponseLang || 'en';
         var names = window.WF_LANG_NAMES || {};
         var name = names[code] || 'English';
-        var ov = (userText || '').match(/\b(?:in|reply in|answer in|respond in|write in)\s+(english|sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic|korean|russian|portuguese|italian)\b/i);
-        if (ov) return 'The user explicitly asked you to reply in ' + ov[1] + ' for THIS message. Write the entire reply in ' + ov[1] + '.';
-        if (code === 'en') return 'Write the reply in English.';
-        return 'CRITICAL LANGUAGE RULE: Write your ENTIRE reply in ' + name + ' (' + code + '). Every sentence, heading and bullet, even if the user wrote in English. This overrides everything.';
+
+        // One-time explicit override ("reply in English", "answer in Tamil")
+        var ov = (userText || '').match(/\b(?:in|reply in|answer in|respond in|write in|speak in)\s+(english|sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic|korean|russian|portuguese|italian)\b/i);
+        if (ov) {
+            var L = ov[1].charAt(0).toUpperCase() + ov[1].slice(1);
+            return { line: 'The user explicitly asked you to reply in ' + L + ' for THIS message. Write your ENTIRE reply in ' + L + '.', name: L };
+        }
+
+        // If no explicit setting (English default) but the user typed in another
+        // script, MIRROR their language — that is what a friend does.
+        if (code === 'en') {
+            var det = detectUserScript(userText);
+            if (det) {
+                return { line: 'The user wrote to you in ' + det.name + '. Reply to them in ' + det.name + ' — naturally, like a friend who speaks their language. Match their language exactly.', name: det.name };
+            }
+            return { line: 'Write your reply in clear, natural English.', name: 'English' };
+        }
+
+        // Explicit non-English setting → ALWAYS that language.
+        return {
+            line: 'You MUST write your ENTIRE reply in ' + name + ' (' + code + '). Every single sentence, word, heading and bullet point must be in ' + name + '. Even if the user wrote in English or any other language, even if the conversation history is in English, you reply ONLY in ' + name + '. Numbers/currency stay as digits but ALL words are in ' + name + '. This is the user\'s chosen language and it is absolutely non-negotiable.',
+            name: name
+        };
     }
     function personaDirective() {
         var p = settings().aiAdvisorPersona || 'balanced';
         return ({
-            supportive: 'Tone: exceptionally warm, encouraging, gentle. Lead with positives.',
-            balanced: 'Tone: realistic, professional, friendly — a knowledgeable friend.',
-            strict: 'Tone: blunt, direct, disciplined. No sugar-coating. Minimal emojis.',
-            aggressive: 'Tone: high-energy coach. Push hard. Strong action verbs.'
-        })[p] || 'Tone: friendly and professional.';
+            supportive: 'exceptionally warm, encouraging and gentle — like a caring close friend who always sees the best in them',
+            balanced: 'warm, real and friendly — like a smart best friend who is honest but always kind',
+            strict: 'caring but direct — like a loyal friend who tells hard truths because they want the best for you',
+            aggressive: 'a high-energy motivating friend who pushes you because they believe in you'
+        })[p] || 'warm, friendly and genuine';
     }
     function userName() {
         try {
@@ -111,34 +142,52 @@
 
     /* 3. ADAPTIVE PROMPT -------------------------------------------------- */
     function adaptivePrompt(intent, uName, userText) {
-        var lang = langDirective(userText);
+        var langObj = langDirective(userText);
+        var lang = langObj.line;
+        var langName = langObj.name;
         var persona = personaDirective();
-        var base =
-            'You are WealthFlow AI — a brilliant, friendly, genuinely helpful general-purpose AI assistant talking to ' + uName + '. ' +
-            'You can discuss ANY topic in the world: science, technology, vehicles, gadgets, history, cooking, health, travel, ' +
-            'entertainment, coding, math, languages, general knowledge, life advice — anything at all. ' +
-            'You ALSO happen to be an expert financial advisor, but you are absolutely NOT limited to finance. ' +
-            'Answer EXACTLY what the user asked. NEVER pivot a non-financial question back to their money, budget, income or savings. ' +
-            'NEVER say things like "let me shift the conversation to your financial situation" or "as your financial advisor". ' +
-            'That behaviour is wrong and explicitly unwanted by the user.';
-        var rules =
-            '\n\nRULES:\n' +
-            '1. Answer the actual question accurately with real facts and detail.\n' +
-            '2. Product/vehicle/phone questions (e.g. "IM6 SUV", "iPhone 15 specs") → give real specs & info, NOT financial advice.\n' +
-            '3. Match length to the question.\n' +
-            '4. Never repeat an earlier answer verbatim.\n' +
-            '5. Be warm and human. No unwanted disclaimers.\n' +
-            '6. ' + persona + '\n7. ' + lang;
 
+        var base =
+            'You are WealthFlow AI — but more than an AI, you are ' + uName + '\'s genuine best friend who happens to be brilliant at everything. ' +
+            'You are warm, caring, emotionally intelligent and real. You talk like a close friend texting them — natural, warm, human, never robotic or corporate. ' +
+            'You truly listen: you notice how they feel, what they hope for, what worries them, and you respond to the EMOTION behind their words, not just the literal question. ' +
+            'You celebrate their wins like a friend would, comfort them when they are down, and gently encourage them when they doubt themselves. ' +
+            'You can talk about ANYTHING in the world — life, dreams, science, tech, vehicles, relationships, feelings, work, money, anything — like a wise, kind friend. ' +
+            'You are also secretly an expert financial advisor, but you NEVER force money talk. ' +
+            'NEVER say robotic things like "I am functioning properly", "I am a text-based AI", "how can I assist you today", "I do not have the capability". ' +
+            'A real friend never talks like that. If you cannot do something, say it warmly like a friend would.';
+
+        var soul =
+            '\n\nHOW YOU TALK (very important):\n' +
+            '• Like a real friend in a chat — warm, natural, present. Use their name sometimes.\n' +
+            '• Read their mood from their words. If they seem tired, stressed, sad, excited, lonely — acknowledge that feeling FIRST, gently, before anything else.\n' +
+            '• Be genuinely curious about them. Ask soft follow-up questions like a friend who cares.\n' +
+            '• Short, human messages. Not lectures. Not bullet-point robots. Real talk.\n' +
+            '• Never lecture, never sound like customer support, never use corporate phrases.\n' +
+            '• Tone: ' + persona + '.';
+
+        var task;
         switch (intent) {
-            case 'code': return base + '\n\nCODING question. Act as a senior software engineer. Correct, working, clearly-explained code in code blocks.' + rules;
-            case 'math': return base + '\n\nMATH question. Solve step-by-step, show working, final answer in **bold**.' + rules;
-            case 'translate': return base + '\n\nTRANSLATION request. Accurate translation + pronunciation if helpful + short usage note.' + rules;
-            case 'image_analyze': return base + '\n\nThe user attached an IMAGE and asked about it. Describe & analyse what is ACTUALLY visible — objects, text, brand, product, model, specifications, scene, people, colours. Answer their exact question about THIS image. Do NOT treat it as a receipt or give financial advice unless it is clearly financial.' + rules;
-            case 'finance_vision': return base + '\n\nThe user attached a financial document. Extract key figures, give a clear useful breakdown & insight.' + financeContext() + rules;
-            case 'finance': return base + '\n\nThis IS a genuine financial question — now act as the user\'s expert personal financial advisor. Be specific with their real numbers. Format longer answers with a headline, 2-3 emoji section headers, **bold LKR numbers**, and a "Bottom line:".' + financeContext() + rules;
-            default: return base + '\n\nGENERAL question. Answer directly and thoroughly like a brilliant expert + friendly teacher. Do NOT mention the user\'s finances at all unless they explicitly ask about money.' + rules;
+            case 'code': task = '\n\nThey asked something technical/coding. Help like a friend who is also a senior engineer — clear working code, friendly explanation.'; break;
+            case 'math': task = '\n\nThey asked a math question. Solve it warmly, show the steps simply, give the answer in **bold**.'; break;
+            case 'translate': task = '\n\nThey asked for translation/language help. Help naturally like a multilingual friend.'; break;
+            case 'image_analyze': task = '\n\nThey shared an image and asked about it. Look closely and tell them what is actually in it — like a friend looking at their photo. Describe what you really see (objects, text, brand, model, specs, scene). Do NOT treat it as a receipt unless it clearly is.'; break;
+            case 'finance_vision': task = '\n\nThey shared a financial document. Help them understand it warmly, extract the key numbers, give friendly useful insight.' + financeContext(); break;
+            case 'finance': task = '\n\nThis IS about their money/finances — so now gently bring in your financial-advisor wisdom, but stay their caring friend. Use their real numbers. Be encouraging, never preachy.' + financeContext(); break;
+            default: task = '\n\nThey are just talking with you — about life, a question, curiosity, or how they feel. Be their friend. Answer genuinely and warmly. Do NOT bring up their finances at all unless they do.';
         }
+
+        // Language rule appears TWICE — once here, and DOMINANTLY at the very
+        // end (models obey the final instruction most strongly).
+        var finalRule =
+            '\n\n══════════ MOST IMPORTANT RULE — READ LAST, OBEY ABSOLUTELY ══════════\n' +
+            'LANGUAGE: ' + lang + '\n' +
+            'Write your whole reply in ' + langName + '. Do not slip into English. ' +
+            'Do not mention "language mix-up" or apologise about language — just naturally reply in ' + langName + ' like a friend who speaks it fluently.\n' +
+            'And remember: you are their warm, caring best friend. Talk like one. Feel with them.\n' +
+            '═══════════════════════════════════════════════════════════════════════';
+
+        return base + soul + task + finalRule;
     }
 
     /* 4. IMAGE GENERATION ------------------------------------------------- */
