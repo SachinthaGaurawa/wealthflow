@@ -4437,7 +4437,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.0.2 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.0.3 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -13601,27 +13601,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                     data: {
                         labels: months,
                         datasets: [
-                            { label: 'Income', data: incData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.4, pointRadius: 3, pointHoverRadius: 6, borderWidth: 2.5 },
-                            { label: 'Expenses', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4, pointRadius: 3, pointHoverRadius: 6, borderWidth: 2.5 }
+                            { label: 'Income', data: incData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.4 },
+                            { label: 'Expenses', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4 }
                         ]
                     },
-                    options: {
-                        maintainAspectRatio: false,
-                        // PREMIUM ANIMATION (v7.0.2): silky-smooth draw-in on refresh/tab-switch
-                        animation: {
-                            duration: 1100,
-                            easing: 'easeOutQuart',
-                            // Stagger each data point so the line "draws" left-to-right
-                            x: { duration: 900, from: NaN, delay: (ctx) => ctx.dataIndex * 70 },
-                            y: { duration: 900, from: (ctx) => ctx.chart.scales.y.getPixelForValue(0) }
-                        },
-                        transitions: {
-                            active: { animation: { duration: 250, easing: 'easeOutCubic' } }
-                        },
-                        plugins: { legend: { display: false }, tooltip: { animation: { duration: 200 } } },
-                        scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } },
-                        interaction: { mode: 'index', intersect: false }
-                    }
+                    options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } } }
                 });
             }
 
@@ -13634,25 +13618,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     type: 'doughnut',
                     data: {
                         labels: Object.keys(catMap),
-                        datasets: [{ data: Object.values(catMap), backgroundColor: ['#d4af37', '#10b981', '#ef4444', '#3b82f6', '#8b5cf6', '#06b6d4', '#94a3b8', '#f87171'], borderWidth: 2, borderColor: document.documentElement.getAttribute('data-theme') === 'dark' ? '#0a0f1c' : '#ffffff', hoverOffset: 12 }]
+                        datasets: [{ data: Object.values(catMap), backgroundColor: ['#d4af37', '#10b981', '#ef4444', '#3b82f6', '#8b5cf6', '#06b6d4', '#94a3b8', '#f87171'] }]
                     },
-                    options: {
-                        maintainAspectRatio: false,
-                        // PREMIUM DOUGHNUT ANIMATION (v7.0.2): rotates in + scales up + arc-by-arc draw
-                        animation: {
-                            duration: 1200,
-                            easing: 'easeOutQuart',
-                            animateRotate: true,
-                            animateScale: true
-                        },
-                        transitions: {
-                            active: { animation: { duration: 300, easing: 'easeOutCubic' } }
-                        },
-                        plugins: {
-                            legend: { position: 'right', labels: { color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#e2e8f0' : '#1e293b', font: { size: 10 }, padding: 10 } },
-                            tooltip: { animation: { duration: 200 } }
-                        }
-                    }
+                    options: { maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#e2e8f0' : '#1e293b', font: { size: 10 } } } } }
                 });
             }
 
@@ -14402,8 +14370,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.0.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.0.2 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.0.3 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.0.3 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14412,7 +14380,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.0.2 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.0.3 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
