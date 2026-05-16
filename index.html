@@ -4437,7 +4437,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v6.9.1 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.0.2 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6017,8 +6017,8 @@
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
             getObj(k, def = {}) { return appData[k] !== undefined ? appData[k] : def; },
-            set(k, v) {
-                // ISSUE 5 FIX — Decoy/Panic Mode is READ-ONLY. Never persists or syncs anywhere.
+            set(k, v, silent = false) {
+                // Decoy/Panic Mode is READ-ONLY. Never persists or syncs anywhere.
                 if (window._isDecoyMode === true) {
                     appData[k] = v; // in-memory only; lost on reload
                     console.log('[DECOY] Write blocked from disk/cloud:', k);
@@ -6026,37 +6026,22 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
-                _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
+                if (!silent) _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
                 // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
                 try {
                     if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
                 } catch (_) { /* ignore */ }
-                if (!isSyncingFromCloud) {
+                if (!isSyncingFromCloud && !silent) {
                     setDirty(true);
                     debouncedSync();
                 }
             }
         };
 
-        // ============================================================================
-        // CRITICAL FIX v6.9: expose key globals on window for cross-script access
-        // (lexical const/let declarations don't auto-attach to window in browsers)
-        // ============================================================================
+        // Expose DB + appData on window so external scripts (v5 module) can reach them.
+        // lexical const/let in a script tag don't auto-attach to window otherwise.
         window.DB = DB;
         window.appData = appData;
-        Object.defineProperty(window, '_wfHostState', {
-            get() {
-                return {
-                    isSyncingFromCloud: isSyncingFromCloud,
-                    isDirty: isDirty,
-                    isInitialised: isInitialised,
-                    lastLocalWriteTs: _lastLocalWriteTs,
-                    userDocRef: userDocRef,
-                    currentUser: currentUser
-                };
-            }
-        });
-        // Setter so v5 can flag a pending write
         window._wfMarkLocalWrite = function () { _lastLocalWriteTs = Date.now(); };
 
         function debouncedSync() {
@@ -6130,7 +6115,7 @@
                     });
                     isSyncingFromCloud = false;
                     lastSyncTime = Date.now();
-                    
+
                     if (isDirty) {
                         debouncedSync(); // Ensure preserved local items are pushed!
                     }
@@ -8846,6 +8831,28 @@ YOUR PERSONALITY & CRITICAL RULES:
             localStorage.removeItem('wf2_device_biometric');
         }
 
+        // RESTORED v6.9.2: verifyBiometricZone for showPage biometric guard
+        async function verifyBiometricZone() {
+            const bio = getDeviceBiometric();
+            if (!bio || !bio.rawId) return true; // Allow if not registered
+            try {
+                const challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
+                const binaryString = atob(bio.rawId);
+                const rawId = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) { rawId[i] = binaryString.charCodeAt(i); }
+                const publicKey = {
+                    challenge, rpId: window.location.hostname,
+                    allowCredentials: [{ type: "public-key", id: rawId }],
+                    userVerification: "required", timeout: 60000
+                };
+                const assertion = await navigator.credentials.get({ publicKey });
+                return !!assertion;
+            } catch (e) {
+                console.error('[BIO]', e);
+                return false;
+            }
+        }
+
         async function isBiometricAvailable() {
             if (!window.PublicKeyCredential) return false;
             try {
@@ -9103,25 +9110,15 @@ YOUR PERSONALITY & CRITICAL RULES:
                                             const cloudVal = cloudData[key];
                                             let finalVal = cloudVal;
 
-                                            // If the local database has pending writes, PRESERVE local state entirely
-                                            // to prevent edits/deletions from being overwritten by old cloud data.
-                                            if (isDirty) {
-                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
-                                                    console.warn('[SYNC] 🛡️ INIT — Unsynced local changes detected. Preferring local cache over cloud for "' + key + '".');
-                                                    finalVal = localVal;
-                                                    _localOnlyCount++;
-                                                }
-                                            } else {
-                                                // Fallback to array-merge if isDirty wasn't properly tracked (legacy protection)
-                                                if (Array.isArray(localVal) && Array.isArray(cloudVal)) {
-                                                    const cloudIds = new Set(cloudVal.map(x => x && x.id).filter(Boolean));
-                                                    const localOnly = localVal.filter(x => x && x.id && !cloudIds.has(x.id));
-                                                    if (localOnly.length > 0) {
-                                                        console.warn('[SYNC] 🛡️ INIT — preserving ' + localOnly.length +
-                                                            ' offline-only items in "' + key + '" (will be pushed to cloud)');
-                                                        finalVal = cloudVal.concat(localOnly);
-                                                        _localOnlyCount += localOnly.length;
-                                                    }
+                                            // Array-merge protection: if local has items not in cloud, keep them
+                                            if (Array.isArray(localVal) && Array.isArray(cloudVal)) {
+                                                const cloudIds = new Set(cloudVal.map(x => x && x.id).filter(Boolean));
+                                                const localOnly = localVal.filter(x => x && x.id && !cloudIds.has(x.id));
+                                                if (localOnly.length > 0) {
+                                                    console.warn('[SYNC] 🛡️ INIT — preserving ' + localOnly.length +
+                                                        ' offline-only items in "' + key + '" (will be pushed to cloud)');
+                                                    finalVal = cloudVal.concat(localOnly);
+                                                    _localOnlyCount += localOnly.length;
                                                 }
                                             }
 
@@ -9171,7 +9168,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                     if (window.__wfBootCompleted) window.__wfBootCompleted();
                                     finishBoot();
 
-                                    // Real-time listener for cross-device sync
+                                    // Real-time listener for cross-device sync (PROVEN-WORKING v6.9.1 LOGIC)
                                     try {
                                         userDocRef.onSnapshot((snap) => {
                                             try {
@@ -9268,11 +9265,6 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                             // Before blindly overwriting appData[key] with the cloud value,
                                                             // protect against the race where the cloud snapshot arrives
                                                             // BEFORE our recent local write has been replicated.
-                                                            //
-                                                            // v6.9 had a bug: it called debouncedSync() on every merge,
-                                                            // which caused an infinite sync loop ("Syncing..." never clears).
-                                                            // v6.9.1 fix: do NOT auto-re-sync — the user's next legitimate
-                                                            // action will trigger sync. Just protect the local data.
                                                             const localVal = appData[key];
                                                             const cloudVal = cloudData[key];
                                                             let finalVal = cloudVal;
@@ -9283,18 +9275,20 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                                     console.warn('[SYNC] 🛡️ Race detected (unsynced local changes) — keeping local state for "' + key + '" to prevent revert.');
                                                                     finalVal = localVal;
                                                                     setDirty(true);
-                                                                    
-                                                                    // We MUST trigger a debounced sync here, otherwise the preserved local 
+
+                                                                    // We MUST trigger a debounced sync here, otherwise the preserved local
                                                                     // state will NEVER push to the cloud until the user manually triggers another save!
-                                                                    setTimeout(debouncedSync, 1000); 
+                                                                    setTimeout(debouncedSync, 1000);
                                                                 }
                                                             }
-                                                            appData[key] = finalVal;
-                                                            localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
-                                                            if (key === 'sessions') {
-                                                                sessionsChanged = true;
-                                                            } else {
-                                                                nonSessionChanged = true;
+                                                            if (finalVal !== localVal) {
+                                                                appData[key] = finalVal;
+                                                                localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
+                                                                if (key === 'sessions') {
+                                                                    sessionsChanged = true;
+                                                                } else {
+                                                                    nonSessionChanged = true;
+                                                                }
                                                             }
                                                         }
                                                     });
@@ -9323,7 +9317,6 @@ YOUR PERSONALITY & CRITICAL RULES:
                                     } catch (listenerErr) {
                                         console.error('[SYNC] Snapshot listener setup error:', listenerErr);
                                     }
-
                                 } catch (err) {
                                     console.error("[SYNC] ❌ Cloud Error. Using local cache:", err);
                                     clearInterval(pInt);
@@ -9841,29 +9834,7 @@ YOUR PERSONALITY & CRITICAL RULES:
         // Auto-detect category from expense description
         async function autoDetectCategory(desc) {
             if (!desc || desc.length < 3) return;
-            
-            const s = DB.getObj('settings');
-            let searchDesc = desc;
-            
-            if (s.smartEntry) {
-                // Check if user typed a number at the end, e.g. "Coffee 500" or "Starbucks 12.50"
-                const match = desc.match(/(.+?)\s+([\d,.]+)$/);
-                if (match) {
-                    searchDesc = match[1].trim();
-                    const amtStr = match[2].replace(/,/g, '');
-                    const amt = parseFloat(amtStr);
-                    if (!isNaN(amt)) {
-                        const amtInput = $('e_amount');
-                        if (amtInput && !amtInput.value) { // Only auto-fill if empty
-                            amtInput.value = fmtN(amt);
-                            $('e_desc').value = searchDesc; // Clean up description
-                            triggerHaptic('light');
-                        }
-                    }
-                }
-            }
-
-            const cat = await autoCategorizeExpense(searchDesc);
+            const cat = await autoCategorizeExpense(desc);
             if (cat) {
                 const sel = $('e_cat');
                 if (sel) {
@@ -10000,6 +9971,24 @@ YOUR PERSONALITY & CRITICAL RULES:
         // ==================== SIDEBAR ====================
         const pgTitles = { dashboard: '📊 Dashboard', monthly: '📅 Monthly Plan', income: '💰 Income & Investments', loans: '🏦 Bank Loans', ccinstall: '💳 CC Installments', cconetime: '⏱️ CC One-Time Payments', cheques: '📄 Cheque Tracker', expenses: '🧾 Monthly Expenses', targets: '🎯 Targets & Savings', balance: '⚖️ Balance Tracker', dscr: '📐 DSCR Calculator', settings: '⚙️ System Settings', ai: '🤖 <span style="color:var(--accent)">AI Advisor</span>', score: '🏆 WealthFlow Score', subscriptions: '🔔 Subscriptions', debtdemo: '💣 Debt Demolisher', montecarlo: '🔮 Wealth Simulator', cashflow3d: '🌐 3D Cash Flow', sessions: '📱 Active Sessions' };
 
+        function showPage(name, navEl) {
+            // RESTORED v6.9.2: biometric guard for sensitive zones
+            const s = DB.getObj('settings');
+            if (s.strictBiometrics && (name === 'settings' || name === 'export')) {
+                if (typeof verifyBiometricZone === 'function') {
+                    verifyBiometricZone().then(ok => {
+                        if (ok) _proceedShowPage(name, navEl);
+                        else {
+                            notify('Biometric verification failed. Access Denied.', 'error');
+                            triggerHaptic('error');
+                        }
+                    });
+                    return;
+                }
+            }
+            _proceedShowPage(name, navEl);
+        }
+
         function _proceedShowPage(name, navEl) {
             triggerHaptic('light');
             playUISound('click');
@@ -10027,42 +10016,6 @@ YOUR PERSONALITY & CRITICAL RULES:
             } else {
                 renderPage(name);
             }
-        }
-
-        async function verifyBiometricZone() {
-            const bio = getDeviceBiometric();
-            if (!bio || !bio.rawId) return true; // Allow if not registered
-            try {
-                const challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
-                const binaryString = atob(bio.rawId);
-                const rawId = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) { rawId[i] = binaryString.charCodeAt(i); }
-                const publicKey = {
-                    challenge, rpId: window.location.hostname,
-                    allowCredentials: [{ type: "public-key", id: rawId }],
-                    userVerification: "required", timeout: 60000
-                };
-                const assertion = await navigator.credentials.get({ publicKey });
-                return !!assertion;
-            } catch (e) {
-                console.error('[BIO]', e);
-                return false;
-            }
-        }
-
-        function showPage(name, navEl) {
-            const s = DB.getObj('settings');
-            if (s.strictBiometrics && (name === 'settings' || name === 'export')) {
-                verifyBiometricZone().then(ok => {
-                    if (ok) _proceedShowPage(name, navEl);
-                    else {
-                        notify('Biometric verification failed. Access Denied.', 'error');
-                        triggerHaptic('error');
-                    }
-                });
-                return;
-            }
-            _proceedShowPage(name, navEl);
         }
 
 
@@ -13593,7 +13546,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const nowD = new Date();
             const curMonthStr = `${nowD.getFullYear()}-${p2(nowD.getMonth() + 1)}`;
             const curMonthExp = DB.get('expenses').filter(e => e.month === curMonthStr).reduce((s, e) => s + e.amount, 0);
-            
+
             const s = DB.getObj('settings');
             let forexHtml = '';
             if (s.liveForex) {
@@ -13648,11 +13601,27 @@ table.amort tbody tr { page-break-inside: avoid; }
                     data: {
                         labels: months,
                         datasets: [
-                            { label: 'Income', data: incData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.4 },
-                            { label: 'Expenses', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4 }
+                            { label: 'Income', data: incData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.4, pointRadius: 3, pointHoverRadius: 6, borderWidth: 2.5 },
+                            { label: 'Expenses', data: expData, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.4, pointRadius: 3, pointHoverRadius: 6, borderWidth: 2.5 }
                         ]
                     },
-                    options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } } }
+                    options: {
+                        maintainAspectRatio: false,
+                        // PREMIUM ANIMATION (v7.0.2): silky-smooth draw-in on refresh/tab-switch
+                        animation: {
+                            duration: 1100,
+                            easing: 'easeOutQuart',
+                            // Stagger each data point so the line "draws" left-to-right
+                            x: { duration: 900, from: NaN, delay: (ctx) => ctx.dataIndex * 70 },
+                            y: { duration: 900, from: (ctx) => ctx.chart.scales.y.getPixelForValue(0) }
+                        },
+                        transitions: {
+                            active: { animation: { duration: 250, easing: 'easeOutCubic' } }
+                        },
+                        plugins: { legend: { display: false }, tooltip: { animation: { duration: 200 } } },
+                        scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } },
+                        interaction: { mode: 'index', intersect: false }
+                    }
                 });
             }
 
@@ -13665,9 +13634,25 @@ table.amort tbody tr { page-break-inside: avoid; }
                     type: 'doughnut',
                     data: {
                         labels: Object.keys(catMap),
-                        datasets: [{ data: Object.values(catMap), backgroundColor: ['#d4af37', '#10b981', '#ef4444', '#3b82f6', '#8b5cf6', '#06b6d4', '#94a3b8', '#f87171'] }]
+                        datasets: [{ data: Object.values(catMap), backgroundColor: ['#d4af37', '#10b981', '#ef4444', '#3b82f6', '#8b5cf6', '#06b6d4', '#94a3b8', '#f87171'], borderWidth: 2, borderColor: document.documentElement.getAttribute('data-theme') === 'dark' ? '#0a0f1c' : '#ffffff', hoverOffset: 12 }]
                     },
-                    options: { maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#e2e8f0' : '#1e293b', font: { size: 10 } } } } }
+                    options: {
+                        maintainAspectRatio: false,
+                        // PREMIUM DOUGHNUT ANIMATION (v7.0.2): rotates in + scales up + arc-by-arc draw
+                        animation: {
+                            duration: 1200,
+                            easing: 'easeOutQuart',
+                            animateRotate: true,
+                            animateScale: true
+                        },
+                        transitions: {
+                            active: { animation: { duration: 300, easing: 'easeOutCubic' } }
+                        },
+                        plugins: {
+                            legend: { position: 'right', labels: { color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#e2e8f0' : '#1e293b', font: { size: 10 }, padding: 10 } },
+                            tooltip: { animation: { duration: 200 } }
+                        }
+                    }
                 });
             }
 
@@ -14103,34 +14088,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
         </div>
 
-        <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">🚀 Advanced Automation & AI</div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Live Forex Integration</div><div class="setting-desc">Auto-update dashboard balances using real-time exchange rate APIs.</div></div>
-                <div class="toggle ${s.liveForex ? 'on' : ''}" onclick="toggleSetting('liveForex', ${!s.liveForex}); if(!${s.liveForex}){notify('Live Forex enabled. Exchange rates will auto-sync.','success'); triggerHaptic('success');}"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Smart Entry Auto-Complete</div><div class="setting-desc">AI predicts and auto-fills categories and amounts when you type short descriptions.</div></div>
-                <div class="toggle ${s.smartEntry ? 'on' : ''}" onclick="toggleSetting('smartEntry', ${!s.smartEntry});"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Aggressive Background Sync</div><div class="setting-desc">High-frequency syncing for maximum safety. Disable for battery saving.</div></div>
-                <div class="toggle ${s.aggressiveSync ? 'on' : ''}" onclick="toggleSetting('aggressiveSync', ${!s.aggressiveSync});"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Predictive Cash Flow AI</div><div class="setting-desc">Receive proactive warnings about burn rate and potential cash shortages.</div></div>
-                <div class="toggle ${s.predictiveCashFlow ? 'on' : ''}" onclick="toggleSetting('predictiveCashFlow', ${!s.predictiveCashFlow});"></div>
-            </div>
-            <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Zone-Based Biometrics</div><div class="setting-desc">Require biometric authentication for sensitive actions (Export, Settings).</div></div>
-                <div class="toggle ${s.strictBiometrics ? 'on' : ''}" onclick="toggleSetting('strictBiometrics', ${!s.strictBiometrics});"></div>
-            </div>
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label" style="color:var(--red);">🚨 Panic / Decoy PIN</div><div class="setting-desc">Set a custom 6-digit PIN. If entered, a fake, untraceable dashboard loads.</div></div>
-                <button class="btn btn-secondary btn-sm" style="color:var(--red); border-color:var(--red);" onclick="setupDecoyMode()">Configure</button>
-            </div>
-        </div>
-
         <!-- System Integration / Gemini API Key removed from UI per security best practice. Backend keys are managed via Vercel ENV. -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(66, 133, 244, 0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:#4285F4;">🔌 AI Engine Status</div>
@@ -14445,8 +14402,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v6.9.1 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v6.9.1 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.0.2 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.0.2 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14455,7 +14412,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v6.9.1 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.0.2 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
