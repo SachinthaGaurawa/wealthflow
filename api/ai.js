@@ -227,16 +227,21 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'huggingface' };
     }
 
-    // ---------- EXECUTION CHAIN ----------
+    // ---------- PARALLEL MULTI-ENGINE EXECUTION ----------
+    // All engines fire SIMULTANEOUSLY (not one-by-one). This is dramatically
+    // faster and more reliable: a slow/down provider no longer blocks the rest.
+    //
+    //  • mode=fastest  → first valid reply wins (best for chat latency)
+    //  • mode=consensus→ collect all replies, pick the best (best for accuracy
+    //                     on vision / JSON extraction / critical answers)
     const errorLog = [];
 
-    // For vision: vision-capable engines first
     let engines;
     if (isVision) {
         engines = [
-            { name: 'Gemini',  fn: fetchGemini },
-            { name: 'Ollama',  fn: fetchOllama },
-            { name: 'Groq',    fn: fetchGroq }
+            { name: 'Gemini', fn: fetchGemini },
+            { name: 'Ollama', fn: fetchOllama },
+            { name: 'Groq',   fn: fetchGroq }
         ];
     } else {
         engines = [
@@ -248,30 +253,108 @@ export default async function handler(req, res) {
         ];
     }
 
-    // Honour preferredProvider hint by moving it to the front
-    if (preferredProvider) {
-        const pref = String(preferredProvider).toLowerCase();
-        engines.sort((a, b) => {
-            const aMatch = a.name.toLowerCase() === pref ? -1 : 0;
-            const bMatch = b.name.toLowerCase() === pref ? -1 : 0;
-            return aMatch - bMatch;
+    // Wants JSON (receipt extraction etc.) → use consensus for max accuracy.
+    const wantsJSON = /\{[^}]*"vendor"[^}]*\}|return only.*json|extract.*json/i.test(prompt);
+    const requestedMode = (req.body && req.body.mode) ? String(req.body.mode) : null;
+    const mode = requestedMode || ((isVision || wantsJSON) ? 'consensus' : 'fastest');
+
+    // Wrap each engine call so a rejection becomes a tagged result, never throws.
+    function run(engine) {
+        const started = Date.now();
+        return Promise.resolve()
+            .then(() => engine.fn())
+            .then(r => ({ ok: true, name: engine.name, reply: r.reply, provider: r.provider, ms: Date.now() - started }))
+            .catch(e => {
+                console.warn(`[AI] ${engine.name} failed:`, e.message);
+                errorLog.push(`${engine.name}: ${e.message}`);
+                return { ok: false, name: engine.name, error: e.message, ms: Date.now() - started };
+            });
+    }
+
+    const isValid = (txt) => typeof txt === 'string' && txt.trim().length > 1;
+
+    // ---- MODE: FASTEST (race — first valid reply wins) ----
+    if (mode === 'fastest') {
+        const pending = engines.map(run);
+        const settled = [];
+        // Resolve as soon as ANY engine returns a valid reply.
+        const winner = await new Promise((resolve) => {
+            let remaining = pending.length;
+            pending.forEach(p => p.then(r => {
+                settled.push(r);
+                if (r.ok && isValid(r.reply)) resolve(r);
+                if (--remaining === 0) resolve(null); // all done, none valid
+            }));
+        });
+        if (winner) {
+            // Let the remaining engines settle in the background (no-op) — we
+            // already have our fast answer.
+            return res.status(200).json({
+                reply: winner.reply,
+                provider: winner.provider,
+                mode: 'fastest',
+                latencyMs: winner.ms,
+                engines: engines.map(e => e.name)
+            });
+        }
+        // Fall through to consensus handling if the race produced nothing.
+    }
+
+    // ---- MODE: CONSENSUS (gather all, choose the best) ----
+    const results = await Promise.all(engines.map(run));
+    const good = results.filter(r => r.ok && isValid(r.reply));
+
+    if (good.length === 0) {
+        return res.status(503).json({
+            error: 'All AI providers are temporarily unavailable.',
+            details: errorLog.join(' | ')
         });
     }
 
-    for (const engine of engines) {
+    // Scoring: prefer the response most representative of the set.
+    //  • JSON tasks → the one that parses AND agrees with the majority on key fields
+    //  • Prose      → the longest substantive answer (proxy for completeness),
+    //                 lightly weighted toward faster engines on ties
+    function tryParse(s) {
         try {
-            console.log(`[AI] Attempting ${engine.name}…`);
-            const result = await engine.fn();
-            console.log(`[AI] ✓ ${engine.name} succeeded`);
-            return res.status(200).json({ reply: result.reply, provider: result.provider });
-        } catch (e) {
-            console.warn(`[AI] ${engine.name} failed:`, e.message);
-            errorLog.push(`${engine.name}: ${e.message}`);
-        }
+            const m = s.match(/\{[\s\S]*\}/);
+            return m ? JSON.parse(m[0]) : null;
+        } catch (_) { return null; }
     }
 
-    return res.status(503).json({
-        error: 'All AI providers are temporarily unavailable.',
-        details: errorLog.join(' | ')
+    let best;
+    if (wantsJSON) {
+        const parsed = good.map(r => ({ r, j: tryParse(r.reply) })).filter(x => x.j);
+        if (parsed.length) {
+            // Majority vote on the "amount"/"vendor" fields when present.
+            const tally = {};
+            parsed.forEach(({ j }) => {
+                const key = JSON.stringify([j.amount ?? null, (j.vendor || '').toLowerCase().trim()]);
+                tally[key] = (tally[key] || 0) + 1;
+            });
+            let topKey = null, topN = 0;
+            Object.entries(tally).forEach(([k, n]) => { if (n > topN) { topN = n; topKey = k; } });
+            const consensusPick = parsed.find(({ j }) =>
+                JSON.stringify([j.amount ?? null, (j.vendor || '').toLowerCase().trim()]) === topKey);
+            best = (consensusPick || parsed[0]).r;
+        } else {
+            best = good.sort((a, b) => b.reply.length - a.reply.length)[0];
+        }
+    } else {
+        // Prose: longest substantive wins; tie-break by speed.
+        best = good.sort((a, b) => {
+            const d = b.reply.trim().length - a.reply.trim().length;
+            if (Math.abs(d) > 120) return d;
+            return a.ms - b.ms;
+        })[0];
+    }
+
+    return res.status(200).json({
+        reply: best.reply,
+        provider: best.provider,
+        mode: 'consensus',
+        consensusOf: good.length,
+        agreement: good.map(r => r.name),
+        latencyMs: best.ms
     });
 }
