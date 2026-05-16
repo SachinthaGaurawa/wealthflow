@@ -1,468 +1,267 @@
 /* ============================================================================
- * WealthFlow AI Intelligence Engine v6.0
+ * WealthFlow AI Intelligence Engine v6.1
  * ----------------------------------------------------------------------------
- * Fixes the core problems with the AI advisor:
- *   1. Intent detection — distinguishes general / financial / image-analysis /
- *      image-generation / coding / math / translation requests instead of
- *      always behaving like a finance-only bot.
- *   2. Adaptive identity — the AI is a genuinely general assistant that ALSO
- *      happens to be an expert financial advisor, not a finance-only robot.
- *   3. Image generation — real image creation via Pollinations (no API key).
- *   4. Smart image analysis — "what is this?" describes the actual image
- *      instead of forcing a financial interpretation.
- *   5. Anti-repetition — detects near-duplicate replies and regenerates with
- *      higher variation so the AI never sends the same answer twice.
+ * v6.0 patched sendAIMessage, but wealthflow-ai-v4.js ALSO patches that
+ * function, creating a patch-war the financial flow kept winning. v6.1
+ * intercepts at the TRUE universal chokepoint instead: window.callAI().
  *
- * This module monkey-patches the host page's sendAIMessage / handleAIScan
- * after load. It is intentionally defensive: if the host functions aren't
- * present it silently no-ops.
+ * EVERY AI response in the app — chat, image scan, multi-file, the original
+ * financial flow — funnels through window.callAI(prompt, image). Wrapping
+ * callAI gives us 100% control regardless of which wrapper executes.
+ *
+ * Fixes (from user screenshots):
+ *   • "Do you know IM6 SUV?" → real vehicle answer (was: forced finance).
+ *   • "Can you generate an image of IM6?" → actually generates it.
+ *   • General / coding / math / translation → answered properly.
+ *   • Repetition → detected & regenerated with variation.
+ *   • Genuine finance questions → still full advisor mode.
  * ========================================================================== */
 (function () {
     'use strict';
 
-    var TAG = '[AI v6]';
+    var TAG = '[AI v6.1]';
     function log() { try { console.log.apply(console, [TAG].concat([].slice.call(arguments))); } catch (_) {} }
 
-    // ---------------------------------------------------------------------
-    // 1. INTENT CLASSIFIER
-    // ---------------------------------------------------------------------
-    // Lightweight, deterministic, instant (no extra API round-trip). Returns
-    // one of: image_gen | image_analyze | general | finance | code | math |
-    // translate | definition
+    /* 1. INTENT CLASSIFIER ------------------------------------------------ */
     function classifyIntent(text, hasImage) {
         var t = (text || '').toLowerCase().trim();
 
-        // Image generation — explicit creative requests
-        var genPatterns = [
-            /\b(generate|create|make|draw|design|paint|render|produce|sketch|imagine)\b.*\b(image|picture|photo|art|logo|illustration|drawing|wallpaper|poster|icon|graphic|pic|painting|design)\b/,
-            /\b(image|picture|photo|art|logo|illustration|drawing|wallpaper|poster|icon)\b.*\b(of|for|showing|with|that looks)\b/,
-            /^(draw|paint|sketch|design)\b/,
-            /\bcan you (draw|create|generate|make).*(image|picture|art|logo)/
+        var gen = [
+            /\b(generate|create|make|draw|design|paint|render|produce|sketch|imagine|give me)\b[^.]*\b(image|picture|photo|art|logo|illustration|drawing|wallpaper|poster|icon|graphic|pic|painting|portrait|scene|visual)\b/,
+            /^(draw|paint|sketch|design)\s+/,
+            /\b(image|picture|photo|pic|art)\b\s+of\b/,
+            /\bcan you (draw|create|generate|make|design)\b[^.]*\b(image|picture|art|logo|pic|photo)\b/
         ];
-        for (var i = 0; i < genPatterns.length; i++) {
-            if (genPatterns[i].test(t)) return 'image_gen';
-        }
+        for (var i = 0; i < gen.length; i++) if (gen[i].test(t)) return 'image_gen';
 
-        // Image analysis — there's an image AND a question about it
         if (hasImage) {
-            // If they explicitly ask financial extraction, treat as finance-vision
-            if (/\b(receipt|invoice|bill|expense|statement|bank|salary|payslip|how much|total|amount|spent|cost)\b/.test(t)) {
+            if (/\b(receipt|invoice|bill|expense|statement|bank statement|payslip|salary slip|how much.*(cost|total|spent)|total amount|amount due|add.*expense|scan.*(receipt|bill))\b/.test(t)) {
                 return 'finance_vision';
             }
             return 'image_analyze';
         }
 
-        // Coding
-        if (/\b(code|function|script|bug|error|python|javascript|java|c\+\+|html|css|sql|api|regex|algorithm|debug|compile|programming|write a program)\b/.test(t)) {
-            return 'code';
-        }
+        if (/\b(code|coding|function|script|bug|stack ?trace|exception|python|javascript|typescript|java\b|c\+\+|c#|php|ruby|golang|rust|html|css|sql|api|regex|algorithm|debug|compile|programming|program|leetcode|terminal|git\b|react|node\.?js)\b/.test(t)) return 'code';
 
-        // Math (pure calculation, not financial planning)
-        if (/^[\s\d+\-*/().^%]+=?\??$/.test(t) || /\b(calculate|solve|equation|derivative|integral|square root|factorial|prime|geometry|algebra|trigonometry)\b/.test(t)) {
-            return 'math';
-        }
+        if (/^[\s\d+\-*/().^%×÷=?]+$/.test(t) ||
+            /\b(calculate|compute|solve|equation|derivative|integral|square root|cube root|factorial|prime number|geometry|algebra|trigonometry|logarithm|percentage of|what is \d)\b/.test(t)) return 'math';
 
-        // Translation
-        if (/\b(translate|translation|how do you say|what does .* mean in|in (sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic))\b/.test(t)) {
-            return 'translate';
-        }
+        if (/\b(translate|translation|how do you say|what does .* mean|say .* in (sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic|korean|russian|portuguese|italian)|in (sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic) language)\b/.test(t)) return 'translate';
 
-        // Definition / general knowledge — "what is", "who is", "explain", "tell me about"
-        var generalPatterns = [
-            /^(what|who|when|where|why|how|which|whose|whom)\b/,
-            /\b(explain|describe|tell me about|what is|what are|who is|who was|define|meaning of|history of|difference between|how does|how do|how to)\b/,
-            /\b(specification|specs|features|review|comparison|vs\.?|versus|recipe|weather|news|sport|movie|song|book|game|country|capital|planet|science|biology|chemistry|physics|space|animal|history|geography)\b/
+        var finance = /\b(my money|my budget|budget|save money|saving|savings|loan|debt|invest|investment|income|expense|salary|cash flow|profit|portfolio|emi|installment|interest rate|net worth|wealth|afford|how much.*(save|spend|invest)|bank balance|tax\b|epf|etf|retirement|pension|insurance|mortgage|credit card debt|financial (plan|goal|advice)|spending|monthly (income|expense))\b/;
+
+        var general = [
+            /^(what|who|when|where|why|how|which|whose|whom|is|are|was|were|do|does|did|can|could|will|would|tell|explain|describe|define|name|list)\b/,
+            /\b(specification|specs|feature|review|comparison|compare|vs\.?|versus|recipe|cook|weather|news|sport|football|cricket|movie|film|song|music|book|novel|game|country|capital city|planet|universe|science|biology|chemistry|physics|space|astronomy|animal|plant|history|geography|language|culture|religion|philosophy|technology|gadget|phone|laptop|computer|car\b|vehicle|engine|suv|sedan|truck|brand|company|celebrity|actor|singer|author|president|prime minister|war\b|battle|invention|discovery|theory|formula|element|disease|medicine|health tip|exercise|workout|diet|nutrition|travel|tourist|hotel|flight|how to|how does|how do|difference between|meaning of|definition of|know .* (suv|car|vehicle|phone|model))\b/
         ];
-        var financeWords = /\b(money|budget|save|saving|loan|debt|invest|income|expense|salary|cash|fund|profit|portfolio|emi|installment|interest rate|net worth|wealth|financ|afford|spend|bank balance|tax|epf|etf|retirement|pension|insurance|mortgage|credit)\b/;
+        var isGeneral = false;
+        for (var g = 0; g < general.length; g++) if (general[g].test(t)) { isGeneral = true; break; }
 
-        var looksGeneral = false;
-        for (var g = 0; g < generalPatterns.length; g++) {
-            if (generalPatterns[g].test(t)) { looksGeneral = true; break; }
-        }
+        if (isGeneral && !finance.test(t)) return 'general';
+        if (finance.test(t)) return 'finance';
 
-        // If it looks like a general question AND has no finance words → general
-        if (looksGeneral && !financeWords.test(t)) return 'general';
+        if (t.length < 28 ||
+            /\b(hi|hello|hey|yo|sup|hii+|thanks|thank you|thx|bye|good (morning|afternoon|evening|night)|how are you|how's it going|whats up|what's up|lol|haha|ok|okay|cool|nice|great|awesome|wow|please|sorry|welcome)\b/.test(t)) return 'general';
 
-        // Explicit finance signal → finance
-        if (financeWords.test(t)) return 'finance';
-
-        // Greetings / casual / very short → general (friendly chat)
-        if (t.length < 25 || /\b(hi|hello|hey|yo|sup|thanks|thank you|bye|good morning|good night|how are you|lol|haha|ok|okay|cool|nice|wow|great)\b/.test(t)) {
-            return 'general';
-        }
-
-        // Default: general assistant (NOT finance). This is the key behavioural
-        // change — the AI no longer assumes everything is about money.
         return 'general';
     }
 
-    // ---------------------------------------------------------------------
-    // 2. ADAPTIVE SYSTEM PROMPT
-    // ---------------------------------------------------------------------
-    function getLangDirective() {
-        try {
-            var s = (window.DB && window.DB.getObj) ? window.DB.getObj('settings', {}) : {};
-            var code = s.aiResponseLang || 'en';
-            var names = window.WF_LANG_NAMES || {};
-            var name = names[code] || 'English';
-            if (code === 'en') return 'Respond in English.';
-            return 'CRITICAL: Write your ENTIRE reply in ' + name + ' (' + code + '). Every sentence. ' +
-                'Only use a different language if the user explicitly asks in this message. This overrides all else.';
-        } catch (_) { return 'Respond in English.'; }
+    /* 2. LANGUAGE + PERSONA ----------------------------------------------- */
+    function settings() {
+        try { return (window.DB && window.DB.getObj) ? window.DB.getObj('settings', {}) : {}; }
+        catch (_) { return {}; }
     }
-
-    function getPersonaDirective() {
+    function langDirective(userText) {
+        var s = settings();
+        var code = s.aiResponseLang || 'en';
+        var names = window.WF_LANG_NAMES || {};
+        var name = names[code] || 'English';
+        var ov = (userText || '').match(/\b(?:in|reply in|answer in|respond in|write in)\s+(english|sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic|korean|russian|portuguese|italian)\b/i);
+        if (ov) return 'The user explicitly asked you to reply in ' + ov[1] + ' for THIS message. Write the entire reply in ' + ov[1] + '.';
+        if (code === 'en') return 'Write the reply in English.';
+        return 'CRITICAL LANGUAGE RULE: Write your ENTIRE reply in ' + name + ' (' + code + '). Every sentence, heading and bullet, even if the user wrote in English. This overrides everything.';
+    }
+    function personaDirective() {
+        var p = settings().aiAdvisorPersona || 'balanced';
+        return ({
+            supportive: 'Tone: exceptionally warm, encouraging, gentle. Lead with positives.',
+            balanced: 'Tone: realistic, professional, friendly — a knowledgeable friend.',
+            strict: 'Tone: blunt, direct, disciplined. No sugar-coating. Minimal emojis.',
+            aggressive: 'Tone: high-energy coach. Push hard. Strong action verbs.'
+        })[p] || 'Tone: friendly and professional.';
+    }
+    function userName() {
         try {
-            var s = (window.DB && window.DB.getObj) ? window.DB.getObj('settings', {}) : {};
-            var p = s.aiAdvisorPersona || 'balanced';
-            var map = {
-                supportive: 'Tone: warm, encouraging, gentle. Always find a positive angle.',
-                balanced: 'Tone: realistic, professional, friendly — like a knowledgeable friend.',
-                strict: 'Tone: blunt, direct, disciplined. No sugar-coating, no emojis.',
-                aggressive: 'Tone: high-intensity coach. Push hard, strong action verbs.'
-            };
-            return map[p] || map.balanced;
+            var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
+            return (c && c.userName) ? c.userName : 'there';
+        } catch (_) { return 'there'; }
+    }
+    function financeContext() {
+        try {
+            var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
+            if (!c) return '';
+            return '\n\nUSER FINANCIAL SNAPSHOT (use only when relevant):\n' +
+                '• Monthly Income: LKR ' + (c.totalMonthlyIncome || 0).toLocaleString() + '\n' +
+                '• This Month Expenses: LKR ' + (c.thisMonthExpenses || 0).toLocaleString() + '\n' +
+                '• Monthly Loan Payments: LKR ' + (c.monthlyLoanPayments || 0).toLocaleString() + '\n' +
+                '• Net Monthly Cash Flow: LKR ' + (c.netMonthlyCashFlow || 0).toLocaleString() + '\n' +
+                '• Balance On Hand: LKR ' + (c.balanceOnHand || 0).toLocaleString();
         } catch (_) { return ''; }
     }
 
-    // Build identity prompt by intent. The financial context is only injected
-    // when it's actually relevant.
-    function buildAdaptivePrompt(intent, userName, financialContextText) {
-        var lang = getLangDirective();
-        var persona = getPersonaDirective();
-        var base = 'You are WealthFlow AI — a brilliant, friendly, genuinely helpful general-purpose AI assistant for ' + (userName || 'the user') + '. ' +
-            'You can discuss ANY topic in the world: science, technology, history, cooking, health, travel, entertainment, coding, math, languages, life advice — anything. ' +
-            'You ALSO happen to be a world-class financial advisor, but you are NOT limited to finance. ' +
-            'Answer what the user actually asked. Never force a financial angle onto a non-financial question.';
+    /* 3. ADAPTIVE PROMPT -------------------------------------------------- */
+    function adaptivePrompt(intent, uName, userText) {
+        var lang = langDirective(userText);
+        var persona = personaDirective();
+        var base =
+            'You are WealthFlow AI — a brilliant, friendly, genuinely helpful general-purpose AI assistant talking to ' + uName + '. ' +
+            'You can discuss ANY topic in the world: science, technology, vehicles, gadgets, history, cooking, health, travel, ' +
+            'entertainment, coding, math, languages, general knowledge, life advice — anything at all. ' +
+            'You ALSO happen to be an expert financial advisor, but you are absolutely NOT limited to finance. ' +
+            'Answer EXACTLY what the user asked. NEVER pivot a non-financial question back to their money, budget, income or savings. ' +
+            'NEVER say things like "let me shift the conversation to your financial situation" or "as your financial advisor". ' +
+            'That behaviour is wrong and explicitly unwanted by the user.';
+        var rules =
+            '\n\nRULES:\n' +
+            '1. Answer the actual question accurately with real facts and detail.\n' +
+            '2. Product/vehicle/phone questions (e.g. "IM6 SUV", "iPhone 15 specs") → give real specs & info, NOT financial advice.\n' +
+            '3. Match length to the question.\n' +
+            '4. Never repeat an earlier answer verbatim.\n' +
+            '5. Be warm and human. No unwanted disclaimers.\n' +
+            '6. ' + persona + '\n7. ' + lang;
 
-        var rules = '\n\nCORE RULES:\n' +
-            '- Answer the ACTUAL question. If asked "what is the full specification of the iPhone 15", give phone specs — NOT financial advice.\n' +
-            '- Be accurate and specific. Use real facts, real numbers, real detail. If unsure, say so honestly.\n' +
-            '- Match length to the question: short question → short answer; deep question → structured detailed answer.\n' +
-            '- Never repeat a previous answer verbatim. Always add new value.\n' +
-            '- Be warm and human, not robotic. No boilerplate disclaimers.\n' +
-            '- ' + persona + '\n- ' + lang;
-
-        var identity;
         switch (intent) {
-            case 'general':
-            case 'definition':
-                identity = base + '\n\nThe user asked a GENERAL knowledge question. Answer it directly, accurately and thoroughly like an expert encyclopedia + friendly teacher. Do NOT mention their finances unless they ask.';
-                break;
-            case 'code':
-                identity = base + '\n\nThe user asked a CODING/technical question. Act as a senior software engineer. Give correct, working, well-explained code with brief commentary. Use code blocks.';
-                break;
-            case 'math':
-                identity = base + '\n\nThe user asked a MATH problem. Solve it step by step, show the working clearly, and give the final answer in bold.';
-                break;
-            case 'translate':
-                identity = base + '\n\nThe user asked for a TRANSLATION or language help. Provide the accurate translation, pronunciation if useful, and a usage note.';
-                break;
-            case 'image_analyze':
-                identity = base + '\n\nThe user attached an IMAGE and asked about it. Describe and analyse what is ACTUALLY in the image accurately and in detail. Identify objects, text, people, scenes, products, specifications — whatever is relevant to their question. Do NOT assume it is a receipt or financial document unless it clearly is.';
-                break;
-            case 'finance_vision':
-                identity = base + '\n\nThe user attached a financial document/image. Extract the key data and give a clear breakdown plus useful financial insight.' +
-                    (financialContextText ? '\n\nUSER FINANCIAL CONTEXT:\n' + financialContextText : '');
-                break;
-            case 'finance':
-                identity = base + '\n\nThe user asked a FINANCIAL question. Now act as their expert personal financial advisor. Be specific with their real numbers.' +
-                    (financialContextText ? '\n\nUSER FINANCIAL CONTEXT:\n' + financialContextText : '') +
-                    '\n\nFORMAT longer answers with a headline, 2-3 emoji section headers, bold **LKR** numbers, and a "Bottom line:".';
-                break;
-            default:
-                identity = base;
+            case 'code': return base + '\n\nCODING question. Act as a senior software engineer. Correct, working, clearly-explained code in code blocks.' + rules;
+            case 'math': return base + '\n\nMATH question. Solve step-by-step, show working, final answer in **bold**.' + rules;
+            case 'translate': return base + '\n\nTRANSLATION request. Accurate translation + pronunciation if helpful + short usage note.' + rules;
+            case 'image_analyze': return base + '\n\nThe user attached an IMAGE and asked about it. Describe & analyse what is ACTUALLY visible — objects, text, brand, product, model, specifications, scene, people, colours. Answer their exact question about THIS image. Do NOT treat it as a receipt or give financial advice unless it is clearly financial.' + rules;
+            case 'finance_vision': return base + '\n\nThe user attached a financial document. Extract key figures, give a clear useful breakdown & insight.' + financeContext() + rules;
+            case 'finance': return base + '\n\nThis IS a genuine financial question — now act as the user\'s expert personal financial advisor. Be specific with their real numbers. Format longer answers with a headline, 2-3 emoji section headers, **bold LKR numbers**, and a "Bottom line:".' + financeContext() + rules;
+            default: return base + '\n\nGENERAL question. Answer directly and thoroughly like a brilliant expert + friendly teacher. Do NOT mention the user\'s finances at all unless they explicitly ask about money.' + rules;
         }
-        return identity + rules;
     }
 
-    // ---------------------------------------------------------------------
-    // 3. IMAGE GENERATION (Pollinations — free, no key, client-side)
-    // ---------------------------------------------------------------------
+    /* 4. IMAGE GENERATION ------------------------------------------------- */
     function extractImagePrompt(text) {
-        var t = text.trim();
-        // Strip leading command words
-        t = t.replace(/^(please\s+)?(can you\s+)?(generate|create|make|draw|design|paint|render|produce|sketch|imagine|give me)\s+(me\s+)?(an?\s+)?(image|picture|photo|art|logo|illustration|drawing|wallpaper|poster|icon|graphic|pic|painting)\s*(of|for|showing|with|that looks like|:)?\s*/i, '');
-        return t || text;
+        var t = (text || '').trim();
+        t = t.replace(/^(please\s+)?(can you\s+|could you\s+|will you\s+)?(pls\s+)?(generate|create|make|draw|design|paint|render|produce|sketch|imagine|give me)\s+(me\s+)?(an?\s+|the\s+)?(image|picture|photo|art|logo|illustration|drawing|wallpaper|poster|icon|graphic|pic|painting|portrait|visual)\s*(of|for|showing|with|that looks like|like|:)?\s*/i, '');
+        return (t.replace(/\?+$/, '').trim()) || text;
     }
-
-    function generateImage(promptText) {
+    function buildImageUrl(promptText) {
         var clean = extractImagePrompt(promptText);
         var seed = Math.floor(Math.random() * 1e9);
-        var enhanced = encodeURIComponent(clean + ', high quality, highly detailed, professional, 4k');
-        // Pollinations: free text-to-image, returns an image directly at this URL
-        var url = 'https://image.pollinations.ai/prompt/' + enhanced +
-            '?width=1024&height=1024&seed=' + seed + '&nologo=true&model=flux';
-        return { url: url, prompt: clean };
+        var enc = encodeURIComponent(clean + ', ultra high quality, highly detailed, professional, sharp focus, 4k');
+        return { url: 'https://image.pollinations.ai/prompt/' + enc + '?width=1024&height=1024&seed=' + seed + '&nologo=true&model=flux', prompt: clean };
     }
 
-    // ---------------------------------------------------------------------
-    // 4. ANTI-REPETITION
-    // ---------------------------------------------------------------------
-    var _recentReplies = [];
-    function similarity(a, b) {
+    /* 5. PROMPT PARSING --------------------------------------------------- */
+    function lastUserLine(prompt) {
+        if (!prompt) return '';
+        var m = prompt.match(/\n([^\n:]{1,40}):\s*([^\n]+)\nAI:\s*$/);
+        if (m) return m[2].trim();
+        var lines = prompt.split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+        for (var i = lines.length - 1; i >= 0; i--) {
+            if (/^AI:?$/.test(lines[i])) continue;
+            var c = lines[i].replace(/^[^:]{1,40}:\s*/, '');
+            if (c && c.length > 1) return c;
+        }
+        return prompt.slice(-200);
+    }
+
+    /* 6. ANTI-REPETITION -------------------------------------------------- */
+    var _recent = [];
+    function sim(a, b) {
         if (!a || !b) return 0;
         a = a.toLowerCase().replace(/\s+/g, ' ').trim();
         b = b.toLowerCase().replace(/\s+/g, ' ').trim();
         if (a === b) return 1;
-        // Token Jaccard similarity
-        var sa = {}, sb = {}, i, common = 0;
-        var ta = a.split(' '), tb = b.split(' ');
-        for (i = 0; i < ta.length; i++) sa[ta[i]] = 1;
-        for (i = 0; i < tb.length; i++) sb[tb[i]] = 1;
-        var keysA = Object.keys(sa), keysB = Object.keys(sb);
-        for (i = 0; i < keysA.length; i++) if (sb[keysA[i]]) common++;
-        var union = keysA.length + keysB.length - common;
-        return union ? common / union : 0;
+        var A = {}, B = {}, common = 0, ta = a.split(' '), tb = b.split(' '), i;
+        for (i = 0; i < ta.length; i++) A[ta[i]] = 1;
+        for (i = 0; i < tb.length; i++) B[tb[i]] = 1;
+        var ka = Object.keys(A), kb = Object.keys(B);
+        for (i = 0; i < ka.length; i++) if (B[ka[i]]) common++;
+        var u = ka.length + kb.length - common;
+        return u ? common / u : 0;
     }
-    function isRepetitive(reply) {
-        for (var i = 0; i < _recentReplies.length; i++) {
-            if (similarity(reply, _recentReplies[i]) > 0.82) return true;
-        }
-        return false;
-    }
-    function rememberReply(reply) {
-        _recentReplies.push(reply);
-        if (_recentReplies.length > 5) _recentReplies.shift();
-    }
+    function isRepeat(r) { for (var i = 0; i < _recent.length; i++) if (sim(r, _recent[i]) > 0.85) return true; return false; }
+    function remember(r) { _recent.push(r); if (_recent.length > 6) _recent.shift(); }
 
-    // ---------------------------------------------------------------------
-    // 5. PATCH sendAIMessage
-    // ---------------------------------------------------------------------
-    function installSendPatch() {
-        if (typeof window.sendAIMessage !== 'function') return false;
-        if (window.__aiV6SendPatched) return true;
+    /* 7. SECONDARY GUARD — wrap window.callAI for modules (e.g. v4) that
+     *    call window.callAI(...) explicitly. The PRIMARY interception is
+     *    inlined inside index.html's own callAI() (v6.2) because the host
+     *    calls callAI() as a bare identifier that a window override cannot
+     *    catch. This wrapper adds image-gen + intent for the explicit-call
+     *    paths and is harmless if the inlined engine already handled it. */
+    var _origCallAI = null;
 
-        var origSend = window.sendAIMessage;
-
-        window.sendAIMessage = async function (msgOverride) {
-            var input = document.getElementById('aiChatInput');
-            var msg = msgOverride || (input ? input.value.trim() : '');
-            if (!msg) return;
-
-            var intent = classifyIntent(msg, false);
-            log('intent =', intent, '| msg =', msg.slice(0, 60));
-
-            // ---- IMAGE GENERATION ----
-            if (intent === 'image_gen') {
-                if (input) { input.value = ''; if (window.autoResizeAIInput) window.autoResizeAIInput(input); }
-                if (window.appendAIMessage) window.appendAIMessage('user', msg);
-
-                var hist0 = window.getAIHistory ? window.getAIHistory() : [];
-                hist0.push({ role: 'user', content: msg, ts: Date.now() });
-                if (window.saveAIHistory) window.saveAIHistory(hist0);
-
-                if (window.showAITyping) window.showAITyping(true);
-                try {
-                    var gen = generateImage(msg);
-                    // Preload the image so we can show it when ready
-                    await new Promise(function (resolve) {
-                        var im = new Image();
-                        im.onload = resolve;
-                        im.onerror = resolve;
-                        im.src = gen.url;
-                        setTimeout(resolve, 12000); // safety timeout
-                    });
-                    if (window.showAITyping) window.showAITyping(false);
-
-                    var html = '🎨 Here is the image I generated for "<strong>' + gen.prompt.replace(/</g, '&lt;') + '</strong>":<br><br>' +
-                        '<img src="' + gen.url + '" alt="Generated image" ' +
-                        'style="max-width:100%;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.3);" ' +
-                        'onclick="window.open(this.src,\'_blank\')" />' +
-                        '<br><div style="font-size:11px;color:var(--text3);margin-top:6px;">Tap image to open full size · Ask me to "regenerate" for a new variation</div>';
-
-                    if (window.appendAIMessage) window.appendAIMessage('bot', html);
-
-                    var hist1 = window.getAIHistory ? window.getAIHistory() : [];
-                    hist1.push({ role: 'assistant', content: '[Generated image: ' + gen.prompt + ']', ts: Date.now() });
-                    if (window.saveAIHistory) window.saveAIHistory(hist1);
-                } catch (err) {
-                    if (window.showAITyping) window.showAITyping(false);
-                    if (window.appendAIMessage) window.appendAIMessage('bot', '⚠️ I couldn\'t generate the image right now. Please try again with a clearer description.');
-                }
-                return;
-            }
-
-            // ---- NON-FINANCE INTENTS: override the system identity ----
-            if (intent === 'general' || intent === 'code' || intent === 'math' ||
-                intent === 'translate' || intent === 'definition') {
-
-                if (input) { input.value = ''; if (window.autoResizeAIInput) window.autoResizeAIInput(input); }
-                if (window.appendAIMessage) window.appendAIMessage('user', msg);
-
-                var h = window.getAIHistory ? window.getAIHistory() : [];
-                h.push({ role: 'user', content: msg, ts: Date.now() });
-                if (window.saveAIHistory) window.saveAIHistory(h);
-
-                if (window.showAITyping) window.showAITyping(true);
-                if (document.getElementById('aiSendBtn')) document.getElementById('aiSendBtn').disabled = true;
-
-                try {
-                    var userName = 'there';
-                    try {
-                        var ctx = window.buildFinancialContext ? window.buildFinancialContext() : null;
-                        if (ctx && ctx.userName) userName = ctx.userName;
-                    } catch (_) {}
-
-                    var sys = buildAdaptivePrompt(intent, userName, null);
-
-                    var recent = (window.getAIHistory ? window.getAIHistory() : []).slice(-10);
-                    var convo = sys + '\n\n--- CONVERSATION ---\n';
-                    recent.slice(0, -1).forEach(function (m) {
-                        convo += (m.role === 'user' ? userName : 'AI') + ': ' + m.content + '\n';
-                    });
-                    convo += userName + ': ' + msg + '\nAI:';
-
-                    var reply = await window.callAI(convo);
-                    reply = (reply || '').replace(/^#{1,3}\s+/gm, '').trim();
-
-                    // Anti-repetition: regenerate once with a variation nudge
-                    if (isRepetitive(reply)) {
-                        log('repetitive reply detected — regenerating');
-                        var convo2 = convo + '\n\n(Note: give a FRESH answer with different wording and new detail — do not repeat earlier phrasing.)';
-                        var reply2 = await window.callAI(convo2);
-                        reply2 = (reply2 || '').replace(/^#{1,3}\s+/gm, '').trim();
-                        if (reply2 && reply2.length > 10) reply = reply2;
-                    }
-                    rememberReply(reply);
-
-                    if (window.showAITyping) window.showAITyping(false);
-                    if (window.appendAIMessage) window.appendAIMessage('bot', reply);
-
-                    var h2 = window.getAIHistory ? window.getAIHistory() : [];
-                    h2.push({ role: 'assistant', content: reply, ts: Date.now() });
-                    if (window.saveAIHistory) window.saveAIHistory(h2);
-
-                    if (window._updateAIContextPills) { try { window._updateAIContextPills(); } catch (_) {} }
-                } catch (err) {
-                    if (window.showAITyping) window.showAITyping(false);
-                    if (window.appendAIMessage) window.appendAIMessage('bot', '⚠️ Connection issue. Please try again in a moment.\n\n' + (err && err.message ? err.message : ''));
-                } finally {
-                    if (document.getElementById('aiSendBtn')) document.getElementById('aiSendBtn').disabled = false;
-                }
-                return;
-            }
-
-            // ---- FINANCE intent → use the host's original (financial) flow,
-            //      but still apply anti-repetition afterwards.
-            return origSend.apply(this, arguments);
-        };
-
-        window.__aiV6SendPatched = true;
-        log('sendAIMessage patched ✓');
-        return true;
+    function alreadyRewritten(p) {
+        return /general-purpose AI assistant talking to|GENERAL question\. Answer directly|CODING question\. Act as|attached an IMAGE and asked about it/i.test(p || '');
     }
 
-    // ---------------------------------------------------------------------
-    // 6. PATCH handleAIScan — smart image analysis (not always financial)
-    // ---------------------------------------------------------------------
-    function installScanPatch() {
-        if (typeof window.handleAIScan !== 'function') return false;
-        if (window.__aiV6ScanPatched) return true;
+    async function callAIv6(prompt, image) {
+        // If the inlined v6.2 engine already transformed this prompt, pass through.
+        if (alreadyRewritten(prompt)) return _origCallAI(prompt, image);
 
-        var origScan = window.handleAIScan;
+        var last = lastUserLine(prompt);
+        var intent = classifyIntent(last, !!image);
 
-        window.handleAIScan = async function (e, type) {
-            // Only re-route the conversational image path. Expense/subscription
-            // receipt scanning keeps the host's specialised JSON pipeline.
-            if (type !== 'ai_chat') {
-                return origScan.apply(this, arguments);
-            }
-
-            var file = e.target.files[0];
-            if (!file) return;
-
-            // The user's accompanying text (if any) sets the intent
-            var inputEl = document.getElementById('aiChatInput');
-            var userText = inputEl ? inputEl.value.trim() : '';
-            if (!userText) userText = 'What is this? Describe it in detail.';
-
-            var intent = classifyIntent(userText, true); // image present
-            log('scan intent =', intent);
-
+        if (!image && intent === 'image_gen') {
+            var g = buildImageUrl(last);
             try {
-                if (inputEl) { inputEl.value = ''; if (window.autoResizeAIInput) window.autoResizeAIInput(inputEl); }
-                if (window.appendAIMessage) window.appendAIMessage('user', '🖼️ ' + userText);
-                if (window.showAITyping) window.showAITyping(true);
+                await new Promise(function (res) {
+                    var im = new Image();
+                    im.onload = res; im.onerror = res; im.src = g.url;
+                    setTimeout(res, 14000);
+                });
+            } catch (_) {}
+            return '🎨 Here is the image I generated for "**' + g.prompt + '**":\n\n' +
+                '<img src="' + g.url + '" alt="generated" style="max-width:100%;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.3);cursor:pointer;" onclick="window.open(this.src,\'_blank\')" />\n\n' +
+                '<span style="font-size:11px;opacity:.7;">Tap image to open full size. Ask me to "regenerate" for a new variation.</span>';
+        }
 
-                var comp = await window._compressImageToBase64(file, 1600, 0.9);
-                var base64Img = comp.base64;
+        var rewritten = prompt;
+        var isHostFin = /WealthFlow AI|financial advisor|FINANCIAL SNAPSHOT|CURRENT FINANCIAL|ADVISOR STYLE/i.test(prompt || '');
+        if (last && (isHostFin || image)) {
+            var sys = adaptivePrompt(intent, userName(), last);
+            var tail;
+            var ci = (prompt || '').indexOf('--- CONVERSATION ---');
+            if (ci !== -1) tail = prompt.slice(ci);
+            else tail = '--- CONVERSATION ---\n' + userName() + ': ' + last + '\nAI:';
+            rewritten = sys + '\n\n' + tail;
+        }
 
-                var userName = 'there';
-                try {
-                    var ctx = window.buildFinancialContext ? window.buildFinancialContext() : null;
-                    if (ctx && ctx.userName) userName = ctx.userName;
-                } catch (_) {}
-
-                var visionPrompt;
-                if (intent === 'finance_vision') {
-                    var fctx = '';
-                    try {
-                        var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
-                        if (c) fctx = 'Monthly income LKR ' + (c.totalMonthlyIncome || 0).toLocaleString() +
-                            ', this-month expenses LKR ' + (c.thisMonthExpenses || 0).toLocaleString() + '.';
-                    } catch (_) {}
-                    visionPrompt = buildAdaptivePrompt('finance_vision', userName, fctx) +
-                        '\n\nUser question about the attached image: "' + userText + '"';
-                } else {
-                    visionPrompt = buildAdaptivePrompt('image_analyze', userName, null) +
-                        '\n\nThe user attached an image and asked: "' + userText + '"\n' +
-                        'Answer their exact question about THIS image accurately. Describe what you actually see — ' +
-                        'objects, text, brand, product, specs, scene, people, colours, context. ' +
-                        'If they asked for specifications, list the real specs you can see or identify. ' +
-                        'Do NOT treat this as a receipt or give financial advice unless the image is clearly financial.';
-                }
-
-                var reply = await window.callAI(visionPrompt, base64Img);
-                reply = (reply || '').replace(/^#{1,3}\s+/gm, '').trim();
-
-                if (isRepetitive(reply)) {
-                    var reply2 = await window.callAI(visionPrompt + '\n\n(Give a fresh, different, detailed answer.)', base64Img);
-                    reply2 = (reply2 || '').replace(/^#{1,3}\s+/gm, '').trim();
-                    if (reply2 && reply2.length > 10) reply = reply2;
-                }
-                rememberReply(reply);
-
-                if (window.showAITyping) window.showAITyping(false);
-                if (window.appendAIMessage) window.appendAIMessage('bot', reply);
-
-                var h = window.getAIHistory ? window.getAIHistory() : [];
-                h.push({ role: 'user', content: '[Image] ' + userText, ts: Date.now() });
-                h.push({ role: 'assistant', content: reply, ts: Date.now() });
-                if (window.saveAIHistory) window.saveAIHistory(h);
-
-                e.target.value = '';
-            } catch (err) {
-                if (window.showAITyping) window.showAITyping(false);
-                if (window.appendAIMessage) window.appendAIMessage('bot', '⚠️ I couldn\'t analyse that image. Please try again.\n\n' + (err && err.message ? err.message : ''));
-                e.target.value = '';
+        var reply = await _origCallAI(rewritten, image);
+        try {
+            if (reply && typeof reply === 'string' && isRepeat(reply)) {
+                var r2 = await _origCallAI(rewritten + '\n\n(Give a FRESH answer: different wording, new angle.)', image);
+                if (r2 && typeof r2 === 'string' && r2.length > 10) reply = r2;
             }
-        };
-
-        window.__aiV6ScanPatched = true;
-        log('handleAIScan patched ✓');
-        return true;
+            if (reply && typeof reply === 'string') remember(reply);
+        } catch (_) {}
+        return reply;
     }
 
-    // ---------------------------------------------------------------------
-    // 7. BOOTSTRAP — wait until host functions exist, then patch
-    // ---------------------------------------------------------------------
+    function ensurePatched() {
+        if (typeof window.callAI !== 'function') return false;
+        if (window.callAI.__v6 === true) return true;
+        _origCallAI = window.callAI;
+        callAIv6.__v6 = true;
+        window.callAI = callAIv6;
+        log('window.callAI guard installed ✓');
+        return true;
+    }
     var tries = 0;
-    var boot = setInterval(function () {
-        tries++;
-        var a = installSendPatch();
-        var b = installScanPatch();
-        if ((a && b) || tries > 60) {
-            clearInterval(boot);
-            log('bootstrap complete (sendPatched=' + !!window.__aiV6SendPatched +
-                ', scanPatched=' + !!window.__aiV6ScanPatched + ')');
-        }
-    }, 500);
+    var boot = setInterval(function () { tries++; ensurePatched(); if (tries > 120) clearInterval(boot); }, 500);
+    setInterval(ensurePatched, 3000);
 
-    // Expose for diagnostics
     window.WealthFlowAIv6 = {
+        version: '6.2',
         classifyIntent: classifyIntent,
-        generateImage: generateImage,
-        version: '6.0'
+        buildImageUrl: buildImageUrl,
+        adaptiveSystemPrompt: function (intent, userText) {
+            return adaptivePrompt(intent, userName(), userText);
+        },
+        _status: function () { return { patched: !!(window.callAI && window.callAI.__v6), tries: tries }; }
     };
+    log('module loaded (v6.2 — inlined primary + window guard)');
 })();

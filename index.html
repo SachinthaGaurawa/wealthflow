@@ -55,9 +55,10 @@
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
 
-    <script src="/wealthflow-scanner.js" defer></script>
-    <script src="/wealthflow-ai-v4.js" defer></script>
-    <script src="/wealthflow-ai-v6.js" defer></script>
+    <script src="wealthflow-scanner.js" defer></script>
+    <script src="wealthflow-ai-v4.js" defer></script>
+    <script src="wealthflow-ai-v6.js" defer></script>
+    <script src="wealthflow-ml.js" defer></script>
 
     
 
@@ -4456,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.1.0 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6593,6 +6594,111 @@
         async function callAI(prompt, image = null) {
             let errorLogs = [];
 
+            // ═══════════════════════════════════════════════════════════════
+            // AI INTELLIGENCE ENGINE v6.2 (inlined — unbypassable)
+            // Detects intent and rewrites the forced-financial prompt so the
+            // AI answers general / image / coding / math questions properly,
+            // generates real images, and only does finance for finance Qs.
+            // ═══════════════════════════════════════════════════════════════
+            try {
+                const _wfAI = window.WealthFlowAIv6;
+                // Extract the user's actual last line from the host prompt
+                let _lastLine = '';
+                {
+                    const _m = (prompt || '').match(/\n([^\n:]{1,40}):\s*([^\n]+)\nAI:\s*$/);
+                    if (_m) _lastLine = _m[2].trim();
+                    else {
+                        const _ls = (prompt || '').split('\n').map(x => x.trim()).filter(Boolean);
+                        for (let i = _ls.length - 1; i >= 0; i--) {
+                            if (/^AI:?$/.test(_ls[i])) continue;
+                            const _c = _ls[i].replace(/^[^:]{1,40}:\s*/, '');
+                            if (_c && _c.length > 1) { _lastLine = _c; break; }
+                        }
+                    }
+                    if (!_lastLine) _lastLine = (prompt || '').slice(-200);
+                }
+
+                // Minimal built-in classifier as a fallback if the v6 module
+                // hasn't finished loading yet (defer). Mirrors the module logic
+                // for the most important cases so behaviour is correct even on
+                // the very first message.
+                function _builtinIntent(txt, hasImg) {
+                    const s = (txt || '').toLowerCase().trim();
+                    if (/\b(generate|create|make|draw|design|paint|render|sketch|imagine|give me)\b[^.]*\b(image|picture|photo|art|logo|illustration|drawing|wallpaper|poster|icon|pic|painting|portrait|visual)\b/.test(s) ||
+                        /^(draw|paint|sketch|design)\s+/.test(s) || /\b(image|picture|photo|pic|art)\b\s+of\b/.test(s)) return 'image_gen';
+                    if (hasImg) {
+                        if (/\b(receipt|invoice|bill|expense|statement|payslip|how much|total|amount due|add.*expense)\b/.test(s)) return 'finance_vision';
+                        return 'image_analyze';
+                    }
+                    if (/\b(code|function|script|bug|python|javascript|java\b|html|css|sql|api|regex|algorithm|debug|programming)\b/.test(s)) return 'code';
+                    if (/^[\s\d+\-*/().^%×÷=?]+$/.test(s) || /\b(calculate|solve|equation|square root|factorial|algebra)\b/.test(s)) return 'math';
+                    if (/\b(translate|how do you say|what does .* mean|say .* in (sinhala|tamil|hindi|french|spanish|german))\b/.test(s)) return 'translate';
+                    const fin = /\b(my money|budget|save money|saving|savings|loan|debt|invest|income|expense|salary|cash flow|portfolio|emi|net worth|wealth|afford|tax\b|epf|etf|retirement|pension|mortgage|spending|monthly (income|expense))\b/;
+                    const gen = /^(what|who|when|where|why|how|which|is|are|do|does|did|can|could|tell|explain|describe|define)\b|\b(specification|specs|feature|review|vs\.?|versus|recipe|weather|news|movie|song|book|game|country|capital|science|animal|history|car\b|vehicle|suv|phone|laptop|brand|how to|how does|difference between|meaning of|know .* (suv|car|vehicle|phone))\b/;
+                    if (gen.test(s) && !fin.test(s)) return 'general';
+                    if (fin.test(s)) return 'finance';
+                    if (s.length < 28 || /\b(hi|hello|hey|thanks|thank you|bye|good (morning|night)|how are you|ok|cool|nice)\b/.test(s)) return 'general';
+                    return 'general';
+                }
+
+                const _intent = (() => {
+                    // Base intent from the rule classifier
+                    let base = (_wfAI && _wfAI.classifyIntent)
+                        ? _wfAI.classifyIntent(_lastLine, !!image)
+                        : _builtinIntent(_lastLine, !!image);
+                    // If the on-device ML model is confident and disagrees on a
+                    // non-image case, trust the learned model (it adapts to THIS
+                    // user's phrasing over time).
+                    try {
+                        if (!image && window.WealthFlowML && window.WealthFlowML.predictIntent) {
+                            const ml = window.WealthFlowML.predictIntent(_lastLine);
+                            if (ml && ml.confidence >= 0.80 && ml.intent && ml.intent !== base) {
+                                console.log('[AI-ML] intent override:', base, '→', ml.intent, '(conf ' + ml.confidence.toFixed(2) + ')');
+                                base = ml.intent;
+                            }
+                        }
+                    } catch (_) {}
+                    return base;
+                })();
+
+                // ---- IMAGE GENERATION: short-circuit, return an <img> ----
+                if (!image && _intent === 'image_gen' && _wfAI && _wfAI.buildImageUrl) {
+                    const _g = _wfAI.buildImageUrl(_lastLine);
+                    try {
+                        await new Promise(res => {
+                            const im = new Image();
+                            im.onload = res; im.onerror = res; im.src = _g.url;
+                            setTimeout(res, 14000);
+                        });
+                    } catch (_) {}
+                    _lastAIProvider = 'pollinations:flux';
+                    return '🎨 Here is the image I generated for "**' + _g.prompt + '**":\n\n' +
+                        '<img src="' + _g.url + '" alt="generated" style="max-width:100%;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.3);cursor:pointer;" onclick="window.open(this.src,\'_blank\')" />\n\n' +
+                        '<span style="font-size:11px;opacity:.7;">Tap image to open full size. Ask me to "regenerate" for a new variation.</span>';
+                }
+
+                // ---- NON-FINANCE: replace the forced financial system prompt ----
+                const _isHostFin = /WealthFlow AI|financial advisor|FINANCIAL SNAPSHOT|CURRENT FINANCIAL|ADVISOR STYLE/i.test(prompt || '');
+                if (_lastLine && (_isHostFin || image) && _wfAI && _wfAI.adaptiveSystemPrompt) {
+                    let _sys = _wfAI.adaptiveSystemPrompt(_intent, _lastLine);
+                    // Append on-device learned personalization (facts, topics, length pref)
+                    try {
+                        if (window.WealthFlowML && window.WealthFlowML.personalizationBlock) {
+                            _sys += window.WealthFlowML.personalizationBlock();
+                        }
+                    } catch (_) {}
+                    let _tail;
+                    const _ci = (prompt || '').indexOf('--- CONVERSATION ---');
+                    if (_ci !== -1) _tail = prompt.slice(_ci);
+                    else _tail = '--- CONVERSATION ---\nUser: ' + _lastLine + '\nAI:';
+                    prompt = _sys + '\n\n' + _tail;
+                    window._wfLastIntent = _intent;
+                    window._wfLastUserLine = _lastLine;
+                    console.log('[AI v6.2] intent=' + _intent + ' → prompt rewritten + personalized');
+                }
+            } catch (_e) { console.warn('[AI v6.2] intent engine skipped:', _e && _e.message); }
+            // ═══════════════════════════════════════════════════════════════
+
             // 1. Try Vercel Backend First (Handles multi-engine securely)
             try {
                 const isLocalOrGitHub = window.location.hostname.includes('github.io') || window.location.hostname === 'localhost';
@@ -7551,6 +7657,17 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 // Show bot reply with followups
                 appendAIMessage('bot', mainReply, followups);
 
+                // On-device ML: learn from this exchange (facts, intent, prefs)
+                try {
+                    if (window.WealthFlowML && window.WealthFlowML.observe) {
+                        window.WealthFlowML.observe(
+                            window._wfLastUserLine || msg,
+                            mainReply,
+                            window._wfLastIntent || null
+                        );
+                    }
+                } catch (_) {}
+
                 // Update persona based on interaction
                 updateAIPersona(msg, mainReply);
                 _updateAIContextPills();
@@ -7620,6 +7737,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // Paragraph spacing
             f = f.replace(/\n{2,}/g, '<div class="ai-spacer"></div>');
             f = f.replace(/\n/g, '<br>');
+            // Restore SAFE generated <img> tags (image generation feature).
+            // These are produced only by our own code, never from user input.
+            f = f.replace(/&lt;img src=&quot;(https:\/\/image\.pollinations\.ai\/[^"&]+)&quot;[^&]*?&gt;/g,
+                '<img src="$1" alt="generated" style="max-width:100%;border-radius:14px;border:1px solid var(--border);box-shadow:0 4px 18px rgba(0,0,0,.3);cursor:pointer;margin:6px 0;" onclick="window.open(this.src,&quot;_blank&quot;)" />');
+            f = f.replace(/&lt;span style=&quot;font-size:11px;opacity:\.7;&quot;&gt;(.+?)&lt;\/span&gt;/g,
+                '<span style="font-size:11px;opacity:.7;">$1</span>');
             bubble.innerHTML = f;
 
             // Meta row with time
@@ -7647,11 +7770,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     bubble.appendChild(pillWrap);
                 }
 
-                // Action buttons (copy + read aloud)
+                // Action buttons (copy + read aloud + ML feedback)
                 const actions = document.createElement('div');
                 actions.className = 'ai-msg-actions';
                 const rawText = text;
-                actions.innerHTML = `<button class="ai-msg-action-btn" onclick="this.textContent='✓ Copied';navigator.clipboard.writeText(this.closest('.ai-msg-wrap').querySelector('.ai-bubble').innerText);setTimeout(()=>this.textContent='📋 Copy',1500)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button>`;
+                actions.innerHTML = `<button class="ai-msg-action-btn" onclick="this.textContent='✓ Copied';navigator.clipboard.writeText(this.closest('.ai-msg-wrap').querySelector('.ai-bubble').innerText);setTimeout(()=>this.textContent='📋 Copy',1500)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)">👍</button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)">👎</button>`;
                 bubble.appendChild(actions);
             } else {
                 meta.innerHTML = `<span>${timeStr}</span>`;
@@ -7662,6 +7785,28 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             wrap.appendChild(bubble);
             container.appendChild(wrap);
             setTimeout(() => { container.scrollTop = container.scrollHeight; }, 50);
+        }
+
+        function _aiFeedback(btn, liked) {
+            try {
+                const wrap = btn.closest('.ai-msg-wrap');
+                const aiText = wrap ? wrap.querySelector('.ai-bubble').innerText : '';
+                // Find the preceding user message
+                let userText = window._wfLastUserLine || '';
+                if (wrap && wrap.previousElementSibling && wrap.previousElementSibling.classList.contains('user-msg')) {
+                    userText = wrap.previousElementSibling.querySelector('.ai-bubble').innerText || userText;
+                }
+                if (window.WealthFlowML && window.WealthFlowML.recordFeedback) {
+                    window.WealthFlowML.recordFeedback(userText, aiText, !!liked);
+                }
+                // Visual confirmation
+                const sib = btn.parentElement.querySelectorAll('.ai-fb-btn');
+                sib.forEach(b => { b.style.opacity = '0.35'; b.disabled = true; });
+                btn.style.opacity = '1';
+                btn.textContent = liked ? '👍 Thanks' : '👎 Noted';
+                if (typeof triggerHaptic === 'function') triggerHaptic('toggle');
+                if (typeof notify === 'function') notify(liked ? 'Thanks! The AI is learning your preferences 🧠' : 'Noted — the AI will adjust 🧠', 'success');
+            } catch (e) { console.warn('[AI-ML] feedback error', e && e.message); }
         }
 
         function showAITyping(show) {
@@ -14646,8 +14791,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.1.0 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.1.0 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.0 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.0 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14656,7 +14801,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.1.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
