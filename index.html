@@ -4437,7 +4437,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.0 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.0.1 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6004,24 +6004,15 @@
         };
         let isInitialised = false;
         let inactivityTimer = 0;
-        // RESTORED v6.9.2: read persisted isDirty so unsynced offline changes survive page reload
-        let isDirty = (() => {
-            try { return localStorage.getItem('wf2_isDirty') === 'true'; }
-            catch (_) { return false; }
-        })();
+        let isDirty = localStorage.getItem('wf2_isDirty') === 'true';
+        function setDirty(state) {
+            isDirty = state;
+            localStorage.setItem('wf2_isDirty', state ? 'true' : 'false');
+        }
         let isSyncingFromCloud = false;
         let syncDebounceTimer = null;
         let lastSyncTime = 0;
-        // RESTORED v6.9.3: PERSISTENT local timestamp — survives browser refreshes.
-        // Used to (a) suppress own echo snapshots, (b) block stale cloud snapshots
-        // when our local write is newer.
-        let _lastLocalWriteTs = parseInt(localStorage.getItem('wf2__localWriteTs') || '0', 10);
-
-        // RESTORED v6.9.2: persistent isDirty across reloads (so unsynced offline changes survive a refresh)
-        function setDirty(state) {
-            isDirty = state;
-            try { localStorage.setItem('wf2_isDirty', state ? 'true' : 'false'); } catch (_) {}
-        }
+        let _lastLocalWriteTs = 0;  // Timestamp of last local DB.set() — used to suppress onSnapshot echo
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
@@ -6035,11 +6026,7 @@
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
-                if (!silent) {
-                    _lastLocalWriteTs = Date.now();
-                    // PERSIST — so even if the user reloads before sync, the timestamp survives
-                    try { localStorage.setItem('wf2__localWriteTs', _lastLocalWriteTs.toString()); } catch (_) {}
-                }
+                if (!silent) _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
                 // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
                 try {
                     if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(k, v);
@@ -6051,29 +6038,11 @@
             }
         };
 
-        // ============================================================================
-        // CRITICAL FIX v6.9: expose key globals on window for cross-script access
-        // (lexical const/let declarations don't auto-attach to window in browsers)
-        // ============================================================================
+        // Expose DB + appData on window so external scripts (v5 module) can reach them.
+        // lexical const/let in a script tag don't auto-attach to window otherwise.
         window.DB = DB;
         window.appData = appData;
-        Object.defineProperty(window, '_wfHostState', {
-            get() {
-                return {
-                    isSyncingFromCloud: isSyncingFromCloud,
-                    isDirty: isDirty,
-                    isInitialised: isInitialised,
-                    lastLocalWriteTs: _lastLocalWriteTs,
-                    userDocRef: userDocRef,
-                    currentUser: currentUser
-                };
-            }
-        });
-        // Setter so v5 can flag a pending write
-        window._wfMarkLocalWrite = function () {
-            _lastLocalWriteTs = Date.now();
-            try { localStorage.setItem('wf2__localWriteTs', _lastLocalWriteTs.toString()); } catch (_) {}
-        };
+        window._wfMarkLocalWrite = function () { _lastLocalWriteTs = Date.now(); };
 
         function debouncedSync() {
             if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
@@ -6089,25 +6058,24 @@
 
             setSyncStatus('syncing');
 
-            // CRITICAL: bind _writeTs EXACTLY to _lastLocalWriteTs (logical timestamp).
-            // This is the foundation of the echo-suppression + stale-block protocol.
-            // Echo detection: cloudData._writeTs === _lastLocalWriteTs && cloudData._writeDeviceId === ourId
-            // Stale detection: _lastLocalWriteTs > cloudData._writeTs → block, push our newer data
+            // Add sync metadata — include a device-level write stamp to identify our own echoes
             const syncPayload = Object.assign({}, appData, {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
                 _lastModifiedBy: currentUser ? currentUser.uid : 'unknown',
                 _writeDeviceId: _getDeviceId(),
-                _writeTs: _lastLocalWriteTs  // logical timestamp from DB.set time, NOT Date.now()
+                _writeTs: Date.now()
             });
 
-            // Use merge:true so cloud-only fields never get dropped
+            // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
             userDocRef.set(syncPayload, { merge: true }).then(() => {
                 setDirty(false);
                 lastSyncTime = Date.now();
+                _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
             }).catch(err => {
                 console.error('[SYNC] ❌ Push failed:', err.code, err.message);
+                // Don't set offline — Firestore will retry automatically via persistence
                 setTimeout(() => setSyncStatus(navigator.onLine ? 'online' : 'offline'), 1000);
             });
         }
@@ -6121,21 +6089,8 @@
                 if (doc.exists) {
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
-
-                    // Stale-block: if local timestamp is newer than cloud, push instead of pull
-                    const cloudWriteTs = cloudData._writeTs || 0;
-                    if (_lastLocalWriteTs > cloudWriteTs) {
-                        console.warn('[SYNC] 🛡️ Force sync blocked! Local data (' + _lastLocalWriteTs + ') is newer than cloud (' + cloudWriteTs + ').');
-                        setDirty(true);
-                        debouncedSync(); // Push our newer local data to cloud
-                        isSyncingFromCloud = false;
-                        notify('Local data is newer. Pushing to cloud...', 'info');
-                        return;
-                    }
-
                     Object.keys(cloudData).forEach(key => {
-                        if (key === '_lastModified' || key === '_lastModifiedBy' ||
-                            key === '_writeDeviceId' || key === '_writeTs') return;
+                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
                         if (key === 'settings') {
                             // Deep-merge settings: cloud fills gaps, local wins for existing keys
@@ -6146,6 +6101,15 @@
                             return;
                         }
 
+                        // Protect local pending writes from being wiped by a manual force sync
+                        if (Array.isArray(appData[key]) && Array.isArray(cloudData[key])) {
+                            if (isDirty && JSON.stringify(appData[key]) !== JSON.stringify(cloudData[key])) {
+                                console.warn('[SYNC] 🛡️ forceSync: Race detected (unsynced local changes) — keeping local state for "' + key + '"');
+                                setDirty(true);
+                                return; // Skip overwriting appData for this key
+                            }
+                        }
+
                         appData[key] = cloudData[key];
                         localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
                     });
@@ -6153,7 +6117,7 @@
                     lastSyncTime = Date.now();
 
                     if (isDirty) {
-                        debouncedSync(); // Ensure preserved local items are pushed
+                        debouncedSync(); // Ensure preserved local items are pushed!
                     }
 
                     // Re-render active page
@@ -9204,13 +9168,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                     if (window.__wfBootCompleted) window.__wfBootCompleted();
                                     finishBoot();
 
-                                    // Real-time listener for cross-device sync (PROVEN-WORKING v7.0 LOGIC)
-                                    // Architecture:
-                                    //   1. STALE-BLOCK: If our _lastLocalWriteTs > cloudData._writeTs, drop the snapshot
-                                    //      entirely — it's older than our pending write. Push our newer data.
-                                    //   2. ECHO-SUPPRESS: If cloudData._writeDeviceId === our deviceId AND timestamps
-                                    //      match exactly, this is our OWN write echoing back. Suppress, don't re-render.
-                                    //   3. APPLY: Otherwise it's a real update from another device. Apply per-key.
+                                    // Real-time listener for cross-device sync (PROVEN-WORKING v6.9.1 LOGIC)
                                     try {
                                         userDocRef.onSnapshot((snap) => {
                                             try {
@@ -9225,23 +9183,19 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     setSyncStatus(navigator.onLine ? 'online' : 'offline');
                                                 }
 
+                                                // SETTINGS FIX: Suppress echo — if this snapshot is just our own write bouncing back,
+                                                // skip the overwrite. This prevents the race condition where:
+                                                //   1. User changes setting → DB.set() → syncToCloud()
+                                                //   2. Cloud echoes back → onSnapshot fires → overwrites appData with stale/echo data
+                                                // We suppress for 3 seconds after any local write.
                                                 if (!hasPending && source === 'server') {
                                                     const cloudData = snap.data();
+                                                    const msSinceLastWrite = Date.now() - _lastLocalWriteTs;
+                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() && msSinceLastWrite < 3000;
 
-                                                    // STALE-BLOCK: snapshot older than our pending local write?
-                                                    const cloudWriteTs = cloudData._writeTs || 0;
-                                                    if (_lastLocalWriteTs > cloudWriteTs) {
-                                                        console.warn('[SYNC] 🛡️ Snapshot blocked! Local (' + _lastLocalWriteTs + ') > cloud (' + cloudWriteTs + ')');
-                                                        setDirty(true);
-                                                        setTimeout(debouncedSync, 1000);
-                                                        return;
-                                                    }
-
-                                                    // ECHO-SUPPRESS: exact match of deviceId AND timestamp = our own echo
-                                                    const isOwnEcho = cloudData._writeDeviceId === _getDeviceId() &&
-                                                                      _lastLocalWriteTs === cloudWriteTs;
                                                     if (isOwnEcho) {
-                                                        console.log('[SYNC] ⏭️ Suppressed own echo');
+                                                        console.log('[SYNC] ⏭️ Suppressed own echo (written ' + msSinceLastWrite + 'ms ago)');
+                                                        // Still update sync status and timestamp
                                                         lastSyncTime = Date.now();
                                                         return;
                                                     }
@@ -9249,7 +9203,7 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                     console.log('[SYNC] 📥 Received cloud update from ANOTHER device');
                                                     isSyncingFromCloud = true;
 
-                                                    // PIN-CHANGE: if another device changed the PIN, force re-login
+                                                    // Check if PIN was changed on another device
                                                     const newAuth = cloudData.auth;
                                                     const currentAuth = appData.auth;
                                                     if (newAuth && currentAuth && newAuth._pinChangedAt &&
@@ -9283,39 +9237,61 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         return false;
                                                     };
 
-                                                    // Apply each cloud key to local
+                                                    // SETTINGS FIX: Deep-merge 'settings' instead of full replacement.
+                                                    // This ensures cloud data fills in missing keys but never wipes
+                                                    // keys that the user just changed locally.
                                                     Object.keys(cloudData).forEach(key => {
-                                                        if (key === '_lastModified' || key === '_lastModifiedBy' ||
-                                                            key === '_writeDeviceId' || key === '_writeTs') return;
+                                                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
                                                         if (key === 'settings') {
-                                                            // Deep-merge: cloud fills gaps, local wins
+                                                            // Merge strategy: cloud fills gaps, but local wins for existing keys
                                                             const cloudSettings = cloudData.settings || {};
                                                             const localSettings = appData.settings || {};
                                                             const merged = Object.assign({}, cloudSettings, localSettings);
+                                                            // Only update if the merged result differs from current
                                                             if (!_isEq(merged, localSettings)) {
                                                                 appData.settings = merged;
                                                                 localStorage.setItem('wf2_settings', JSON.stringify(merged));
                                                                 nonSessionChanged = true;
-                                                                console.log('[SYNC] 🔧 Settings merged');
+                                                                console.log('[SYNC] 🔧 Settings merged (cloud filled gaps, local preserved)');
                                                             }
                                                             return;
                                                         }
 
                                                         if (!_isEq(cloudData[key], appData[key])) {
-                                                            // Cloud is guaranteed NEWER than local at this point
-                                                            // (stale-block already rejected older snapshots).
-                                                            // Trust the cloud array completely — no fragile merging.
-                                                            appData[key] = cloudData[key];
-                                                            localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                                                            if (key === 'sessions') {
-                                                                sessionsChanged = true;
-                                                            } else {
-                                                                nonSessionChanged = true;
+                                                            // ============================================================
+                                                            // CRITICAL FIX v6.9.1: SAVE-DISAPPEAR + INFINITE SYNC LOOP
+                                                            // ============================================================
+                                                            // Before blindly overwriting appData[key] with the cloud value,
+                                                            // protect against the race where the cloud snapshot arrives
+                                                            // BEFORE our recent local write has been replicated.
+                                                            const localVal = appData[key];
+                                                            const cloudVal = cloudData[key];
+                                                            let finalVal = cloudVal;
+                                                            // CRITICAL FIX: Preserve ENTIRE local array if we have pending local writes.
+                                                            // Prevents edits/deletions from reverting when an old cloud snapshot arrives.
+                                                            if (Array.isArray(localVal) && Array.isArray(cloudVal) && isDirty) {
+                                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
+                                                                    console.warn('[SYNC] 🛡️ Race detected (unsynced local changes) — keeping local state for "' + key + '" to prevent revert.');
+                                                                    finalVal = localVal;
+                                                                    setDirty(true);
+
+                                                                    // We MUST trigger a debounced sync here, otherwise the preserved local
+                                                                    // state will NEVER push to the cloud until the user manually triggers another save!
+                                                                    setTimeout(debouncedSync, 1000);
+                                                                }
+                                                            }
+                                                            if (finalVal !== localVal) {
+                                                                appData[key] = finalVal;
+                                                                localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
+                                                                if (key === 'sessions') {
+                                                                    sessionsChanged = true;
+                                                                } else {
+                                                                    nonSessionChanged = true;
+                                                                }
                                                             }
                                                         }
                                                     });
-
                                                     isSyncingFromCloud = false;
                                                     lastSyncTime = Date.now();
 
@@ -9329,15 +9305,13 @@ YOUR PERSONALITY & CRITICAL RULES:
                                                         }
                                                     } else if (sessionsChanged) {
                                                         console.log('[SYNC] 🔄 Sessions updated — localized render');
-                                                        if ($('app') && $('app').classList.contains('show') &&
-                                                            document.getElementById('page-sessions')?.classList.contains('active')) {
+                                                        if ($('app') && $('app').classList.contains('show') && document.getElementById('page-sessions')?.classList.contains('active')) {
                                                             try { _renderSessionsDebounced(); } catch(e) {}
                                                         }
                                                     }
                                                 }
                                             } catch (snapErr) {
                                                 console.error('[SYNC] Snapshot processing error:', snapErr);
-                                                isSyncingFromCloud = false;
                                             }
                                         });
                                     } catch (listenerErr) {
@@ -14409,8 +14383,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.0 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.0 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.0.1 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.0.1 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14419,7 +14393,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.0.1 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
