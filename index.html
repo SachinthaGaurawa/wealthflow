@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.4 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.5 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6719,7 +6719,29 @@
 
                 // ---- NON-FINANCE: replace the forced financial system prompt ----
                 const _isHostFin = /WealthFlow AI|financial advisor|FINANCIAL SNAPSHOT|CURRENT FINANCIAL|ADVISOR STYLE/i.test(prompt || '');
-                if (_lastLine && (_isHostFin || image)) {
+                // If an image is attached AND the caller already built a rich
+                // vision prompt (from the v4/v5 vision pipeline), DO NOT discard
+                // it — that prompt has the real "analyse this image" instructions.
+                // Only lightly prepend the friend persona + language rule.
+                const _hasRichVisionPrompt = !!image && /(analy|describe|what.*(see|image|picture)|extract|OCR|vision|read this|look at)/i.test(prompt || '');
+                if (image && _hasRichVisionPrompt) {
+                    // Keep the original vision prompt intact; just enforce
+                    // language + friendly tone at the very end.
+                    let _vLang = 'English';
+                    try {
+                        const _st = (window.DB && window.DB.getObj) ? window.DB.getObj('settings', {}) : {};
+                        const _names = window.WF_LANG_NAMES || {};
+                        if (_st.aiResponseLang && _st.aiResponseLang !== 'en') _vLang = _names[_st.aiResponseLang] || _st.aiResponseLang;
+                        else if (/[\u0d80-\u0dff]/.test(_lastLine)) _vLang = 'Sinhala';
+                        else if (/[\u0b80-\u0bff]/.test(_lastLine)) _vLang = 'Tamil';
+                        else if (/[\u0900-\u097f]/.test(_lastLine)) _vLang = 'Hindi';
+                    } catch (_) {}
+                    prompt = prompt +
+                        '\n\n[IMPORTANT: You CAN see the attached image — look at it carefully and describe/analyse exactly what is really in it (objects, text, brand, model, people, scene, numbers). Be specific and accurate. Answer as a warm, helpful friend. Reply in ' + _vLang + '.]';
+                    window._wfLastIntent = _intent;
+                    window._wfLastUserLine = _lastLine;
+                    console.log('[AI v6.2] vision prompt preserved, lang=' + _vLang);
+                } else if (_lastLine && (_isHostFin || image)) {
                     let _sys;
                     if (_wfAI && _wfAI.adaptiveSystemPrompt) {
                         _sys = _wfAI.adaptiveSystemPrompt(_intent, _lastLine);
@@ -7488,9 +7510,14 @@ Be conversational and precise.`;
             const hist = getAIHistory();
             wrap.innerHTML = '';
             if (hist.length === 0) {
-                // Re-show welcome
+                // Re-show welcome with a fresh time-based, personalised greeting
                 const wb = document.getElementById('aiWelcomeBlock');
-                if (wb) wb.style.display = '';
+                if (wb) {
+                    try {
+                        wb.innerHTML = _aiGreetingBlock("I'm here whenever you need me — ask me anything, or just chat. 💬");
+                    } catch (_) {}
+                    wb.style.display = '';
+                }
                 return;
             }
             const welcome = document.getElementById('aiWelcomeBlock');
@@ -7900,7 +7927,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const actions = document.createElement('div');
                 actions.className = 'ai-msg-actions';
                 const rawText = text;
-                actions.innerHTML = `<button class="ai-msg-action-btn" onclick="this.textContent='✓ Copied';navigator.clipboard.writeText(this.closest('.ai-msg-wrap').querySelector('.ai-bubble').innerText);setTimeout(()=>this.textContent='📋 Copy',1500)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)">👍</button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)">👎</button>`;
+                // Copy ONLY the message content (strip HTML tags, decode
+                // entities) — never the action buttons or timestamp.
+                const _copyPayload = (function () {
+                    try {
+                        const tmp = document.createElement('div');
+                        tmp.innerHTML = String(rawText || '');
+                        // remove any nested action/meta if present
+                        tmp.querySelectorAll('.ai-msg-actions, .ai-msg-meta, .ai-followup-pills').forEach(n => n.remove());
+                        return (tmp.innerText || tmp.textContent || '').trim();
+                    } catch (_) { return String(rawText || '').trim(); }
+                })();
+                actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="(function(b){navigator.clipboard.writeText(b.getAttribute('data-copy')||'');b.textContent='✓ Copied';setTimeout(()=>b.textContent='📋 Copy',1500);})(this)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)">👍</button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)">👎</button>`;
                 bubble.appendChild(actions);
             } else {
                 meta.innerHTML = `<span>${timeStr}</span>`;
@@ -15077,7 +15115,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.4 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.5 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15086,7 +15124,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.4 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.5 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
