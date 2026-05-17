@@ -64,10 +64,26 @@ function wrapHtml(html, name) {
 export default async function handler(req, res) {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') return res.status(200).end();
+
+    // Handle Deletion
+    if (req.method === 'DELETE') {
+        try {
+            const { id } = req.query || req.body || {};
+            if (!id || typeof id !== 'string' || id.length < 5) return res.status(400).json({ error: 'Invalid ID' });
+            // Delete from primary collection
+            await fetch(`${FS_BASE}/s/${id}?key=${API_KEY}`, { method: 'DELETE' });
+            // Delete from backup collection
+            await fetch(`${FS_BASE}/shared_statements/${id}?key=${API_KEY}`, { method: 'DELETE' });
+            return res.status(200).json({ success: true, message: 'Deleted' });
+        } catch (e) {
+            return res.status(500).json({ error: 'Failed to delete' });
+        }
+    }
+
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     try {
