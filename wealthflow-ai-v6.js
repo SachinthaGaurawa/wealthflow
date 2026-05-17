@@ -48,7 +48,7 @@
 
         if (/\b(translate|translation|how do you say|what does .* mean|say .* in (sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic|korean|russian|portuguese|italian)|in (sinhala|tamil|hindi|french|spanish|german|chinese|japanese|arabic) language)\b/.test(t)) return 'translate';
 
-        var finance = /\b(my money|my budget|budget|save money|saving|savings|loan|debt|invest|investment|income|expense|salary|cash flow|profit|portfolio|emi|installment|interest rate|net worth|wealth|afford|how much.*(save|spend|invest)|bank balance|tax\b|epf|etf|retirement|pension|insurance|mortgage|credit card debt|financial (plan|goal|advice)|spending|monthly (income|expense))\b/;
+        var finance = /\b(my money|my budget|budget|save money|saving|savings|loan|debt|invest|investment|income|expense|salary|cash flow|profit|portfolio|emi|installment|interest rate|net worth|wealth|afford|how much.*(save|spend|invest)|bank balance|tax\b|epf|etf|retirement|pension|insurance|mortgage|credit card debt|financial (plan|goal|advice|position|situation|status|health)|spending|monthly (income|expense)|my (economy|economic|financial|money) (situation|status|position|state|health|condition)|economy (situation|status)|my (situation|status|position|state) (in|on) (system|app|wealthflow)|how (am i|are my finances) doing|my finances|financial overview|money situation|where do i stand|overall (situation|status))\b/;
 
         var general = [
             /^(what|who|when|where|why|how|which|whose|whom|is|are|was|were|do|does|did|can|could|will|would|tell|explain|describe|define|name|list)\b/,

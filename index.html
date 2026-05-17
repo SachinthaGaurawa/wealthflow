@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.2 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.3 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6741,20 +6741,24 @@
                     window._wfLastIntent = _intent;
                     window._wfLastUserLine = _lastLine;
                     console.log('[AI v6.2] vision prompt preserved, lang=' + _vLang);
-                } else if (_lastLine && (_isHostFin || image)) {
+                } else if (_lastLine) {
+                    // ALWAYS rewrite for any chat message — not only financial
+                    // ones. This guarantees the chosen AI Response Language AND
+                    // the user's real financial data are applied to EVERY reply
+                    // (previously skipped when the message didn't look financial,
+                    // which is why "my economy situation" got a generic English
+                    // answer with no real numbers).
                     let _sys;
                     if (_wfAI && _wfAI.adaptiveSystemPrompt) {
                         _sys = _wfAI.adaptiveSystemPrompt(_intent, _lastLine);
                     } else {
-                        // Built-in friend-mode prompt (used if helper module is slow to load)
                         _sys = 'You are WealthFlow AI — more than an AI, you are this person\'s genuine best friend who is brilliant at everything. ' +
                             'You are warm, caring, emotionally intelligent and real. You talk like a close friend texting them — natural, warm, human, never robotic or corporate. ' +
                             'You notice how they feel and respond to the emotion behind their words first. You can talk about anything in the world. ' +
-                            'You are secretly also a financial expert but you NEVER force money talk and never bring up their finances unless they do. ' +
+                            'You are secretly also a financial expert. When they ask ANYTHING about their money, economy, situation, finances, savings, loans, income or "my status" — use their REAL numbers from the snapshot below and answer clearly and professionally. ' +
                             'NEVER say robotic things like "I am a text-based AI", "I do not have the capability", "how can I assist you today". ' +
-                            (_intent === 'finance' ? 'They asked about money — gently bring in financial wisdom as a caring friend. ' : 'Just be their warm friend and answer genuinely. ');
+                            (_intent === 'finance' ? 'They asked about money — bring in financial wisdom as a caring friend, with their real figures. ' : 'Just be their warm friend and answer genuinely. ');
                     }
-                    // Append on-device learned personalization (facts, topics, length pref)
                     try {
                         if (window.WealthFlowML && window.WealthFlowML.personalizationBlock) {
                             _sys += window.WealthFlowML.personalizationBlock();
@@ -7937,15 +7941,19 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // attachments, image-gen, history replay) render it directly instead
             // of escaping (escaping was dumping base64 data URIs as text).
             // v4 calls appendAIMessage('user', html, true) so the flag can land
-            // in followups OR isReplay — accept either, and also content-detect
-            // our own thumbnail/markup wrappers.
+            // Trusted-HTML fast path is ONLY for our own image/thumbnail
+            // markup (data: images, attachment wrappers). For replayed AI
+            // *text* messages we must still run the full markdown renderer
+            // below, otherwise charts/tables/diagrams vanish after refresh.
             const _trustFlag = isReplay === true || followups === true;
             const _looksLikeTrustedHTML = typeof text === 'string' && (
                 /<img\s+src="data:image/i.test(text) ||
                 /<div style="display:(flex|inline-block)[^"]*"[^>]*>\s*(<img|<div)/i.test(text) ||
                 /style="[^"]*object-fit:cover/i.test(text)
             );
-            if ((_trustFlag && /<[a-z]/i.test(text)) || _looksLikeTrustedHTML) {
+            const _hasRenderable = typeof text === 'string' &&
+                (/```chart/i.test(text) || /(^|\n)\s*\|.*\|/.test(text) || /```/.test(text));
+            if (_looksLikeTrustedHTML || (_trustFlag && /<[a-z]/i.test(text) && !_hasRenderable && !/\|/.test(text))) {
                 bubble.innerHTML = text;
                 wrap.appendChild(avatar);
                 wrap.appendChild(bubble);
@@ -8609,31 +8617,69 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         const NOTIF_VAPID_KEY = 'BMrNh7oiE5fAz3K5P9k1rEZRgJWxfpFl3gVFi6KZJiV5XzNz6J1dAv8w9xK3JYzQ9FNE1gGsHoH2P0kEyI2zFg0'; // placeholder
 
         async function requestAINotificationPermission() {
-            if (!('Notification' in window)) return;
-            if (Notification.permission === 'default') {
-                const perm = await Notification.requestPermission();
-                if (perm === 'granted') {
-                    notify('🔔 Smart AI Notifications enabled!', 'success');
+            if (!('Notification' in window)) {
+                // iOS Safari (not installed as PWA) has no Notification API.
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                const standalone = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+                if (isIOS && !standalone) {
+                    notify('📲 To get notifications on iPhone: tap Share → "Add to Home Screen", then open WealthFlow from the home screen.', 'info');
+                }
+                return;
+            }
+            try {
+                if (Notification.permission === 'default') {
+                    const perm = await Notification.requestPermission();
+                    if (perm === 'granted') {
+                        notify('🔔 Notifications enabled on this device!', 'success');
+                        // Make sure the SW is ready so iOS/Android can post to
+                        // the real device notification panel.
+                        if ('serviceWorker' in navigator) await navigator.serviceWorker.ready.catch(() => {});
+                        scheduleAINotifications();
+                        sendSmartNotification('WealthFlow', "You're all set — I'll keep you posted right here. 💙");
+                    } else {
+                        notify('Notifications are blocked. Enable them in your browser/OS settings to get reminders.', 'info');
+                    }
+                } else if (Notification.permission === 'granted') {
+                    if ('serviceWorker' in navigator) await navigator.serviceWorker.ready.catch(() => {});
                     scheduleAINotifications();
                 }
-            } else if (Notification.permission === 'granted') {
-                scheduleAINotifications();
-            }
+            } catch (e) { console.warn('[notify perm]', e && e.message); }
         }
 
-        function sendSmartNotification(title, body, icon) {
-            if (Notification.permission !== 'granted') return;
-            const opts = {
-                body, icon: icon || 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
-                badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
-                vibrate: [100, 50, 100], tag: 'wealthflow-ai-' + Date.now(), requireInteraction: false,
-                data: { url: '/' }
-            };
-            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-                navigator.serviceWorker.controller.postMessage({ type: 'SHOW_NOTIFICATION', title, options: opts });
-            } else {
-                new Notification(title, opts);
-            }
+        async function sendSmartNotification(title, body, icon) {
+            try {
+                if (!('Notification' in window) || Notification.permission !== 'granted') return;
+                const opts = {
+                    body,
+                    icon: icon || 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
+                    badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
+                    vibrate: [100, 50, 100],
+                    tag: 'wealthflow-ai-' + Date.now(),
+                    renotify: true,
+                    requireInteraction: false,
+                    data: { url: '/', ts: Date.now() }
+                };
+                // PRIMARY (works on iOS PWA, Android, desktop): use the actual
+                // ServiceWorkerRegistration.showNotification — this is the ONLY
+                // method iOS supports, and it posts to the real OS notification
+                // panel on every platform.
+                if ('serviceWorker' in navigator) {
+                    const reg = await navigator.serviceWorker.ready.catch(() => null);
+                    if (reg && reg.showNotification) {
+                        await reg.showNotification(title, opts);
+                        return;
+                    }
+                    // Secondary: message an active controller SW
+                    if (navigator.serviceWorker.controller) {
+                        navigator.serviceWorker.controller.postMessage({ type: 'SHOW_NOTIFICATION', title, options: opts });
+                        return;
+                    }
+                }
+                // Last resort (older desktop browsers only)
+                if (typeof Notification === 'function') {
+                    try { new Notification(title, opts); } catch (_) {}
+                }
+            } catch (e) { console.warn('[notify] failed:', e && e.message); }
         }
 
         function checkAndSendAIReminders() {
@@ -15304,7 +15350,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.2 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.3 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15313,7 +15359,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.2 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.3 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
