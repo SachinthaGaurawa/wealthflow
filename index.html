@@ -13553,19 +13553,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 }).catch(()=>{});
                         }
                         
-                        const analyticsBtn = document.createElement('button');
-                        analyticsBtn.className = 'btn btn-ghost btn-sm';
-                        analyticsBtn.style.cssText = 'padding:4px 8px;font-size:10px;color:var(--text1);';
-                        analyticsBtn.textContent = '📊';
-                        analyticsBtn.title = 'View Analytics';
-                        if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
-                            analyticsBtn.onclick = () => window._showAnalyticsDialog(h.shortId, h.loanName);
-                        } else {
-                            analyticsBtn.style.opacity = '0.3';
-                            analyticsBtn.title = 'Analytics not available for this link type';
-                            analyticsBtn.onclick = () => notify('Analytics only available for standard share links', 'info');
-                        }
-                        
                         const openBtn = document.createElement('button');
                         openBtn.className = 'btn btn-ghost btn-sm';
                         openBtn.style.cssText = 'padding:4px 8px;font-size:10px;color:var(--accent);';
@@ -13590,9 +13577,51 @@ table.amort tbody tr { page-break-inside: avoid; }
                         delBtn.innerHTML = '🗑️';
                         delBtn.title = 'Delete Link';
                         delBtn.onclick = async () => {
-                            if (confirm('Delete this share link?\n\nIf you click OK, the URL will be disabled permanently and anyone who has it will no longer be able to view it.')) {
-                                delBtn.innerHTML = '⌛';
-                                delBtn.disabled = true;
+                            // Professional Inline Modal
+                            const cOver = document.createElement('div');
+                            cOver.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:9999999;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.25s ease;';
+                            
+                            cOver.innerHTML = `
+                                <div style="background:var(--bg1);border:1px solid var(--border);border-radius:20px;padding:28px 24px;max-width:340px;width:90%;text-align:center;box-shadow:0 16px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);transform:scale(0.95) translateY(10px);transition:all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+                                    <div style="width:60px;height:60px;background:rgba(231,76,60,0.1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 16px;color:#e74c3c;">🗑️</div>
+                                    <h3 style="margin:0 0 10px;color:var(--text1);font-size:18px;font-weight:700;letter-spacing:-0.3px;">Delete Share Link?</h3>
+                                    <p style="margin:0 0 24px;color:var(--text2);font-size:13px;line-height:1.6;">This URL will be disabled permanently. Anyone who has it will no longer be able to view the statement.</p>
+                                    <div style="display:flex;gap:12px;">
+                                        <button id="_c_can" style="flex:1;padding:12px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);color:var(--text1);font-weight:600;font-size:14px;cursor:pointer;transition:all 0.2s;">Cancel</button>
+                                        <button id="_c_del" style="flex:1;padding:12px;border-radius:12px;background:#e74c3c;border:none;color:#fff;font-weight:600;font-size:14px;cursor:pointer;transition:all 0.2s;box-shadow:0 4px 12px rgba(231,76,60,0.3);">Yes, Delete</button>
+                                    </div>
+                                </div>
+                            `;
+                            document.body.appendChild(cOver);
+                            
+                            // Hover effects
+                            const btnCan = cOver.querySelector('#_c_can');
+                            const btnDel = cOver.querySelector('#_c_del');
+                            btnCan.onmouseover = () => btnCan.style.background = 'var(--bg3)';
+                            btnCan.onmouseout = () => btnCan.style.background = 'var(--bg2)';
+                            btnDel.onmouseover = () => { btnDel.style.transform = 'translateY(-1px)'; btnDel.style.boxShadow = '0 6px 16px rgba(231,76,60,0.4)'; };
+                            btnDel.onmouseout = () => { btnDel.style.transform = 'none'; btnDel.style.boxShadow = '0 4px 12px rgba(231,76,60,0.3)'; };
+
+                            // Animate in
+                            requestAnimationFrame(() => {
+                                cOver.style.opacity = '1';
+                                cOver.children[0].style.transform = 'scale(1) translateY(0)';
+                            });
+
+                            const closeC = () => {
+                                cOver.style.opacity = '0';
+                                cOver.children[0].style.transform = 'scale(0.95) translateY(10px)';
+                                setTimeout(() => { if(cOver.parentNode) cOver.parentNode.removeChild(cOver); }, 250);
+                            };
+
+                            btnCan.onclick = closeC;
+                            
+                            btnDel.onclick = async () => {
+                                btnDel.innerHTML = '<span style="display:inline-block;animation:_stmtSpin 1s linear infinite;">⏳</span> Deleting...';
+                                btnDel.disabled = true;
+                                btnCan.disabled = true;
+                                btnCan.style.opacity = '0.5';
+                                
                                 try {
                                     if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
                                         await fetch('https://wealthflow-personal.vercel.app/api/statement-store?id=' + h.shortId, { method: 'DELETE' }).catch(()=>{});
@@ -13601,12 +13630,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 // Remove from local history
                                 hist.splice(i, 1);
                                 localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
+                                closeC();
                                 _renderHistory(); // Re-render
-                            }
+                            };
                         };
                         
                         row.appendChild(info);
-                        row.appendChild(analyticsBtn);
                         row.appendChild(openBtn);
                         row.appendChild(copyBtn);
                         row.appendChild(delBtn);
@@ -13698,90 +13727,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
 
-        window._showAnalyticsDialog = async (id, loanName) => {
-            const overlay = document.createElement('div');
-            overlay.className = 'mo';
-            overlay.style.zIndex = '9999999';
-            overlay.innerHTML = `
-                <div class="md md-sm" style="max-width:600px;background:#0d1424;">
-                    <div class="md-hdr" style="border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:12px;">
-                        <div class="md-title" style="color:#fff;">📊 Statement Analytics</div>
-                        <button class="md-x" id="_ana_close" style="color:#fff;">✕</button>
-                    </div>
-                    <div id="_ana_content" style="padding:20px 0;text-align:center;color:var(--text3);">
-                        <div style="font-size:32px;animation:_stmtSpin 1s linear infinite;width:32px;height:32px;border:3px solid rgba(212,175,55,0.2);border-top-color:#d4af37;border-radius:50%;margin:0 auto 16px;"></div>
-                        Fetching live analytics...
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(overlay);
-            requestAnimationFrame(() => overlay.classList.add('open'));
-            const close = () => { overlay.classList.remove('open'); setTimeout(() => { if(overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 250); };
-            overlay.querySelector('#_ana_close').onclick = close;
-            overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-
-            try {
-                const res = await fetch('https://wealthflow-personal.vercel.app/api/statement-view?analytics=1&id=' + id);
-                if (!res.ok) throw new Error('API Error');
-                const data = await res.json();
-                
-                const content = overlay.querySelector('#_ana_content');
-                content.style.textAlign = 'left';
-                
-                const statCards = `
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
-                        <div style="background:rgba(212,175,55,0.1);border:1px solid rgba(212,175,55,0.2);padding:16px;border-radius:12px;text-align:center;">
-                            <div style="font-size:28px;font-weight:700;color:#d4af37;font-family:var(--mono);">${data.views || 0}</div>
-                            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-top:4px;">Total Views</div>
-                        </div>
-                        <div style="background:rgba(46,204,113,0.1);border:1px solid rgba(46,204,113,0.2);padding:16px;border-radius:12px;text-align:center;">
-                            <div style="font-size:28px;font-weight:700;color:#2ecc71;font-family:var(--mono);">${data.uniqueViewers || 0}</div>
-                            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-top:4px;">Unique Viewers</div>
-                        </div>
-                    </div>
-                `;
-
-                if (!data.logs || data.logs.length === 0) {
-                    content.innerHTML = statCards + '<div style="text-align:center;padding:30px;color:var(--text3);font-size:13px;background:rgba(255,255,255,0.02);border-radius:12px;">No view logs available yet.<br>Share this link to see analytics!</div>';
-                    return;
-                }
-
-                const listHtml = data.logs.map(l => {
-                    const dt = new Date(l.time);
-                    const timeStr = dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                    
-                    let dvIcon = '💻';
-                    if (l.device === 'Mobile') dvIcon = '📱';
-                    
-                    return `
-                        <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:rgba(255,255,255,0.03);margin-bottom:8px;border-radius:10px;border:1px solid rgba(255,255,255,0.05);">
-                            <div style="display:flex;align-items:center;gap:12px;">
-                                <div style="font-size:20px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.08);border-radius:50%;">${l.flag || '🌍'}</div>
-                                <div>
-                                    <div style="color:#fff;font-size:13px;font-weight:600;">${l.city !== 'Unknown' ? l.city + ', ' : ''}${l.country}</div>
-                                    <div style="color:var(--text3);font-size:11px;margin-top:2px;">${dvIcon} ${l.os} · ${l.browser}</div>
-                                </div>
-                            </div>
-                            <div style="text-align:right;">
-                                <div style="font-family:var(--mono);font-size:11px;color:var(--accent);">${l.ip || 'Unknown IP'}</div>
-                                <div style="color:var(--text3);font-size:10px;margin-top:2px;">${timeStr}</div>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-
-                content.innerHTML = statCards + `
-                    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px;">Recent Views</div>
-                    <div style="max-height:300px;overflow-y:auto;padding-right:6px;" id="_ana_scroll">
-                        ${listHtml}
-                    </div>
-                `;
-            } catch (err) {
-                overlay.querySelector('#_ana_content').innerHTML = '<div style="color:#e74c3c;padding:20px;text-align:center;">Failed to load analytics.</div>';
-            }
-        };
-
-
+        // Share entry point — auto-closes statement window to focus on share flow
         async function _shareLoanStatement(win, l) {
             // Auto-close any open statement overlays so the user isn't confused by background popups
             document.querySelectorAll('.mo.open').forEach(el => {
