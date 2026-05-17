@@ -6023,6 +6023,14 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
 
+        // ALWAYS stay signed in — LOCAL persistence keeps the Google session
+        // across app/browser close & reopen so the user never has to log in
+        // again (and server-side auto-backup can run on every launch).
+        try {
+            firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+                .catch(e => console.warn('[Auth] persistence:', e && e.message));
+        } catch (_) {}
+
         // Enable offline persistence (returns a Promise, must use .catch)
         db.enablePersistence({ synchronizeTabs: true }).catch(err => {
             if (err.code === 'failed-precondition') {
@@ -8556,34 +8564,64 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             }
         }
 
-        // Manual "Backup Now" — forces an immediate cloud (Firestore) push and
-        // stamps the lastBackup time so the WhatsApp-style status block updates.
-        async function backupNow(silent) {
+        // Manual / auto "Backup Now" — pushes to Firestore (always) + Drive
+        // (if authed), and records REAL metadata so the status card is accurate.
+        async function backupNow(silent, trigger) {
+            const startedAt = Date.now();
+            let cloudOk = false, driveOk = false;
+            const recCount = (DB.get('income').length + DB.get('loans').length +
+                DB.get('expenses').length + DB.get('targets').length +
+                DB.get('ccinstall').length + DB.get('cconetime').length +
+                DB.get('cheques').length + DB.get('subscriptions').length);
             try {
-                if (!silent) { notify('☁️ Backing up to cloud…', 'info'); triggerHaptic('medium'); }
+                if (!silent) { notify('☁️ Backing up…', 'info'); triggerHaptic('medium'); }
                 const s = DB.getObj('settings', {});
-                s.lastBackup = new Date().toISOString();
-                DB.set('settings', s);            // marks dirty → triggers sync
-                setDirty(true);
-                if (typeof syncToCloud === 'function') {
-                    await Promise.resolve(syncToCloud());
-                }
-                // Also push to Google Drive if connected (best-effort, no 2nd login)
+
+                // 1. Cloud (Firestore) — always
+                try {
+                    setDirty(true);
+                    if (typeof syncToCloud === 'function') {
+                        await Promise.resolve(syncToCloud());
+                    }
+                    cloudOk = true;
+                } catch (ce) { console.warn('[backup] cloud failed', ce && ce.message); }
+
+                // 2. Google Drive — if we have a token (no 2nd login needed)
                 if (typeof gapiToken !== 'undefined' && gapiToken && typeof executeDriveBackup === 'function') {
-                    executeDriveBackup().catch(() => {});
+                    try { await Promise.resolve(executeDriveBackup()); driveOk = true; }
+                    catch (de) { console.warn('[backup] drive failed', de && de.message); }
                 }
+
+                // 3. Record REAL metadata for the status card
+                const nowIso = new Date().toISOString();
+                s.lastBackup = nowIso;
+                s.lastBackupMeta = {
+                    at: nowIso,
+                    records: recCount,
+                    cloud: cloudOk,
+                    drive: driveOk,
+                    trigger: trigger || (silent ? 'auto' : 'manual'),
+                    durationMs: Date.now() - startedAt
+                };
+                DB.set('settings', s);
+                if (cloudOk) { try { if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud()); } catch (_) {} }
+                localStorage.setItem('wf_last_auto_backup', String(Date.now()));
+
                 if (!silent) {
+                    notify('✅ Backup complete · ' + recCount + ' records · ' +
+                        (cloudOk ? 'Cloud ✓' : 'Cloud ✗') + (driveOk ? ' · Drive ✓' : ''), 'success');
+                    triggerHaptic('success');
                     setTimeout(() => {
                         if (document.getElementById('page-settings')?.classList.contains('active')) {
                             try { renderSettings(); } catch (e) {}
                         }
-                    }, 600);
-                    notify('✅ Backup complete · ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}), 'success');
-                    triggerHaptic('success');
+                    }, 500);
                 }
+                return cloudOk || driveOk;
             } catch (e) {
                 console.error('[backupNow]', e);
                 if (!silent) notify('Backup failed: ' + e.message, 'error');
+                return false;
             }
         }
 
@@ -9630,6 +9668,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                 userDocRef = db.collection('users').doc(user.uid);
                                 if (splashText) splashText.textContent = "Syncing with cloud...";
                                 console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
+                                // User is signed in (persisted) → ensure the
+                                // auto-backup scheduler is running and run any
+                                // missed backup now.
+                                setTimeout(() => {
+                                    try { if (typeof scheduleAutoBackup === 'function') scheduleAutoBackup(); } catch (_) {}
+                                }, 3000);
 
                                 try {
                                     // Force server fetch to always get latest data
@@ -14852,7 +14896,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>
                     <div style="font-size:11px;color:var(--text3);margin-top:4px;">
                         ${(() => {
-                            const recs = (DB.get('income').length + DB.get('loans').length + DB.get('expenses').length + DB.get('targets').length + DB.get('ccinstall').length + DB.get('cconetime').length + DB.get('cheques').length);
+                            const meta = s.lastBackupMeta || null;
+                            const recs = (DB.get('income').length + DB.get('loans').length + DB.get('expenses').length + DB.get('targets').length + DB.get('ccinstall').length + DB.get('cconetime').length + DB.get('cheques').length + DB.get('subscriptions').length);
+                            if (meta) {
+                                const dest = (meta.cloud ? '☁️ Cloud✓' : '☁️ Cloud✗') + (meta.drive ? ' · 📁 Drive✓' : '');
+                                const trig = meta.trigger === 'auto' ? '🤖 Auto' : '👆 Manual';
+                                return `📊 ${meta.records} records backed up · ${dest} · ${trig} · ⏰ Schedule: ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? s.autoBackupFreq : 'off'}`;
+                            }
                             return `📊 ${recs} records · 🔄 ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? '⏰ Auto: ' + s.autoBackupFreq : '⏰ Auto-backup off'}`;
                         })()}
                     </div>
@@ -18273,27 +18323,34 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const now = Date.now();
                 if (now - last < interval) return; // not due yet
 
-                // Due now → run it. Prefer the cloud (Firestore) backup which
-                // never needs Google Drive auth; also try Drive if we have a
-                // token (no second login thanks to the scope at sign-in).
-                console.log('[AutoBackup] Backup is due — running now');
+                console.log('[AutoBackup] Backup is due — running automatically');
                 if (typeof backupNow === 'function') {
-                    await backupNow(true); // silent=true (no extra prompts)
+                    await backupNow(true, 'auto'); // silent + tagged as auto
                 } else {
                     const sx = DB.getObj('settings', {});
                     sx.lastBackup = new Date().toISOString();
                     DB.set('settings', sx);
                     if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud());
                 }
-                if (typeof gapiToken !== 'undefined' && gapiToken && typeof executeDriveBackup === 'function') {
-                    executeDriveBackup().catch(() => {});
-                }
                 localStorage.setItem('wf_last_auto_backup', String(now));
                 if (typeof sendSmartNotification === 'function') {
-                    sendSmartNotification('☁️ Auto-Backup Complete', 'Your WealthFlow data has been backed up automatically.');
+                    sendSmartNotification('☁️ Auto-Backup Complete', 'Your WealthFlow data was backed up automatically.');
+                }
+                // Refresh the settings card if it's open
+                if (document.getElementById('page-settings')?.classList.contains('active')) {
+                    try { renderSettings(); } catch (_) {}
                 }
             } catch (e) { console.warn('[AutoBackup] check failed:', e && e.message); }
         }
+
+        // Re-check auto-backup when the tab becomes visible again (covers the
+        // "browser was reopened / woke from sleep" case) and when auth lands.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                try { _checkAutoBackupDue(); } catch (_) {}
+            }
+        });
+        window.addEventListener('focus', () => { try { _checkAutoBackupDue(); } catch (_) {} });
         // Global helper: 0 = Sunday, 1 = Monday — driven by the Week Starts On setting
         function _weekStartDay() {
             return (DB.getObj('settings', {}).weekStart === 'sunday') ? 0 : 1;
