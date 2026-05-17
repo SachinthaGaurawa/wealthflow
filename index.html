@@ -2298,8 +2298,12 @@
             padding: 7px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;
             background: var(--card2); border: 1px solid var(--border); color: var(--text2);
             cursor: pointer; transition: all .2s; white-space: nowrap;
-            animation: aiPillIn .4s ease backwards;
+            animation: aiPillIn .4s ease both;
+            pointer-events: auto; position: relative; z-index: 2;
+            -webkit-tap-highlight-color: transparent; user-select: none;
         }
+        .ai-suggestion-pill * { pointer-events: none; }
+        .ai-suggestion-pill:active { transform: scale(.96); }
         .ai-suggestion-pill:nth-child(1) { animation-delay: .05s; }
         .ai-suggestion-pill:nth-child(2) { animation-delay: .1s; }
         .ai-suggestion-pill:nth-child(3) { animation-delay: .15s; }
@@ -4457,7 +4461,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.4 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.5 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -8438,15 +8442,29 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 return icons.budget;
             }
 
-            container.innerHTML = suggestions.slice(0, 5).map((s, i) =>
-                `<button class="ai-suggestion-pill" type="button" data-q="${s.replace(/"/g, '&quot;')}" onclick="_sendSuggestion(this)">${iconFor(s)}&nbsp; ${s}</button>`
+            container.innerHTML = suggestions.slice(0, 5).map((s) =>
+                `<button class="ai-suggestion-pill" type="button" data-q="${s.replace(/"/g, '&quot;')}">${iconFor(s)}&nbsp; ${s}</button>`
             ).join('');
+
+            // Bind ONCE via event delegation on the container itself. This is
+            // immune to inline-handler scope/timing/CSP problems that were
+            // stopping the chips from working when clicked.
+            if (!container._wfBound) {
+                container._wfBound = true;
+                container.addEventListener('click', function (ev) {
+                    const btn = ev.target.closest('.ai-suggestion-pill');
+                    if (!btn || !container.contains(btn)) return;
+                    ev.preventDefault();
+                    const q = btn.getAttribute('data-q');
+                    if (q && typeof sendAIMessage === 'function') sendAIMessage(q);
+                });
+            }
         }
 
-        // Reliable handler — reads the plain question from data-q (no emoji /
-        // quote-escaping problems) and sends it straight to the AI.
+        // Reliable fallback handler (delegation in initAISuggestionPills is
+        // primary; this stays for any legacy/inline path).
         function _sendSuggestion(btn) {
-            const q = btn && btn.getAttribute('data-q');
+            const q = btn && btn.getAttribute && btn.getAttribute('data-q');
             if (q && typeof sendAIMessage === 'function') sendAIMessage(q);
         }
         window._sendSuggestion = _sendSuggestion;
@@ -15440,7 +15458,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.4 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.5 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15449,7 +15467,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.4 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.5 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
