@@ -13081,10 +13081,8 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function _uploadStatementForSharing(html, loanName) {
             const errors = [];
             
-            // Generate the current base URL (supports github pages, local, or vercel)
-            let baseUrl = window.location.origin + window.location.pathname;
-            if (baseUrl.endsWith('index.html')) baseUrl = baseUrl.replace('index.html', '');
-            if (!baseUrl.endsWith('/')) baseUrl += '/';
+            // Generate the base URL for the share links (User requested to always use Vercel domain)
+            const baseUrl = _WF_APP_URL + '/';
 
             // Strategy 1: Server /api/statement-store (PRIMARY — writes to Firestore)
             try {
@@ -13098,11 +13096,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const data = await resp.json();
                     if (data && data.url && data.url.length < 200) {
                         console.log('[Share] ✅ statement-store:', data.url);
-                        // If we are not on Vercel, adapt the returned URL to our current domain
-                        let finalUrl = data.url;
-                        if (data.id && !window.location.hostname.includes('vercel.app')) {
-                            finalUrl = baseUrl + '?s=' + data.id;
-                        }
+                        // Force Vercel domain as requested
+                        const finalUrl = baseUrl + '?s=' + data.id;
                         return { url: finalUrl, days: data.days || 30, expires: (data.days || 30) + ' days', shortId: data.id, via: data.via || 'server' };
                     }
                 }
