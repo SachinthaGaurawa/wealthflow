@@ -13261,22 +13261,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
 
                 setProgress(90, 'Finalizing…');
-
-                // Save to share history
-                try {
-                    const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
-                    hist.unshift({
-                        url: shareUrl,
-                        loanName: l.name,
-                        loanId: l.id,
-                        createdAt: new Date().toISOString(),
-                        expiresAt: new Date(Date.now() + (result.days || 30) * 86400000).toISOString(),
-                        via: result.via || 'server',
-                        chars: shareUrl.length
-                    });
-                    if (hist.length > 100) hist.length = 100;
-                    localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
-                } catch (e) { /* silent */ }
+                await new Promise(r => setTimeout(r, 100));
 
                 setProgress(100, 'Ready!');
                 await new Promise(r => setTimeout(r, 150));
@@ -13362,6 +13347,28 @@ table.amort tbody tr { page-break-inside: avoid; }
             const l = config.l; // optional
             const pdfBlob = config.pdfBlob; // optional, for Elite Reports
             const isElite = !!pdfBlob;
+            
+            let _savedToHistory = false;
+            const _saveToHistory = () => {
+                if (_savedToHistory) return;
+                try {
+                    const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
+                    // Avoid saving duplicate URLs
+                    if (hist.some(h => h.url === url)) return;
+                    
+                    hist.unshift({
+                        url: url,
+                        loanName: titleName,
+                        createdAt: new Date().toISOString(),
+                        expiresAt: new Date(Date.now() + (result.days || 30) * 86400000).toISOString(),
+                        via: result.via || 'server',
+                        shortId: result.shortId || url
+                    });
+                    if (hist.length > 100) hist.length = 100;
+                    localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
+                    _savedToHistory = true;
+                } catch (e) { /* silent */ }
+            };
 
             const overlay = document.createElement('div');
             overlay.className = 'mo';
@@ -13661,6 +13668,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_surl_copy').onclick = async (e) => {
                 const btn = e.currentTarget;
                 const _doCopiedFeedback = () => {
+                    _saveToHistory();
                     btn.classList.add('btn-copied');
                     btn.innerHTML = '✅ Copied!';
                     btn.style.animation = '_copyPulse 0.35s cubic-bezier(0.4,0,0.2,1)';
@@ -16577,7 +16585,52 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // ----------------- LUXURY PDF ENGINE -----------------
-        function generateLuxuryPDFReport() {
+        async function generateLuxuryPDFReport() {
+            // SHOW OVERLAY
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.style.zIndex = '999999';
+            overlay.innerHTML = `
+                <div class="md md-sm" style="max-width:440px;text-align:center;">
+                    <div class="md-hdr" style="justify-content:center;border-bottom:0;padding-bottom:0;">
+                        <div class="md-title" id="_ash_title">🚀 Generating Smart Link</div>
+                    </div>
+                    <div style="padding:24px 20px 12px;">
+                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Compiling secure report…</div>
+                        <div style="width:100%;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden;margin-bottom:8px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.3);">
+                            <div id="_ash_bar" style="height:100%;width:5%;background:linear-gradient(90deg, var(--accent), #2ecc71);border-radius:5px;transition:width 0.4s ease-out;"></div>
+                        </div>
+                        <div style="font-size:11px;color:var(--text3);display:flex;justify-content:space-between;">
+                            <span id="_ash_pct">5%</span>
+                            <span>Powered by WealthFlow</span>
+                        </div>
+                    </div>
+                    <div class="md-ftr" style="justify-content:center;border-top:0;">
+                        <button class="btn btn-ghost" id="_ash_cancel">Cancel</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+
+            const setProgress = (pct, msg) => {
+                const el = overlay.querySelector('#_ash_msg'); if (el && msg) el.textContent = msg;
+                const bar = overlay.querySelector('#_ash_bar'); if (bar) bar.style.width = pct + '%';
+                const pctTxt = overlay.querySelector('#_ash_pct'); if (pctTxt) pctTxt.textContent = pct + '%';
+            };
+            const closeOverlay = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            let cancelled = false;
+            overlay.querySelector('#_ash_cancel').onclick = () => { cancelled = true; closeOverlay(); };
+
+            // Give UI time to render overlay before blocking thread with jsPDF
+            await new Promise(r => setTimeout(r, 50)); 
+            if (cancelled) return;
+
+            setProgress(15, 'Rendering high-res PDF...');
+            await new Promise(r => setTimeout(r, 50));
+
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF('p', 'mm', 'a4'); // A4 size
 
@@ -16768,33 +16821,28 @@ table.amort tbody tr { page-break-inside: avoid; }
         <span style="font-size:18px;">📥</span> Download PDF
     </a>
 </div>`;
+                if (cancelled) return;
+                setProgress(40, 'Uploading to secure cloud…');
 
-                    // Call the bulletproof loan sharing engine!
-                    const result = await _uploadStatementForSharing(htmlWrapper, eliteName);
-                    
-                    if (!result || !result.url) {
-                        throw new Error("Failed to generate URL");
-                    }
-                    
-                    const downloadURL = result.url;
+                // Call the bulletproof loan sharing engine!
+                const result = await _uploadStatementForSharing(htmlWrapper, eliteName);
+                if (cancelled) return;
+                
+                if (!result || !result.url) {
+                    throw new Error("Failed to generate URL");
+                }
+                
+                setProgress(90, 'Finalizing…');
+                await new Promise(r => setTimeout(r, 100));
+                
+                const downloadURL = result.url;
 
-                    // Save to history list
-                    try {
-                        const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
-                        hist.unshift({ 
-                            url: downloadURL, 
-                            loanName: eliteName, 
-                            createdAt: new Date().toISOString(),
-                            expiresAt: new Date(Date.now() + (result.days || 30) * 86400000).toISOString(),
-                            via: result.via || 'server',
-                            shortId: result.shortId || downloadURL // it's not a shortId for API, but for history tracking
-                        });
-                        if (hist.length > 50) hist.length = 50;
-                        localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
-                    } catch (e) { /* silent */ }
+                setProgress(100, 'Ready!');
+                await new Promise(r => setTimeout(r, 150));
+                closeOverlay();
 
-                    // Display beautiful unified Share UI
-                    _showShareableUrlDialog({
+                // Display beautiful unified Share UI
+                _showShareableUrlDialog({
                         title: eliteName,
                         url: downloadURL,
                         pdfBlob: pdfBlob,
