@@ -130,7 +130,7 @@
      *    safely under Vercel's 4.5 MB JSON-body limit.
      * ========================================================================= */
     async function renderPdfPageAdaptive(pdf, pageNum, maxBytes) {
-        maxBytes = maxBytes || 3 * 1024 * 1024;  // 3 MB safe ceiling
+        maxBytes = maxBytes || 3.8 * 1024 * 1024;  // 3.8 MB (Gemini inline limit ~4MB)
         var scales = [2.0, 1.5, 1.2, 1.0, 0.8];
         var qualities = [0.85, 0.75, 0.65, 0.55];
         var page = await pdf.getPage(pageNum);
@@ -174,7 +174,7 @@
     async function fileToImagesV4(file, opts) {
         opts = opts || {};
         var maxPages = opts.maxPages || 3;
-        var maxBytes = opts.maxBytes || 3 * 1024 * 1024;
+        var maxBytes = opts.maxBytes || 3.8 * 1024 * 1024;
 
         if (!file) throw new Error('No file provided');
         var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
@@ -195,9 +195,10 @@
                 reader.readAsDataURL(file);
             });
 
-            // Adaptive scale-down
-            var dims = [1800, 1500, 1200, 1000, 800];
-            var quals = [0.88, 0.78, 0.68, 0.55];
+            // Adaptive scale-down — keep MUCH higher resolution & quality for
+            // accurate recognition of text, badges, models, fine detail.
+            var dims = [2600, 2200, 1800, 1500, 1200, 1000];
+            var quals = [0.95, 0.90, 0.82, 0.72, 0.6];
             for (var di = 0; di < dims.length; di++) {
                 var maxDim = dims[di];
                 var w = img.naturalWidth, h = img.naturalHeight;
@@ -1899,7 +1900,7 @@
             for (var i = 0; i < attachments.length && allImages.length < 15; i++) {
                 try {
                     var bundle = await fileToImagesV4(attachments[i].file, {
-                        maxPages: 2, maxBytes: 2.5 * 1024 * 1024
+                        maxPages: 3, maxBytes: 3.8 * 1024 * 1024, enhance: true
                     });
                     for (var p = 0; p < bundle.images.length && allImages.length < 15; p++) {
                         allImages.push({
@@ -1978,13 +1979,13 @@
         images.slice(0, 6).forEach(function (b64) {
             parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
         });
-        var models = ['gemini-2.0-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        var models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro', 'gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'];
         for (var k = 0; k < keys.length; k++) {
             for (var m = 0; m < models.length; m++) {
                 try {
                     var r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + models[m] + ':generateContent?key=' + keys[k], {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0.25, maxOutputTokens: 2048 } })
+                        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0.2, maxOutputTokens: 8192, topP: 0.95 } })
                     });
                     if (r.status === 429 || r.status === 503) continue;     // try next model
                     if (r.status === 404) continue;                         // model name unavailable
@@ -2014,7 +2015,7 @@
                     var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _GROQ_VISION_KEY },
-                        body: JSON.stringify({ model: models[i], messages: [{ role: 'user', content: content }], temperature: 0.3, max_tokens: 1800 })
+                        body: JSON.stringify({ model: models[i], messages: [{ role: 'user', content: content }], temperature: 0.25, max_tokens: 4096 })
                     });
                     if (r.status === 429 || r.status === 503) continue;
                     if (r.status === 404 || r.status === 400) continue;
@@ -2350,7 +2351,7 @@
             var imgs = [];
             for (var i = 0; i < atts.length && imgs.length < 15; i++) {
                 try {
-                    var b = await fileToImagesV4(atts[i].file, { maxPages: 2, maxBytes: 2.5 * 1024 * 1024 });
+                    var b = await fileToImagesV4(atts[i].file, { maxPages: 3, maxBytes: 3.8 * 1024 * 1024, enhance: true });
                     for (var p = 0; p < b.images.length && imgs.length < 15; p++) {
                         imgs.push(b.images[p]);
                     }
@@ -2370,16 +2371,23 @@
             } catch (_) {}
 
             var visionPrompt =
-                'You are WealthFlow AI — a brilliant, warm best friend with EXPERT computer vision. ' +
-                'The user ' + uName + ' has attached ' + imgs.length + ' image' + (imgs.length > 1 ? 's' : '') + ' and is asking about ' + (imgs.length > 1 ? 'them' : 'it') + '.\n\n' +
-                'YOU CAN SEE THE IMAGE(S). Look very carefully and answer accurately.\n' +
-                'Identify EXACTLY what is shown — for a vehicle: make, model, year range, body type, trim, colour, notable features, approximate market value if known. ' +
-                'For documents/receipts: read all text, amounts, dates. For objects/scenes: describe precisely. ' +
-                'Give the FULL detailed answer the user asked for (they may want all specs).\n' +
-                'Be specific and confident about what you can see; only say "I can\'t tell" for genuinely unclear parts. ' +
-                'Never say you cannot see images — you can.\n\n' +
-                'USER\'S QUESTION: ' + (userMsg || 'What is this? Give me full details and all specs.') + '\n\n' +
-                'Reply warmly like a knowledgeable friend, in ' + lang + '. Lead with the direct answer (what it is), then the details/specs.';
+                'You are WealthFlow AI — a world-class multimodal expert with state-of-the-art computer vision, OCR and reasoning, and a warm best-friend tone. ' +
+                'The user ' + uName + ' attached ' + imgs.length + ' image' + (imgs.length > 1 ? 's' : '') + '.\n\n' +
+                'YOU CAN FULLY SEE THE IMAGE(S). Examine every detail with maximum accuracy:\n' +
+                '• Read ALL visible text precisely (badges, plates, labels, screens, fine print) — OCR it exactly.\n' +
+                '• Identify the subject exactly. Vehicle → exact make, model, generation, year, trim/variant, body style, colour, drivetrain, market; cross-check badges, headlight/grille/wheel design, proportions before deciding. If the user corrects you, RE-EXAMINE honestly and verify — do not just agree to please them, and do not stubbornly repeat a wrong guess; reason from visual evidence.\n' +
+                '• Documents/receipts/screenshots → extract every number, date, party, line item.\n' +
+                '• Objects/scenes → describe precisely with materials, brands, context.\n' +
+                'Be confident and specific; only say "unclear" for genuinely illegible parts. Never claim you cannot see images.\n\n' +
+                '⚙️ OUTPUT FORMAT — OBEY THE USER\'S REQUEST EXACTLY:\n' +
+                '• If they ask for a TABLE or "compare" → output a proper GitHub-flavoured Markdown table (| col | col |).\n' +
+                '• If they ask for CHARTS / diagrams / graphs → output a fenced ```chart code block containing JSON: ' +
+                '{"type":"bar|line|pie|radar","title":"...","labels":[...],"datasets":[{"label":"...","data":[...]}]} — real numbers, one block per chart. Also give the data as a Markdown table so nothing is lost.\n' +
+                '• If they ask for ANALYSIS → give structured analysis with clear headings and bullet points.\n' +
+                '• If they ask for full specs/comparison → be exhaustive: every spec (power, torque, 0-100, range/economy, battery/engine, dimensions, price), side-by-side in a table, then charts for the key numeric comparisons, then a short verdict.\n' +
+                'Use real, accurate, up-to-date figures from your knowledge; if a figure varies by market, say the typical value and note it.\n\n' +
+                'USER\'S REQUEST: ' + (userMsg || 'Identify this and give full details, a comparison table, and charts where useful.') + '\n\n' +
+                'Reply warmly like a knowledgeable friend, in ' + lang + '. Lead with the direct answer, then deliver EXACTLY the format(s) requested (table/charts/analysis).';
 
             var reply = await callMultiImageAI(
                 imgs.map(function (b64, idx) { return { base64: b64, sourceFile: atts[Math.min(idx, atts.length - 1)].name || ('image' + idx), isPdf: false, page: 1 }; }),

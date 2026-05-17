@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.9 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -7926,7 +7926,28 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // === PREMIUM MARKDOWN RENDERER ===
             const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             let f = esc(text);
-            // Code blocks first
+
+            // ── CHART BLOCKS ── ```chart { "type":"bar", "labels":[...], ... } ```
+            // The AI emits these when the user asks for charts/graphs/diagrams.
+            // Render each as a real Chart.js canvas after the bubble is inserted.
+            const _charts = [];
+            f = f.replace(/```chart\s*([\s\S]*?)```/gi, (m, body) => {
+                try {
+                    // body was HTML-escaped — unescape for JSON.parse
+                    const raw = body.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+                    const spec = JSON.parse(raw);
+                    const id = 'aichart_' + Date.now() + '_' + _charts.length;
+                    _charts.push({ id, spec });
+                    return `<div class="ai-chart-wrap" style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:12px;padding:12px;margin:10px 0;">
+                        ${spec.title ? `<div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:8px;">${esc(String(spec.title))}</div>` : ''}
+                        <div style="position:relative;height:260px;"><canvas id="${id}"></canvas></div>
+                    </div>`;
+                } catch (e) {
+                    return '<div class="ai-code-block">' + body + '</div>';
+                }
+            });
+
+            // Code blocks (after chart blocks so charts aren't swallowed)
             f = f.replace(/```([\s\S]*?)```/g, '<div class="ai-code-block">$1</div>');
             // Bold
             f = f.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -7970,6 +7991,51 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             f = f.replace(/&lt;span style=&quot;font-size:11px;opacity:\.7;&quot;&gt;(.+?)&lt;\/span&gt;/g,
                 '<span style="font-size:11px;opacity:.7;">$1</span>');
             bubble.innerHTML = f;
+
+            // Render any AI-generated charts now that the canvases exist.
+            if (_charts.length && typeof Chart !== 'undefined') {
+                const _palette = ['#d4af37', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'];
+                setTimeout(() => {
+                    _charts.forEach(({ id, spec }) => {
+                        try {
+                            const cv = document.getElementById(id);
+                            if (!cv) return;
+                            const ds = (spec.datasets || []).map((d, i) => ({
+                                label: d.label || ('Series ' + (i + 1)),
+                                data: d.data || [],
+                                backgroundColor: spec.type === 'line'
+                                    ? 'rgba(212,175,55,0.15)'
+                                    : (spec.type === 'pie' || spec.type === 'doughnut' || spec.type === 'radar')
+                                        ? _palette.map(c => c + 'cc')
+                                        : _palette[i % _palette.length],
+                                borderColor: spec.type === 'pie' || spec.type === 'doughnut'
+                                    ? '#0a1020'
+                                    : _palette[i % _palette.length],
+                                borderWidth: 2,
+                                fill: spec.type === 'line',
+                                tension: 0.35,
+                                pointBackgroundColor: _palette[i % _palette.length]
+                            }));
+                            new Chart(cv.getContext('2d'), {
+                                type: (spec.type === 'doughnut' ? 'doughnut' : spec.type) || 'bar',
+                                data: { labels: spec.labels || [], datasets: ds },
+                                options: {
+                                    responsive: true, maintainAspectRatio: false,
+                                    plugins: {
+                                        legend: { labels: { color: '#cbd5e1', font: { size: 11 } },
+                                            display: ds.length > 1 || ['pie', 'doughnut', 'radar'].includes(spec.type) },
+                                        tooltip: { enabled: true }
+                                    },
+                                    scales: ['pie', 'doughnut', 'radar'].includes(spec.type) ? {} : {
+                                        x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' } },
+                                        y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' } }
+                                    }
+                                }
+                            });
+                        } catch (e) { console.warn('[ai-chart] render failed:', e && e.message); }
+                    });
+                }, 60);
+            }
 
             // Meta row with time
             const meta = document.createElement('div');
@@ -15188,7 +15254,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.9 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.0 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15197,7 +15263,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.9 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
