@@ -4461,7 +4461,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.6 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.7 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -13144,9 +13144,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return result;
             } catch (e) { console.warn('[Share] TmpFiles failed:', e.message); }
 
-            // Strategy 3: Hash URL (always works — guaranteed, but long URL)
-            console.warn('[Share] ⚠️ Using hash URL fallback (URL will be long)');
-            return _createHashUrl(html, loanName);
+            // NO giant data-URL fallback. A 191 000-char link is unusable and
+            // cannot be sent on any platform, so producing one is worse than
+            // failing. Surface an honest error and let the caller ask the user
+            // to retry (the server endpoint is normally up — this only trips
+            // if every host AND the server are unreachable at once).
+            throw new Error('SHARE_ALL_FAILED');
         }
 
         // =====================================================================
@@ -13390,6 +13393,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                     validityStr = result.expires || '30 days';
                 }
 
+                // Hard guard: a usable share link is short. If anything ever
+                // yields an oversized URL, treat it as a failure (text share)
+                // instead of showing an unsendable link.
+                if (!shareUrl || shareUrl.length > 300) {
+                    throw new Error('SHARE_ALL_FAILED');
+                }
+
                 setProgress(100, 'Ready!');
                 await new Promise(r => setTimeout(r, 200));
 
@@ -13412,7 +13422,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             } catch (e) {
                 closeOverlay();
                 console.error('[Share] Error:', e);
-                notify('⚠️ Could not generate link: ' + (e.message || 'Unknown error') + '. Falling back to text share.', 'warning');
+                const msg = (e && e.message) || 'Unknown error';
+                if (msg === 'SHARE_ALL_FAILED' || /all_hosts_failed/.test(msg)) {
+                    notify('⚠️ Couldn\'t create the share link right now (network/hosts busy). Sharing the summary as text instead — or tap 🔗 Share again in a moment.', 'warning');
+                } else {
+                    notify('⚠️ Could not generate link: ' + msg + '. Sharing summary as text instead.', 'warning');
+                }
                 setTimeout(() => _localShareStatement(l, _generateSummaryText(l)), 400);
             }
         }
@@ -15441,7 +15456,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.6 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.7 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15450,7 +15465,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.6 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.7 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
