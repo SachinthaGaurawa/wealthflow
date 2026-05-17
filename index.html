@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.2 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.3 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5392,7 +5392,10 @@
                         placeholder="57" step="0.1" oninput="calcIncomeM()"></div>
             </div>
             <div class="fr">
-                <div class="fg"><label class="fl">Start Date *</label><input class="fi" id="i_start" type="date"></div>
+                <div class="fg"><label class="fl">Start Date *</label>
+                    <input class="fi" id="i_start" type="date">
+                    <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;width:100%;font-size:12px;" onclick="setIncomeStartDateToday()">📅 Set Start Date (Today)</button>
+                </div>
                 <div class="fg"><label class="fl">End Date</label><input class="fi" id="i_end" type="date"></div>
             </div>
             <div class="fr">
@@ -5404,7 +5407,6 @@
                     </select></div>
                 <div class="fg"><label class="fl">Payment Start Date *</label>
                     <input class="fi" id="i_day" type="date">
-                    <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;width:100%;font-size:12px;" onclick="setIncomeStartDateToday()">📅 Set Start Date (Today)</button>
                     <div style="font-size:11px;color:var(--text3);margin-top:4px;">Tip: For most investments the Payment Start Date is the same as the investment Start Date.</div>
                 </div>
             </div>
@@ -7527,9 +7529,13 @@ Be conversational and precise.`;
             const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
 
             const activeIncome = income.filter(s => {
+                // Missing/invalid start date → treat as active (don't silently
+                // drop the income, which made counts wrong & hid it from the AI).
+                if (!s.start) return (!s.end || new Date(s.end + 'T00:00:00') >= now);
                 const start = new Date(s.start + 'T00:00:00');
+                if (isNaN(start.getTime())) return true;
                 const end = s.end ? new Date(s.end + 'T00:00:00') : null;
-                return start <= now && (!end || end >= now);
+                return start <= now && (!end || (end >= now));
             });
             const totalIncome = activeIncome.reduce((s, x) => s + (x.monthly || 0), 0);
             const curExpenses = expenses.filter(e => e.month === curMonthStr);
@@ -7962,6 +7968,23 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         const _AI_VOICE_MAX_RETRIES = 3;
 
 
+        // Friendly time-of-day greeting block, personalised with the user's name.
+        function _aiGreetingBlock(contextLine) {
+            const h = new Date().getHours();
+            let part, emoji;
+            if (h < 12) { part = 'Good morning'; emoji = '🌅'; }
+            else if (h < 17) { part = 'Good afternoon'; emoji = '☀️'; }
+            else if (h < 21) { part = 'Good evening'; emoji = '🌆'; }
+            else { part = 'Good night'; emoji = '🌙'; }
+            let name = '';
+            try {
+                if (window.currentUser && window.currentUser.displayName) name = window.currentUser.displayName.split(' ')[0];
+                else { const c = (typeof buildFinancialContext === 'function') ? buildFinancialContext() : null; if (c && c.userName && c.userName !== 'User') name = String(c.userName).split(' ')[0]; }
+            } catch (_) {}
+            const hello = name ? `${part}, ${name}!` : `${part}!`;
+            return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal best-friend advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">${emoji} ${hello} ${contextLine}</div>`;
+        }
+
         async function clearAIChat() {
             const clearedAt = Date.now();
             localStorage.removeItem(AI_HISTORY_KEY);
@@ -7987,7 +8010,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const welcome = document.createElement('div');
                 welcome.id = 'aiWelcomeBlock';
                 welcome.className = 'ai-welcome-msg';
-                welcome.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal financial advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">👋 Hello! Chat cleared. I'm here whenever you need me! Ask me anything 💡</div>`;
+                welcome.innerHTML = _aiGreetingBlock("Your chat is cleared and I still remember your goals & finances. What would you like to talk about? 💬");
                 container.appendChild(welcome);
             }
             notify('Chat history cleared (all devices).', 'info');
@@ -8034,7 +8057,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const welcome = document.createElement('div');
                     welcome.id = 'aiWelcomeBlock';
                     welcome.className = 'ai-welcome-msg';
-                    welcome.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal financial advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">👋 Hello! My memory has been completely reset on all your devices. I'm ready to start fresh! 💡</div>`;
+                    welcome.innerHTML = _aiGreetingBlock("My memory has been completely reset on all your devices — a fresh start. What's on your mind? 🌱");
                     container.appendChild(welcome);
                 }
 
@@ -8293,22 +8316,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const income = DB.get('income') || [];
                 const loans = DB.get('loans') || [];
                 const targets = DB.get('targets') || [];
-                const now = new Date();
-                const activeIncome = income.filter(s => {
-                    try {
-                        const st = new Date((s.start || '2000-01-01') + 'T00:00:00');
-                        const en = s.end ? new Date(s.end + 'T00:00:00') : null;
-                        return st <= now && (!en || en >= now);
-                    } catch (_) { return true; }
-                });
-                const activeLoans = loans.filter(l => {
-                    try { return (typeof loanEndDate === 'function' ? loanEndDate(l) : now) >= now; }
-                    catch (_) { return true; }
-                });
                 const pills = [];
-                const incCount = activeIncome.length || income.length;
+                // Show the TOTAL counts (consistent with the Account & Identity
+                // panel and the Income & Investments tab). Date-filtering here
+                // caused a mismatch (panel showed 6, pill showed 5).
+                const incCount = income.length;
+                const loanCount = loans.length;
                 if (incCount > 0) pills.push('💰 ' + incCount + ' income source' + (incCount > 1 ? 's' : ''));
-                if (activeLoans.length > 0) pills.push('🏦 ' + activeLoans.length + ' loan' + (activeLoans.length > 1 ? 's' : ''));
+                if (loanCount > 0) pills.push('🏦 ' + loanCount + ' loan' + (loanCount > 1 ? 's' : ''));
                 if (targets.length > 0) pills.push('🎯 ' + targets.length + ' goal' + (targets.length > 1 ? 's' : ''));
 
                 const st = DB.getObj('settings', {});
@@ -8469,13 +8484,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
                 scope: 'https://www.googleapis.com/auth/drive.file',
+                // Pre-fill the Google account the user already signed in with so
+                // the chooser does NOT appear again.
+                login_hint: (window.currentUser && window.currentUser.email) ? window.currentUser.email : undefined,
                 callback: (tokenResponse) => {
                     if (tokenResponse && tokenResponse.access_token) {
                         gapiToken = tokenResponse.access_token;
-                        // Cache the token securely for 1 hour
                         const expiry = Date.now() + ((tokenResponse.expires_in - 10) * 1000);
                         localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
-
                         if (window.pendingDriveAction === 'backup') executeDriveBackup();
                         if (window.pendingDriveAction === 'restore') fetchDriveBackups();
                     }
@@ -8501,14 +8517,40 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         async function requestDrivePermission(action) {
             window.pendingDriveAction = action;
+            // 1. Reuse a valid cached/captured token — NO login at all.
             if (gapiToken) {
                 if (action === 'backup') executeDriveBackup();
                 if (action === 'restore') fetchDriveBackups();
                 return;
             }
-
+            // 2. Re-check the cached token (may have been set after init).
+            try {
+                const cached = localStorage.getItem('wf_drive_token');
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (parsed.token && Date.now() < parsed.expiry) {
+                        gapiToken = parsed.token;
+                        if (action === 'backup') executeDriveBackup();
+                        if (action === 'restore') fetchDriveBackups();
+                        return;
+                    }
+                }
+            } catch (_) {}
+            // 3. Need a token. Refresh the hint to the signed-in account and
+            //    request SILENTLY (prompt:'') so no account chooser pops up —
+            //    the user already authorised Google at app sign-in.
             if (tokenClient) {
-                tokenClient.requestAccessToken();
+                try {
+                    if (window.currentUser && window.currentUser.email) {
+                        tokenClient.requestAccessToken({ prompt: '', login_hint: window.currentUser.email });
+                    } else {
+                        tokenClient.requestAccessToken({ prompt: '' });
+                    }
+                } catch (e) {
+                    // Fallback: a one-time consent (only if silent failed)
+                    try { tokenClient.requestAccessToken({ prompt: 'consent' }); }
+                    catch (_) { notify('Google Drive authorization failed. Please try again.', 'error'); }
+                }
             } else {
                 notify('Google Services failing to load. Check connection.', 'error');
             }
@@ -10639,17 +10681,19 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         // ==================== INCOME ====================
-        // Quick "Set Start Date" button — fills payment start date with today's date
-        // (most investments: investment Start Date == Payment Start Date).
+        // "Set Start Date (Today)" — fills the investment Start Date with today.
+        // Since for most investments Start Date == Payment Start Date, this also
+        // fills the Payment Start Date if it is still empty (one tap = both).
         function setIncomeStartDateToday() {
-            const el = $('i_day');
-            if (el) {
-                const d = new Date();
-                el.value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-                triggerHaptic('toggle');
-                notify('Start date set to today', 'success');
-                if (typeof calcIncomeM === 'function') { try { calcIncomeM(); } catch(e){} }
-            }
+            const d = new Date();
+            const todayStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            const startEl = $('i_start');
+            const dayEl = $('i_day');
+            if (startEl) startEl.value = todayStr;            // the investment Start Date (image 6 highlighted field)
+            if (dayEl && !dayEl.value) dayEl.value = todayStr; // payment date too, only if empty
+            triggerHaptic('toggle');
+            notify('Start date set to today', 'success');
+            if (typeof calcIncomeM === 'function') { try { calcIncomeM(); } catch (e) {} }
         }
 
         function saveIncome() {
@@ -14977,7 +15021,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.2 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.3 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14986,7 +15030,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.2 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.3 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -15084,6 +15128,17 @@ table.amort tbody tr { page-break-inside: avoid; }
         function toggleSetting(key, val) {
             const s = DB.getObj('settings', {});
             s[key] = val;
+            // Round Display Amounts and Hide Sensitive Numbers are mutually
+            // exclusive — turning one ON forces the other OFF. (Both can be OFF.)
+            if (val === true) {
+                if (key === 'roundAmounts') { s.privacyMode = false; s.hideSensitive = false; }
+                if (key === 'privacyMode' || key === 'hideSensitive') {
+                    s.roundAmounts = false;
+                    // keep the two privacy aliases in sync
+                    s.privacyMode = (key === 'privacyMode') ? true : s.privacyMode;
+                    s.hideSensitive = (key === 'hideSensitive') ? true : s.hideSensitive;
+                }
+            }
             DB.set('settings', s);
             const scrollContainer = document.querySelector('.sb-nav') || document.body;
             const scrollPos = scrollContainer.scrollTop || window.scrollY;
