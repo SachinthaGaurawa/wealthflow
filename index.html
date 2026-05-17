@@ -9568,6 +9568,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const sId = params.get('s');
                 const goId = params.get('go');
                 const tstmtId = params.get('tstmt');
+                const dpasteId = params.get('dp');
                 const stmtId = params.get('stmt');
                 const ustmtId = params.get('ustmt');
                 const hash = window.location.hash;
@@ -9593,7 +9594,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     return;
                 }
 
-                if (!sId && !tstmtId && !stmtId && !ustmtId && !hashData) return;
+                if (!sId && !tstmtId && !dpasteId && !stmtId && !ustmtId && !hashData) return;
 
                 window._isStatementViewer = true;
 
@@ -9707,6 +9708,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         })
                         .then(html => _renderStmt(html, 'Shared Statement'))
                         .catch(err => _showError(err.message || 'Could not load statement. It may have expired.'));
+                    return;
+                }
+
+                // Strategy 3: ?dp= format (dpaste.com)
+                if (dpasteId) {
+                    fetch('https://dpaste.com/' + dpasteId + '.txt')
+                        .then(res => {
+                            if (!res.ok) throw new Error('Statement expired or not found on dpaste.');
+                            return res.text();
+                        })
+                        .then(html => _renderStmt(html, 'Shared Statement'))
+                        .catch(err => _showError('Could not load statement. It may have expired.'));
                     return;
                 }
 
@@ -13123,7 +13136,29 @@ table.amort tbody tr { page-break-inside: avoid; }
                 errors.push('client-firestore: ' + (e && e.message));
             }
 
-            // Strategy 3: tmpfiles.org (100% free, zero-auth, CORS-friendly, 60 min expiry)
+            // Strategy 3: dpaste.com (100% free, NO auth, NO strict CORS, returns plain text URL)
+            // This is the absolute most reliable fallback because it's a generic text pastebin.
+            try {
+                const body = new URLSearchParams();
+                body.append('content', html);
+                body.append('format', 'url');
+                const res = await _fetchWithTimeout('https://dpaste.com/api/v2/', { method: 'POST', body }, 15000);
+                if (res.ok) {
+                    const txt = await res.text();
+                    const urlStr = txt.trim();
+                    if (urlStr.startsWith('https://dpaste.com/')) {
+                        const id = urlStr.replace('https://dpaste.com/', '').replace('.txt', '');
+                        const url = baseUrl + '?dp=' + id;
+                        console.log('[Share] ✅ dpaste.com:', url);
+                        return { url, expires: '7 days', shortId: id, via: 'dpaste' };
+                    }
+                }
+                errors.push('dpaste: HTTP ' + res.status);
+            } catch (e) {
+                errors.push('dpaste: ' + (e && e.message));
+            }
+
+            // Strategy 4: tmpfiles.org (100% free, zero-auth, CORS-friendly, 60 min expiry)
             // This is the ultimate fallback that guarantees success on purely static hosting!
             try {
                 const fd = new FormData();
@@ -13147,7 +13182,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 errors.push('tmpfiles: ' + (e && e.message));
             }
 
-            // Strategy 4: file.io (100% free, zero-auth, expires after 1 view)
+            // Strategy 5: file.io (100% free, zero-auth, expires after 1 view)
             try {
                 const fd = new FormData();
                 const blob = new Blob([html], { type: "text/html" });
