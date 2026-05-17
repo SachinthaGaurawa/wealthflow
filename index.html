@@ -16750,10 +16750,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             // Upload via server-side proxy and show share dialog
             notify('Generating Elite Report shareable link…', 'info');
-            const eliteFileName = `WealthFlow_Elite_${MONTHS_S[month]}_${year}_${Date.now()}.pdf`;
             (async () => {
                 try {
-                    // Convert blob to base64 for server proxy upload
+                    // Convert blob to base64 for embedding in HTML
                     const reader = new FileReader();
                     const base64 = await new Promise((resolve, reject) => {
                         reader.onload = () => resolve(reader.result.split(',')[1]);
@@ -16761,28 +16760,44 @@ table.amort tbody tr { page-break-inside: avoid; }
                         reader.readAsDataURL(pdfBlob);
                     });
 
-                    const proxyBase = 'https://wealthflow-personal.vercel.app';
-                    const resp = await _fetchWithTimeout(proxyBase + '/api/share-upload', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ base64, fileName: eliteFileName })
-                    }, 12000);
+                    // Build a beautiful HTML wrapper for the PDF
+                    const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
+                    const htmlWrapper = `<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WealthFlow Elite Report</title>
+</head>
+<body style="background:linear-gradient(135deg,#060a14,#0d1424);color:#fff;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;overflow:hidden;">
+    <div style="text-align:center;background:rgba(255,255,255,0.03);padding:40px;border-radius:20px;border:1px solid rgba(255,255,255,0.05);box-shadow:0 10px 40px rgba(0,0,0,0.5);max-width:400px;width:90%;">
+        <div style="font-size:54px;margin-bottom:16px;animation:_pulse 2s infinite;">📊</div>
+        <h2 style="color:#d4af37;margin:0 0 12px;font-size:22px;">Elite Report Ready</h2>
+        <p style="color:rgba(255,255,255,0.6);font-size:14px;margin:0 0 30px;line-height:1.5;">Your secure financial statement has been compiled and is ready for viewing.</p>
+        <a download="WealthFlow_Elite_Report.pdf" href="data:application/pdf;base64,${base64}" style="background:linear-gradient(135deg,#d4af37,#b8962e);color:#000;padding:14px 28px;border-radius:12px;text-decoration:none;font-weight:700;display:inline-block;box-shadow:0 4px 15px rgba(212,175,55,0.3);transition:transform 0.2s;">📥 Download PDF</a>
+        <style>@keyframes _pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }</style>
+    </div>
+</body>
+</html>`;
 
-                    if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
-                    const res = await resp.json();
-                    let downloadURL = res.url;
-                    let isPermanent = res.permanent;
-                    let service = res.service || 'Cloud';
+                    // Call the bulletproof loan sharing engine!
+                    const result = await _uploadStatementForSharing(htmlWrapper, eliteName);
+                    
+                    if (!result || !result.url) {
+                        throw new Error("Failed to generate URL");
+                    }
+                    
+                    const downloadURL = result.url;
 
                     // Save to history list
                     try {
                         const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
                         hist.unshift({ 
                             url: downloadURL, 
-                            loanName: 'Elite Report — ' + MONTHS[month] + ' ' + year, 
+                            loanName: eliteName, 
                             createdAt: new Date().toISOString(),
-                            via: 'server',
-                            shortId: downloadURL // it's not a shortId for API, but for history tracking
+                            expiresAt: new Date(Date.now() + (result.days || 30) * 86400000).toISOString(),
+                            via: result.via || 'server',
+                            shortId: result.shortId || downloadURL // it's not a shortId for API, but for history tracking
                         });
                         if (hist.length > 50) hist.length = 50;
                         localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
@@ -16790,13 +16805,10 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                     // Display beautiful unified Share UI
                     _showShareableUrlDialog({
-                        title: 'Elite Report — ' + MONTHS[month] + ' ' + year,
+                        title: eliteName,
                         url: downloadURL,
                         pdfBlob: pdfBlob,
-                        result: {
-                            days: isPermanent ? 3650 : 14,
-                            service: service
-                        }
+                        result: result
                     });
 
                 } catch (err) {
