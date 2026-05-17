@@ -140,44 +140,12 @@ export default async function handler(req, res) {
         const expiresAt = expiryField && expiryField.integerValue ? parseInt(expiryField.integerValue, 10) : null;
         const views = (docData.v && docData.v.integerValue) || (docData.views && docData.views.integerValue) || '0';
 
-        const analyticsMode = req.query.analytics === '1';
-        
-        // ── Increment view counter and log analytics ──
-        if (!metaOnly && !analyticsMode) {
-            const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '';
-            const ua = req.headers['user-agent'] || '';
-            _incrementViewCount(collection, safeId, ip, ua).catch(() => {});
+        // ── Increment view counter (fire-and-forget) ONLY for actual views ──
+        if (!metaOnly) {
+            _incrementViewCount(collection, safeId, parseInt(views, 10)).catch(() => {});
         }
 
-        // ── Return Analytics Logs ──
-        if (analyticsMode) {
-            const rawLogs = (docData.vl && docData.vl.arrayValue && docData.vl.arrayValue.values) ||
-                            (docData.viewLogs && docData.viewLogs.arrayValue && docData.viewLogs.arrayValue.values) || [];
-            
-            const logs = rawLogs.map(v => {
-                const f = v.mapValue?.fields || {};
-                return {
-                    time: parseInt(f.t?.integerValue || '0', 10),
-                    ip: f.ip?.stringValue || 'Unknown',
-                    os: f.os?.stringValue || 'Unknown',
-                    browser: f.br?.stringValue || 'Unknown',
-                    device: f.dv?.stringValue || 'Unknown',
-                    country: f.co?.stringValue || 'Unknown',
-                    city: f.ci?.stringValue || 'Unknown',
-                    flag: f.fl?.stringValue || '🌍'
-                };
-            }).sort((a, b) => b.time - a.time);
-
-            return res.status(200).json({
-                id: safeId,
-                name,
-                views: parseInt(views, 10),
-                uniqueViewers: new Set(logs.map(l => l.ip)).size,
-                logs
-            });
-        }
-
-        // ── Return Meta response ──
+        // ── Return response ──
         if (metaOnly) {
             return res.status(200).json({
                 id: safeId,
@@ -202,101 +170,31 @@ export default async function handler(req, res) {
         console.error('[statement-view] error:', e.message);
         return res.status(500).json({ error: 'server_error', detail: e.message });
     }
-// Increment view count and log viewer details in Firestore (fire-and-forget, non-blocking)
-async function _incrementViewCount(collection, docId, ip, ua) {
-    const viewField = collection === 's' ? 'v' : 'views';
-    const logsField = collection === 's' ? 'vl' : 'viewLogs';
-    
-    try {
-        const geo = await getGeo(ip);
-        const { os, browser, device } = parseUA(ua);
-        
-        const ipStr = String(ip.split(',')[0]).trim();
-        
-        const logEntry = {
-            mapValue: {
-                fields: {
-                    t: { integerValue: String(Date.now()) },
-                    ip: { stringValue: ipStr || 'Unknown' },
-                    os: { stringValue: os },
-                    br: { stringValue: browser },
-                    dv: { stringValue: device },
-                    co: { stringValue: geo.country },
-                    ci: { stringValue: geo.city },
-                    fl: { stringValue: geo.flag }
-                }
-            }
-        };
+}
 
-        const dbPath = `projects/${PROJECT_ID}/databases/(default)/documents/${collection}/${docId}`;
-        
+// Increment view count in Firestore (fire-and-forget, non-blocking)
+async function _incrementViewCount(collection, docId, currentViews) {
+    const newViews = (currentViews || 0) + 1;
+    const viewField = collection === 's' ? 'v' : 'views';
+
+    try {
         await fetchWithTimeout(
-            `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default):commit?key=${API_KEY}`,
+            `${FS_BASE}/${collection}/${docId}?updateMask.fieldPaths=${viewField}&key=${API_KEY}`,
             {
-                method: 'POST',
+                method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    writes: [
-                        {
-                            transform: {
-                                document: dbPath,
-                                fieldTransforms: [
-                                    {
-                                        fieldPath: viewField,
-                                        increment: { integerValue: "1" }
-                                    },
-                                    {
-                                        fieldPath: logsField,
-                                        appendMissingElements: { values: [logEntry] }
-                                    }
-                                ]
-                            }
-                        }
-                    ]
+                    fields: {
+                        [viewField]: { integerValue: String(newViews) }
+                    }
                 })
             },
-            6000
+            5000
         );
     } catch (e) {
+        // Non-critical — don't block the response
         console.warn('[statement-view] view count update failed:', e.message);
     }
-}
-
-async function getGeo(ip) {
-    const ipStr = (ip || '').split(',')[0].trim();
-    if (!ipStr || ipStr === '127.0.0.1' || ipStr === '::1') return { country: 'Local', city: 'Local', flag: '🏠' };
-    try {
-        const r = await fetchWithTimeout(`https://ipwho.is/${ipStr}`, {}, 3000);
-        const data = await r.json();
-        if (data.success) {
-            return {
-                country: data.country || 'Unknown',
-                city: data.city || 'Unknown',
-                flag: data.flag && data.flag.emoji ? data.flag.emoji : '🌍'
-            };
-        }
-    } catch(e){}
-    return { country: 'Unknown', city: 'Unknown', flag: '🌍' };
-}
-
-function parseUA(ua) {
-    if (!ua) return { os: 'Unknown', browser: 'Unknown', device: 'Desktop' };
-    const str = ua.toLowerCase();
-    let os = 'Unknown';
-    if (str.includes('win')) os = 'Windows';
-    else if (str.includes('mac') && !str.includes('iphone') && !str.includes('ipad')) os = 'macOS';
-    else if (str.includes('iphone') || str.includes('ipad')) os = 'iOS';
-    else if (str.includes('android')) os = 'Android';
-    else if (str.includes('linux')) os = 'Linux';
-    
-    let browser = 'Unknown';
-    if (str.includes('edg/')) browser = 'Edge';
-    else if (str.includes('chrome/') || str.includes('crios/')) browser = 'Chrome';
-    else if (str.includes('firefox/') || str.includes('fxios/')) browser = 'Firefox';
-    else if (str.includes('safari/')) browser = 'Safari';
-
-    const device = (os === 'iOS' || os === 'Android' || str.includes('mobile')) ? 'Mobile' : 'Desktop';
-    return { os, browser, device };
 }
 
 async function fetchWithTimeout(url, options, timeoutMs = 8000) {
