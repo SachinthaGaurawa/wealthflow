@@ -77,14 +77,23 @@
             .split(/\s+/).filter(function (w) { return w.length > 1 && w.length < 24; });
     }
 
-    // ---- 1. Naive-Bayes intent training ----
+    // ---- 1. Naive-Bayes intent training (unigram + bigram features) ----
+    function _features(text) {
+        var ws = tokens(text);
+        var feats = ws.slice();
+        for (var i = 0; i < ws.length - 1; i++) feats.push(ws[i] + '_' + ws[i + 1]); // bigrams
+        return feats;
+    }
+
     function trainIntent(text, intent) {
         if (!text || !intent) return;
-        var ws = tokens(text);
+        var ws = _features(text);
         model.intentTotals[intent] = (model.intentTotals[intent] || 0) + 1;
+        if (!model.vocab) model.vocab = {};
         ws.forEach(function (w) {
             if (!model.wordIntent[w]) model.wordIntent[w] = {};
             model.wordIntent[w][intent] = (model.wordIntent[w][intent] || 0) + 1;
+            model.vocab[w] = 1;
         });
         model.trained++;
         save();
@@ -94,16 +103,22 @@
     function predictIntent(text) {
         var labels = Object.keys(model.intentTotals);
         if (labels.length < 2 || model.trained < 12) return null; // not enough data yet
-        var ws = tokens(text);
+        var ws = _features(text);
+        var V = model.vocab ? Object.keys(model.vocab).length : 50; // vocabulary size
         var totalDocs = labels.reduce(function (s, l) { return s + model.intentTotals[l]; }, 0);
         var best = null, bestScore = -Infinity, scores = {};
         labels.forEach(function (label) {
             // log prior
             var score = Math.log(model.intentTotals[label] / totalDocs);
+            // total feature count for this label (for proper multinomial NB)
+            var labelWordTotal = 0;
+            for (var w in model.wordIntent) {
+                if (model.wordIntent[w][label]) labelWordTotal += model.wordIntent[w][label];
+            }
             ws.forEach(function (w) {
                 var wc = (model.wordIntent[w] && model.wordIntent[w][label]) || 0;
-                // Laplace smoothing
-                score += Math.log((wc + 1) / (model.intentTotals[label] + 2));
+                // Proper multinomial NB Laplace smoothing: (count+1)/(labelTotal+V)
+                score += Math.log((wc + 1) / (labelWordTotal + V));
             });
             scores[label] = score;
             if (score > bestScore) { bestScore = score; best = label; }
@@ -111,7 +126,9 @@
         // Confidence = softmax gap between top-1 and top-2
         var sorted = labels.map(function (l) { return scores[l]; }).sort(function (a, b) { return b - a; });
         var gap = sorted.length > 1 ? (sorted[0] - sorted[1]) : 5;
-        var conf = 1 / (1 + Math.exp(-gap)); // 0.5..1
+        var conf = 1 / (1 + Math.exp(-gap / 2)); // calibrated 0.5..1
+        // Only return a prediction we're actually confident about (cuts ML "fails")
+        if (conf < 0.62) return null;
         return { intent: best, confidence: conf };
     }
 

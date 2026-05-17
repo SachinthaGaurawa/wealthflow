@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.0 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.2 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -7780,6 +7780,37 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 ═════════════════════════════════════════════════════════════════`;
         }
 
+        // Edit a previous user message (Claude/Gemini style): puts the text
+        // back in the input, removes that message + everything after it from
+        // the chat & history, so the user can resend an edited version.
+        function _editUserMessage(wrapEl, originalText) {
+            try {
+                const container = $('aiChatMessages');
+                const input = $('aiChatInput');
+                if (!container || !input) return;
+                // Remove this wrap and all following messages from the DOM
+                const wraps = Array.from(container.querySelectorAll('.ai-msg-wrap'));
+                const idx = wraps.indexOf(wrapEl);
+                if (idx === -1) return;
+                for (let i = wraps.length - 1; i >= idx; i--) wraps[i].remove();
+                // Trim history to before this user message
+                let hist = getAIHistory();
+                // find the matching user entry from the end
+                for (let i = hist.length - 1; i >= 0; i--) {
+                    if (hist[i].role === 'user' && hist[i].content === originalText) {
+                        hist = hist.slice(0, i);
+                        break;
+                    }
+                }
+                saveAIHistory(hist);
+                input.value = originalText;
+                autoResizeAIInput(input);
+                input.focus();
+                notify('✏️ Edit your message and send again', 'info');
+            } catch (e) { console.error('[editMsg]', e); }
+        }
+        window._editUserMessage = _editUserMessage;
+
         async function sendAIMessage(msgOverride) {
             const input = $('aiChatInput');
             const msg = msgOverride || (input ? input.value.trim() : '');
@@ -7949,6 +7980,28 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
             // Code blocks (after chart blocks so charts aren't swallowed)
             f = f.replace(/```([\s\S]*?)```/g, '<div class="ai-code-block">$1</div>');
+
+            // ── TABLE DETECTION — run EARLY (before bold/bullets/currency so
+            //    pipe rows aren't mangled). Handles multi-column separators
+            //    like | --- | --- | --- | and tolerates a blank line.
+            f = f.replace(/((?:^|\n)[ \t]*\|.*\|[ \t]*(?:\n[ \t]*\|.*\|[ \t]*)+)/g, (match) => {
+                const rows = match.split('\n').map(r => r.trim()).filter(r => r.startsWith('|') && r.length > 1);
+                if (rows.length < 2) return match;
+                const isSep = (r) => /^\|?[\s:|-]+\|?$/.test(r) && /-{2,}/.test(r);
+                let html = '<table class="ai-table">';
+                let headerDone = false;
+                rows.forEach((row) => {
+                    if (isSep(row)) { headerDone = true; return; }
+                    // split on | but keep empty middle cells correct
+                    let cells = row.split('|');
+                    if (cells[0].trim() === '') cells.shift();
+                    if (cells.length && cells[cells.length - 1].trim() === '') cells.pop();
+                    const isHeader = !headerDone && html.indexOf('<tr>') === -1;
+                    const tag = isHeader ? 'th' : 'td';
+                    html += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+                });
+                return '\n' + html + '</table>\n';
+            });
             // Bold
             f = f.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
             // Italic
@@ -7967,20 +8020,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             f = f.replace(/((?:LKR|USD|EUR|GBP|INR|AUD|JPY|Rs\.?)\s?[\d,]+(?:\.\d+)?)/g, '<span class="ai-money">$1</span>');
             // Takeaway / Bottom line
             f = f.replace(/^(Bottom line|Best move|Recommendation|Takeaway|Key point|Summary|Action plan):/gim, '<div class="ai-takeaway">💡 $1:</div>');
-            // Table detection (simple | delimited)
-            f = f.replace(/((?:(?:^|\n)\|.+\|(?:\n|$))+)/g, (match) => {
-                const rows = match.trim().split('\n').filter(r => r.includes('|'));
-                if (rows.length < 2) return match;
-                const isSep = (r) => /^\|[\s\-:]+\|$/.test(r.trim());
-                let html = '<table class="ai-table">';
-                rows.forEach((row, i) => {
-                    if (isSep(row)) return;
-                    const cells = row.split('|').filter(c => c.trim());
-                    const tag = i === 0 ? 'th' : 'td';
-                    html += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
-                });
-                return html + '</table>';
-            });
+            // (Table detection moved earlier — runs before bold/bullets.)
             // Paragraph spacing
             f = f.replace(/\n{2,}/g, '<div class="ai-spacer"></div>');
             f = f.replace(/\n/g, '<br>');
@@ -8080,7 +8120,17 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="(function(b){navigator.clipboard.writeText(b.getAttribute('data-copy')||'');b.textContent='✓ Copied';setTimeout(()=>b.textContent='📋 Copy',1500);})(this)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)">👍</button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)">👎</button>`;
                 bubble.appendChild(actions);
             } else {
+                // User message — show time + an Edit button (like Claude/Gemini)
                 meta.innerHTML = `<span>${timeStr}</span>`;
+                if (role === 'user' && !isReplay && typeof text === 'string' && !/^<(img|div)/i.test(text)) {
+                    const editBtn = document.createElement('button');
+                    editBtn.className = 'ai-msg-action-btn';
+                    editBtn.style.cssText = 'margin-left:8px;font-size:11px;';
+                    editBtn.textContent = '✏️ Edit';
+                    editBtn.dataset.original = text;
+                    editBtn.onclick = function () { _editUserMessage(wrap, this.dataset.original); };
+                    meta.appendChild(editBtn);
+                }
             }
             bubble.appendChild(meta);
 
@@ -15254,7 +15304,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.0 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.2 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15263,7 +15313,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.2 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>

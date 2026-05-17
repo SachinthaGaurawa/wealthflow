@@ -214,13 +214,14 @@
         // Universal output-format capability — every response, not just vision.
         var formatRule =
             '\n\n📊 OUTPUT FORMAT — give the user EXACTLY what they ask for:\n' +
-            '• "table" / "compare" → a proper GitHub-flavoured Markdown table (| col | col |).\n' +
-            '• "chart" / "graph" / "diagram" → a fenced ```chart code block with JSON: ' +
-            '{"type":"bar|line|pie|radar|doughnut","title":"...","labels":[...],"datasets":[{"label":"...","data":[...]}]} ' +
-            '(real numbers; one block per chart; also include the same data as a Markdown table).\n' +
-            '• "analysis" / "analyse" → structured analysis with clear headings + bullets + a short verdict.\n' +
-            '• Comparison of 2+ things → specs table + a chart of the key numeric differences + verdict.\n' +
-            'Use accurate real-world figures from your knowledge. Never say "I can\'t make charts" — you CAN via the chart block.';
+            '• "table" / "compare" → a proper GitHub-flavoured Markdown table WITH the | --- | separator row after the header.\n' +
+            '• "chart" / "graph" / "diagram" → fenced ```chart blocks with JSON ' +
+            '{"type":"bar|line|pie|radar|doughnut","title":"...","labels":[...],"datasets":[{"label":"...","data":[...]}]}. ' +
+            'data arrays MUST be pure numbers only (35000, not "$35,000"). NEVER mix different units in one chart — make a SEPARATE chart per metric so small values do not vanish. Also include the data as a table.\n' +
+            '• "analysis" / "research" / "deep research" → structured analysis, headings, bullets, evidence, verdict; for "deep research" be exhaustive.\n' +
+            '• "simple" / "shortly" / "brief" → short, direct, no fluff. "full" / "all details" / "everything" → comprehensive and exhaustive.\n' +
+            '• Comparison of 2+ things → spec table + a separate chart per numeric metric + verdict.\n' +
+            'Use accurate real-world figures. Never say "I can\'t make charts" — you CAN via the chart block.';
 
         // Language rule appears TWICE — once here, and DOMINANTLY at the very
         // end (models obey the final instruction most strongly).
