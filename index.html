@@ -13535,8 +13535,23 @@ table.amort tbody tr { page-break-inside: avoid; }
                         
                         const info = document.createElement('div');
                         info.style.cssText = 'flex:1;min-width:0;';
+                        const viewsSpanId = '_wf_views_' + i;
                         info.innerHTML = '<div style="font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (h.loanName || 'Loan').replace(/</g, '&lt;') + '</div>' +
-                            '<div style="color:var(--text3);font-size:10px;">' + created.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' · ' + statusBadge + '</div>';
+                            '<div style="color:var(--text3);font-size:10px;">' + created.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' · ' + statusBadge + ' <span id="' + viewsSpanId + '"></span></div>';
+                        
+                        // Fetch real-time views if it's a Firestore/Server link
+                        if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
+                            fetch('https://wealthflow-personal.vercel.app/api/statement-view?meta=1&id=' + h.shortId)
+                                .then(r => r.json())
+                                .then(data => {
+                                    const vSpan = overlay.querySelector('#' + viewsSpanId);
+                                    if (vSpan && data && typeof data.views !== 'undefined') {
+                                        vSpan.innerHTML = ' · 👁 ' + data.views;
+                                        vSpan.style.color = 'var(--accent)';
+                                        vSpan.style.fontWeight = '600';
+                                    }
+                                }).catch(()=>{});
+                        }
                         
                         const openBtn = document.createElement('button');
                         openBtn.className = 'btn btn-ghost btn-sm';
