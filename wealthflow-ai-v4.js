@@ -1957,43 +1957,139 @@
      *     - If 1 image: vision-scan (works as before)
      *     - If 2-15 images: parallel vision-scan calls, then synthesis call
      * ========================================================================= */
-    // Direct Gemini Vision call — most reliable, no backend dependency.
-    async function _directGeminiVision(images, prompt) {
-        var key = '';
+    // ── MULTI-PROVIDER VISION CASCADE ───────────────────────────────────────
+    // Tries several vision engines in order. Returns text, or null only if
+    // EVERY engine failed (caller then shows an honest error — never a
+    // generic chat reply that ignores the image).
+    var _GEMINI_VISION_KEYS = [
+        'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ',
+        'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4'
+    ];
+    var _GROQ_VISION_KEY = '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';
+
+    async function _geminiVision(images, prompt) {
+        var keys = [];
         try {
             var st = window.DB ? window.DB.getObj('settings', {}) : {};
-            key = st.geminiKey || 'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ';
-        } catch (_) { key = 'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ'; }
+            if (st.geminiKey) keys.push(st.geminiKey);
+        } catch (_) {}
+        keys = keys.concat(_GEMINI_VISION_KEYS);
         var parts = [{ text: prompt }];
         images.slice(0, 6).forEach(function (b64) {
             parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
         });
-        var models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
-        for (var m = 0; m < models.length; m++) {
-            try {
-                var r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + models[m] + ':generateContent?key=' + key, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0.25, maxOutputTokens: 2048 } })
-                });
-                if (r.status === 429 || r.status === 503 || r.status === 404) continue;
-                if (!r.ok) continue;
-                var d = await r.json();
-                var t = d && d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts && d.candidates[0].content.parts[0] && d.candidates[0].content.parts[0].text;
-                if (t && t.trim()) return t.trim();
-            } catch (e) { console.warn('[' + V5 + '] direct gemini vision ' + models[m] + ':', e && e.message); }
+        var models = ['gemini-2.0-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        for (var k = 0; k < keys.length; k++) {
+            for (var m = 0; m < models.length; m++) {
+                try {
+                    var r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + models[m] + ':generateContent?key=' + keys[k], {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0.25, maxOutputTokens: 2048 } })
+                    });
+                    if (r.status === 429 || r.status === 503) continue;     // try next model
+                    if (r.status === 404) continue;                         // model name unavailable
+                    if (r.status === 400 || r.status === 403) break;        // bad/forbidden key → next key
+                    if (!r.ok) continue;
+                    var d = await r.json();
+                    var t = d && d.candidates && d.candidates[0] && d.candidates[0].content &&
+                        d.candidates[0].content.parts && d.candidates[0].content.parts[0] &&
+                        d.candidates[0].content.parts[0].text;
+                    if (t && t.trim()) { console.log('[' + V5 + '] vision via gemini ' + models[m]); return t.trim(); }
+                } catch (e) { console.warn('[' + V5 + '] gemini ' + models[m] + ':', e && e.message); }
+            }
         }
         return null;
     }
 
-    async function callMultiImageAI(images, prompt, preferFrontier, onProgress) {
-        // 1. PRIMARY: direct Gemini Vision (works everywhere, incl. GitHub Pages)
-        if (onProgress) onProgress('🔍 Analysing the image with vision AI…');
+    async function _groqVision(images, prompt) {
+        // Groq Llama Vision — OpenAI-style messages with image_url data URIs
         try {
-            var direct = await _directGeminiVision(images, prompt);
-            if (direct) return direct;
-        } catch (e) { console.warn('[' + V5 + '] direct vision failed, trying backend:', e && e.message); }
+            var content = [{ type: 'text', text: prompt }];
+            images.slice(0, 5).forEach(function (b64) {
+                content.push({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + b64 } });
+            });
+            var models = ['llama-3.2-90b-vision-preview', 'llama-3.2-11b-vision-preview', 'meta-llama/llama-4-scout-17b-16e-instruct'];
+            for (var i = 0; i < models.length; i++) {
+                try {
+                    var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _GROQ_VISION_KEY },
+                        body: JSON.stringify({ model: models[i], messages: [{ role: 'user', content: content }], temperature: 0.3, max_tokens: 1800 })
+                    });
+                    if (r.status === 429 || r.status === 503) continue;
+                    if (r.status === 404 || r.status === 400) continue;
+                    if (!r.ok) continue;
+                    var d = await r.json();
+                    var t = d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+                    if (t && t.trim()) { console.log('[' + V5 + '] vision via groq ' + models[i]); return t.trim(); }
+                } catch (e) { console.warn('[' + V5 + '] groq ' + models[i] + ':', e && e.message); }
+            }
+        } catch (e) { console.warn('[' + V5 + '] groq vision:', e && e.message); }
+        return null;
+    }
 
-        // 2. SECONDARY: vision-scan backend (if reachable)
+    async function _backendVision(images, prompt) {
+        // Vercel /api/ai (server has Gemini/Groq/Ollama vision with server keys)
+        try {
+            var r = await fetch(_apiBase() + '/ai', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: prompt, image: images[0].base64 })
+            });
+            if (r.ok) {
+                var d = await r.json();
+                if (d && d.reply && d.reply.trim()) { console.log('[' + V5 + '] vision via backend ' + (d.provider || '')); return d.reply.trim(); }
+            }
+        } catch (e) { console.warn('[' + V5 + '] backend vision:', e && e.message); }
+        return null;
+    }
+
+    async function callMultiImageAI(images, prompt, preferFrontier, onProgress) {
+        if (!images || !images.length) throw new Error('No image data');
+        console.log('[' + V5 + '] vision cascade start — ' + images.length + ' image(s), first b64 len=' + (images[0].base64 ? images[0].base64.length : 0));
+
+        // Engine 1: Gemini direct (multi-key, multi-model)
+        if (onProgress) onProgress('🔍 Analysing the image…');
+        var out = await _geminiVision(images, prompt);
+        if (out) return out;
+
+        // Engine 2: Groq Llama Vision
+        if (onProgress) onProgress('🔎 Cross-checking with a second vision engine…');
+        out = await _groqVision(images, prompt);
+        if (out) return out;
+
+        // Engine 3: Vercel backend (server-side keys, more providers)
+        if (onProgress) onProgress('🛰️ Trying the secure backend…');
+        out = await _backendVision(images, prompt);
+        if (out) return out;
+
+        // Engine 4: vision-scan OCR pipeline (last resort, then reason over text)
+        try {
+            var hasVS = await isEndpointAvailable('/vision-scan');
+            if (hasVS) {
+                if (onProgress) onProgress('🧬 Deep OCR pass…');
+                var rr = await fetch(_apiBase() + '/vision-scan', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: images[0].base64, mode: 'frontier',
+                        hints: { taskType: 'universal_vision', customPrompt: prompt } })
+                });
+                if (rr.ok) {
+                    var dd = await rr.json();
+                    if (dd && dd.result && (dd.result.raw_text || dd.result.description)) {
+                        var seen = dd.result.description || dd.result.raw_text;
+                        if (typeof window.callAI === 'function') {
+                            return await window.callAI(prompt + '\n\n[Vision system extracted this from the image: ' + seen + ']\nAnswer the user using this.');
+                        }
+                        return seen;
+                    }
+                }
+            }
+        } catch (e) { console.warn('[' + V5 + '] vision-scan last resort:', e && e.message); }
+
+        // ALL vision engines failed — be honest, don't fake a chat reply.
+        throw new Error('VISION_ALL_FAILED');
+    }
+
+    async function _legacyCallMultiImageAI(images, prompt, preferFrontier, onProgress) {
         var hasVisionScan = await isEndpointAvailable('/vision-scan');
         if (!hasVisionScan && typeof window.callAI === 'function') {
             return await window.callAI(prompt, images[0].base64);
@@ -2312,9 +2408,18 @@
         } catch (err) {
             _hideThinking();
             console.error('[' + V5 + '] vision send failed:', err);
-            if (typeof window.appendAIMessage === 'function') {
-                window.appendAIMessage('bot', '⚠️ I had trouble reading that image: ' + (err && err.message ? err.message : 'unknown error') + '. Please try again, or send a clearer photo.');
+            var emsg = (err && err.message) ? err.message : 'unknown error';
+            var friendly;
+            if (emsg === 'VISION_ALL_FAILED') {
+                friendly = '😔 I tried several vision engines but none could read the image right now ' +
+                    '(the AI vision services may be temporarily rate-limited). Your image was received correctly — ' +
+                    'please try again in a minute, or describe what you\'d like me to look at and I\'ll do my best.';
+            } else if (/Could not read|extract/i.test(emsg)) {
+                friendly = '⚠️ I couldn\'t decode that file. Please try a JPG/PNG photo or a clearer image.';
+            } else {
+                friendly = '⚠️ I had trouble reading that image: ' + emsg + '. Please try again, or send a clearer photo.';
             }
+            if (typeof window.appendAIMessage === 'function') window.appendAIMessage('bot', friendly);
         }
     };
 
