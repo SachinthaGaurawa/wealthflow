@@ -4461,7 +4461,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.5 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.6 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -13103,7 +13103,34 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ── MASTER UPLOAD: Tries strategies in priority order ──
         // Firestore first (shortest URL), then TmpFiles, then Hash fallback
         async function _uploadStatementForSharing(html, loanName) {
-            // Strategy 1: Firestore ultra-short ID (BEST — shortest URL, 30-day validity)
+            // Strategy 0: Server statement-store (BEST — server writes to
+            // Firestore via REST with the project API key, so it works 100%
+            // of the time regardless of the visitor's sign-in/CORS state and
+            // ALWAYS returns a ~45-char URL — this kills the giant-URL bug).
+            try {
+                const proxyBase = 'https://wealthflow-personal.vercel.app';
+                const ctrl = new AbortController();
+                const tm = setTimeout(() => ctrl.abort(), 12000);
+                try {
+                    const resp = await fetch(proxyBase + '/api/statement-store', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ html, name: loanName }),
+                        signal: ctrl.signal
+                    });
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data && data.url && data.url.length < 120) {
+                            console.log('[Share] ✅ statement-store:', data.url, '(' + data.url.length + ' chars)');
+                            return { url: data.url, days: data.days || 30, expires: '30 days', shortId: data.id };
+                        }
+                    } else {
+                        console.warn('[Share] statement-store HTTP', resp.status);
+                    }
+                } finally { clearTimeout(tm); }
+            } catch (e) { console.warn('[Share] statement-store failed:', e && e.message); }
+
+            // Strategy 1: Firestore ultra-short ID (client SDK) — secondary
             try {
                 const result = await _uploadToSharedStatements(html, loanName);
                 console.log('[Share] ✅ Firestore upload success:', result.url, '(' + result.url.length + ' chars)');
@@ -13337,52 +13364,30 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const statementHTML = _buildLoanStatementHTML(l);
                 if (cancelled) return;
 
-                // Step 2: Cloud Upload via Puter.js (User requested Puter integration & PDF)
-                setProgress(40, 'Rendering Professional PDF...');
-                await new Promise(r => setTimeout(r, 100));
+                // Step 2: Reliable server-side store FIRST — guarantees a
+                // tiny (~45-char) URL with 30-day validity, no login prompts,
+                // works from anywhere. (Puter is no longer the primary path
+                // because it prompts a login and frequently fails, which was
+                // forcing the giant data-URL fallback.)
+                setProgress(45, 'Securing your statement...');
                 let shareUrl = null;
-                let validityStr = 'Permanent';
+                let validityStr = '30 days';
 
                 try {
-                    // Generate the PDF from HTML
-                    const pdfBlob = await _statementHtmlToPdfBlob(statementHTML, l.name);
+                    const result = await _uploadStatementForSharing(statementHTML, l.name);
                     if (cancelled) return;
-
-                    setProgress(60, 'Connecting to Puter Network...');
-                    if (typeof puter !== 'undefined') {
-                        // Puter will prompt login if needed.
-                        const shortId = _generateShortId(6).toLowerCase();
-                        const siteName = 'stmt-' + shortId;
-
-                        setProgress(75, 'Uploading Secure Document...');
-                        await puter.fs.mkdir(siteName);
-
-                        // Write the PDF
-                        await puter.fs.write(`${siteName}/statement.pdf`, pdfBlob);
-
-                        // Write an index.html that redirects to the PDF automatically, for better UX
-                        const indexHtml = `<!DOCTYPE html><html><head><title>WealthFlow Statement</title><meta http-equiv="refresh" content="0; url=statement.pdf"></head><body style="background:#060a14;color:#fff;font-family:sans-serif;text-align:center;padding:50px;"><h2>Loading Secure Statement...</h2><p>If not redirected automatically, <a href="statement.pdf" style="color:#00f0ff;">click here</a>.</p></body></html>`;
-                        await puter.fs.write(`${siteName}/index.html`, indexHtml);
-
-                        // Deploy the site
-                        setProgress(85, 'Finalizing Puter deployment...');
-                        const site = await puter.hosting.create(siteName, siteName);
-
-                        shareUrl = `https://${site.subdomain}.puter.site/statement.pdf`;
-                        console.log('[Share] ✅ Puter upload success:', shareUrl);
-                    } else {
-                        throw new Error('Puter SDK not loaded');
+                    shareUrl = result.url;
+                    validityStr = result.expires || (result.days ? result.days + ' days' : '30 days');
+                    setProgress(80, 'Optimising link...');
+                    if (shareUrl && shareUrl.length > 90) {
+                        const shorter = await _shortenUrl(shareUrl);
+                        if (shorter && shorter.length < shareUrl.length) shareUrl = shorter;
                     }
                 } catch (e) {
-                    console.warn('[Share] Puter upload failed, falling back...', e);
-                    // Fallback to legacy upload if Puter fails or user cancels login
-                    setProgress(70, 'Using fallback secure network...');
+                    console.warn('[Share] primary upload failed, last-resort:', e && e.message);
                     const result = await _uploadStatementForSharing(statementHTML, l.name);
                     shareUrl = result.url;
                     validityStr = result.expires || '30 days';
-
-                    setProgress(90, 'Shrinking URL...');
-                    shareUrl = await _shortenUrl(shareUrl);
                 }
 
                 setProgress(100, 'Ready!');
@@ -13434,16 +13439,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.className = 'mo';
             overlay.style.zIndex = '999999';
 
-            const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=1&color=d4af37&bgcolor=0a0e1a&data=' + encodeURIComponent(url);
             const urlLen = url.length;
             const isShort = urlLen < 40;
             const urlBadge = isShort
                 ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ SHORT URL (' + urlLen + ' chars)</span>'
                 : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🔗 ' + urlLen + ' chars</span>';
-
-            const whatsappUrl = 'https://wa.me/?text=' + encodeURIComponent('WealthFlow Loan Statement — ' + (l.name || 'Loan') + '\n\nView online: ' + url);
-            const emailUrl = 'mailto:?subject=' + encodeURIComponent('WealthFlow Loan Statement — ' + (l.name || 'Loan')) + '&body=' + encodeURIComponent('View your loan statement online:\n\n' + url + '\n\nGenerated by WealthFlow Elite');
-            const telegramUrl = 'https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent('WealthFlow Loan Statement — ' + (l.name || 'Loan'));
 
             overlay.innerHTML = `
                 <style>
@@ -13479,39 +13479,22 @@ table.amort tbody tr { page-break-inside: avoid; }
                         ${urlBadge}
                     </div>
                     
-                    <div style="display:flex;gap:16px;margin-top:8px;align-items:flex-start;">
-                        <div style="flex:1;min-width:0;">
-                            <div class="fg" style="margin:0;">
-                                <label class="fl">🔗 Short Shareable URL</label>
-                                <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
-                                    style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--bg2);cursor:text;">
-                            </div>
-                            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
-                                <button class="btn btn-primary btn-sm btn-3d" id="_surl_copy" style="flex:1;padding:10px 14px;font-weight:700;font-size:13px;min-width:120px;">📋 Copy Link</button>
-                                <button class="btn btn-ghost btn-sm btn-3d" id="_surl_open" style="flex:1;padding:10px;background:var(--bg2);">🔗 Open</button>
-                                <button class="btn btn-ghost btn-sm btn-3d" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};padding:10px;background:var(--bg2);">📤 Share</button>
-                            </div>
+                    <div style="margin-top:8px;">
+                        <div class="fg" style="margin:0;">
+                            <label class="fl">🔗 Short Shareable URL</label>
+                            <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
+                                style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--bg2);cursor:text;">
                         </div>
-                        <div style="width:110px;height:110px;background:#fff;border-radius:10px;padding:5px;flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,0.15);">
-                            <img src="${qrUrl}" alt="QR Code" style="width:100%;height:100%;display:block;border-radius:6px;">
-                        </div>
-                    </div>
-                    
-                    <!-- Social Share Buttons -->
-                    <div style="margin-top:16px;">
-                        <label class="fl" style="margin-bottom:8px;display:block;">📱 Quick Share</label>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                            <a href="${whatsappUrl}" target="_blank" rel="noopener" class="_share-social-btn wa">💬 WhatsApp</a>
-                            <a href="${emailUrl}" class="_share-social-btn em">✉️ Email</a>
-                            <a href="${telegramUrl}" target="_blank" rel="noopener" class="_share-social-btn tg">✈️ Telegram</a>
-                            <a href="https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent('Loan Statement — ' + (l.name || 'Loan'))}" target="_blank" rel="noopener" class="_share-social-btn" style="background:rgba(29,161,242,0.1);color:#1da1f2;border-color:rgba(29,161,242,0.3);">𝕏 Post</a>
-                            <a href="https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}" target="_blank" rel="noopener" class="_share-social-btn" style="background:rgba(0,119,181,0.1);color:#0077b5;border-color:rgba(0,119,181,0.3);">💼 LinkedIn</a>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+                            <button class="btn btn-primary btn-sm btn-3d" id="_surl_copy" style="flex:2;padding:11px 14px;font-weight:700;font-size:13px;min-width:140px;">📋 Copy Link</button>
+                            <button class="btn btn-ghost btn-sm btn-3d" id="_surl_open" style="flex:1;padding:11px;background:var(--bg2);">🔗 Open</button>
+                            <button class="btn btn-ghost btn-sm btn-3d" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};padding:11px;background:var(--bg2);">📤 Share</button>
                         </div>
                     </div>
 
                     <!-- Download PDF Button -->
-                    <div style="margin-top:12px;">
-                        <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:10px;background:var(--bg2);font-size:12px;">
+                    <div style="margin-top:14px;">
+                        <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:11px;background:var(--bg2);font-size:12px;">
                             📄 Download Statement as PDF
                         </button>
                     </div>
@@ -15458,7 +15441,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.5 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.6 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15467,7 +15450,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.5 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.6 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
