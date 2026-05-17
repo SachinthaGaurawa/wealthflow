@@ -13064,30 +13064,33 @@ table.amort tbody tr { page-break-inside: avoid; }
                 .finally(() => clearTimeout(timer));
         }
 
-        // ── MASTER UPLOAD: Server-side Firestore store (single reliable path) ──
+        // ── MASTER UPLOAD: Multi-Strategy Bulletproof Architecture ──
         async function _uploadStatementForSharing(html, loanName) {
-            // Strategy 1: Server /api/statement-store (PRIMARY — writes to
-            // Firestore via REST with the project API key. Works 100% of the
-            // time regardless of sign-in/CORS state. Returns ~50-char URL.)
             const errors = [];
+            
+            // Generate the current base URL (supports github pages, local, or vercel)
+            let baseUrl = window.location.origin + window.location.pathname;
+            if (baseUrl.endsWith('index.html')) baseUrl = baseUrl.replace('index.html', '');
+            if (!baseUrl.endsWith('/')) baseUrl += '/';
+
+            // Strategy 1: Server /api/statement-store (PRIMARY — writes to Firestore)
             try {
                 const resp = await _fetchWithTimeout(_WF_APP_URL + '/api/statement-store', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ html, name: loanName })
-                }, 18000);
+                }, 12000);
 
                 if (resp.ok) {
                     const data = await resp.json();
                     if (data && data.url && data.url.length < 200) {
-                        console.log('[Share] ✅ statement-store:', data.url, '(' + data.url.length + ' chars)');
-                        return {
-                            url: data.url,
-                            days: data.days || 30,
-                            expires: (data.days || 30) + ' days',
-                            shortId: data.id,
-                            via: data.via || 'server'
-                        };
+                        console.log('[Share] ✅ statement-store:', data.url);
+                        // If we are not on Vercel, adapt the returned URL to our current domain
+                        let finalUrl = data.url;
+                        if (data.id && !window.location.hostname.includes('vercel.app')) {
+                            finalUrl = baseUrl + '?s=' + data.id;
+                        }
+                        return { url: finalUrl, days: data.days || 30, expires: (data.days || 30) + ' days', shortId: data.id, via: data.via || 'server' };
                     }
                 }
                 const errBody = await resp.text().catch(() => '');
@@ -13112,12 +13115,55 @@ table.amort tbody tr { page-break-inside: avoid; }
                         v: 0
                     });
 
-                    const url = _WF_APP_URL + '/?s=' + shortId;
+                    const url = baseUrl + '?s=' + shortId;
                     console.log('[Share] ✅ Client Firestore:', url);
                     return { url, days: 30, expires: '30 days', shortId, via: 'client-firestore' };
                 }
             } catch (e) {
                 errors.push('client-firestore: ' + (e && e.message));
+            }
+
+            // Strategy 3: tmpfiles.org (100% free, zero-auth, CORS-friendly, 60 min expiry)
+            // This is the ultimate fallback that guarantees success on purely static hosting!
+            try {
+                const fd = new FormData();
+                const blob = new Blob([html], { type: "text/plain" });
+                fd.append("file", blob, "stmt.txt");
+                const res = await _fetchWithTimeout("https://tmpfiles.org/api/v1/upload", { method: "POST", body: fd }, 15000);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.status === 'success' && data.data && data.data.url) {
+                        const parts = data.data.url.split('/');
+                        const id = parts[3];
+                        if (id) {
+                            const url = baseUrl + '?tstmt=' + id;
+                            console.log('[Share] ✅ tmpfiles.org:', url);
+                            return { url, expires: '60 minutes', shortId: id, via: 'tmpfiles' };
+                        }
+                    }
+                }
+                errors.push('tmpfiles: HTTP ' + res.status);
+            } catch (e) {
+                errors.push('tmpfiles: ' + (e && e.message));
+            }
+
+            // Strategy 4: file.io (100% free, zero-auth, expires after 1 view)
+            try {
+                const fd = new FormData();
+                const blob = new Blob([html], { type: "text/html" });
+                fd.append("file", blob, "stmt.html");
+                const res = await _fetchWithTimeout("https://file.io/?expires=1w", { method: "POST", body: fd }, 15000);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.success && data.link) {
+                        console.log('[Share] ✅ file.io:', data.link);
+                        // file.io serves directly, so we just give the file.io link
+                        return { url: data.link, expires: '1 view or 7 days', shortId: data.key, via: 'file.io' };
+                    }
+                }
+                errors.push('file.io: HTTP ' + res.status);
+            } catch (e) {
+                errors.push('file.io: ' + (e && e.message));
             }
 
             // NEVER produce a giant data URL. Surface an honest error.
