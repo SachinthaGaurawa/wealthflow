@@ -13517,25 +13517,72 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const container = overlay.querySelector('#_surl_history_list');
                 try {
                     const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
+                    container.innerHTML = '';
                     if (hist.length === 0) {
                         container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px;">No previous share links</div>';
                         return;
                     }
-                    container.innerHTML = hist.slice(0, 20).map((h, i) => {
+                    hist.slice(0, 20).forEach((h, i) => {
                         const created = new Date(h.createdAt);
                         const expires = h.expiresAt ? new Date(h.expiresAt) : new Date(created.getTime() + 30 * 86400000);
                         const isExpired = Date.now() > expires.getTime();
                         const statusBadge = isExpired
                             ? '<span style="color:#e74c3c;font-size:9px;font-weight:700;">EXPIRED</span>'
                             : '<span style="color:#2ecc71;font-size:9px;font-weight:700;">ACTIVE</span>';
-                        return '<div style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:11px;display:flex;align-items:center;gap:8px;' + (isExpired ? 'opacity:0.5;' : '') + '">' +
-                            '<div style="flex:1;min-width:0;">' +
-                                '<div style="font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (h.loanName || 'Loan').replace(/</g, '&lt;') + '</div>' +
-                                '<div style="color:var(--text3);font-size:10px;">' + created.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' · ' + statusBadge + '</div>' +
-                            '</div>' +
-                            '<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:10px;" onclick="navigator.clipboard.writeText(\'' + h.url.replace(/'/g, "\\'") + '\');this.textContent=\'✓\';setTimeout(()=>this.textContent=\'📋\',1500);">📋</button>' +
-                        '</div>';
-                    }).join('');
+                        
+                        const row = document.createElement('div');
+                        row.style.cssText = 'padding:8px 10px;border-bottom:1px solid var(--border);font-size:11px;display:flex;align-items:center;gap:8px;' + (isExpired ? 'opacity:0.5;' : '');
+                        
+                        const info = document.createElement('div');
+                        info.style.cssText = 'flex:1;min-width:0;';
+                        info.innerHTML = '<div style="font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (h.loanName || 'Loan').replace(/</g, '&lt;') + '</div>' +
+                            '<div style="color:var(--text3);font-size:10px;">' + created.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' · ' + statusBadge + '</div>';
+                        
+                        const openBtn = document.createElement('button');
+                        openBtn.className = 'btn btn-ghost btn-sm';
+                        openBtn.style.cssText = 'padding:4px 8px;font-size:10px;color:var(--accent);';
+                        openBtn.textContent = '🌍';
+                        openBtn.title = 'Open Link';
+                        openBtn.onclick = () => window.open(h.url, '_blank', 'noopener,noreferrer');
+
+                        const copyBtn = document.createElement('button');
+                        copyBtn.className = 'btn btn-ghost btn-sm';
+                        copyBtn.style.cssText = 'padding:4px 8px;font-size:10px;';
+                        copyBtn.textContent = '📋';
+                        copyBtn.title = 'Copy Link';
+                        copyBtn.onclick = () => {
+                            navigator.clipboard.writeText(h.url);
+                            copyBtn.textContent = '✓';
+                            setTimeout(() => copyBtn.textContent = '📋', 1500);
+                        };
+
+                        const delBtn = document.createElement('button');
+                        delBtn.className = 'btn btn-ghost btn-sm';
+                        delBtn.style.cssText = 'padding:4px 8px;font-size:10px;color:#e74c3c;';
+                        delBtn.innerHTML = '🗑️';
+                        delBtn.title = 'Delete Link';
+                        delBtn.onclick = async () => {
+                            if (confirm('Delete this share link?\n\nIf you click OK, the URL will be disabled permanently and anyone who has it will no longer be able to view it.')) {
+                                delBtn.innerHTML = '⌛';
+                                delBtn.disabled = true;
+                                try {
+                                    if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
+                                        await fetch('https://wealthflow-personal.vercel.app/api/statement-store?id=' + h.shortId, { method: 'DELETE' }).catch(()=>{});
+                                    }
+                                } catch(e){}
+                                // Remove from local history
+                                hist.splice(i, 1);
+                                localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
+                                _renderHistory(); // Re-render
+                            }
+                        };
+                        
+                        row.appendChild(info);
+                        row.appendChild(openBtn);
+                        row.appendChild(copyBtn);
+                        row.appendChild(delBtn);
+                        container.appendChild(row);
+                    });
                 } catch (e) {
                     container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px;">Could not load history</div>';
                 }
