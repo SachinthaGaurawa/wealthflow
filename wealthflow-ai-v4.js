@@ -1957,10 +1957,45 @@
      *     - If 1 image: vision-scan (works as before)
      *     - If 2-15 images: parallel vision-scan calls, then synthesis call
      * ========================================================================= */
+    // Direct Gemini Vision call — most reliable, no backend dependency.
+    async function _directGeminiVision(images, prompt) {
+        var key = '';
+        try {
+            var st = window.DB ? window.DB.getObj('settings', {}) : {};
+            key = st.geminiKey || 'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ';
+        } catch (_) { key = 'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ'; }
+        var parts = [{ text: prompt }];
+        images.slice(0, 6).forEach(function (b64) {
+            parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
+        });
+        var models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+        for (var m = 0; m < models.length; m++) {
+            try {
+                var r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + models[m] + ':generateContent?key=' + key, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0.25, maxOutputTokens: 2048 } })
+                });
+                if (r.status === 429 || r.status === 503 || r.status === 404) continue;
+                if (!r.ok) continue;
+                var d = await r.json();
+                var t = d && d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts && d.candidates[0].content.parts[0] && d.candidates[0].content.parts[0].text;
+                if (t && t.trim()) return t.trim();
+            } catch (e) { console.warn('[' + V5 + '] direct gemini vision ' + models[m] + ':', e && e.message); }
+        }
+        return null;
+    }
+
     async function callMultiImageAI(images, prompt, preferFrontier, onProgress) {
+        // 1. PRIMARY: direct Gemini Vision (works everywhere, incl. GitHub Pages)
+        if (onProgress) onProgress('🔍 Analysing the image with vision AI…');
+        try {
+            var direct = await _directGeminiVision(images, prompt);
+            if (direct) return direct;
+        } catch (e) { console.warn('[' + V5 + '] direct vision failed, trying backend:', e && e.message); }
+
+        // 2. SECONDARY: vision-scan backend (if reachable)
         var hasVisionScan = await isEndpointAvailable('/vision-scan');
         if (!hasVisionScan && typeof window.callAI === 'function') {
-            // Fallback: use the existing callAI with just the first image
             return await window.callAI(prompt, images[0].base64);
         }
 
@@ -2085,6 +2120,8 @@
             patchFileInputsV5();
             // 5. Patch AI chat attach
             patchAIChatAttachButton();
+            // 5b. Install drag & drop zone
+            try { _installAIDropZone(); } catch (_) {}
             // 6. Patch sendAIMessage
             patchSendAIMessageV5();
             console.log('[' + V5 + '] All v5 patches installed ✓');
@@ -2110,6 +2147,7 @@
             try {
                 patchFileInputsV5();
                 patchAIChatAttachButton();
+                try { _installAIDropZone(); } catch (_) {}
                 patchSendAIMessageV5();
                 _patchDBset();
             } catch (_) {}
@@ -2120,10 +2158,161 @@
     /* =========================================================================
      * 32. PUBLIC v5 DEBUG OBJECT
      * ========================================================================= */
+    // ── Robust "send with vision" — used by the host's native image path ──
+    // Sends ALL attached images to a vision-capable model and shows the reply.
+    // ── DRAG & DROP files/images onto the AI chat ───────────────────────────
+    function _installAIDropZone() {
+        var zone = document.getElementById('aiChatMessages');
+        var card = document.getElementById('page-ai');
+        if (!zone || zone._wfDrop) return;
+        zone._wfDrop = true;
+
+        var overlay = document.createElement('div');
+        overlay.id = 'aiDropOverlay';
+        overlay.style.cssText = 'position:absolute;inset:0;z-index:50;display:none;align-items:center;justify-content:center;' +
+            'background:rgba(13,29,60,0.82);backdrop-filter:blur(3px);border:2.5px dashed #d4af37;border-radius:14px;' +
+            'font-size:17px;font-weight:700;color:#fff;pointer-events:none;text-align:center;';
+        overlay.innerHTML = '<div>📎 Drop your image or file here<br><span style="font-size:12px;font-weight:500;opacity:.85;">Photos, screenshots, PDFs — I\'ll read them</span></div>';
+        // The chat messages box needs a positioned parent for the overlay.
+        var host = zone.parentElement || zone;
+        if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        host.appendChild(overlay);
+
+        var dragDepth = 0;
+        function show() { overlay.style.display = 'flex'; }
+        function hide() { overlay.style.display = 'none'; dragDepth = 0; }
+
+        ['dragenter', 'dragover'].forEach(function (ev) {
+            host.addEventListener(ev, function (e) {
+                if (e.dataTransfer && Array.prototype.some.call(e.dataTransfer.types || [], function (t) { return t === 'Files'; })) {
+                    e.preventDefault(); e.stopPropagation();
+                    if (ev === 'dragenter') dragDepth++;
+                    show();
+                }
+            });
+        });
+        host.addEventListener('dragleave', function (e) {
+            dragDepth--;
+            if (dragDepth <= 0) hide();
+        });
+        host.addEventListener('drop', function (e) {
+            e.preventDefault(); e.stopPropagation();
+            hide();
+            var files = e.dataTransfer && e.dataTransfer.files ? Array.prototype.slice.call(e.dataTransfer.files) : [];
+            if (!files.length) return;
+            // Reuse the exact same attach pipeline (progress ring + send lock).
+            handleAIChatMultiAttach({ target: { files: files, value: '' } });
+        });
+        console.log('[' + V5 + '] drag & drop zone installed ✓');
+    }
+
+    window._wfSendWithVision = async function (userMsg) {
+        var atts = _aiChatAttachments.slice();
+        if (atts.length === 0) {
+            // Nothing attached — let the normal text flow handle it.
+            if (typeof _originalSendAIMessage === 'function') return _originalSendAIMessage(userMsg);
+            return;
+        }
+        if (atts.some(function (a) { return a && a.uploading; })) {
+            if (window.notify) window.notify('⏳ Files still uploading…', 'info');
+            return;
+        }
+
+        var inputEl = document.getElementById('aiChatInput');
+        if (inputEl) { inputEl.value = ''; if (window.autoResizeAIInput) window.autoResizeAIInput(inputEl); }
+
+        // Show the user's message with image thumbnails
+        if (typeof window.appendAIMessage === 'function') {
+            var thumbs = atts.map(function (a) {
+                if (a.isPdf) return '<div style="display:inline-block;width:78px;height:78px;border-radius:8px;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;display:inline-flex;align-items:center;justify-content:center;font-size:22px;margin:2px;border:1px solid rgba(212,175,55,0.3);">📄</div>';
+                return '<img src="' + a.preview + '" style="display:inline-block;width:78px;height:78px;object-fit:cover;border-radius:8px;margin:2px;border:1px solid rgba(212,175,55,0.3);">';
+            }).join('');
+            var uhtml = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">' + thumbs + '</div>' +
+                (userMsg ? '<div>' + escapeHtml(userMsg) + '</div>' : '<div style="opacity:.7;font-style:italic;">(What is in this? Please analyse.)</div>');
+            window.appendAIMessage('user', uhtml, true);
+        }
+
+        // Clear the rail + unlock
+        _aiChatAttachments = [];
+        _renderAttachmentRail();
+        _setSendLock(false);
+
+        _showThinking('👁️ Looking at your ' + (atts.length > 1 ? atts.length + ' files' : 'image') + '…');
+
+        try {
+            // Extract base64 images (compress, PDFs → pages)
+            var imgs = [];
+            for (var i = 0; i < atts.length && imgs.length < 15; i++) {
+                try {
+                    var b = await fileToImagesV4(atts[i].file, { maxPages: 2, maxBytes: 2.5 * 1024 * 1024 });
+                    for (var p = 0; p < b.images.length && imgs.length < 15; p++) {
+                        imgs.push(b.images[p]);
+                    }
+                } catch (eX) { console.warn('[' + V5 + '] extract failed:', eX && eX.message); }
+            }
+            if (imgs.length === 0) throw new Error('Could not read the attached image(s)');
+
+            _updateThinking('🧠 Analysing in depth…');
+
+            // Build a STRONG vision instruction so the model never ignores it.
+            var uName = (window.currentUser && window.currentUser.displayName)
+                ? window.currentUser.displayName.split(' ')[0] : 'there';
+            var lang = 'English';
+            try {
+                var st = window.DB ? window.DB.getObj('settings', {}) : {};
+                if (st.aiResponseLang && window.WF_LANG_NAMES) lang = window.WF_LANG_NAMES[st.aiResponseLang] || 'English';
+            } catch (_) {}
+
+            var visionPrompt =
+                'You are WealthFlow AI — a brilliant, warm best friend with EXPERT computer vision. ' +
+                'The user ' + uName + ' has attached ' + imgs.length + ' image' + (imgs.length > 1 ? 's' : '') + ' and is asking about ' + (imgs.length > 1 ? 'them' : 'it') + '.\n\n' +
+                'YOU CAN SEE THE IMAGE(S). Look very carefully and answer accurately.\n' +
+                'Identify EXACTLY what is shown — for a vehicle: make, model, year range, body type, trim, colour, notable features, approximate market value if known. ' +
+                'For documents/receipts: read all text, amounts, dates. For objects/scenes: describe precisely. ' +
+                'Give the FULL detailed answer the user asked for (they may want all specs).\n' +
+                'Be specific and confident about what you can see; only say "I can\'t tell" for genuinely unclear parts. ' +
+                'Never say you cannot see images — you can.\n\n' +
+                'USER\'S QUESTION: ' + (userMsg || 'What is this? Give me full details and all specs.') + '\n\n' +
+                'Reply warmly like a knowledgeable friend, in ' + lang + '. Lead with the direct answer (what it is), then the details/specs.';
+
+            var reply = await callMultiImageAI(
+                imgs.map(function (b64, idx) { return { base64: b64, sourceFile: atts[Math.min(idx, atts.length - 1)].name || ('image' + idx), isPdf: false, page: 1 }; }),
+                visionPrompt, true, _updateThinking
+            );
+
+            _hideThinking();
+            if (typeof window.appendAIMessage === 'function') window.appendAIMessage('bot', reply);
+
+            // Persist to history (text summary; images aren't stored)
+            try {
+                if (window.getAIHistory && window.saveAIHistory) {
+                    var h = window.getAIHistory();
+                    h.push({ role: 'user', content: (userMsg || '(image)') + ' [📎 ' + atts.length + ' file' + (atts.length > 1 ? 's' : '') + ']', ts: Date.now() });
+                    h.push({ role: 'assistant', content: reply, ts: Date.now() });
+                    window.saveAIHistory(h);
+                }
+            } catch (_) {}
+
+            try {
+                if (window.WealthFlowML && window.WealthFlowML.observe) {
+                    window.WealthFlowML.observe(userMsg || '(image question)', reply, 'image_analyze');
+                }
+            } catch (_) {}
+            if (typeof window._updateAIContextPills === 'function') window._updateAIContextPills();
+        } catch (err) {
+            _hideThinking();
+            console.error('[' + V5 + '] vision send failed:', err);
+            if (typeof window.appendAIMessage === 'function') {
+                window.appendAIMessage('bot', '⚠️ I had trouble reading that image: ' + (err && err.message ? err.message : 'unknown error') + '. Please try again, or send a clearer photo.');
+            }
+        }
+    };
+
     window.WF_AI_V5 = {
         version: V5,
-        attachments: _aiChatAttachments,
+        get attachments() { return _aiChatAttachments; },
         _removeAttachment: _removeAttachment,
+        sendWithVision: window._wfSendWithVision,
         utils: {
             showThinking: _showThinking,
             hideThinking: _hideThinking,

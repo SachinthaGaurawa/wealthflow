@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.6 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.7 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -7734,6 +7734,28 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         async function sendAIMessage(msgOverride) {
             const input = $('aiChatInput');
             const msg = msgOverride || (input ? input.value.trim() : '');
+
+            // ── NATIVE IMAGE/FILE HANDLING ───────────────────────────────────
+            // If the user attached files (v4 rail), ALWAYS route through the
+            // vision pipeline so the AI actually sees the image. This no longer
+            // depends on a fragile monkey-patch.
+            let _atts = [];
+            try {
+                if (window.WF_AI_V5 && Array.isArray(window.WF_AI_V5.attachments)) {
+                    _atts = window.WF_AI_V5.attachments;
+                }
+            } catch (_) {}
+            if (_atts.length > 0) {
+                // Don't allow send while an upload is still in progress.
+                if (_atts.some(a => a && a.uploading)) {
+                    notify('⏳ Please wait — files are still uploading…', 'info');
+                    return;
+                }
+                if (typeof window._wfSendWithVision === 'function') {
+                    return window._wfSendWithVision(msg);
+                }
+            }
+
             if (!msg) return;
 
             if (input) { input.value = ''; autoResizeAIInput(input); }
@@ -15117,7 +15139,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.6 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.7 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15126,7 +15148,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.6 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.7 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
