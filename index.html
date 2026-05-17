@@ -13286,7 +13286,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { await navigator.clipboard.writeText(shareUrl); } catch (e) { /* silent */ }
 
                 // Show premium share dialog
-                _showShareableUrlDialog(l, shareUrl, validityStr, result);
+                _showShareableUrlDialog({
+                    l: l,
+                    url: shareUrl,
+                    result: result
+                });
 
             } catch (e) {
                 closeOverlay();
@@ -13351,7 +13355,14 @@ table.amort tbody tr { page-break-inside: avoid; }
         // =====================================================================
         // PREMIUM SHARE DIALOG — QR Code, Social Sharing, History, Expiry
         // =====================================================================
-        function _showShareableUrlDialog(l, url, validityStr = '30 days', result = {}) {
+        function _showShareableUrlDialog(config) {
+            const url = config.url;
+            const result = config.result || {};
+            const titleName = config.title || (config.l ? config.l.name : 'Report');
+            const l = config.l; // optional
+            const pdfBlob = config.pdfBlob; // optional, for Elite Reports
+            const isElite = !!pdfBlob;
+
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.style.zIndex = '999999';
@@ -13362,11 +13373,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ SHORT URL (' + urlLen + ' chars)</span>'
                 : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🔗 ' + urlLen + ' chars</span>';
 
-            const expiryDate = new Date(Date.now() + (result.days || 30) * 86400000);
-            const expiryStr = expiryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+            const expiryDate = new Date(Date.now() + (result.days || (isElite ? 3650 : 30)) * 86400000);
+            const expiryStr = (result.days || 0) > 1000 ? 'Permanent' : expiryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
-            const shareText = encodeURIComponent('Loan statement for ' + (l.name || 'Loan') + ': ' + url);
-            const shareTitle = encodeURIComponent('WealthFlow Statement — ' + (l.name || 'Loan'));
+            const shareText = encodeURIComponent((isElite ? 'WealthFlow Elite Report: ' : 'Loan statement for ' + titleName + ': ') + url);
+            const shareTitle = encodeURIComponent((isElite ? 'WealthFlow Elite Report' : 'WealthFlow Statement — ' + titleName));
 
             overlay.innerHTML = `
                 <style>
@@ -13398,7 +13409,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <button class="md-x" id="_surl_close">✕</button>
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
-                        Anyone with this link can view the statement for <b>${(l.name || '').replace(/</g, '&lt;')}</b>.
+                        Anyone with this link can view the ${isElite ? 'Elite Report' : 'statement for <b>' + titleName.replace(/</g, '&lt;') + '</b>'}.
                         <span style="color:var(--green);">Valid until ${expiryStr}.</span>
                         ${urlBadge}
                     </div>
@@ -13427,7 +13438,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <!-- Download PDF -->
                         <div style="margin-top:14px;">
                             <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:11px;background:var(--bg2);font-size:12px;">
-                                📄 Download Statement as PDF
+                                ${isElite ? '📥 Download to Local Device' : '📄 Download Statement as PDF'}
                             </button>
                         </div>
                     </div>
@@ -13462,7 +13473,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <div style="margin-top:6px;font-size:10px;color:var(--text3);display:flex;gap:12px;flex-wrap:wrap;">
                             <span>📏 URL: ${urlLen} chars</span>
                             <span>⏳ Expires: ${expiryStr}</span>
-                            <span>🛡️ Stored: Firestore</span>
+                            <span>🛡️ Stored: ${isElite ? (result.service || 'Cloud') : 'Firestore'}</span>
                         </div>
                     </div>
                 </div>`;
@@ -13687,8 +13698,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 nativeBtn.onclick = async () => {
                     try {
                         await navigator.share({
-                            title: 'WealthFlow Loan Statement — ' + l.name,
-                            text: 'Loan statement for ' + l.name + '. View online: ' + url,
+                            title: shareTitle,
+                            text: decodeURIComponent(shareText),
                             url: url
                         });
                     } catch (e) {
@@ -13704,23 +13715,29 @@ table.amort tbody tr { page-break-inside: avoid; }
                     pdfBtn.innerHTML = '⏳ Generating PDF…';
                     pdfBtn.disabled = true;
                     try {
-                        const stmtHTML = _buildLoanStatementHTML(l);
-                        const blob = await _statementHtmlToPdfBlob(stmtHTML, l.name);
+                        let blob = pdfBlob;
+                        if (!blob && l) {
+                            const stmtHTML = _buildLoanStatementHTML(l);
+                            blob = await _statementHtmlToPdfBlob(stmtHTML, l.name);
+                        }
+                        if (!blob) throw new Error("No PDF data available");
+
                         const blobUrl = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = blobUrl;
-                        a.download = 'WealthFlow_Statement_' + (l.name || 'Loan').replace(/[^a-zA-Z0-9]/g, '_') + '.pdf';
+                        a.download = isElite ? (titleName.replace(/[^a-zA-Z0-9]/g, '_') + '.pdf') : ('WealthFlow_Statement_' + titleName.replace(/[^a-zA-Z0-9]/g, '_') + '.pdf');
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
                         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-                        pdfBtn.innerHTML = '✅ PDF Downloaded!';
+                        
+                        pdfBtn.innerHTML = '✅ Downloaded!';
                         pdfBtn.style.color = 'var(--green)';
-                        setTimeout(() => { pdfBtn.innerHTML = '📄 Download Statement as PDF'; pdfBtn.disabled = false; pdfBtn.style.color = ''; }, 2000);
+                        setTimeout(() => { pdfBtn.innerHTML = isElite ? '📥 Download to Local Device' : '📄 Download Statement as PDF'; pdfBtn.disabled = false; pdfBtn.style.color = ''; }, 2000);
                     } catch (err) {
                         console.error('[PDF Download]', err);
                         pdfBtn.innerHTML = '❌ Failed — try Print instead';
-                        setTimeout(() => { pdfBtn.innerHTML = '📄 Download Statement as PDF'; pdfBtn.disabled = false; }, 2000);
+                        setTimeout(() => { pdfBtn.innerHTML = isElite ? '📥 Download to Local Device' : '📄 Download Statement as PDF'; pdfBtn.disabled = false; }, 2000);
                     }
                 };
             }
@@ -16730,18 +16747,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             // Generate blob URL for safe sharing locally
             const pdfBlob = doc.output('blob');
-            const pdfUrl = URL.createObjectURL(pdfBlob);
-
-            // Create an anchor and click it to trigger local download
-            const a = document.createElement('a');
-            a.href = pdfUrl;
-            a.download = `WealthFlow_Elite_Statement_${MONTHS_S[month]}_${year}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
 
             // Upload via server-side proxy and show share dialog
-            notify('Generating shareable link…', 'info');
+            notify('Generating Elite Report shareable link…', 'info');
             const eliteFileName = `WealthFlow_Elite_${MONTHS_S[month]}_${year}_${Date.now()}.pdf`;
             (async () => {
                 try {
@@ -16763,31 +16771,44 @@ table.amort tbody tr { page-break-inside: avoid; }
                     if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
                     const res = await resp.json();
                     let downloadURL = res.url;
+                    let isPermanent = res.permanent;
+                    let service = res.service || 'Cloud';
 
-                    // URL from share-upload is already short (file.io/0x0.st)
-
-
+                    // Save to history list
                     try {
                         const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
-                        hist.unshift({ url: downloadURL, loanName: 'Elite Report — ' + MONTHS[month] + ' ' + year, createdAt: new Date().toISOString() });
+                        hist.unshift({ 
+                            url: downloadURL, 
+                            loanName: 'Elite Report — ' + MONTHS[month] + ' ' + year, 
+                            createdAt: new Date().toISOString(),
+                            via: 'server',
+                            shortId: downloadURL // it's not a shortId for API, but for history tracking
+                        });
                         if (hist.length > 50) hist.length = 50;
                         localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
                     } catch (e) { /* silent */ }
 
-                    navigator.clipboard.writeText(downloadURL).catch(() => { });
-                    notify('✨ Shareable link ready and copied to clipboard!', 'success');
+                    // Display beautiful unified Share UI
+                    _showShareableUrlDialog({
+                        title: 'Elite Report — ' + MONTHS[month] + ' ' + year,
+                        url: downloadURL,
+                        pdfBlob: pdfBlob,
+                        result: {
+                            days: isPermanent ? 3650 : 14,
+                            service: service
+                        }
+                    });
 
-                    // Direct native share without popup box
-                    if (navigator.share) {
-                        navigator.share({
-                            title: 'WealthFlow Elite Statement',
-                            text: 'WealthFlow Elite Financial Statement — View online: ' + downloadURL,
-                            url: downloadURL
-                        }).catch(e => console.log('Share dismissed:', e));
-                    }
                 } catch (err) {
                     console.error('[Elite Report Share]', err);
-                    notify('PDF saved locally. Could not generate cloud link — check internet.', 'warning');
+                    notify('Could not generate cloud link. Ready for local download.', 'warning');
+                    // Fallback to basic share dialog if upload fails
+                    _showShareableUrlDialog({
+                        title: 'Elite Report — ' + MONTHS[month] + ' ' + year,
+                        url: 'File stored locally',
+                        pdfBlob: pdfBlob,
+                        result: { days: 0, service: 'Local Only' }
+                    });
                 }
             })();
         }
