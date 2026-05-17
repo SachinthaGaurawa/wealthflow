@@ -16762,22 +16762,12 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                     // Build a beautiful HTML wrapper for the PDF
                     const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
-                    const htmlWrapper = `<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>WealthFlow Elite Report</title>
-</head>
-<body style="background:linear-gradient(135deg,#060a14,#0d1424);color:#fff;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;overflow:hidden;">
-    <div style="text-align:center;background:rgba(255,255,255,0.03);padding:40px;border-radius:20px;border:1px solid rgba(255,255,255,0.05);box-shadow:0 10px 40px rgba(0,0,0,0.5);max-width:400px;width:90%;">
-        <div style="font-size:54px;margin-bottom:16px;animation:_pulse 2s infinite;">📊</div>
-        <h2 style="color:#d4af37;margin:0 0 12px;font-size:22px;">Elite Report Ready</h2>
-        <p style="color:rgba(255,255,255,0.6);font-size:14px;margin:0 0 30px;line-height:1.5;">Your secure financial statement has been compiled and is ready for viewing.</p>
-        <a download="WealthFlow_Elite_Report.pdf" href="data:application/pdf;base64,${base64}" style="background:linear-gradient(135deg,#d4af37,#b8962e);color:#000;padding:14px 28px;border-radius:12px;text-decoration:none;font-weight:700;display:inline-block;box-shadow:0 4px 15px rgba(212,175,55,0.3);transition:transform 0.2s;">📥 Download PDF</a>
-        <style>@keyframes _pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }</style>
-    </div>
-</body>
-</html>`;
+                    const htmlWrapper = `<div style="width:100%;height:calc(100vh - 44px);background:#111;position:relative;overflow:hidden;">
+    <iframe src="data:application/pdf;base64,${base64}#toolbar=0" style="width:100%;height:100%;border:none;display:block;"></iframe>
+    <a download="WealthFlow_Elite_Report.pdf" href="data:application/pdf;base64,${base64}" style="position:fixed;top:64px;right:24px;z-index:99999;background:linear-gradient(135deg,#d4af37,#b8962e);color:#000;padding:12px 20px;border-radius:12px;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(212,175,55,0.4);display:flex;align-items:center;gap:8px;transition:transform 0.2s;">
+        <span style="font-size:18px;">📥</span> Download PDF
+    </a>
+</div>`;
 
                     // Call the bulletproof loan sharing engine!
                     const result = await _uploadStatementForSharing(htmlWrapper, eliteName);
