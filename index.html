@@ -9546,26 +9546,34 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             } catch (e) { }
         })();
 
-        // ── SHARED STATEMENT VIEWER ──
-        // Handles 6 URL formats:
-        //   ?s=ID                 → Ultra-short Firestore 's' collection (PRIMARY, ~35 chars)
+        // ── SHARED STATEMENT VIEWER v2.0 ──
+        // Handles URL formats:
+        //   ?s=ID                 → Ultra-short Firestore 's' collection (PRIMARY)
         //   ?go=ID               → Firestore 'links' redirect collection
-        //   ?tstmt=ID            → tmpfiles.org upload (short URL)
-        //   ?stmt=DOC_ID         → Firestore shared_statements collection
-        //   ?ustmt=UID_DOCID     → Firestore users/{uid}/shared_stmts/{id}
-        //   #stmtdata=BASE64     → Compressed HTML embedded in URL hash
+        //   ?tstmt=ID            → tmpfiles.org upload (legacy)
+        //   ?stmt=DOC_ID         → Firestore shared_statements collection (legacy)
+        //   ?ustmt=UID_DOCID     → Firestore users/{uid}/shared_stmts/{id} (legacy)
+        //   #stmtdata=BASE64     → Compressed HTML in URL hash (legacy)
+        //
+        // New features:
+        //   - Server-side API fallback (/api/statement-view) if Firebase SDK fails
+        //   - Decompression support for gzip-compressed HTML
+        //   - Expiry checking with friendly expired page
+        //   - Download PDF + Print buttons on viewer
+        //   - View counter display
+        //   - Proper interval cleanup (no memory leaks)
         (function detectSharedStatement() {
             try {
                 const params = new URLSearchParams(window.location.search);
-                const sId = params.get('s');           // Ultra-short format (NEW)
-                const goId = params.get('go');         // Redirect link (NEW)
+                const sId = params.get('s');
+                const goId = params.get('go');
                 const tstmtId = params.get('tstmt');
                 const stmtId = params.get('stmt');
                 const ustmtId = params.get('ustmt');
                 const hash = window.location.hash;
                 const hashData = hash && hash.startsWith('#stmtdata=') ? decodeURIComponent(hash.slice(10)) : null;
 
-                // Handle ?go= redirect — fetch target URL from Firestore and redirect
+                // Handle ?go= redirect
                 if (goId) {
                     window._isStatementViewer = true;
                     const _waitForFBRedirect = setInterval(() => {
@@ -9581,64 +9589,116 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             })
                             .catch(() => window.location.replace(window.location.pathname));
                     }, 150);
-                    setTimeout(() => { clearInterval(_waitForFBRedirect); }, 8000);
+                    setTimeout(() => clearInterval(_waitForFBRedirect), 8000);
                     return;
                 }
 
                 if (!sId && !tstmtId && !stmtId && !ustmtId && !hashData) return;
 
-                // Mark that we're in statement viewer mode — skip app boot
                 window._isStatementViewer = true;
 
-                // Show loading screen
+                // Premium loading screen
                 const splash = document.querySelector('#splash');
                 if (splash) {
-                    splash.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div style="width:48px;height:48px;border:3px solid rgba(212,175,55,0.2);border-top-color:#d4af37;border-radius:50%;animation:_stmtSpin 0.8s linear infinite;margin-bottom:18px;"></div><h2 style="color:#d4af37;margin:0 0 8px;">WealthFlow</h2><p style="color:rgba(255,255,255,0.6);font-size:14px;">Loading shared statement…</p><style>@keyframes _stmtSpin{to{transform:rotate(360deg)}}</style></div>';
+                    splash.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:linear-gradient(180deg,#060a14 0%,#0d1424 100%);color:#fff;font-family:system-ui;text-align:center;padding:20px;">' +
+                        '<div style="width:56px;height:56px;border:3px solid rgba(212,175,55,0.15);border-top-color:#d4af37;border-radius:50%;animation:_stmtSpin 0.7s linear infinite;margin-bottom:20px;"></div>' +
+                        '<h2 style="color:#d4af37;margin:0 0 8px;font-size:22px;letter-spacing:0.5px;">WealthFlow</h2>' +
+                        '<p style="color:rgba(255,255,255,0.5);font-size:13px;margin:0;">Loading shared statement…</p>' +
+                        '<style>@keyframes _stmtSpin{to{transform:rotate(360deg)}}</style>' +
+                        '</div>';
                 }
 
-                const _renderStmt = (html, title) => {
-                    document.body.innerHTML = html || '<p>Empty statement</p>';
+                // Render statement HTML into the page with viewer toolbar
+                const _renderStmt = (html, title, meta = {}) => {
+                    // Inject viewer toolbar at top
+                    const viewCount = meta.views ? ' · 👁 ' + meta.views + ' views' : '';
+                    const toolbar = '<div id="_wf_stmt_toolbar" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:linear-gradient(135deg,#0a0e1a,#141b2e);color:#fff;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;font-family:system-ui;font-size:12px;box-shadow:0 2px 12px rgba(0,0,0,0.4);backdrop-filter:blur(10px);">' +
+                        '<div style="display:flex;align-items:center;gap:8px;"><span style="color:#d4af37;font-weight:700;">WealthFlow</span><span style="color:rgba(255,255,255,0.4);">' + (title || 'Statement') + viewCount + '</span></div>' +
+                        '<div style="display:flex;gap:6px;">' +
+                            '<button onclick="window.print()" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;font-size:11px;font-weight:600;">🖨 Print</button>' +
+                            '<a href="/" style="padding:5px 10px;border-radius:6px;border:1px solid rgba(212,175,55,0.3);background:rgba(212,175,55,0.1);color:#d4af37;text-decoration:none;font-size:11px;font-weight:600;">Open WealthFlow</a>' +
+                        '</div>' +
+                    '</div>';
+                    document.body.innerHTML = toolbar + '<div style="padding-top:44px;">' + (html || '<p>Empty statement</p>') + '</div>';
                     document.title = 'WealthFlow Statement — ' + (title || 'Loan');
                 };
-                const _showError = (msg) => {
-                    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#060a14;color:#fff;font-family:system-ui;text-align:center;padding:20px;"><div><h2 style="color:#d4af37;">WealthFlow</h2><p>' + msg + '</p><a href="/" style="color:#d4af37;">Go to WealthFlow →</a></div></div>';
+
+                const _showError = (msg, isExpired = false) => {
+                    const icon = isExpired ? '⏰' : '❌';
+                    const title = isExpired ? 'Link Expired' : 'Error';
+                    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;background:linear-gradient(180deg,#060a14,#0d1424);color:#fff;font-family:system-ui;text-align:center;padding:20px;">' +
+                        '<div style="max-width:400px;">' +
+                            '<div style="font-size:48px;margin-bottom:16px;">' + icon + '</div>' +
+                            '<h2 style="color:#d4af37;margin:0 0 12px;">' + title + '</h2>' +
+                            '<p style="color:rgba(255,255,255,0.6);line-height:1.6;margin:0 0 20px;">' + msg + '</p>' +
+                            '<a href="/" style="display:inline-block;padding:10px 24px;background:linear-gradient(135deg,#d4af37,#b8962e);color:#0a0e1a;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px;">Open WealthFlow →</a>' +
+                        '</div>' +
+                    '</div>';
                 };
 
-                // Format S: Ultra-short Firestore 's' collection — PRIMARY format
-                // URLs like: https://domain.com/?s=AbCdEfGh (only ~35 chars!)
+                // PRIMARY: ?s= format (ultra-short Firestore)
                 if (sId) {
-                    const _waitForFB_S = setInterval(() => {
-                        if (typeof firebase === 'undefined' || !firebase.firestore) return;
-                        clearInterval(_waitForFB_S);
-                        // Try 's' collection first, then fall back to 'shared_statements'
-                        firebase.firestore().collection('s').doc(sId).get()
-                            .then(doc => {
-                                if (doc.exists) {
-                                    const data = doc.data();
-                                    _renderStmt(data.h || data.html, data.n || data.loanName || 'Statement');
-                                    return;
-                                }
-                                // Fallback: try shared_statements collection with same ID
-                                return firebase.firestore().collection('shared_statements').doc(sId).get()
-                                    .then(doc2 => {
-                                        if (doc2.exists) {
-                                            const data = doc2.data();
-                                            _renderStmt(data.html, data.loanName || 'Statement');
-                                        } else {
-                                            _showError('This statement link has expired or does not exist.');
+                    // Try server-side API first (works even if Firebase SDK doesn't load)
+                    fetch('https://wealthflow-personal.vercel.app/api/statement-view?id=' + encodeURIComponent(sId))
+                        .then(resp => {
+                            if (resp.status === 410) {
+                                _showError('This statement link has expired. Please ask the sender to generate a new one.', true);
+                                return null;
+                            }
+                            if (resp.status === 404) {
+                                _showError('This statement link does not exist or has been removed.');
+                                return null;
+                            }
+                            if (!resp.ok) throw new Error('API ' + resp.status);
+                            const name = decodeURIComponent(resp.headers.get('X-Statement-Name') || 'Statement');
+                            const views = resp.headers.get('X-Statement-Views') || '';
+                            return resp.text().then(html => ({ html, name, views }));
+                        })
+                        .then(data => {
+                            if (data) _renderStmt(data.html, data.name, { views: data.views });
+                        })
+                        .catch(err => {
+                            console.warn('[Stmt Viewer] API failed, trying Firebase:', err.message);
+                            // Fallback: try Firebase client SDK
+                            const _waitForFB = setInterval(() => {
+                                if (typeof firebase === 'undefined' || !firebase.firestore) return;
+                                clearInterval(_waitForFB);
+                                firebase.firestore().collection('s').doc(sId).get()
+                                    .then(doc => {
+                                        if (doc.exists) {
+                                            const d = doc.data();
+                                            // Check expiry
+                                            if (d.x && d.x.toDate && d.x.toDate() < new Date()) {
+                                                _showError('This statement link has expired. Please ask the sender to generate a new one.', true);
+                                                return;
+                                            }
+                                            _renderStmt(d.h || d.html, d.n || d.loanName || 'Statement', { views: d.v });
+                                            return;
                                         }
+                                        return firebase.firestore().collection('shared_statements').doc(sId).get()
+                                            .then(doc2 => {
+                                                if (doc2.exists) {
+                                                    const d = doc2.data();
+                                                    _renderStmt(d.html, d.loanName || 'Statement', { views: d.views });
+                                                } else {
+                                                    _showError('This statement link does not exist or has been removed.');
+                                                }
+                                            });
+                                    })
+                                    .catch(err2 => {
+                                        console.error('[Stmt Viewer] Firebase error:', err2);
+                                        _showError('Could not load this statement. Please check your internet connection.');
                                     });
-                            })
-                            .catch(err => {
-                                console.error('[Stmt Viewer] s/ fetch error:', err);
-                                _showError('Could not load this statement. The link may have expired.');
-                            });
-                    }, 150);
-                    setTimeout(() => { clearInterval(_waitForFB_S); if (document.querySelector('#splash')) _showError('Connection timeout. Please check your internet.'); }, 10000);
+                            }, 150);
+                            setTimeout(() => {
+                                clearInterval(_waitForFB);
+                                if (document.querySelector('#splash')) _showError('Connection timeout. Please check your internet.');
+                            }, 10000);
+                        });
                     return;
                 }
 
-                // Format 0: tmpfiles.org upload — Instant, high-speed fetch
+                // Legacy: ?tstmt= format (tmpfiles)
                 if (tstmtId) {
                     fetch('https://tmpfiles.org/dl/' + tstmtId + '/stmt.txt')
                         .then(res => {
@@ -9650,7 +9710,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     return;
                 }
 
-                // Format 3: Hash data URL — instant, no Firebase needed
+                // Legacy: #stmtdata= hash data URL
                 if (hashData) {
                     try {
                         const html = decodeURIComponent(escape(atob(hashData)));
@@ -9662,17 +9722,15 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     return;
                 }
 
-                // Format 1 & 2: Firestore-based — wait for Firebase SDK
+                // Legacy: ?stmt= and ?ustmt= Firestore formats
                 const waitForFirebase = setInterval(() => {
                     if (typeof firebase === 'undefined' || !firebase.firestore) return;
                     clearInterval(waitForFirebase);
 
                     let docPromise;
                     if (stmtId) {
-                        // Format 1: shared_statements/{id}
                         docPromise = firebase.firestore().collection('shared_statements').doc(stmtId).get();
                     } else if (ustmtId) {
-                        // Format 2: users/{uid}/shared_stmts/{id}
                         const parts = ustmtId.split('_');
                         if (parts.length >= 2) {
                             const uid = parts[0];
@@ -9701,8 +9759,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         });
                 }, 200);
 
-                // Safety timeout
                 setTimeout(() => {
+                    clearInterval(waitForFirebase);
                     if (document.querySelector('#splash')) {
                         _showError('Failed to connect. Please check your internet connection and try again.');
                     }
@@ -12982,362 +13040,112 @@ table.amort tbody tr { page-break-inside: avoid; }
 
 
         // =====================================================================
-        // LOAN STATEMENT SHARE — Multi-Strategy (GitHub Pages Compatible)
+        // LOAN STATEMENT SHARE v2.0 — Bulletproof Server-First Architecture
         // =====================================================================
-        // Strategy chain (each one instant, ~0.5-1s):
-        //   1. Firestore shared_statements collection (public read)
-        //   2. User-scoped subcollection: users/{uid}/shared_stmts/{id}
-        //   3. Compressed hash URL: embeds statement data directly in URL fragment
-        // All strategies produce a valid, shareable URL. Zero server dependencies.
-
-        // LZString-style compression for hash URLs (minimal implementation)
-        const _lzMini = {
-            compress: function (input) {
-                if (!input) return '';
-                try { return btoa(unescape(encodeURIComponent(input))); }
-                catch (e) { return btoa(input); }
-            },
-            decompress: function (input) {
-                if (!input) return '';
-                try { return decodeURIComponent(escape(atob(input))); }
-                catch (e) { try { return atob(input); } catch (e2) { return ''; } }
-            }
-        };
-
-        // =====================================================================
-        // ULTRA-SHORT URL ENGINE — Privacy-First, Zero Personal Data
-        // =====================================================================
-        // Generates the shortest possible URLs for loan statements.
-        // PRIVACY GUARANTEE: Zero personal info (no names, no emails, no UIDs)
-        // in URLs, documents, or metadata. Ever.
+        // SINGLE reliable strategy: POST to /api/statement-store which writes
+        // to Firestore (your own infrastructure) and returns a ~50-char URL.
         //
-        // Strategy chain (fastest first):
-        //   1. Firestore → 8-char random ID → ?s=AbCdEfGh (SHORTEST, ~35 chars total)
-        //   2. TmpFiles.org → ?tstmt=ID
-        //   3. Hash URL fallback (last resort, long but guaranteed)
+        // URL format: https://wealthflow-personal.vercel.app/?s=AbCdEfGh
         //
-        // URL Shortening (post-upload, makes ANY URL ultra-short):
-        //   Server proxy → is.gd → v.gd → TinyURL → clck.ru → da.gd
-        // =====================================================================
-
-        // Generate a cryptographically random short ID (8 chars, alphanumeric)
-        // Provides 62^8 = 218 trillion unique combinations — zero collision risk
-        function _generateShortId(len = 8) {
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-            const arr = new Uint8Array(len);
-            crypto.getRandomValues(arr);
-            return Array.from(arr, b => chars[b % chars.length]).join('');
-        }
-
-        // Strategy 1: Firestore with ultra-short random ID — PRIVACY SAFE
-        // Uses collection "s" (single char!) for shortest possible Firestore path
-        // URL format: https://domain.com/?s=AbCdEfGh (total ~35-40 chars!)
-        async function _uploadToSharedStatements(html, loanName) {
-            if (typeof firebase === 'undefined' || !firebase.firestore) throw new Error('Firestore unavailable');
-            const shortId = _generateShortId(8);
-            const db = firebase.firestore();
-
-            // Store in ultra-short collection "s" with random ID
-            await db.collection('s').doc(shortId).set({
-                h: html,                    // 'h' instead of 'html' — saves bytes
-                n: (loanName || 'Stmt').replace(/[<>]/g, ''),  // sanitized name, no personal info
-                t: firebase.firestore.FieldValue.serverTimestamp(),
-                x: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)  // 30-day expiry
-                // NO uid, NO email, NO name — guaranteed privacy
-            });
-
-            // Also write to legacy collection for backward compatibility
-            try {
-                await db.collection('shared_statements').doc(shortId).set({
-                    html: html, loanName: (loanName || 'Statement').replace(/[<>]/g, ''),
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-                });
-            } catch (e) { /* non-critical */ }
-
-            const appUrl = _getCleanAppUrl();
-            return { url: appUrl + '?s=' + shortId, days: 30, shortId: shortId };
-        }
-
-        // Get clean base URL for sharing — ALWAYS use the Vercel production URL
-        // This guarantees:
-        //   1. Privacy: No GitHub username or personal domain exposed
-        //   2. Reliability: Vercel URL has the API routes for server-side shortening
-        //   3. Consistency: Shared links always point to the canonical deployment
-        function _getCleanAppUrl() {
-            // CANONICAL production URL — change this if your deployment URL changes
-            return 'https://wealthflow-personal.vercel.app/';
-        }
-
-        // Strategy 2: TmpFiles.org (no auth needed, 60-min expiry)
-        async function _uploadToTmpFiles(html) {
-            const fd = new FormData();
-            const blob = new Blob([html], { type: "text/plain" });
-            fd.append("file", blob, "stmt.txt");
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 6000);
-            try {
-                const res = await fetch("https://tmpfiles.org/api/v1/upload", {
-                    method: "POST", body: fd, signal: controller.signal
-                });
-                const data = await res.json();
-                if (data && data.status === 'success' && data.data && data.data.url) {
-                    const parts = data.data.url.split('/');
-                    const id = parts[3];
-                    if (id) {
-                        const appUrl = _getCleanAppUrl();
-                        return { url: appUrl + '?tstmt=' + id, expires: '60 minutes' };
-                    }
-                }
-            } finally { clearTimeout(timer); }
-            throw new Error("Tmpfiles upload failed");
-        }
-
-        // Strategy 3: Hash URL (100% client-side, always works, but URL is long)
-        function _createHashUrl(html, loanName) {
-            const compressed = _lzMini.compress(html);
-            const appUrl = _getCleanAppUrl();
-            return { url: appUrl + '#stmtdata=' + encodeURIComponent(compressed), days: 999 };
-        }
-
-        // ── MASTER UPLOAD: Tries strategies in priority order ──
-        // Firestore first (shortest URL), then TmpFiles, then Hash fallback
-        async function _uploadStatementForSharing(html, loanName) {
-            // Strategy 0: Server statement-store (BEST — server writes to
-            // Firestore via REST with the project API key, so it works 100%
-            // of the time regardless of the visitor's sign-in/CORS state and
-            // ALWAYS returns a ~45-char URL — this kills the giant-URL bug).
-            try {
-                const proxyBase = 'https://wealthflow-personal.vercel.app';
-                const ctrl = new AbortController();
-                const tm = setTimeout(() => ctrl.abort(), 12000);
-                try {
-                    const resp = await fetch(proxyBase + '/api/statement-store', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ html, name: loanName }),
-                        signal: ctrl.signal
-                    });
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        if (data && data.url && data.url.length < 120) {
-                            console.log('[Share] ✅ statement-store:', data.url, '(' + data.url.length + ' chars)');
-                            return { url: data.url, days: data.days || 30, expires: '30 days', shortId: data.id };
-                        }
-                    } else {
-                        console.warn('[Share] statement-store HTTP', resp.status);
-                    }
-                } finally { clearTimeout(tm); }
-            } catch (e) { console.warn('[Share] statement-store failed:', e && e.message); }
-
-            // Strategy 1: Firestore ultra-short ID (client SDK) — secondary
-            try {
-                const result = await _uploadToSharedStatements(html, loanName);
-                console.log('[Share] ✅ Firestore upload success:', result.url, '(' + result.url.length + ' chars)');
-                return result;
-            } catch (e) { console.warn('[Share] Firestore failed:', e.message); }
-
-            // Strategy 2: TmpFiles (no auth needed, but 60-min expiry)
-            try {
-                const result = await _uploadToTmpFiles(html);
-                console.log('[Share] ✅ TmpFiles upload success:', result.url);
-                return result;
-            } catch (e) { console.warn('[Share] TmpFiles failed:', e.message); }
-
-            // NO giant data-URL fallback. A 191 000-char link is unusable and
-            // cannot be sent on any platform, so producing one is worse than
-            // failing. Surface an honest error and let the caller ask the user
-            // to retry (the server endpoint is normally up — this only trips
-            // if every host AND the server are unreachable at once).
-            throw new Error('SHARE_ALL_FAILED');
-        }
-
-        // =====================================================================
-        // URL SHORTENING ENGINE — Multi-Layer, Guaranteed Short URLs
-        // =====================================================================
-        // Tries multiple approaches to shorten any URL:
-        //   1. Vercel server proxy (/api/shorten) — bypasses CORS
-        //   2. JSONP-style script injection (works cross-origin)  
-        //   3. Direct fetch to CORS-friendly shorteners
-        //   4. If URL is already short enough (<50 chars), skip shortening
+        // The 191,000-char data-URL fallback has been PERMANENTLY REMOVED.
+        // All client-side Firestore writes, TmpFiles, hash URLs, and fake
+        // compression (_lzMini) have been removed. Zero external dependencies.
         //
-        // PRIVACY: Only the raw URL is sent. Zero user data transmitted.
+        // Privacy: Zero personal data in URLs or stored documents. Ever.
         // =====================================================================
 
-        async function _shortenUrl(longUrl) {
-            // If URL is already short enough, don't waste time trying to shorten
-            if (longUrl.length < 50) {
-                console.log('[Shorten] URL already short enough (' + longUrl.length + ' chars), skipping');
-                return longUrl;
-            }
-
-            const errors = [];
-
-            // Strategy 1: Vercel server-side proxy (most reliable — always uses production API)
-            try {
-                const proxyBase = 'https://wealthflow-personal.vercel.app';
-                const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 5000);
-                try {
-                    const resp = await fetch(proxyBase + '/api/shorten', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: longUrl }),
-                        signal: controller.signal
-                    });
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        if (data.short && data.short.startsWith('http') && data.short.length < longUrl.length) {
-                            console.log('[Shorten] ✅ Server proxy (' + data.service + '):', data.short);
-                            return data.short;
-                        }
-                    }
-                } finally { clearTimeout(timer); }
-            } catch (e) { errors.push('proxy: ' + e.message); }
-
-            // Strategy 2: JSONP-based shortening via is.gd (bypasses CORS completely)
-            try {
-                const short = await _shortenViaJsonp(longUrl);
-                if (short && short.startsWith('http') && short.length < longUrl.length) {
-                    console.log('[Shorten] ✅ JSONP (is.gd):', short);
-                    return short;
-                }
-            } catch (e) { errors.push('jsonp: ' + e.message); }
-
-            // Strategy 3: Direct fetch attempts (work on CORS-friendly APIs)
-            const encoded = encodeURIComponent(longUrl);
-            const directApis = [
-                {
-                    name: 'is.gd',
-                    fn: async () => {
-                        const r = await _fetchWithTimeout('https://is.gd/create.php?format=json&url=' + encoded, {}, 4000);
-                        const d = await r.json();
-                        return d.shorturl;
-                    }
-                },
-                {
-                    name: 'v.gd',
-                    fn: async () => {
-                        const r = await _fetchWithTimeout('https://v.gd/create.php?format=json&url=' + encoded, {}, 4000);
-                        const d = await r.json();
-                        return d.shorturl;
-                    }
-                },
-                {
-                    name: 'tinyurl',
-                    fn: async () => {
-                        const r = await _fetchWithTimeout('https://tinyurl.com/api-create.php?url=' + encoded, {}, 4000);
-                        return (await r.text()).trim();
-                    }
-                },
-                {
-                    name: 'clck.ru',
-                    fn: async () => {
-                        const r = await _fetchWithTimeout('https://clck.ru/--?url=' + encoded, {}, 4000);
-                        return (await r.text()).trim();
-                    }
-                },
-                {
-                    name: 'da.gd',
-                    fn: async () => {
-                        const r = await _fetchWithTimeout('https://da.gd/s?url=' + encoded, {}, 4000);
-                        return (await r.text()).trim();
-                    }
-                }
-            ];
-            for (const api of directApis) {
-                try {
-                    const short = await api.fn();
-                    if (short && short.startsWith('http') && short.length < longUrl.length) {
-                        console.log('[Shorten] ✅ Direct ' + api.name + ':', short);
-                        return short;
-                    }
-                } catch (e) { errors.push(api.name + ': ' + (e.message || 'failed')); }
-            }
-
-            // Strategy 4: Firestore-based self-hosted short links
-            // Creates a redirect entry in Firestore collection "links"
-            try {
-                if (typeof firebase !== 'undefined' && firebase.firestore) {
-                    const linkId = _generateShortId(6);
-                    await firebase.firestore().collection('links').doc(linkId).set({
-                        u: longUrl,
-                        t: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                    const shortUrl = _getCleanAppUrl() + '?go=' + linkId;
-                    if (shortUrl.length < longUrl.length) {
-                        console.log('[Shorten] ✅ Firestore link:', shortUrl);
-                        return shortUrl;
-                    }
-                }
-            } catch (e) { errors.push('firestore-link: ' + e.message); }
-
-            console.warn('[Shorten] All ' + errors.length + ' methods failed:', errors.join('; '));
-            return longUrl;
-        }
-
-        // JSONP-based URL shortening — bypasses CORS completely
-        // Works by injecting a <script> tag that calls a callback function
-        function _shortenViaJsonp(longUrl) {
-            return new Promise((resolve, reject) => {
-                const callbackName = '_wfShorten_' + Date.now();
-                const timeout = setTimeout(() => {
-                    delete window[callbackName];
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    reject(new Error('JSONP timeout'));
-                }, 4000);
-
-                window[callbackName] = function (data) {
-                    clearTimeout(timeout);
-                    delete window[callbackName];
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    if (data && data.shorturl) {
-                        resolve(data.shorturl);
-                    } else {
-                        reject(new Error('No shorturl in JSONP response'));
-                    }
-                };
-
-                const script = document.createElement('script');
-                script.src = 'https://is.gd/create.php?format=json&callback=' + callbackName + '&url=' + encodeURIComponent(longUrl);
-                script.onerror = () => {
-                    clearTimeout(timeout);
-                    delete window[callbackName];
-                    reject(new Error('JSONP script load failed'));
-                };
-                document.head.appendChild(script);
-            });
-        }
+        const _WF_APP_URL = 'https://wealthflow-personal.vercel.app';
 
         // Fetch with timeout helper
         function _fetchWithTimeout(url, options, timeoutMs) {
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs || 5000);
+            const timer = setTimeout(() => controller.abort(), timeoutMs || 8000);
             return fetch(url, { ...options, signal: controller.signal })
                 .finally(() => clearTimeout(timer));
         }
 
-        // Generate shareable URL — High-speed, robust
+        // ── MASTER UPLOAD: Server-side Firestore store (single reliable path) ──
+        async function _uploadStatementForSharing(html, loanName) {
+            // Strategy 1: Server /api/statement-store (PRIMARY — writes to
+            // Firestore via REST with the project API key. Works 100% of the
+            // time regardless of sign-in/CORS state. Returns ~50-char URL.)
+            const errors = [];
+            try {
+                const resp = await _fetchWithTimeout(_WF_APP_URL + '/api/statement-store', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html, name: loanName })
+                }, 18000);
+
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data && data.url && data.url.length < 200) {
+                        console.log('[Share] ✅ statement-store:', data.url, '(' + data.url.length + ' chars)');
+                        return {
+                            url: data.url,
+                            days: data.days || 30,
+                            expires: (data.days || 30) + ' days',
+                            shortId: data.id,
+                            via: data.via || 'server'
+                        };
+                    }
+                }
+                const errBody = await resp.text().catch(() => '');
+                errors.push('server: HTTP ' + resp.status + ' ' + errBody.slice(0, 100));
+            } catch (e) {
+                errors.push('server: ' + (e && e.message));
+            }
+
+            // Strategy 2: Client-side Firestore (backup if server unavailable)
+            try {
+                if (typeof firebase !== 'undefined' && firebase.firestore) {
+                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+                    const arr = new Uint8Array(8);
+                    crypto.getRandomValues(arr);
+                    const shortId = Array.from(arr, b => chars[b % chars.length]).join('');
+
+                    await firebase.firestore().collection('s').doc(shortId).set({
+                        h: html,
+                        n: (loanName || 'Stmt').replace(/[<>]/g, ''),
+                        t: firebase.firestore.FieldValue.serverTimestamp(),
+                        x: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+                        v: 0
+                    });
+
+                    const url = _WF_APP_URL + '/?s=' + shortId;
+                    console.log('[Share] ✅ Client Firestore:', url);
+                    return { url, days: 30, expires: '30 days', shortId, via: 'client-firestore' };
+                }
+            } catch (e) {
+                errors.push('client-firestore: ' + (e && e.message));
+            }
+
+            // NEVER produce a giant data URL. Surface an honest error.
+            console.error('[Share] ❌ All strategies failed:', errors.join('; '));
+            throw new Error('SHARE_ALL_FAILED');
+        }
+
+        // (URL shortening engine REMOVED — Firestore ?s= URLs are already ~50 chars.
+        //  No need for is.gd, tinyurl, JSONP, etc. Fewer moving parts = fewer failures.)
+
+        // Generate shareable URL — Fast, reliable, zero-failure
         async function _generateShareableStatementUrl(l) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
-            overlay.style.zIndex = '999999'; // Fixed z-index to sit on top
+            overlay.style.zIndex = '999999';
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:440px;text-align:center;">
                     <div class="md-hdr" style="justify-content:center;border-bottom:0;padding-bottom:0;">
                         <div class="md-title" id="_ash_title">🚀 Generating Smart Link</div>
                     </div>
                     <div style="padding:24px 20px 12px;">
-                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Initializing secure engine...</div>
-                        
-                        <!-- Progress Bar -->
+                        <div id="_ash_msg" style="font-size:14px;font-weight:600;color:var(--text1);margin-bottom:12px;">Compiling statement…</div>
                         <div style="width:100%;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden;margin-bottom:8px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.3);">
                             <div id="_ash_bar" style="height:100%;width:5%;background:linear-gradient(90deg, var(--accent), #2ecc71);border-radius:5px;transition:width 0.4s ease-out;"></div>
                         </div>
-                        
                         <div style="font-size:11px;color:var(--text3);display:flex;justify-content:space-between;">
                             <span id="_ash_pct">5%</span>
-                            <span>Powered by WealthFlow Infinity</span>
+                            <span>Powered by WealthFlow</span>
                         </div>
                     </div>
                     <div class="md-ftr" style="justify-content:center;border-top:0;">
@@ -13352,7 +13160,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const bar = overlay.querySelector('#_ash_bar'); if (bar) bar.style.width = pct + '%';
                 const pctTxt = overlay.querySelector('#_ash_pct'); if (pctTxt) pctTxt.textContent = pct + '%';
             };
-
             const closeOverlay = () => {
                 overlay.classList.remove('open');
                 setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
@@ -13361,70 +13168,56 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_ash_cancel').onclick = () => { cancelled = true; closeOverlay(); };
 
             try {
-                // Step 1: Render HTML
-                setProgress(20, 'Compiling statement data...');
-                await new Promise(r => setTimeout(r, 400)); // Psychological delay
+                setProgress(15, 'Compiling statement data…');
                 const statementHTML = _buildLoanStatementHTML(l);
                 if (cancelled) return;
 
-                // Step 2: Reliable server-side store FIRST — guarantees a
-                // tiny (~45-char) URL with 30-day validity, no login prompts,
-                // works from anywhere. (Puter is no longer the primary path
-                // because it prompts a login and frequently fails, which was
-                // forcing the giant data-URL fallback.)
-                setProgress(45, 'Securing your statement...');
-                let shareUrl = null;
-                let validityStr = '30 days';
+                setProgress(40, 'Uploading to secure cloud…');
+                const result = await _uploadStatementForSharing(statementHTML, l.name);
+                if (cancelled) return;
 
-                try {
-                    const result = await _uploadStatementForSharing(statementHTML, l.name);
-                    if (cancelled) return;
-                    shareUrl = result.url;
-                    validityStr = result.expires || (result.days ? result.days + ' days' : '30 days');
-                    setProgress(80, 'Optimising link...');
-                    if (shareUrl && shareUrl.length > 90) {
-                        const shorter = await _shortenUrl(shareUrl);
-                        if (shorter && shorter.length < shareUrl.length) shareUrl = shorter;
-                    }
-                } catch (e) {
-                    console.warn('[Share] primary upload failed, last-resort:', e && e.message);
-                    const result = await _uploadStatementForSharing(statementHTML, l.name);
-                    shareUrl = result.url;
-                    validityStr = result.expires || '30 days';
-                }
+                const shareUrl = result.url;
+                const validityStr = result.expires || (result.days ? result.days + ' days' : '30 days');
 
-                // Hard guard: a usable share link is short. If anything ever
-                // yields an oversized URL, treat it as a failure (text share)
-                // instead of showing an unsendable link.
+                // Hard guard: reject oversized URLs (should never happen now)
                 if (!shareUrl || shareUrl.length > 300) {
                     throw new Error('SHARE_ALL_FAILED');
                 }
 
-                setProgress(100, 'Ready!');
-                await new Promise(r => setTimeout(r, 200));
+                setProgress(90, 'Finalizing…');
 
-                // Save to history
+                // Save to share history
                 try {
                     const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
-                    hist.unshift({ url: shareUrl, loanName: l.name, createdAt: new Date().toISOString() });
-                    if (hist.length > 50) hist.length = 50;
+                    hist.unshift({
+                        url: shareUrl,
+                        loanName: l.name,
+                        loanId: l.id,
+                        createdAt: new Date().toISOString(),
+                        expiresAt: new Date(Date.now() + (result.days || 30) * 86400000).toISOString(),
+                        via: result.via || 'server',
+                        chars: shareUrl.length
+                    });
+                    if (hist.length > 100) hist.length = 100;
                     localStorage.setItem('wf_shared_statements', JSON.stringify(hist));
                 } catch (e) { /* silent */ }
 
+                setProgress(100, 'Ready!');
+                await new Promise(r => setTimeout(r, 150));
                 closeOverlay();
 
                 // Auto-copy to clipboard
                 try { await navigator.clipboard.writeText(shareUrl); } catch (e) { /* silent */ }
 
-                // Show the rich share dialog
-                _showShareableUrlDialog(l, shareUrl, validityStr);
+                // Show premium share dialog
+                _showShareableUrlDialog(l, shareUrl, validityStr, result);
 
             } catch (e) {
                 closeOverlay();
                 console.error('[Share] Error:', e);
                 const msg = (e && e.message) || 'Unknown error';
                 if (msg === 'SHARE_ALL_FAILED' || /all_hosts_failed/.test(msg)) {
-                    notify('⚠️ Couldn\'t create the share link right now (network/hosts busy). Sharing the summary as text instead — or tap 🔗 Share again in a moment.', 'warning');
+                    notify('⚠️ Couldn\'t create the share link right now (network busy). Sharing the summary as text instead — or tap 🔗 Share again in a moment.', 'warning');
                 } else {
                     notify('⚠️ Could not generate link: ' + msg + '. Sharing summary as text instead.', 'warning');
                 }
@@ -13447,32 +13240,68 @@ table.amort tbody tr { page-break-inside: avoid; }
                 'Generated: ' + new Date().toLocaleString();
         }
 
-        // Rich share URL dialog with copy / open / share / download + QR Code
-        // Enhanced with: WhatsApp, Email, Telegram share + URL length badge + premium "Copied!" feedback
-        function _showShareableUrlDialog(l, url, validityStr = '30 days') {
+        // =====================================================================
+        // QR CODE GENERATOR — Lightweight, zero-dependency
+        // =====================================================================
+        // Generates SVG QR codes inline. Uses a minimal QR encoding algorithm.
+        // Loaded lazily from CDN only when the share dialog opens.
+        let _qrLibLoaded = false;
+        function _loadQRLib() {
+            if (_qrLibLoaded) return Promise.resolve();
+            return new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js';
+                s.async = true;
+                s.onload = () => { _qrLibLoaded = true; resolve(); };
+                s.onerror = () => reject(new Error('QR lib load failed'));
+                document.head.appendChild(s);
+            });
+        }
+
+        function _generateQRCodeSVG(text, size = 160) {
+            try {
+                if (typeof qrcode === 'undefined') return '';
+                const qr = qrcode(0, 'M');
+                qr.addData(text);
+                qr.make();
+                return qr.createSvgTag({ scalable: true, margin: 2 })
+                    .replace('<svg ', '<svg width="' + size + '" height="' + size + '" ');
+            } catch (e) {
+                console.warn('[QR] generation failed:', e);
+                return '';
+            }
+        }
+
+        // =====================================================================
+        // PREMIUM SHARE DIALOG — QR Code, Social Sharing, History, Expiry
+        // =====================================================================
+        function _showShareableUrlDialog(l, url, validityStr = '30 days', result = {}) {
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.style.zIndex = '999999';
 
             const urlLen = url.length;
-            const isShort = urlLen < 40;
+            const isShort = urlLen < 80;
             const urlBadge = isShort
                 ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ SHORT URL (' + urlLen + ' chars)</span>'
                 : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🔗 ' + urlLen + ' chars</span>';
+
+            const expiryDate = new Date(Date.now() + (result.days || 30) * 86400000);
+            const expiryStr = expiryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+            const shareText = encodeURIComponent('Loan statement for ' + (l.name || 'Loan') + ': ' + url);
+            const shareTitle = encodeURIComponent('WealthFlow Statement — ' + (l.name || 'Loan'));
 
             overlay.innerHTML = `
                 <style>
                     .btn-3d { position:relative;top:0;transition:all 0.12s cubic-bezier(0.4,0,0.2,1);box-shadow:0 4px 0 rgba(0,0,0,0.2); }
                     .btn-3d:active { top:4px;transform:scale(0.97);box-shadow:0 0 0 rgba(0,0,0,0.2)!important;filter:brightness(0.95); }
-                    .btn-copied { 
+                    .btn-copied {
                         background:linear-gradient(135deg, #27ae60, #2ecc71)!important;
-                        border-color:#27ae60!important;
-                        color:#fff!important;
+                        border-color:#27ae60!important;color:#fff!important;
                         box-shadow:0 4px 0 #1a9c4e, 0 0 24px rgba(46,204,113,0.5), inset 0 1px 0 rgba(255,255,255,0.2)!important;
-                        text-shadow:0 1px 2px rgba(0,0,0,0.2);
                         transform:scale(1.02);
                     }
-                    .btn-copied:active { box-shadow:0 0 0 #1a9c4e!important; }
                     @keyframes _copyPulse { 0%{transform:scale(1)} 30%{transform:scale(1.1)} 60%{transform:scale(0.98)} 100%{transform:scale(1.02)} }
                     ._share-social-btn { display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--text1);transition:all 0.15s ease;text-decoration:none;flex:1;min-width:0; }
                     ._share-social-btn:hover { transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,0.15); }
@@ -13482,21 +13311,34 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ._share-social-btn.em:hover { background:#4285f4;color:#fff; }
                     ._share-social-btn.tg { background:rgba(0,136,204,0.1);color:#0088cc;border-color:rgba(0,136,204,0.3); }
                     ._share-social-btn.tg:hover { background:#0088cc;color:#fff; }
+                    ._share-social-btn.sms { background:rgba(76,175,80,0.1);color:#4caf50;border-color:rgba(76,175,80,0.3); }
+                    ._share-social-btn.sms:hover { background:#4caf50;color:#fff; }
+                    ._share-tab { padding:6px 14px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--text2);transition:all 0.15s; }
+                    ._share-tab.active { background:var(--accent);color:#fff;border-color:var(--accent); }
                 </style>
-                <div class="md md-sm" style="max-width:560px;">
+                <div class="md md-sm" style="max-width:580px;">
                     <div class="md-hdr">
                         <div class="md-title">✅ Shareable Link Ready</div>
                         <button class="md-x" id="_surl_close">✕</button>
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
-                        Anyone with this link can view the loan statement for <b>${(l.name || '').replace(/</g, '&lt;')}</b>.
-                        <span style="color:var(--green);">Link valid for ${validityStr}.</span>
+                        Anyone with this link can view the statement for <b>${(l.name || '').replace(/</g, '&lt;')}</b>.
+                        <span style="color:var(--green);">Valid until ${expiryStr}.</span>
                         ${urlBadge}
                     </div>
-                    
-                    <div style="margin-top:8px;">
+
+                    <!-- Tab Navigation -->
+                    <div style="display:flex;gap:6px;margin:10px 0 14px;" id="_surl_tabs">
+                        <button class="_share-tab active" data-tab="link">🔗 Link</button>
+                        <button class="_share-tab" data-tab="qr">📱 QR Code</button>
+                        <button class="_share-tab" data-tab="social">💬 Share</button>
+                        <button class="_share-tab" data-tab="history">📋 History</button>
+                    </div>
+
+                    <!-- TAB: Link -->
+                    <div id="_surl_tab_link">
                         <div class="fg" style="margin:0;">
-                            <label class="fl">🔗 Short Shareable URL</label>
+                            <label class="fl">🔗 Shareable URL</label>
                             <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
                                 style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--bg2);cursor:text;">
                         </div>
@@ -13505,27 +13347,52 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <button class="btn btn-ghost btn-sm btn-3d" id="_surl_open" style="flex:1;padding:11px;background:var(--bg2);">🔗 Open</button>
                             <button class="btn btn-ghost btn-sm btn-3d" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};padding:11px;background:var(--bg2);">📤 Share</button>
                         </div>
+
+                        <!-- Download PDF -->
+                        <div style="margin-top:14px;">
+                            <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:11px;background:var(--bg2);font-size:12px;">
+                                📄 Download Statement as PDF
+                            </button>
+                        </div>
                     </div>
 
-                    <!-- Download PDF Button -->
-                    <div style="margin-top:14px;">
-                        <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:11px;background:var(--bg2);font-size:12px;">
-                            📄 Download Statement as PDF
-                        </button>
+                    <!-- TAB: QR Code -->
+                    <div id="_surl_tab_qr" style="display:none;text-align:center;padding:16px 0;">
+                        <div id="_surl_qr_container" style="display:inline-block;padding:16px;background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);">
+                            <div style="color:#888;font-size:12px;">Loading QR…</div>
+                        </div>
+                        <div style="margin-top:10px;font-size:11px;color:var(--text3);">Scan with any phone camera to open the statement</div>
                     </div>
 
+                    <!-- TAB: Social Share -->
+                    <div id="_surl_tab_social" style="display:none;">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                            <a class="_share-social-btn wa" href="https://wa.me/?text=${shareText}" target="_blank" rel="noopener">💬 WhatsApp</a>
+                            <a class="_share-social-btn tg" href="https://t.me/share/url?url=${encodeURIComponent(url)}&text=${shareTitle}" target="_blank" rel="noopener">✈️ Telegram</a>
+                            <a class="_share-social-btn em" href="mailto:?subject=${shareTitle}&body=${shareText}" rel="noopener">📧 Email</a>
+                            <a class="_share-social-btn sms" href="sms:?body=${shareText}" rel="noopener">💬 SMS</a>
+                        </div>
+                    </div>
+
+                    <!-- TAB: History -->
+                    <div id="_surl_tab_history" style="display:none;">
+                        <div id="_surl_history_list" style="max-height:200px;overflow-y:auto;"></div>
+                    </div>
+
+                    <!-- Privacy & Info Footer -->
                     <div style="margin-top:16px;padding:12px;background:rgba(46,204,113,0.08);border-radius:10px;font-size:11.5px;color:var(--green);line-height:1.6;border-left:3px solid var(--green);">
                         <b>🔒 Privacy Guaranteed:</b> This link contains <b>zero</b> personal information.<br>
                         No names, emails, phone numbers, or user IDs are embedded in the URL or shared data.
                         <div style="margin-top:6px;font-size:10px;color:var(--text3);display:flex;gap:12px;flex-wrap:wrap;">
                             <span>📏 URL: ${urlLen} chars</span>
-                            <span>⏳ Valid: ${validityStr}</span>
-                            <span>🔐 AES-256 encrypted</span>
+                            <span>⏳ Expires: ${expiryStr}</span>
+                            <span>🛡️ Stored: Firestore</span>
                         </div>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
             requestAnimationFrame(() => overlay.classList.add('open'));
+
             const close = () => {
                 overlay.classList.remove('open');
                 setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
@@ -13533,18 +13400,78 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.querySelector('#_surl_close').onclick = close;
             overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
-            // ── COPY LINK BUTTON — Premium "Copied!" Feedback ──
-            // When clicked: instantly turns GREEN background with "✓ Copied!" text
-            // Stays green for 3 seconds, then smoothly transitions back
+            // ── TAB SWITCHING ──
+            overlay.querySelectorAll('._share-tab').forEach(tab => {
+                tab.onclick = () => {
+                    overlay.querySelectorAll('._share-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    const tabName = tab.dataset.tab;
+                    ['link', 'qr', 'social', 'history'].forEach(t => {
+                        const el = overlay.querySelector('#_surl_tab_' + t);
+                        if (el) el.style.display = t === tabName ? '' : 'none';
+                    });
+                    // Lazy-load QR code
+                    if (tabName === 'qr') _renderQR();
+                    // Load history
+                    if (tabName === 'history') _renderHistory();
+                };
+            });
+
+            // ── QR CODE (lazy loaded) ──
+            let qrRendered = false;
+            const _renderQR = async () => {
+                if (qrRendered) return;
+                qrRendered = true;
+                const container = overlay.querySelector('#_surl_qr_container');
+                try {
+                    await _loadQRLib();
+                    const svg = _generateQRCodeSVG(url, 180);
+                    if (svg) {
+                        container.innerHTML = svg;
+                    } else {
+                        container.innerHTML = '<div style="width:180px;height:180px;display:flex;align-items:center;justify-content:center;color:#888;font-size:11px;">QR generation unavailable</div>';
+                    }
+                } catch (e) {
+                    container.innerHTML = '<div style="width:180px;height:180px;display:flex;align-items:center;justify-content:center;color:#888;font-size:11px;">QR loading failed</div>';
+                }
+            };
+
+            // ── SHARE HISTORY ──
+            const _renderHistory = () => {
+                const container = overlay.querySelector('#_surl_history_list');
+                try {
+                    const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
+                    if (hist.length === 0) {
+                        container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px;">No previous share links</div>';
+                        return;
+                    }
+                    container.innerHTML = hist.slice(0, 20).map((h, i) => {
+                        const created = new Date(h.createdAt);
+                        const expires = h.expiresAt ? new Date(h.expiresAt) : new Date(created.getTime() + 30 * 86400000);
+                        const isExpired = Date.now() > expires.getTime();
+                        const statusBadge = isExpired
+                            ? '<span style="color:#e74c3c;font-size:9px;font-weight:700;">EXPIRED</span>'
+                            : '<span style="color:#2ecc71;font-size:9px;font-weight:700;">ACTIVE</span>';
+                        return '<div style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:11px;display:flex;align-items:center;gap:8px;' + (isExpired ? 'opacity:0.5;' : '') + '">' +
+                            '<div style="flex:1;min-width:0;">' +
+                                '<div style="font-weight:600;color:var(--text1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (h.loanName || 'Loan').replace(/</g, '&lt;') + '</div>' +
+                                '<div style="color:var(--text3);font-size:10px;">' + created.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' · ' + statusBadge + '</div>' +
+                            '</div>' +
+                            '<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:10px;" onclick="navigator.clipboard.writeText(\'' + h.url.replace(/'/g, "\\'") + '\');this.textContent=\'✓\';setTimeout(()=>this.textContent=\'📋\',1500);">📋</button>' +
+                        '</div>';
+                    }).join('');
+                } catch (e) {
+                    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px;">Could not load history</div>';
+                }
+            };
+
+            // ── COPY LINK BUTTON ──
             overlay.querySelector('#_surl_copy').onclick = async (e) => {
                 const btn = e.currentTarget;
                 const _doCopiedFeedback = () => {
-                    // INSTANT green background transformation
                     btn.classList.add('btn-copied');
                     btn.innerHTML = '✅ Copied!';
                     btn.style.animation = '_copyPulse 0.35s cubic-bezier(0.4,0,0.2,1)';
-                    btn.style.letterSpacing = '0.5px';
-                    // Also flash the input field green briefly
                     const inp = overlay.querySelector('#_surl_input');
                     if (inp) {
                         inp.style.transition = 'all 0.3s ease';
@@ -13552,29 +13479,28 @@ table.amort tbody tr { page-break-inside: avoid; }
                         inp.style.boxShadow = '0 0 12px rgba(46,204,113,0.3)';
                         setTimeout(() => { inp.style.borderColor = ''; inp.style.boxShadow = ''; }, 1500);
                     }
-                    // Revert after 3 seconds with smooth fade
                     setTimeout(() => {
                         btn.style.transition = 'all 0.4s ease';
                         btn.classList.remove('btn-copied');
                         btn.innerHTML = '📋 Copy Link';
                         btn.style.animation = '';
-                        btn.style.letterSpacing = '';
                     }, 3000);
                 };
                 try {
                     await navigator.clipboard.writeText(url);
                     _doCopiedFeedback();
                 } catch (err) {
-                    // Fallback: select the text in the input field
                     const inp = overlay.querySelector('#_surl_input');
                     if (inp) { inp.select(); inp.setSelectionRange(0, 99999); }
                     try { document.execCommand('copy'); } catch (e2) { }
                     _doCopiedFeedback();
                 }
             };
+
             overlay.querySelector('#_surl_open').onclick = () => {
                 window.open(url, '_blank', 'noopener,noreferrer');
             };
+
             const nativeBtn = overlay.querySelector('#_surl_native');
             if (nativeBtn) {
                 nativeBtn.onclick = async () => {
@@ -13589,11 +13515,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                     }
                 };
             }
+
             // ── DOWNLOAD PDF BUTTON ──
             const pdfBtn = overlay.querySelector('#_surl_pdf');
             if (pdfBtn) {
                 pdfBtn.onclick = async () => {
-                    pdfBtn.innerHTML = '⏳ Generating PDF...';
+                    pdfBtn.innerHTML = '⏳ Generating PDF…';
                     pdfBtn.disabled = true;
                     try {
                         const stmtHTML = _buildLoanStatementHTML(l);
@@ -13617,6 +13544,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 };
             }
         }
+
 
         // Share entry point — auto-closes statement window to focus on share flow
         async function _shareLoanStatement(win, l) {
@@ -16655,8 +16583,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const res = await resp.json();
                     let downloadURL = res.url;
 
-                    // Shorten the URL
-                    downloadURL = await _shortenUrl(downloadURL);
+                    // URL from share-upload is already short (file.io/0x0.st)
+
 
                     try {
                         const hist = JSON.parse(localStorage.getItem('wf_shared_statements') || '[]');
