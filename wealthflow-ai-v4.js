@@ -1596,6 +1596,52 @@
         return rail;
     }
 
+    function _setSendLock(locked) {
+        try {
+            var btn = document.getElementById('aiSendBtn');
+            if (!btn) return;
+            if (locked) {
+                btn.disabled = true;
+                btn.dataset.wfLocked = '1';
+                btn.style.opacity = '0.45';
+                btn.style.cursor = 'not-allowed';
+                if (!btn.dataset.wfOrig) btn.dataset.wfOrig = btn.innerHTML;
+                btn.innerHTML = '<span class="wf-send-spinner"></span>';
+            } else {
+                btn.disabled = false;
+                btn.dataset.wfLocked = '';
+                btn.style.opacity = '';
+                btn.style.cursor = '';
+                if (btn.dataset.wfOrig) btn.innerHTML = btn.dataset.wfOrig;
+            }
+        } catch (_) {}
+    }
+
+    function _ensureUploadStyles() {
+        if (document.getElementById('wf_upload_styles')) return;
+        var s = document.createElement('style');
+        s.id = 'wf_upload_styles';
+        s.textContent =
+            '@keyframes wfspin{to{transform:rotate(360deg)}}' +
+            '.wf-send-spinner{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,0.35);border-top-color:#fff;border-radius:50%;animation:wfspin 0.7s linear infinite;vertical-align:middle;}' +
+            '.wf-att-prog{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(8,12,24,0.72);backdrop-filter:blur(1px);}' +
+            '.wf-att-ring{transform:rotate(-90deg);}' +
+            '.wf-att-ring circle{fill:none;stroke-width:4;}' +
+            '.wf-att-ring .bg{stroke:rgba(255,255,255,0.18);}' +
+            '.wf-att-ring .fg{stroke:#d4af37;stroke-linecap:round;transition:stroke-dashoffset 0.2s ease;}';
+        document.head.appendChild(s);
+    }
+
+    // Circular progress ring (Claude/Gemini style) drawn over a thumbnail
+    function _progressRing(pct) {
+        var r = 18, c = 2 * Math.PI * r;
+        var off = c * (1 - Math.max(0, Math.min(1, pct)) );
+        return '<div class="wf-att-prog"><svg class="wf-att-ring" width="46" height="46" viewBox="0 0 46 46">' +
+            '<circle class="bg" cx="23" cy="23" r="' + r + '"></circle>' +
+            '<circle class="fg" cx="23" cy="23" r="' + r + '" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '"></circle>' +
+            '</svg></div>';
+    }
+
     function _renderAttachmentRail() {
         var rail = _ensureAttachmentRail();
         if (_aiChatAttachments.length === 0) { rail.style.display = 'none'; rail.innerHTML = ''; return; }
@@ -1603,10 +1649,12 @@
         rail.innerHTML = _aiChatAttachments.map(function (att, idx) {
             var thumb = att.isPdf ?
                 '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1e293b,#0f172a);color:#fbbf24;font-size:20px;font-weight:700;">📄</div>' :
-                '<img src="' + att.preview + '" style="width:100%;height:100%;object-fit:cover;">';
+                (att.preview ? '<img src="' + att.preview + '" style="width:100%;height:100%;object-fit:cover;">' :
+                 '<div style="width:100%;height:100%;background:#0f172a;"></div>');
+            var progress = (att.uploading ? _progressRing(att.progress || 0) : '');
             return '<div style="position:relative;width:54px;height:54px;border-radius:8px;overflow:hidden;border:1px solid rgba(212,175,55,0.4);box-shadow:0 2px 8px rgba(0,0,0,0.3);">' +
-                thumb +
-                '<button onclick="window.WF_AI_V5._removeAttachment(' + idx + ')" style="position:absolute;top:1px;right:1px;width:18px;height:18px;border-radius:50%;border:0;background:rgba(239,68,68,0.9);color:#fff;font-size:11px;line-height:1;cursor:pointer;padding:0;font-weight:700;" title="Remove">×</button>' +
+                thumb + progress +
+                (att.uploading ? '' : '<button onclick="window.WF_AI_V5._removeAttachment(' + idx + ')" style="position:absolute;top:1px;right:1px;width:18px;height:18px;border-radius:50%;border:0;background:rgba(239,68,68,0.9);color:#fff;font-size:11px;line-height:1;cursor:pointer;padding:0;font-weight:700;" title="Remove">×</button>') +
                 (att.isPdf ? '<div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:#fbbf24;font-size:8px;text-align:center;padding:1px 0;">PDF</div>' : '') +
                 '</div>';
         }).join('') +
@@ -1616,6 +1664,8 @@
     function _removeAttachment(idx) {
         _aiChatAttachments.splice(idx, 1);
         _renderAttachmentRail();
+        // Unlock send if nothing is still uploading
+        if (!_aiChatAttachments.some(function (a) { return a.uploading; })) _setSendLock(false);
     }
 
     async function handleAIChatMultiAttach(e) {
@@ -1627,24 +1677,54 @@
             return;
         }
         files = files.slice(0, slotsLeft);
+        _ensureUploadStyles();
+        _setSendLock(true); // lock send button while uploading (like Claude/Gemini)
+
         for (var i = 0; i < files.length; i++) {
             var f = files[i];
             var isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
-            var preview = null;
+            // Insert a placeholder attachment in "uploading" state so the
+            // progress ring shows immediately.
+            var att = { file: f, preview: null, isPdf: isPdf, name: f.name, size: f.size, uploading: true, progress: 0 };
+            _aiChatAttachments.push(att);
+            _renderAttachmentRail();
+
             if (!isPdf) {
-                preview = await new Promise(function (resolve) {
+                /* eslint-disable no-loop-func */
+                await new Promise(function (resolve) {
                     var reader = new FileReader();
-                    reader.onload = function (ev) { resolve(ev.target.result); };
-                    reader.onerror = function () { resolve(null); };
+                    reader.onprogress = function (ev) {
+                        if (ev.lengthComputable) {
+                            att.progress = ev.loaded / ev.total;
+                            _renderAttachmentRail();
+                        }
+                    };
+                    reader.onload = function (ev) {
+                        att.preview = ev.target.result;
+                        att.progress = 1;
+                        att.uploading = false;
+                        _renderAttachmentRail();
+                        resolve();
+                    };
+                    reader.onerror = function () { att.uploading = false; resolve(); };
                     reader.readAsDataURL(f);
                 });
+                /* eslint-enable no-loop-func */
+            } else {
+                // PDFs: brief simulated progress so the ring animates
+                for (var p = 0; p <= 1; p += 0.34) {
+                    att.progress = p; _renderAttachmentRail();
+                    await new Promise(function (r) { setTimeout(r, 90); });
+                }
+                att.uploading = false;
+                _renderAttachmentRail();
             }
-            _aiChatAttachments.push({ file: f, preview: preview, isPdf: isPdf, name: f.name, size: f.size });
         }
-        _renderAttachmentRail();
-        if (e.target) e.target.value = '';   // allow re-pick same files
+
+        _setSendLock(false); // unlock — files ready, user can send now
+        if (e.target) e.target.value = '';
         if (typeof window.notify === 'function')
-            window.notify('📎 Attached ' + files.length + ' file' + (files.length > 1 ? 's' : ''), 'success');
+            window.notify('📎 Attached ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' — ready to send', 'success');
     }
 
     /* =========================================================================

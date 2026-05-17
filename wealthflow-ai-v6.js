@@ -124,8 +124,40 @@
     function userName() {
         try {
             var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
-            return (c && c.userName) ? c.userName : 'there';
+            var n = (c && c.userName) ? c.userName : null;
+            if (n && n !== 'User' && n !== 'there') return n.split(' ')[0];
+            // Fallbacks: Firebase auth, then ML-learned name
+            if (window.currentUser && window.currentUser.displayName) return window.currentUser.displayName.split(' ')[0];
+            return 'there';
         } catch (_) { return 'there'; }
+    }
+    // Always-present identity block so the AI genuinely KNOWS the user.
+    function userProfileBlock() {
+        try {
+            var bits = [];
+            var c = window.buildFinancialContext ? window.buildFinancialContext() : null;
+            var fullName = null;
+            if (c && c.userName && c.userName !== 'User') fullName = c.userName;
+            else if (window.currentUser && window.currentUser.displayName) fullName = window.currentUser.displayName;
+            if (fullName) bits.push('Name: ' + fullName);
+            if (window.currentUser && window.currentUser.email) bits.push('Email: ' + window.currentUser.email);
+            if (c) {
+                if (c.incomeSources) bits.push(c.incomeSources + ' income source(s)');
+                if (c.savingsTargets) bits.push(c.savingsTargets + ' savings goal(s)');
+                if (c.activeLoans) bits.push(c.activeLoans + ' active loan(s)');
+            }
+            // Pull ML-learned durable facts (name, job, goals the user stated)
+            try {
+                if (window.WealthFlowML && window.WealthFlowML.personalizationBlock) {
+                    var pb = window.WealthFlowML.personalizationBlock();
+                    if (pb) bits.push('(learned details below)');
+                }
+            } catch (_) {}
+            if (!bits.length) return '';
+            return '\n\nWHO YOU ARE TALKING TO (you DO know this person — never say you don\'t know their name):\n• ' +
+                bits.join('\n• ') +
+                '\nIf they ask "do you know my name / my details", answer warmly using exactly this info.';
+        } catch (_) { return ''; }
     }
     function financeContext() {
         try {
@@ -136,7 +168,9 @@
                 '• This Month Expenses: LKR ' + (c.thisMonthExpenses || 0).toLocaleString() + '\n' +
                 '• Monthly Loan Payments: LKR ' + (c.monthlyLoanPayments || 0).toLocaleString() + '\n' +
                 '• Net Monthly Cash Flow: LKR ' + (c.netMonthlyCashFlow || 0).toLocaleString() + '\n' +
-                '• Balance On Hand: LKR ' + (c.balanceOnHand || 0).toLocaleString();
+                '• Balance On Hand: LKR ' + (c.balanceOnHand || 0).toLocaleString() + '\n' +
+                (c.incomeDetails ? '• Income: ' + c.incomeDetails + '\n' : '') +
+                (c.targetDetails ? '• Goals: ' + c.targetDetails : '');
         } catch (_) { return ''; }
     }
 
@@ -187,7 +221,7 @@
             'And remember: you are their warm, caring best friend. Talk like one. Feel with them.\n' +
             '═══════════════════════════════════════════════════════════════════════';
 
-        return base + soul + task + finalRule;
+        return base + userProfileBlock() + soul + task + finalRule;
     }
 
     /* 4. IMAGE GENERATION ------------------------------------------------- */

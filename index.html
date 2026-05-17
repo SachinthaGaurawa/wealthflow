@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.1 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.2 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6037,9 +6037,25 @@
         function signInWithGoogle() {
             const provider = new firebase.auth.GoogleAuthProvider();
             provider.setCustomParameters({ prompt: 'select_account' });
+            // Request Drive file scope UP FRONT so manual/auto backup never
+            // needs a second Google login. The token is captured below.
+            provider.addScope('https://www.googleapis.com/auth/drive.file');
 
             // Try popup first (works on desktop), fall back to redirect (works on mobile/PWA)
-            firebase.auth().signInWithPopup(provider).catch(err => {
+            firebase.auth().signInWithPopup(provider).then(result => {
+                try {
+                    const cred = firebase.auth.GoogleAuthProvider.credentialFromResult
+                        ? firebase.auth.GoogleAuthProvider.credentialFromResult(result)
+                        : (result && result.credential);
+                    if (cred && cred.accessToken) {
+                        gapiToken = cred.accessToken;
+                        // Google OAuth tokens last ~1 hour
+                        const expiry = Date.now() + 55 * 60 * 1000;
+                        localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
+                        console.log('[Auth] Drive token captured at sign-in — no second login needed');
+                    }
+                } catch (e) { console.warn('[Auth] could not capture Drive token:', e && e.message); }
+            }).catch(err => {
                 console.warn("Popup blocked or failed, trying redirect...", err.code);
                 if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
                     firebase.auth().signInWithRedirect(provider);
@@ -7402,14 +7418,26 @@ Be conversational and precise.`;
         function startAIMemoryListener() {
             if (!currentUser || !firebase || !firebase.firestore) return;
             if (_aiHistoryUnsub) { _aiHistoryUnsub(); _aiHistoryUnsub = null; }
+            const localClearedAt = parseInt(localStorage.getItem('wf_ai_cleared_at') || '0');
             // Pull initial state from cloud
             firebase.firestore().collection('userAI').doc(currentUser.uid).get().then(snap => {
                 if (snap.exists) {
                     const data = snap.data() || {};
                     const remoteHist = data.history || [];
+                    const remoteMs = data.updatedAtMs || 0;
+                    const cloudClearedAt = data._clearedAt || 0;
+                    // If THIS device cleared/reset more recently than the cloud's
+                    // last write, the cloud is stale — do NOT restore. Keep empty.
+                    if (localClearedAt && localClearedAt >= remoteMs && localClearedAt >= cloudClearedAt) {
+                        _updateAISyncBadge('synced');
+                        return;
+                    }
                     const localHist = getAIHistory();
-                    if (remoteHist.length > localHist.length) {
+                    const localMs = parseInt(localStorage.getItem('wf_ai_synced_at') || '0');
+                    // Most-recent-write wins (not length).
+                    if (remoteMs > localMs) {
                         localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
+                        localStorage.setItem('wf_ai_synced_at', String(remoteMs));
                         if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
                         if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
                         if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
@@ -7422,17 +7450,22 @@ Be conversational and precise.`;
                 .onSnapshot(snap => {
                     if (!snap.exists) return;
                     const data = snap.data() || {};
-                    // Skip if this device just pushed
-                    if (data.deviceId === _getDeviceId()) return;
+                    if (data.deviceId === _getDeviceId()) return; // our own write
                     const remoteHist = data.history || [];
-                    const localHist = getAIHistory();
                     const remoteMs = data.updatedAtMs || 0;
                     const localMs = parseInt(localStorage.getItem('wf_ai_synced_at') || '0');
-                    if (remoteMs > localMs || remoteHist.length > localHist.length) {
+                    const myClearedAt = parseInt(localStorage.getItem('wf_ai_cleared_at') || '0');
+                    // Honour a local clear/reset that is newer than this remote write.
+                    if (myClearedAt && myClearedAt >= remoteMs) return;
+                    // Most-recent-write wins (timestamp, not length).
+                    if (remoteMs > localMs) {
                         localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
                         if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
                         if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
                         localStorage.setItem('wf_ai_synced_at', String(remoteMs || Date.now()));
+                        if (data._clearedAt && data._clearedAt > myClearedAt) {
+                            localStorage.setItem('wf_ai_cleared_at', String(data._clearedAt));
+                        }
                         _updateAISyncBadge('synced');
                         if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
                     }
@@ -7469,6 +7502,10 @@ Be conversational and precise.`;
             // Keep rolling window
             if (hist.length > MAX_HISTORY_MSGS) hist = hist.slice(hist.length - MAX_HISTORY_MSGS);
             localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(hist));
+            // A new message after a clear/reset means the user wants history
+            // again — drop the "cleared" marker so normal sync resumes.
+            if (hist.length > 0) localStorage.removeItem('wf_ai_cleared_at');
+            localStorage.setItem('wf_ai_synced_at', String(Date.now()));
             _scheduleAISync();
         }
         function getAIPersona() {
@@ -7751,6 +7788,27 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const bubble = document.createElement('div');
             bubble.className = `ai-bubble ${role}`;
 
+            // TRUSTED HTML PATH: when a caller passes pre-built HTML (v4 file
+            // attachments, image-gen, history replay) render it directly instead
+            // of escaping (escaping was dumping base64 data URIs as text).
+            // v4 calls appendAIMessage('user', html, true) so the flag can land
+            // in followups OR isReplay — accept either, and also content-detect
+            // our own thumbnail/markup wrappers.
+            const _trustFlag = isReplay === true || followups === true;
+            const _looksLikeTrustedHTML = typeof text === 'string' && (
+                /<img\s+src="data:image/i.test(text) ||
+                /<div style="display:(flex|inline-block)[^"]*"[^>]*>\s*(<img|<div)/i.test(text) ||
+                /style="[^"]*object-fit:cover/i.test(text)
+            );
+            if ((_trustFlag && /<[a-z]/i.test(text)) || _looksLikeTrustedHTML) {
+                bubble.innerHTML = text;
+                wrap.appendChild(avatar);
+                wrap.appendChild(bubble);
+                container.appendChild(wrap);
+                container.scrollTop = container.scrollHeight;
+                return;
+            }
+
             // === PREMIUM MARKDOWN RENDERER ===
             const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             let f = esc(text);
@@ -7904,19 +7962,35 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         const _AI_VOICE_MAX_RETRIES = 3;
 
 
-        function clearAIChat() {
+        async function clearAIChat() {
+            const clearedAt = Date.now();
             localStorage.removeItem(AI_HISTORY_KEY);
+            localStorage.setItem('wf_ai_cleared_at', String(clearedAt));
+            localStorage.setItem('wf_ai_synced_at', String(clearedAt));
+
+            // Wipe the cloud copy too, otherwise it returns on refresh.
+            try {
+                if (currentUser && firebase && firebase.firestore) {
+                    await firebase.firestore().collection('userAI').doc(currentUser.uid).set({
+                        history: [],
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        updatedAtMs: clearedAt,
+                        _clearedAt: clearedAt,
+                        deviceId: _getDeviceId()
+                    }, { merge: true });
+                }
+            } catch (e) { console.warn('[clearAIChat] cloud wipe failed:', e && e.message); }
+
             const container = $('aiChatMessages');
             if (container) {
                 container.innerHTML = '';
-                // Restore welcome
                 const welcome = document.createElement('div');
                 welcome.id = 'aiWelcomeBlock';
                 welcome.className = 'ai-welcome-msg';
-                welcome.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal financial advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">👋 Hello! Chat cleared. I'm here whenever you need me! Ask me anything about your finances 💡</div>`;
+                welcome.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;"><div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#0d1d3c,#1a2d4c);border:2px solid var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🤖</div><div><div style="font-size:13px;font-weight:700;color:var(--accent);">WealthFlow AI</div><div style="font-size:10px;color:var(--text3);">Your personal financial advisor</div></div></div><div style="font-size:14px;color:var(--text);line-height:1.7;">👋 Hello! Chat cleared. I'm here whenever you need me! Ask me anything 💡</div>`;
                 container.appendChild(welcome);
             }
-            notify('Chat history cleared.', 'info');
+            notify('Chat history cleared (all devices).', 'info');
             initAISuggestionPills();
         }
 
@@ -7924,11 +7998,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (!confirm("Are you sure you want to permanently erase the AI's memory and chat history? This clears it on ALL your devices and cannot be undone.")) return;
 
             try {
+                const clearedAt = Date.now();
                 // 1. Clear ALL local AI keys (use the correct constants)
                 localStorage.removeItem(AI_HISTORY_KEY);
                 localStorage.removeItem(AI_PERSONA_KEY);
                 localStorage.removeItem(AI_MEMORY_KEY);
-                localStorage.removeItem('wf_ai_synced_at');
+                localStorage.setItem('wf_ai_cleared_at', String(clearedAt));
+                localStorage.setItem('wf_ai_synced_at', String(clearedAt));
 
                 // 2. Stop the live listener so it can't immediately re-pull stale cloud data
                 if (typeof _aiHistoryUnsub === 'function') {
@@ -7936,16 +8012,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     _aiHistoryUnsub = null;
                 }
 
-                // 3. Wipe the Firestore cloud copy (this is what was making memory "come back")
+                // 3. Wipe the Firestore cloud copy with a clear marker so no
+                //    device ever restores it.
                 if (currentUser && firebase && firebase.firestore) {
                     await firebase.firestore().collection('userAI').doc(currentUser.uid).set({
                         history: [],
                         persona: null,
                         memory: null,
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        updatedAtMs: Date.now(),
+                        updatedAtMs: clearedAt,
+                        _clearedAt: clearedAt,
                         deviceId: _getDeviceId(),
-                        _resetAt: Date.now()
+                        _resetAt: clearedAt
                     });
                 }
 
@@ -8438,10 +8516,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         // Manual "Backup Now" — forces an immediate cloud (Firestore) push and
         // stamps the lastBackup time so the WhatsApp-style status block updates.
-        async function backupNow() {
+        async function backupNow(silent) {
             try {
-                notify('☁️ Backing up to cloud…', 'info');
-                triggerHaptic('medium');
+                if (!silent) { notify('☁️ Backing up to cloud…', 'info'); triggerHaptic('medium'); }
                 const s = DB.getObj('settings', {});
                 s.lastBackup = new Date().toISOString();
                 DB.set('settings', s);            // marks dirty → triggers sync
@@ -8449,20 +8526,22 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 if (typeof syncToCloud === 'function') {
                     await Promise.resolve(syncToCloud());
                 }
-                // Also push to Google Drive if connected (best-effort)
+                // Also push to Google Drive if connected (best-effort, no 2nd login)
                 if (typeof gapiToken !== 'undefined' && gapiToken && typeof executeDriveBackup === 'function') {
                     executeDriveBackup().catch(() => {});
                 }
-                setTimeout(() => {
-                    if (document.getElementById('page-settings')?.classList.contains('active')) {
-                        try { renderSettings(); } catch (e) {}
-                    }
-                }, 600);
-                notify('✅ Backup complete · ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}), 'success');
-                triggerHaptic('success');
+                if (!silent) {
+                    setTimeout(() => {
+                        if (document.getElementById('page-settings')?.classList.contains('active')) {
+                            try { renderSettings(); } catch (e) {}
+                        }
+                    }, 600);
+                    notify('✅ Backup complete · ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}), 'success');
+                    triggerHaptic('success');
+                }
             } catch (e) {
                 console.error('[backupNow]', e);
-                notify('Backup failed: ' + e.message, 'error');
+                if (!silent) notify('Backup failed: ' + e.message, 'error');
             }
         }
 
@@ -9479,6 +9558,25 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     }, 6000);
 
                     try {
+                        // Capture Drive OAuth token from a redirect sign-in
+                        // (mobile/PWA path) so backup never needs a 2nd login.
+                        firebase.auth().getRedirectResult().then(result => {
+                            try {
+                                if (result && result.user) {
+                                    const cred = firebase.auth.GoogleAuthProvider.credentialFromResult
+                                        ? firebase.auth.GoogleAuthProvider.credentialFromResult(result)
+                                        : (result.credential);
+                                    if (cred && cred.accessToken) {
+                                        gapiToken = cred.accessToken;
+                                        localStorage.setItem('wf_drive_token', JSON.stringify({
+                                            token: gapiToken, expiry: Date.now() + 55 * 60 * 1000
+                                        }));
+                                        console.log('[Auth] Drive token captured from redirect');
+                                    }
+                                }
+                            } catch (_) {}
+                        }).catch(() => {});
+
                         firebase.auth().onAuthStateChanged(async (user) => {
                             if (_authCallbackFired) return; // Timeout already handled it
                             _authCallbackFired = true;
@@ -9486,6 +9584,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
                             if (user) {
                                 currentUser = user;
+                                window.currentUser = user;
                                 userDocRef = db.collection('users').doc(user.uid);
                                 if (splashText) splashText.textContent = "Syncing with cloud...";
                                 console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
@@ -14877,8 +14976,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.1 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.1 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.2 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -14887,7 +14986,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.1 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.2 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -18096,24 +18195,49 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const s = DB.getObj('settings', {});
             if (!s.autoBackupFreq || s.autoBackupFreq === 'off') return;
 
-            _autoBackupTimer = setInterval(() => {
-                const now = new Date();
-                const h = now.getHours(), m = now.getMinutes();
-                if (h === 23 && m === 55) {
-                    const freq = s.autoBackupFreq;
-                    // weekStart setting: 'sunday' → backup on Saturday night (end of week),
-                    // 'monday' → backup on Sunday night (end of week). Default: Sunday.
-                    const weekStart = (DB.getObj('settings', {}).weekStart) || 'monday';
-                    const weeklyBackupDay = weekStart === 'sunday' ? 6 : 0; // Sat or Sun
-                    const doBackup = freq === 'daily' ||
-                        (freq === 'weekly' && now.getDay() === weeklyBackupDay) ||
-                        (freq === 'monthly' && new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() === now.getDate());
-                    if (doBackup) {
-                        requestDrivePermission('backup');
-                        sendSmartNotification('☁️ Auto-Backup', 'Your WealthFlow data has been backed up automatically.');
-                    }
+            // Run a "due check" now (catch-up) AND every 5 minutes while open.
+            // This is reliable even if the app was closed at the scheduled
+            // time — the moment the user opens the app, a missed backup runs.
+            _checkAutoBackupDue();
+            _autoBackupTimer = setInterval(_checkAutoBackupDue, 5 * 60 * 1000);
+        }
+
+        function _backupIntervalMs(freq) {
+            if (freq === 'daily') return 24 * 60 * 60 * 1000;
+            if (freq === 'weekly') return 7 * 24 * 60 * 60 * 1000;
+            if (freq === 'monthly') return 30 * 24 * 60 * 60 * 1000;
+            return Infinity;
+        }
+
+        async function _checkAutoBackupDue() {
+            try {
+                const s = DB.getObj('settings', {});
+                if (!s.autoBackupFreq || s.autoBackupFreq === 'off') return;
+                const interval = _backupIntervalMs(s.autoBackupFreq);
+                const last = parseInt(localStorage.getItem('wf_last_auto_backup') || '0');
+                const now = Date.now();
+                if (now - last < interval) return; // not due yet
+
+                // Due now → run it. Prefer the cloud (Firestore) backup which
+                // never needs Google Drive auth; also try Drive if we have a
+                // token (no second login thanks to the scope at sign-in).
+                console.log('[AutoBackup] Backup is due — running now');
+                if (typeof backupNow === 'function') {
+                    await backupNow(true); // silent=true (no extra prompts)
+                } else {
+                    const sx = DB.getObj('settings', {});
+                    sx.lastBackup = new Date().toISOString();
+                    DB.set('settings', sx);
+                    if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud());
                 }
-            }, 60000);
+                if (typeof gapiToken !== 'undefined' && gapiToken && typeof executeDriveBackup === 'function') {
+                    executeDriveBackup().catch(() => {});
+                }
+                localStorage.setItem('wf_last_auto_backup', String(now));
+                if (typeof sendSmartNotification === 'function') {
+                    sendSmartNotification('☁️ Auto-Backup Complete', 'Your WealthFlow data has been backed up automatically.');
+                }
+            } catch (e) { console.warn('[AutoBackup] check failed:', e && e.message); }
         }
         // Global helper: 0 = Sunday, 1 = Monday — driven by the Week Starts On setting
         function _weekStartDay() {
