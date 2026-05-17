@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.3 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.4 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5394,7 +5394,6 @@
             <div class="fr">
                 <div class="fg"><label class="fl">Start Date *</label>
                     <input class="fi" id="i_start" type="date">
-                    <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;width:100%;font-size:12px;" onclick="setIncomeStartDateToday()">📅 Set Start Date (Today)</button>
                 </div>
                 <div class="fg"><label class="fl">End Date</label><input class="fi" id="i_end" type="date"></div>
             </div>
@@ -5407,6 +5406,7 @@
                     </select></div>
                 <div class="fg"><label class="fl">Payment Start Date *</label>
                     <input class="fi" id="i_day" type="date">
+                    <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;width:100%;font-size:12px;" onclick="copyStartDateToPayment()">📅 Same as Start Date</button>
                     <div style="font-size:11px;color:var(--text3);margin-top:4px;">Tip: For most investments the Payment Start Date is the same as the investment Start Date.</div>
                 </div>
             </div>
@@ -10725,20 +10725,26 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         // ==================== INCOME ====================
-        // "Set Start Date (Today)" — fills the investment Start Date with today.
-        // Since for most investments Start Date == Payment Start Date, this also
-        // fills the Payment Start Date if it is still empty (one tap = both).
-        function setIncomeStartDateToday() {
-            const d = new Date();
-            const todayStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        // "Same as Start Date" — copies whatever the user entered as the
+        // investment Start Date into the Payment Start Date field. It does NOT
+        // use today's date; it mirrors the actual Start Date value.
+        function copyStartDateToPayment() {
             const startEl = $('i_start');
             const dayEl = $('i_day');
-            if (startEl) startEl.value = todayStr;            // the investment Start Date (image 6 highlighted field)
-            if (dayEl && !dayEl.value) dayEl.value = todayStr; // payment date too, only if empty
-            triggerHaptic('toggle');
-            notify('Start date set to today', 'success');
-            if (typeof calcIncomeM === 'function') { try { calcIncomeM(); } catch (e) {} }
+            if (!startEl || !startEl.value) {
+                notify('Please pick the investment Start Date first', 'warning');
+                if (startEl) { try { startEl.focus(); } catch (e) {} }
+                return;
+            }
+            if (dayEl) {
+                dayEl.value = startEl.value;          // mirror the Start Date exactly
+                triggerHaptic('toggle');
+                notify('Payment Start Date set to ' + startEl.value, 'success');
+                if (typeof calcIncomeM === 'function') { try { calcIncomeM(); } catch (e) {} }
+            }
         }
+        // Back-compat alias (older callers)
+        function setIncomeStartDateToday() { copyStartDateToPayment(); }
 
         function saveIncome() {
             const name = $('i_name').value.trim(), company = $('i_company').value.trim(), amount = parseMoney($('i_amount').value), rate = parseFloat($('i_rate').value) || 0;
@@ -15071,7 +15077,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.3 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.4 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15080,7 +15086,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.3 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.4 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
