@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.2.7 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.2.8 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -4961,7 +4961,7 @@
                                     <textarea id="aiChatInput" class="fi" placeholder="Ask me anything... 💬" rows="1" style="resize:none;padding-right:40px;border-radius:12px;line-height:1.5;max-height:120px;overflow-y:auto;transition:border-color 0.2s;" onkeydown="handleAIChatKey(event)" oninput="autoResizeAIInput(this)"></textarea>
                                     <label style="position:absolute;right:10px;bottom:9px;cursor:pointer;color:var(--text3);transition:color 0.2s;" title="Attach file or Scan receipt with AI">
                                         📎 📸
-                                        <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ai_chat_scan" style="display:none;" onchange="handleAIScan(event, 'ai_chat')">
+                                        <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ai_chat_scan" style="display:none;" onchange="_aiChatFilePicked(event)">
                                     </label>
                                 </div>
                                 <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
@@ -7216,6 +7216,55 @@ Keep total under 200 words. No markdown, no asterisks.`;
 
             return (result.vendor || result.amount) ? result : null;
         }
+
+        // AI chat file input → ALWAYS route to the v4 multi-attach pipeline
+        // (rail thumbnail + progress ring + send lock + vision on send).
+        // This replaces the old single-file handleAIScan path that was
+        // forcing every image through a "financial document" prompt and
+        // never reaching the vision engine.
+        function _aiChatFilePicked(e) {
+            try {
+                if (typeof window.handleAIChatMultiAttach === 'function') {
+                    return window.handleAIChatMultiAttach(e);
+                }
+                // v4 not loaded yet — retry briefly, then fall back.
+                let tries = 0;
+                const iv = setInterval(() => {
+                    if (typeof window.handleAIChatMultiAttach === 'function') {
+                        clearInterval(iv);
+                        window.handleAIChatMultiAttach(e);
+                    } else if (++tries > 20) {
+                        clearInterval(iv);
+                        // Last-resort: single-image vision via callAI
+                        const f = e.target && e.target.files && e.target.files[0];
+                        if (f) _fallbackSingleImageVision(f);
+                    }
+                }, 150);
+            } catch (err) {
+                console.error('[ai-chat-file]', err);
+            }
+        }
+        window._aiChatFilePicked = _aiChatFilePicked;
+
+        // Hard fallback if v4 module never loads — still lets the user get a
+        // real vision answer instead of silently ignoring the image.
+        async function _fallbackSingleImageVision(file) {
+            try {
+                const { base64: b64 } = await _compressImageToBase64(file, 1600, 0.88);
+                appendAIMessage('user', '<img src="data:image/jpeg;base64,' + b64 + '" style="max-width:160px;border-radius:10px;">', true);
+                showAITyping(true);
+                const lang = (DB.getObj('settings', {}).aiResponseLang && window.WF_LANG_NAMES)
+                    ? (WF_LANG_NAMES[DB.getObj('settings', {}).aiResponseLang] || 'English') : 'English';
+                const p = 'You can SEE this image. Identify exactly what is in it (if a vehicle: make, model, year, specs). Give a full, accurate, friendly answer in ' + lang + '.';
+                const reply = await callAI(p, b64);
+                showAITyping(false);
+                appendAIMessage('bot', reply);
+            } catch (err) {
+                showAITyping(false);
+                appendAIMessage('bot', '⚠️ I had trouble reading that image. Please try again.');
+            }
+        }
+        window._fallbackSingleImageVision = _fallbackSingleImageVision;
 
         async function handleAIScan(e, type) {
             const file = e.target.files[0];
@@ -15139,7 +15188,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.2.7 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.2.8 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15148,7 +15197,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.2.7 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.2.8 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>

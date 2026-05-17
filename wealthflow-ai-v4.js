@@ -2097,10 +2097,16 @@
         if (inp._v5patched) return true;
         inp.multiple = true;
         inp.accept = 'image/*,image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.pdf,.PDF';
-        // Replace the onchange — remove old handleAIScan binding
-        inp.setAttribute('onchange', '');
-        inp.onchange = handleAIChatMultiAttach;
+        // Bind the multi-attach handler directly (in addition to the inline
+        // _aiChatFilePicked bridge, which also routes here — belt & braces so
+        // attaching works even before/after this patch runs).
+        inp.onchange = function (e) {
+            try { handleAIChatMultiAttach(e); }
+            catch (err) { console.error('[' + V5 + '] attach error:', err); }
+        };
         inp._v5patched = true;
+        // expose for the host inline bridge
+        window.handleAIChatMultiAttach = handleAIChatMultiAttach;
         return true;
     }
 
@@ -2205,6 +2211,10 @@
         });
         console.log('[' + V5 + '] drag & drop zone installed ✓');
     }
+
+    // Expose the attach handler globally so the host's inline bridge can
+    // call it even before the patch cycle runs.
+    window.handleAIChatMultiAttach = handleAIChatMultiAttach;
 
     window._wfSendWithVision = async function (userMsg) {
         var atts = _aiChatAttachments.slice();
