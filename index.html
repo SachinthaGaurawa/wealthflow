@@ -4457,7 +4457,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.3 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.4 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -8199,6 +8199,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function autoResizeAIInput(el) {
             el.style.height = 'auto';
             el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+            // Update suggestion chips live as the user types (debounced).
+            clearTimeout(window._suggTimer);
+            window._suggTimer = setTimeout(() => {
+                try { if (typeof initAISuggestionPills === 'function') initAISuggestionPills(); } catch (_) {}
+            }, 280);
         }
 
         // ==================== VOICE INPUT ENGINE v3 ====================
@@ -8386,20 +8391,66 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (!container) return;
 
             const ctx = buildFinancialContext();
-            const suggestions = [];
+            const typed = (($('aiChatInput') || {}).value || '').trim().toLowerCase();
+            let suggestions = [];
 
-            // Dynamic suggestions based on user data
-            if (ctx.totalMonthlyIncome > 0) suggestions.push('📊 How healthy is my cash flow?');
-            if (ctx.activeLoans > 0) suggestions.push('🏦 Help me with my loan strategy');
-            if (ctx.thisMonthExpenses > 0) suggestions.push('💸 Where can I cut expenses?');
-            if (ctx.savingsTargets > 0) suggestions.push('🎯 How to reach my savings goals faster?');
-            suggestions.push('📈 Give me 3 investment tips for Sri Lanka');
-            suggestions.push('💡 What should I focus on this month?');
+            if (typed.length >= 2) {
+                // ── DYNAMIC: adapt to what the user is typing + their records ──
+                const pool = [];
+                if (/cash|flow|money|afford|spend/.test(typed)) pool.push('How healthy is my cash flow this month?', 'Where is my money going?');
+                if (/loan|debt|emi|borrow|interest/.test(typed)) pool.push('Help me with my loan strategy', 'How fast can I clear my debt?');
+                if (/save|saving|goal|target|future/.test(typed)) pool.push('How to reach my savings goals faster?', 'How much should I save monthly?');
+                if (/invest|stock|share|fund|grow/.test(typed)) pool.push('Give me 3 investment tips for Sri Lanka', 'How should I invest my surplus?');
+                if (/income|salary|earn|revenue/.test(typed)) pool.push('Break down my income sources', 'How can I increase my income?');
+                if (/expense|cost|bill|reduce|cut/.test(typed)) pool.push('Where can I cut expenses?', 'What are my biggest expenses?');
+                if (/tax|epf|etf|retire|pension/.test(typed)) pool.push('How do I plan for retirement in Sri Lanka?');
+                if (/budget|plan|month/.test(typed)) pool.push('Help me build a monthly budget', 'What should I focus on this month?');
+                // financial-record-aware additions
+                if (ctx.activeLoans > 0 && /pay|clear|finish/.test(typed)) pool.push('What if I pay extra on my loan each month?');
+                if (ctx.thisMonthExpenses > ctx.totalMonthlyIncome * 0.7) pool.push('My expenses feel high — help me fix this');
+                // de-dup + fallback
+                suggestions = [...new Set(pool)];
+                if (suggestions.length < 3) {
+                    suggestions.push('How is my overall financial health?', 'Give me a full money analysis with charts');
+                }
+            } else {
+                // ── DEFAULT: based purely on the user's real financial records ──
+                if (ctx.totalMonthlyIncome > 0) suggestions.push('How healthy is my cash flow?');
+                if (ctx.activeLoans > 0) suggestions.push('Help me with my loan strategy');
+                if (ctx.thisMonthExpenses > 0) suggestions.push('Where can I cut expenses?');
+                if (ctx.savingsTargets > 0) suggestions.push('How to reach my savings goals faster?');
+                suggestions.push('Give me 3 investment tips for Sri Lanka');
+                suggestions.push('What should I focus on this month?');
+                suggestions.push('Show my full financial analysis with charts');
+            }
 
-            container.innerHTML = suggestions.slice(0, 5).map(s =>
-                `<button class="ai-suggestion-pill" onclick="sendAIMessage('${s.replace(/'/g, "\\'")}')">  ${s}</button>`
+            const icons = { cash: '📊', loan: '🏦', save: '🎯', invest: '📈', income: '💰', expense: '💸', budget: '💡', tax: '🧾', debt: '🏦', analysis: '📈', health: '❤️' };
+            function iconFor(s) {
+                const l = s.toLowerCase();
+                if (/cash|flow/.test(l)) return icons.cash;
+                if (/loan|debt/.test(l)) return icons.loan;
+                if (/save|saving|goal/.test(l)) return icons.save;
+                if (/invest/.test(l)) return icons.invest;
+                if (/income|earn/.test(l)) return icons.income;
+                if (/expense|cut|cost/.test(l)) return icons.expense;
+                if (/tax|retire|pension/.test(l)) return icons.tax;
+                if (/health|analysis|overall/.test(l)) return icons.analysis;
+                return icons.budget;
+            }
+
+            container.innerHTML = suggestions.slice(0, 5).map((s, i) =>
+                `<button class="ai-suggestion-pill" type="button" data-q="${s.replace(/"/g, '&quot;')}" onclick="_sendSuggestion(this)">${iconFor(s)}&nbsp; ${s}</button>`
             ).join('');
         }
+
+        // Reliable handler — reads the plain question from data-q (no emoji /
+        // quote-escaping problems) and sends it straight to the AI.
+        function _sendSuggestion(btn) {
+            const q = btn && btn.getAttribute('data-q');
+            if (q && typeof sendAIMessage === 'function') sendAIMessage(q);
+        }
+        window._sendSuggestion = _sendSuggestion;
+        window.initAISuggestionPills = initAISuggestionPills;
 
         // ==================== TEXT-TO-SPEECH (Read Aloud) ====================
         function _readAIAloud(btn) {
@@ -8859,8 +8910,48 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     cloudOk = true;
                 } catch (ce) { console.warn('[backup] cloud failed', ce && ce.message); }
 
-                // 2. Google Drive — if we have a token (no 2nd login needed)
-                if (typeof gapiToken !== 'undefined' && gapiToken && typeof executeDriveBackup === 'function') {
+                // 2. Google Drive — ensure we have a valid token, refreshing
+                //    SILENTLY if it expired (scheduled backups happen long
+                //    after sign-in, so the token is usually stale by then).
+                let _haveDriveToken = (typeof gapiToken !== 'undefined' && gapiToken);
+                if (!_haveDriveToken) {
+                    // try cached token first
+                    try {
+                        const cached = localStorage.getItem('wf_drive_token');
+                        if (cached) {
+                            const parsed = JSON.parse(cached);
+                            if (parsed.token && Date.now() < parsed.expiry) {
+                                gapiToken = parsed.token;
+                                _haveDriveToken = true;
+                            }
+                        }
+                    } catch (_) {}
+                }
+                if (!_haveDriveToken && typeof tokenClient !== 'undefined' && tokenClient &&
+                    window.currentUser && window.currentUser.email) {
+                    // Silent refresh (prompt:'' — no chooser; user already
+                    // authorised Google at sign-in). Wait briefly for callback.
+                    try {
+                        await new Promise((resolve) => {
+                            let done = false;
+                            const _origCb = tokenClient.callback;
+                            tokenClient.callback = (tr) => {
+                                if (tr && tr.access_token) {
+                                    gapiToken = tr.access_token;
+                                    const expiry = Date.now() + ((tr.expires_in - 10) * 1000);
+                                    localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
+                                    _haveDriveToken = true;
+                                }
+                                if (typeof _origCb === 'function') { try { _origCb(tr); } catch (_) {} }
+                                if (!done) { done = true; resolve(); }
+                            };
+                            try { tokenClient.requestAccessToken({ prompt: '', login_hint: window.currentUser.email }); }
+                            catch (_) { resolve(); }
+                            setTimeout(() => { if (!done) { done = true; resolve(); } }, 6000);
+                        });
+                    } catch (_) {}
+                }
+                if (_haveDriveToken && typeof executeDriveBackup === 'function') {
                     try { await Promise.resolve(executeDriveBackup()); driveOk = true; }
                     catch (de) { console.warn('[backup] drive failed', de && de.message); }
                 }
@@ -10398,19 +10489,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 try { startAIMemoryListener(); } catch (e) { console.error('[LAUNCH] startAIMemoryListener error:', e); }
                 try { _startSessionRevokeWatcher(); } catch (e) { console.error('[LAUNCH] _startSessionRevokeWatcher error:', e); }
                 try { registerCurrentSession(); } catch (e) { console.error('[LAUNCH] registerCurrentSession error:', e); }
-                // Check actionable reminders at launch + every 30 min
-                try { setTimeout(checkActionableReminders, 4000); } catch (e) { }
-                try { setInterval(checkActionableReminders, 30 * 60 * 1000); } catch (e) { }
-                // Re-check whenever the app becomes visible / focused
+                // Actionable reminders: morning / evening / night — at most
+                // ONCE per slot per day. NOT on every tab focus (that was the
+                // annoying behaviour). A slot re-fires only if it hasn't been
+                // shown today and the task is still incomplete.
+                try { setTimeout(_maybeRunReminderSlot, 4000); } catch (e) { }
+                try { setInterval(_maybeRunReminderSlot, 20 * 60 * 1000); } catch (e) { }
                 try {
                     document.addEventListener('visibilitychange', () => {
-                        if (!document.hidden) {
-                            setTimeout(checkActionableReminders, 800);
-                        }
+                        if (!document.hidden) setTimeout(_maybeRunReminderSlot, 1200);
                     });
-                    window.addEventListener('focus', () => {
-                        setTimeout(checkActionableReminders, 800);
-                    });
+                    // NOTE: deliberately NOT bound to window 'focus' — that
+                    // fired the banner on every single tab switch.
                 } catch (e) { }
                 // AI: Request notification permission and schedule AI reminders
                 setTimeout(() => {
@@ -15350,7 +15440,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.2.2 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.3 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.4 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15359,7 +15449,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.3 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.4 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -15920,6 +16010,24 @@ table.amort tbody tr { page-break-inside: avoid; }
         function showActionableBanner({ id, title, message, primary = 'Yes', secondary = 'Not Yet', onPrimary, onSecondary, color = 'var(--accent)', icon = '🔔' }) {
             // Avoid duplicate banners
             if (document.getElementById('ab_' + id)) return;
+
+            // Mirror to the real DEVICE notification panel (iOS/Android/desktop)
+            // — at most once per id per day so it isn't spammy.
+            try {
+                const today = new Date().toISOString().slice(0, 10);
+                const nk = 'wf_devnotif_' + today;
+                const sent = JSON.parse(localStorage.getItem(nk) || '[]');
+                if (!sent.includes(id) && typeof sendSmartNotification === 'function') {
+                    const plain = String(message).replace(/<[^>]+>/g, '');
+                    sendSmartNotification(title, plain);
+                    sent.push(id);
+                    localStorage.setItem(nk, JSON.stringify(sent));
+                    Object.keys(localStorage).forEach(k => {
+                        if (k.startsWith('wf_devnotif_') && k !== nk) localStorage.removeItem(k);
+                    });
+                }
+            } catch (_) {}
+
             // Stack banners — push existing ones up
             const existing = document.querySelectorAll('.actionable-banner.show');
             existing.forEach((b, i) => {
@@ -16066,6 +16174,36 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         // Check for income payment reminders today
+        // Reminder slots: morning (8–12), evening (16–20), night (20–23).
+        // Each slot shows the actionable banner at most ONCE per day. If the
+        // user doesn't act, the task stays pending and the SAME reminder comes
+        // back the next day in each slot — until they complete it. Switching
+        // tabs / reopening the app does NOT re-trigger within a used slot.
+        function _currentReminderSlot() {
+            const h = new Date().getHours();
+            if (h >= 8 && h < 12) return 'morning';
+            if (h >= 16 && h < 20) return 'evening';
+            if (h >= 20 && h < 23) return 'night';
+            return null;
+        }
+        function _maybeRunReminderSlot() {
+            try {
+                const slot = _currentReminderSlot();
+                if (!slot) return;
+                const today = new Date().toISOString().slice(0, 10);
+                const key = 'wf_reminder_slot_' + today;
+                const done = JSON.parse(localStorage.getItem(key) || '[]');
+                if (done.includes(slot)) return;
+                done.push(slot);
+                localStorage.setItem(key, JSON.stringify(done));
+                Object.keys(localStorage).forEach(k => {
+                    if (k.startsWith('wf_reminder_slot_') && k !== key) localStorage.removeItem(k);
+                });
+                if (typeof checkActionableReminders === 'function') checkActionableReminders();
+            } catch (e) { console.warn('[reminderSlot]', e && e.message); }
+        }
+        window._maybeRunReminderSlot = _maybeRunReminderSlot;
+
         function checkActionableReminders() {
             if (_isInQuietHours()) return;
             const s = DB.getObj('settings', {});
