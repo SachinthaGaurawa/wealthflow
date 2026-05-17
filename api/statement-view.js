@@ -140,8 +140,10 @@ export default async function handler(req, res) {
         const expiresAt = expiryField && expiryField.integerValue ? parseInt(expiryField.integerValue, 10) : null;
         const views = (docData.v && docData.v.integerValue) || (docData.views && docData.views.integerValue) || '0';
 
-        // ── Increment view counter (fire-and-forget) ──
-        _incrementViewCount(collection, safeId, parseInt(views, 10)).catch(() => {});
+        // ── Increment view counter (fire-and-forget) ONLY for actual views ──
+        if (!metaOnly) {
+            _incrementViewCount(collection, safeId, parseInt(views, 10)).catch(() => {});
+        }
 
         // ── Return response ──
         if (metaOnly) {
@@ -150,7 +152,7 @@ export default async function handler(req, res) {
                 name,
                 createdAt: createdAt ? new Date(createdAt).toISOString() : null,
                 expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-                views: parseInt(views, 10) + 1,
+                views: parseInt(views, 10),
                 compressed: !!isCompressed,
                 size: html.length,
                 collection
