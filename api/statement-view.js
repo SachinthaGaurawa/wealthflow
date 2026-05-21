@@ -106,8 +106,30 @@ export default async function handler(req, res) {
                 id: safeId, name,
                 createdAt: createdAt ? new Date(createdAt).toISOString() : null,
                 expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-                views: parseInt(views, 10), compressed: !!isCompressed, size: html.length, collection
+                views: parseInt(views, 10), compressed: !!isCompressed, size: html.length, collection,
+                kind: (docData.kind && docData.kind.stringValue) || 'html'
             });
+        }
+
+        // ── NEW: PDF mode (Elite Report). Serve as native PDF so every
+        //    browser / messenger renders it directly (no iframe / data: URL
+        //    hacks that iOS Safari blocks). ─────────────────────────────────
+        const kind = docData.kind && docData.kind.stringValue;
+        const pdfBase64 = (docData.pdf && docData.pdf.stringValue) || null;
+        if (kind === 'pdf' && pdfBase64) {
+            try {
+                const pdfBuf = Buffer.from(pdfBase64, 'base64');
+                const safeFilename = String(name).replace(/[^a-zA-Z0-9_.\- ]/g, '_').slice(0, 80);
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', `inline; filename="${safeFilename}.pdf"`);
+                res.setHeader('Content-Length', pdfBuf.length);
+                res.setHeader('Cache-Control', 'public, max-age=300');
+                res.setHeader('X-Statement-Name', encodeURIComponent(name));
+                return res.status(200).send(pdfBuf);
+            } catch (e) {
+                console.warn('[statement-view] PDF decode failed:', e && e.message);
+                // Fall through to HTML serving below.
+            }
         }
 
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
