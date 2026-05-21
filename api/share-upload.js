@@ -12,7 +12,8 @@
 //   3. tmpfiles.org   — 60-min expiry, direct link
 
 export const config = {
-    maxDuration: 15
+    maxDuration: 30,
+    api: { bodyParser: { sizeLimit: '8mb' } }
 };
 
 export default async function handler(req, res) {
