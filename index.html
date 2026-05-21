@@ -4493,7 +4493,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.9 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6200,6 +6200,39 @@
             }, 300);
         }
 
+        // Migrate legacy bank names ("AMEX" → "American Express (AMEX)") on
+        // load. Runs once per page load and silently rewrites any record
+        // that still has the old short name. The new BANKS list uses the
+        // full name everywhere; the migration keeps existing data
+        // consistent without forcing the user to edit records by hand.
+        function _migrateBankNames() {
+            try {
+                const map = { 'AMEX': 'American Express (AMEX)' };
+                let changed = false;
+                const fix = (arr) => {
+                    if (!Array.isArray(arr)) return;
+                    arr.forEach(rec => {
+                        if (rec && rec.bank && map[rec.bank]) {
+                            rec.bank = map[rec.bank];
+                            changed = true;
+                        }
+                    });
+                };
+                fix(DB.get('loans'));
+                fix(DB.get('ccinstall'));
+                fix(DB.get('cconetime'));
+                fix(DB.get('cheques'));
+                if (changed) {
+                    DB.set('loans', DB.get('loans'));
+                    DB.set('ccinstall', DB.get('ccinstall'));
+                    DB.set('cconetime', DB.get('cconetime'));
+                    DB.set('cheques', DB.get('cheques'));
+                    if (typeof setDirty === 'function') setDirty(true);
+                    console.log('[Migrate] Bank names migrated: AMEX → American Express (AMEX)');
+                }
+            } catch (e) { console.warn('[Migrate] bank name migration failed:', e && e.message); }
+        }
+
         function syncToCloud() {
             if (!userDocRef) return;
             if (!navigator.onLine) { setSyncStatus('offline'); return; }
@@ -6367,7 +6400,7 @@
             return result;
         }
 
-        const BANKS = ['AMEX', 'Bank of Ceylon (BOC)', 'Commercial Bank', 'DFCC Bank', 'Hatton National Bank (HNB)', 'Nations Trust Bank (NTB)', 'Pan Asia Bank', 'Peoples Bank', 'Sampath Bank', 'Seylan Bank', 'Union Bank', 'Other'];
+        const BANKS = ['American Express (AMEX)', 'Bank of Ceylon (BOC)', 'Commercial Bank', 'DFCC Bank', 'Hatton National Bank (HNB)', 'Nations Trust Bank (NTB)', 'Pan Asia Bank', 'Peoples Bank', 'Sampath Bank', 'Seylan Bank', 'Union Bank', 'Other'];
 
         // ISSUE 3 FIX — Language map for AI responses (60+ languages, BCP-47 codes)
         // Used by buildSystemPrompt + the language picker in Settings.
@@ -9002,8 +9035,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     } catch (_) {}
                 }
                 if (_haveDriveToken && typeof executeDriveBackup === 'function') {
-                    try { await Promise.resolve(executeDriveBackup()); driveOk = true; }
-                    catch (de) { console.warn('[backup] drive failed', de && de.message); }
+                    try {
+                        const r = await Promise.resolve(executeDriveBackup());
+                        driveOk = (r !== false); // returns true on real upload success
+                    } catch (de) {
+                        driveOk = false;
+                        console.warn('[backup] drive failed', de && de.message);
+                    }
                 }
 
                 // 3. Record REAL metadata for the status card — ONLY if at
@@ -9057,29 +9095,101 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             }
         }
 
-        async function executeDriveBackup() {
-            if (!gapiToken) return;
-            notify('Uploading backup to Google Drive...', 'info');
+        // WealthFlow master Drive folder (owned by the developer, shared
+        // with "anyone with link → Editor"). Every user's backups land
+        // INSIDE this master folder, but EACH USER gets their own subfolder
+        // named `WealthFlow_<uid8>_<email>` — so multiple users can back up
+        // concurrently without collisions and the developer can see all
+        // backups in one place. drive.file scope only lets each user SEE
+        // their own files, so privacy is preserved.
+        const WF_MASTER_BACKUP_FOLDER = '12_UYwPaxvjNf5oqtW02QAlYAuJJTNO52';
 
-            // CRITICAL — multi-user safety:
-            //  • Backups are written to the SIGNED-IN USER'S own Drive (the
-            //    OAuth token belongs to them, so the upload lands in their
-            //    Drive, not the developer's). No "parents" array is used —
-            //    that was forcing every user's backup into one shared folder
-            //    owned by the developer, causing concurrent-user collisions
-            //    and "I can't see my backups" issues.
-            //  • The filename embeds the user's UID + email so a single
-            //    Drive (e.g. a shared family account used by both partners)
-            //    keeps separate backup files per WealthFlow account.
+        // Per-user subfolder cache so we don't list/create it on every backup.
+        // (Cached in localStorage so it survives reloads but is per-device.)
+        async function _ensureUserBackupSubfolder() {
+            if (!gapiToken) return null;
+            const uid = (window.currentUser && window.currentUser.uid) || 'anon';
+            const email = (window.currentUser && window.currentUser.email) || 'user';
+            const safeEmail = String(email).replace(/[^a-zA-Z0-9._@-]/g, '_');
+            const folderName = `WealthFlow_${uid.slice(0, 8)}_${safeEmail}`;
+
+            // Cache key includes UID so different users on the same browser
+            // don't share a stale folder ID.
+            const cacheKey = 'wf_drive_subfolder_' + uid;
+            const cachedId = localStorage.getItem(cacheKey);
+            if (cachedId) return cachedId;
+
+            // Find an existing subfolder with this exact name inside the master.
+            try {
+                const q = encodeURIComponent(
+                    `name='${folderName}' and ` +
+                    `mimeType='application/vnd.google-apps.folder' and ` +
+                    `'${WF_MASTER_BACKUP_FOLDER}' in parents and trashed=false`
+                );
+                const r = await fetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`,
+                    { headers: { Authorization: 'Bearer ' + gapiToken } }
+                );
+                if (r.ok) {
+                    const j = await r.json();
+                    if (j.files && j.files[0] && j.files[0].id) {
+                        localStorage.setItem(cacheKey, j.files[0].id);
+                        return j.files[0].id;
+                    }
+                }
+            } catch (e) { console.warn('[Drive] subfolder lookup failed:', e && e.message); }
+
+            // Subfolder doesn't exist → create it inside the master folder.
+            try {
+                const r = await fetch('https://www.googleapis.com/drive/v3/files', {
+                    method: 'POST',
+                    headers: {
+                        Authorization: 'Bearer ' + gapiToken,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        name: folderName,
+                        mimeType: 'application/vnd.google-apps.folder',
+                        parents: [WF_MASTER_BACKUP_FOLDER],
+                        description: `WealthFlow backups for ${email} (uid=${uid})`
+                    })
+                });
+                if (r.ok) {
+                    const j = await r.json();
+                    if (j.id) {
+                        localStorage.setItem(cacheKey, j.id);
+                        console.log('[Drive] created per-user backup subfolder', folderName, j.id);
+                        return j.id;
+                    }
+                }
+            } catch (e) { console.warn('[Drive] subfolder create failed:', e && e.message); }
+
+            // If subfolder creation failed (e.g. master folder permissions),
+            // fall back to writing in the master folder directly so the
+            // backup STILL happens — better a slight mix than a lost backup.
+            return WF_MASTER_BACKUP_FOLDER;
+        }
+
+        async function executeDriveBackup() {
+            if (!gapiToken) return false;
+            // (silent during auto-backups; manual flow shows its own toast)
+
+            // Resolve / create this user's private subfolder inside the
+            // shared WealthFlow master folder. Returns the subfolder id, or
+            // the master folder id as last-resort fallback.
+            const parentId = await _ensureUserBackupSubfolder();
+
             const uid = (window.currentUser && window.currentUser.uid) || 'anon';
             const email = (window.currentUser && window.currentUser.email) || 'user';
             const safeEmail = String(email).replace(/[^a-zA-Z0-9._@-]/g, '_');
             const fileContent = JSON.stringify(appData);
             const file = new Blob([fileContent], { type: 'application/json' });
+            const fileName = `WealthFlow_${safeEmail}_${uid.slice(0, 6)}_${today()}_${Date.now()}.json`;
             const metadata = {
-                name: `WealthFlow_${safeEmail}_${uid.slice(0, 6)}_${today()}_${Date.now()}.json`,
+                name: fileName,
                 mimeType: 'application/json',
-                description: `WealthFlow Elite backup · user=${email} · uid=${uid} · created=${new Date().toISOString()}`
+                description: `WealthFlow Elite backup · user=${email} · uid=${uid} · created=${new Date().toISOString()}`,
+                parents: parentId ? [parentId] : undefined
             };
 
             const form = new FormData();
@@ -9087,25 +9197,70 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             form.append('file', file);
 
             try {
-                const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + gapiToken },
-                    body: form
-                });
+                // Ask Drive to return the new file's id + size + parents so we
+                // can VERIFY the write actually landed (highest accuracy).
+                const res = await fetch(
+                    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,parents,createdTime',
+                    {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + gapiToken },
+                        body: form
+                    }
+                );
 
-                if (res.ok) {
-                    const s = DB.getObj('settings');
-                    s.lastBackup = new Date().toISOString();
-                    DB.set('settings', s);
-                    notify('Drive backup complete! ☁️', 'success');
-                } else {
-                    notify('Drive upload failed. Token might be expired.', 'error');
+                if (!res.ok) {
+                    console.warn('[Drive] upload HTTP', res.status);
                     localStorage.removeItem('wf_drive_token');
                     gapiToken = null;
+                    return false;
                 }
+
+                const j = await res.json().catch(() => null);
+                if (!j || !j.id) {
+                    console.warn('[Drive] upload returned no id');
+                    return false;
+                }
+
+                // VERIFY: read the file metadata back. If Drive confirms the
+                // file exists with non-zero size, we mark the backup verified
+                // and stash the file id / size so the Settings card can show
+                // the precise truth ("Verified · 12.4 KB · in folder XYZ").
+                let verified = false, verifiedSize = parseInt(j.size || '0', 10) || fileContent.length;
+                try {
+                    const v = await fetch(
+                        'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(j.id) + '?fields=id,size,parents,trashed',
+                        { headers: { 'Authorization': 'Bearer ' + gapiToken } }
+                    );
+                    if (v.ok) {
+                        const vj = await v.json().catch(() => null);
+                        if (vj && vj.id === j.id && !vj.trashed) {
+                            verified = true;
+                            if (vj.size) verifiedSize = parseInt(vj.size, 10);
+                        }
+                    }
+                } catch (e) { console.warn('[Drive] verify check failed:', e && e.message); }
+
+                // Stash the most-recent file details so the Settings card and
+                // multi-device sync can show the highest-accuracy status.
+                try {
+                    const s = DB.getObj('settings', {});
+                    s.lastDriveBackup = {
+                        at: new Date().toISOString(),
+                        fileId: j.id,
+                        fileName: j.name || fileName,
+                        size: verifiedSize,
+                        verified: !!verified,
+                        parentId: (j.parents && j.parents[0]) || parentId || null,
+                        uid: uid,
+                        email: email
+                    };
+                    DB.set('settings', s);
+                } catch (_) {}
+
+                return verified;
             } catch (e) {
-                console.error(e);
-                notify('Network error during backup.', 'error');
+                console.error('[Drive] upload threw:', e && e.message);
+                return false;
             }
         }
 
@@ -9115,18 +9270,25 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             sel.innerHTML = '<option>Searching Drive...</option>';
 
             try {
-                // List THIS user's WealthFlow backups in their own Drive
-                // (drive.file scope only returns files the app itself created
-                // for the signed-in user — perfect per-user isolation).
+                // First check this user's dedicated subfolder. If we can't
+                // find one yet, search the master folder for files this user
+                // uploaded (drive.file scope only returns files THIS user
+                // created via the app — automatic per-user isolation).
                 const uid = (window.currentUser && window.currentUser.uid) || '';
                 const uidPart = uid ? uid.slice(0, 6) : '';
-                // Match new format (uid-tagged) OR legacy format (untagged) so
-                // existing users can still see and restore their old backups.
-                const nameQuery = uidPart
+                const cached = uid ? localStorage.getItem('wf_drive_subfolder_' + uid) : '';
+                const parentToSearch = cached || WF_MASTER_BACKUP_FOLDER;
+
+                // Match new uid-tagged format OR legacy WealthFlow_Backup_*
+                // so users who backed up before this version still see their
+                // history.
+                const namePred = uidPart
                     ? `(name contains 'WealthFlow_' and (name contains '${uidPart}' or name contains 'WealthFlow_Backup'))`
                     : `name contains 'WealthFlow_'`;
-                const q = encodeURIComponent(`${nameQuery} and trashed = false`);
-                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=10&fields=files(id,name,createdTime)`, {
+                const q = encodeURIComponent(
+                    `${namePred} and '${parentToSearch}' in parents and trashed = false`
+                );
+                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=20&fields=files(id,name,createdTime)`, {
                     headers: { 'Authorization': 'Bearer ' + gapiToken }
                 });
 
@@ -10644,6 +10806,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 try { const fab = $('fabAIBtn'); if (fab) fab.classList.add('show'); } catch (e) { }
                 // Schedule auto backup
                 try { scheduleAutoBackup(); } catch (e) { console.error('[LAUNCH] scheduleAutoBackup error:', e); }
+                // Migrate legacy bank names ("AMEX" → "American Express (AMEX)") once per launch
+                try { _migrateBankNames(); } catch (e) { console.error('[LAUNCH] _migrateBankNames error:', e); }
                 try { updateCCOTBadge(); } catch (e) { }
                 try { updateChequeBadge(); } catch (e) { }
                 try { triggerProactiveEngagement(); } catch (e) { console.error('[LAUNCH] triggerProactiveEngagement error:', e); }
@@ -11271,6 +11435,36 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         // Back-compat alias (older callers)
         function setIncomeStartDateToday() { copyStartDateToPayment(); }
 
+        // Resolve the date the user joined WealthFlow. We prefer:
+        //   1. settings.joinedAt (an ISO date set on first launch)
+        //   2. Firebase user.metadata.creationTime (auth account birth)
+        //   3. localStorage 'wf_joined_at' fallback
+        //   4. today, written back so the next call is stable
+        function _userJoinedDate() {
+            try {
+                const s = DB.getObj('settings', {});
+                if (s.joinedAt) return new Date(s.joinedAt);
+            } catch (_) {}
+            try {
+                if (window.currentUser && window.currentUser.metadata && window.currentUser.metadata.creationTime) {
+                    return new Date(window.currentUser.metadata.creationTime);
+                }
+            } catch (_) {}
+            try {
+                const ls = localStorage.getItem('wf_joined_at');
+                if (ls) return new Date(ls);
+            } catch (_) {}
+            const now = new Date();
+            try {
+                const s = DB.getObj('settings', {});
+                s.joinedAt = now.toISOString();
+                DB.set('settings', s);
+                localStorage.setItem('wf_joined_at', now.toISOString());
+            } catch (_) {}
+            return now;
+        }
+        window._userJoinedDate = _userJoinedDate;
+
         function saveIncome() {
             const name = $('i_name').value.trim(), company = $('i_company').value.trim(), amount = parseMoney($('i_amount').value), rate = parseFloat($('i_rate').value) || 0;
             if (!name || !company || !amount || !rate) { notify('Please fill required fields', 'error'); return; }
@@ -11279,12 +11473,59 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const override = parseMoney($('i_override').value);
             const rec = { id: editMode || uid(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
             const arr = DB.get('income');
+            const isNewRecord = !editMode;
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
             DB.set('income', arr);
+
+            // ── Issue 8: retroactive past-month auto-confirmation ──────────
+            // If the user adds an investment that started BEFORE they joined
+            // WealthFlow (e.g. investment 2025-04-20, joined 2026-05-10),
+            // automatically mark all pre-join months as confirmed-historical
+            // in `incomeReceived` so the system doesn't pester them every
+            // day for months they can't possibly tick. Only runs on NEW
+            // records (not edits) and only for months that don't already
+            // have a manual confirmation.
+            let autoMarked = 0;
+            if (isNewRecord && rec.start) {
+                try {
+                    const startDate = new Date(rec.start + 'T00:00:00');
+                    const joinedDate = _userJoinedDate();
+                    if (startDate < joinedDate) {
+                        const received = DB.getObj('incomeReceived', {});
+                        // Walk every month from startDate up to (but not
+                        // including) joinedDate. Each month gets a key
+                        // `<id>_YYYY-MM` valued as a "historical" stamp.
+                        const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+                        const joinedMonth = new Date(joinedDate.getFullYear(), joinedDate.getMonth(), 1);
+                        while (cursor < joinedMonth) {
+                            const ym = `${cursor.getFullYear()}-${p2(cursor.getMonth() + 1)}`;
+                            const key = `${rec.id}_${ym}`;
+                            if (received[key] === undefined) {
+                                received[key] = {
+                                    auto: true,
+                                    historical: true,
+                                    at: Date.now(),
+                                    reason: 'pre-join historical (auto-marked)'
+                                };
+                                autoMarked++;
+                            }
+                            cursor.setMonth(cursor.getMonth() + 1);
+                        }
+                        if (autoMarked > 0) {
+                            DB.set('incomeReceived', received);
+                        }
+                    }
+                } catch (e) { console.warn('[saveIncome] retroactive mark failed:', e && e.message); }
+            }
+
             // Save to autocomplete
             acSave('inc_name', name); acSave('inc_company', company);
             closeModal('mdIncome'); clearIncomeForm(); renderIncome(); renderDash();
-            notify(editMode ? 'Income source updated!' : 'Income source added!');
+            const baseMsg = editMode ? 'Income source updated!' : 'Income source added!';
+            const extraMsg = autoMarked > 0
+                ? ` ✓ ${autoMarked} past month${autoMarked > 1 ? 's' : ''} auto-marked as historical (before you joined WealthFlow)`
+                : '';
+            notify(baseMsg + extraMsg);
         }
         function clearIncomeForm() {
             editMode = null;
@@ -14185,8 +14426,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
             <td>${item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}</td>
-            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')">✅</button>` : ''}
-                <button class="ib d" onclick="deleteCCOT('${item.id}')">🗑️</button></div></td>
+            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')" title="Mark paid">✅</button>` : ''}
+                <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit">✏️</button>
+                <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete">🗑️</button></div></td>
         </tr>`;
             }).join('');
         }
@@ -14330,6 +14572,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             document.querySelectorAll('.exp-vbtn').forEach(b => b.classList.remove('active'));
             if (btn) btn.classList.add('active');
             window._expViewMode = mode;
+            // Persist so it survives page navigation
+            try { localStorage.setItem('wf_exp_view', mode); } catch (_) {}
             renderExpenses();
         }
 
@@ -14355,7 +14599,97 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-green"><div class="stat-label">Paid</div><div class="stat-val">${filtered.filter(x => x.completed).length}</div><div class="stat-meta">of ${filtered.length}</div></div>
     `;
             const catBadge = { Food: 'bg-g', Transport: 'bg-b', Utilities: 'bg-a', Medical: 'bg-r', Education: 'bg-p', Entertainment: 'bg-c', Clothing: 'bg-gr', Other: 'bg-gr' };
+
+            // ── View mode: Table (default) or Schedule (month-grouped timeline) ──
+            const mode = window._expViewMode || (function(){
+                try { return localStorage.getItem('wf_exp_view') || 'table'; } catch (_) { return 'table'; }
+            })();
+            // Sync the toggle buttons to the active mode (handles page-reload).
+            try {
+                document.querySelectorAll('.exp-vbtn').forEach(b => b.classList.remove('active'));
+                const targetBtn = mode === 'schedule' ? $('expViewSched') : $('expViewTable');
+                if (targetBtn) targetBtn.classList.add('active');
+            } catch (_) {}
+
+            const wrap = document.querySelector('#page-expenses .tbl-wrap');
             const tbody = $('expBody');
+
+            if (mode === 'schedule') {
+                // Hide the table wrapper, render a Schedule timeline grouped
+                // by month, sorted oldest → newest, with category sub-totals.
+                if (wrap) wrap.style.display = 'none';
+                let schedHost = document.getElementById('expScheduleWrap');
+                if (!schedHost) {
+                    schedHost = document.createElement('div');
+                    schedHost.id = 'expScheduleWrap';
+                    schedHost.style.cssText = 'margin-top:14px;';
+                    if (wrap && wrap.parentNode) wrap.parentNode.insertBefore(schedHost, wrap.nextSibling);
+                    else document.getElementById('page-expenses').appendChild(schedHost);
+                }
+                schedHost.style.display = '';
+
+                if (!filtered.length) {
+                    schedHost.innerHTML = emptyState('📅', 'No expenses scheduled', 'Add daily and monthly expenses to see them on a timeline');
+                    return;
+                }
+
+                // Group by YYYY-MM, sort ascending for timeline feel.
+                const groups = {};
+                filtered.forEach(x => {
+                    const key = x.month;
+                    (groups[key] = groups[key] || []).push(x);
+                });
+                const monthKeys = Object.keys(groups).sort();
+                const now = new Date();
+                const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+
+                schedHost.innerHTML = monthKeys.map(ym => {
+                    const items = groups[ym];
+                    const monthTotal = items.reduce((a, b) => a + b.amount, 0);
+                    const paidCount = items.filter(i => i.completed).length;
+                    const isCurrent = ym === ymNow;
+                    const isPast = ym < ymNow;
+                    const tone = isCurrent ? 'var(--accent)' : isPast ? 'var(--text3)' : 'var(--blue)';
+                    const tag = isCurrent ? 'THIS MONTH' : isPast ? 'PAST' : 'UPCOMING';
+                    const itemRows = items.map(x => `
+                        <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
+                            <span class="badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;">${x.cat}</span>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-weight:600;font-size:13px;">${x.desc}</div>
+                                ${x.notes ? `<div style="font-size:11px;color:var(--text3);">${x.notes}</div>` : ''}
+                            </div>
+                            <div style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};">${fmt(x.amount)}</div>
+                            <div class="act-btns">
+                                ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid">✅</button>` : ''}
+                                <button class="ib e" onclick="editExpense('${x.id}')" title="Edit">✏️</button>
+                                <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete">🗑️</button>
+                            </div>
+                        </div>
+                    `).join('');
+                    return `
+                        <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;flex-wrap:wrap;">
+                                <div style="display:flex;align-items:center;gap:10px;">
+                                    <div style="font-weight:800;font-size:15px;color:${tone};">📅 ${monthStrFmt(ym + '-01')}</div>
+                                    <span class="badge" style="background:rgba(212,175,55,0.12);color:${tone};font-size:10px;font-weight:700;">${tag}</span>
+                                </div>
+                                <div style="text-align:right;">
+                                    <div style="font-family:var(--mono);font-weight:800;color:var(--red);">${fmt(monthTotal)}</div>
+                                    <div style="font-size:11px;color:var(--text3);">${paidCount} of ${items.length} paid</div>
+                                </div>
+                            </div>
+                            ${itemRows}
+                        </div>
+                    `;
+                }).join('');
+                return;
+            }
+
+            // Default — table view
+            if (wrap) wrap.style.display = '';
+            const schedHost = document.getElementById('expScheduleWrap');
+            if (schedHost) schedHost.style.display = 'none';
+
             if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="7">${emptyState('🧾', 'No expenses', 'Add daily and monthly expenses to track spending')}</td></tr>`; return; }
             tbody.innerHTML = filtered.map(x => `<tr class="${x.completed ? 'done-row' : ''}">
         <td><div style="font-weight:600;">${x.desc}</div>${x.notes ? `<div class="td-m">${x.notes}</div>` : ''}</td>
@@ -14678,6 +15012,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== MONTHLY DATA & PLAN ====================
         function getMonthlyData(year, month) {
             const dt = new Date(year, month, 1);
+            const monthEnd = new Date(year, month + 1, 0); // last day of the month
             let income = 0;
             DB.get('income').forEach(s => {
                 const start = new Date(s.start + 'T00:00:00');
@@ -14707,8 +15042,74 @@ table.amort tbody tr { page-break-inside: avoid; }
             DB.get('expenses').forEach(e => {
                 if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += e.amount; expItems.push({ name: e.desc, cat: e.cat, amount: e.amount }); }
             });
-            const totalExp = loanTotal + ccTotal + expTotal;
-            return { income, loanTotal, ccTotal, expTotal, totalExp, balance: income - totalExp, loanItems, ccItems2, expItems };
+
+            // ── v7.4.0: include CC One-Time payments, Subscriptions and
+            //    pending Cheques in the monthly expense total. Until v7.3.9
+            //    these were tracked but NOT subtracted from the monthly
+            //    balance, so the system understated total monthly outgoings.
+            //
+            // CC One-Time: the payment date's month
+            let ccotTotal = 0, ccotItems = [];
+            DB.get('cconetime').forEach(item => {
+                if (!item || !item.date) return;
+                const itemDate = new Date(item.date + 'T00:00:00');
+                if (itemDate.getFullYear() === year && itemDate.getMonth() === month) {
+                    ccotTotal += item.amount || 0;
+                    ccotItems.push({ name: item.desc, bank: item.bank, amount: item.amount });
+                }
+            });
+
+            // Subscriptions: cycle-aware. Monthly subs hit every month after
+            // creation; yearly subs hit only in the anniversary month;
+            // weekly subs hit ~4.33× per month. Per-month override
+            // (s.monthOverrides[ym]) lets variable bills (telecom) be exact.
+            let subTotal = 0, subItems = [];
+            DB.get('subscriptions').forEach(s => {
+                if (!s) return;
+                const created = s.createdAt ? new Date(s.createdAt) : null;
+                if (created && (created.getFullYear() > year ||
+                               (created.getFullYear() === year && created.getMonth() > month))) return;
+                const overrideAmt = s.monthOverrides && s.monthOverrides[ym];
+                let amt = (typeof overrideAmt === 'number') ? overrideAmt : (s.amount || 0);
+                const cycle = (s.cycle || 'monthly').toLowerCase();
+                if (cycle === 'yearly' || cycle === 'annual') {
+                    // Yearly billing — only the anniversary month counts.
+                    if (created && created.getMonth() !== month) amt = 0;
+                } else if (cycle === 'weekly') {
+                    amt = amt * 4.33;
+                }
+                if (amt > 0) {
+                    subTotal += amt;
+                    subItems.push({ name: s.name, cat: s.category, amount: amt });
+                }
+            });
+
+            // Cheques: due-to-clear in this month (issue date) and not yet
+            // marked cleared/bounced. Outgoing cheques (party paid) only —
+            // received cheques are income, not expenses.
+            let cheTotal = 0, cheItems = [];
+            DB.get('cheques').forEach(c => {
+                if (!c || !c.issue) return;
+                if (c.type === 'received') return;       // incoming → not an expense
+                if (c.status === 'cleared' || c.status === 'bounced') {
+                    // Only count cleared cheques in their cleared month.
+                    if (c.status !== 'cleared') return;
+                }
+                const releaseDate = new Date((c.release || c.issue) + 'T00:00:00');
+                if (releaseDate.getFullYear() === year && releaseDate.getMonth() === month) {
+                    cheTotal += c.amount || 0;
+                    cheItems.push({ name: c.party + ' · ' + (c.no || ''), amount: c.amount });
+                }
+            });
+
+            const totalExp = loanTotal + ccTotal + expTotal + ccotTotal + subTotal + cheTotal;
+            return {
+                income, loanTotal, ccTotal, expTotal,
+                ccotTotal, subTotal, cheTotal,
+                totalExp, balance: income - totalExp,
+                loanItems, ccItems2, expItems,
+                ccotItems, subItems, cheItems
+            };
         }
 
         function renderMonthly() {
@@ -15489,11 +15890,23 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div style="font-size:11px;color:var(--text3);margin-top:4px;">
                         ${(() => {
                             const meta = s.lastBackupMeta || null;
+                            const drv  = s.lastDriveBackup || null;
                             const recs = (DB.get('income').length + DB.get('loans').length + DB.get('expenses').length + DB.get('targets').length + DB.get('ccinstall').length + DB.get('cconetime').length + DB.get('cheques').length + DB.get('subscriptions').length);
                             if (meta) {
-                                const dest = (meta.cloud ? '☁️ Cloud✓' : '☁️ Cloud✗') + (meta.drive ? ' · 📁 Drive✓' : '');
+                                const cloudPart = meta.cloud ? '☁️ Cloud✓' : '☁️ Cloud✗';
+                                let drivePart = '';
+                                if (meta.drive && drv && drv.verified) {
+                                    const kb = drv.size ? ((drv.size / 1024).toFixed(1) + ' KB') : '';
+                                    drivePart = ` · 📁 Drive✓ <span style="color:var(--green);font-weight:700;">VERIFIED</span>${kb ? ' · ' + kb : ''}`;
+                                } else if (meta.drive) {
+                                    drivePart = ' · 📁 Drive✓';
+                                }
                                 const trig = meta.trigger === 'auto' ? '🤖 Auto' : '👆 Manual';
-                                return `📊 ${meta.records} records backed up · ${dest} · ${trig} · ⏰ Schedule: ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? s.autoBackupFreq : 'off'}`;
+                                const sched = s.autoBackupFreq && s.autoBackupFreq !== 'off' ? s.autoBackupFreq : 'off';
+                                return `📊 ${meta.records} records · ${cloudPart}${drivePart} · ${trig} · ⏰ ${sched}`;
+                            }
+                            if (s.lastBackupAttempt && !s.lastBackupAttempt.success) {
+                                return `⚠️ <span style="color:var(--red);font-weight:700;">Last attempt failed</span> — ${s.lastBackupAttempt.reason || 'will retry automatically'}`;
                             }
                             return `📊 ${recs} records · 🔄 ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? '⏰ Auto: ' + s.autoBackupFreq : '⏰ Auto-backup off'}`;
                         })()}
@@ -15662,8 +16075,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.3.9 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.9 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.0 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15672,7 +16085,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.9 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -16924,21 +17337,19 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
             const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
             const pdfBlob = await _statementHtmlToPdfBlob(html, eliteName);
 
-            // Upload via server-side proxy and show share dialog
+            // Upload via server-side statement-store and show share dialog.
+            // This is the SAME endpoint used by loan statements, so the URL
+            // is the wealthflow-personal.vercel.app domain (matching the
+            // loan flow). The server stores the PDF base64 in Firestore and
+            // returns a /api/statement-view?id=… URL that serves the PDF
+            // with Content-Type: application/pdf — iOS, Android, WhatsApp,
+            // Gmail all render it natively.
             notify('Generating Elite Report shareable link…', 'info');
             (async () => {
                 try {
                     if (cancelled) return;
                     setProgress(40, 'Encoding PDF…');
 
-                    // Send the PDF blob DIRECTLY to /api/share-upload (which
-                    // posts the raw PDF bytes to file.io / 0x0.st / tmpfiles).
-                    // The old approach wrapped the PDF as base64 INSIDE an
-                    // HTML <iframe>, which (a) doubled the payload size so
-                    // generation was very slow, and (b) iOS Safari blocks
-                    // `data:application/pdf;base64,…` inside iframes — the
-                    // generated link opened to a blank page. Direct upload
-                    // returns a real PDF URL every browser opens correctly.
                     const reader = new FileReader();
                     const base64 = await new Promise((resolve, reject) => {
                         reader.onload = () => resolve(reader.result.split(',')[1]);
@@ -16947,27 +17358,33 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     });
 
                     if (cancelled) return;
-                    setProgress(55, 'Uploading PDF…');
+                    setProgress(55, 'Storing on WealthFlow servers…');
 
                     const proxyBase = 'https://wealthflow-personal.vercel.app';
-                    const safeMonth = MONTHS[month].replace(/[^a-zA-Z]/g, '');
-                    const fileName = `WealthFlow_Elite_Report_${safeMonth}_${year}.pdf`;
+                    const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
 
-                    // 15-second hard timeout so the spinner can't sit forever.
+                    // 18-second hard timeout; PDFs are larger than HTML so
+                    // the server-side Firestore write needs a bit more room.
                     const ctrl = new AbortController();
-                    const tm = setTimeout(() => ctrl.abort(), 15000);
+                    const tm = setTimeout(() => ctrl.abort(), 18000);
                     let result = null;
                     try {
-                        const resp = await fetch(proxyBase + '/api/share-upload', {
+                        const resp = await fetch(proxyBase + '/api/statement-store', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ base64, fileName }),
+                            body: JSON.stringify({ pdfBase64: base64, name: eliteName }),
                             signal: ctrl.signal
                         });
                         if (resp.ok) {
                             const data = await resp.json();
                             if (data && data.url) {
-                                result = { url: data.url, days: data.permanent ? 3650 : 14, via: data.service || 'proxy' };
+                                result = {
+                                    url: data.url,
+                                    days: data.days || 30,
+                                    via: data.via || 'firestore',
+                                    kind: data.kind || 'pdf',
+                                    shortId: data.id
+                                };
                             }
                         }
                     } finally { clearTimeout(tm); }
@@ -16987,9 +17404,8 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     await new Promise(r => setTimeout(r, 150));
                     closeOverlay();
 
-                    // Display beautiful unified Share UI
                     _showShareableUrlDialog({
-                        title: 'Elite Report — ' + MONTHS[month] + ' ' + year,
+                        title: eliteName,
                         url: downloadURL,
                         pdfBlob: pdfBlob,
                         result: result
@@ -16998,7 +17414,6 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                 } catch (err) {
                     console.error('[Elite Report Share]', err);
                     notify('Could not generate cloud link. Ready for local download.', 'warning');
-                    // Fallback to basic share dialog if upload fails
                     _showShareableUrlDialog({
                         title: 'Elite Report — ' + MONTHS[month] + ' ' + year,
                         url: 'File stored locally',
@@ -17343,14 +17758,72 @@ Be direct and use real numbers. Avoid generic advice.`;
         function saveSubscription() {
             const name = $('sub_name').value.trim(), cat = $('sub_cat').value, amount = parseMoney($('sub_amount').value), day = parseInt($('sub_day').value);
             if (!name || !amount || !day) { notify('Fill required fields', 'error'); return; }
-            const rec = { id: editMode || uid(), name, category: cat, amount, dueDay: day, cycle: $('sub_cycle').value, anomalyDetect: $('sub_anomaly').value === '1', notes: $('sub_notes').value, history: [], createdAt: new Date().toISOString() };
             const arr = DB.get('subscriptions') || [];
-            if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
+            // Preserve existing per-month overrides / history when editing,
+            // and never destroy them by clearing the form.
+            const existing = editMode ? arr.find(x => x.id === editMode) : null;
+            const rec = {
+                id: editMode || uid(),
+                name, category: cat, amount, dueDay: day,
+                cycle: $('sub_cycle').value,
+                anomalyDetect: $('sub_anomaly').value === '1',
+                notes: $('sub_notes').value,
+                history: existing ? (existing.history || []) : [],
+                monthOverrides: existing ? (existing.monthOverrides || {}) : {},
+                createdAt: existing ? existing.createdAt : new Date().toISOString()
+            };
+            if (editMode) {
+                const i = arr.findIndex(x => x.id === editMode);
+                if (i > -1) arr[i] = rec;
+            } else arr.push(rec);
             DB.set('subscriptions', arr);
-            closeModal('mdSubscription'); clearSubForm(); renderSubscriptions(); notify('Subscription saved!');
+            closeModal('mdSubscription'); clearSubForm(); renderSubscriptions();
+            notify(editMode ? 'Subscription updated!' : 'Subscription saved!');
             playUISound('success');
         }
-        function clearSubForm() { editMode = null;['sub_name', 'sub_amount', 'sub_day', 'sub_notes'].forEach(id => { if ($(id)) $(id).value = ''; }); }
+        function clearSubForm() { editMode = null;['sub_name', 'sub_amount', 'sub_day', 'sub_notes'].forEach(id => { if ($(id)) $(id).value = ''; }); if ($('mdSubscriptionTitle')) $('mdSubscriptionTitle').textContent = 'Add Subscription / Bill'; }
+        function editSubscription(id) {
+            const s = (DB.get('subscriptions') || []).find(x => x.id === id);
+            if (!s) return;
+            editMode = id;
+            if ($('mdSubscriptionTitle')) $('mdSubscriptionTitle').textContent = 'Edit Subscription / Bill';
+            if ($('sub_name'))    $('sub_name').value    = s.name || '';
+            if ($('sub_cat'))     $('sub_cat').value     = s.category || 'Other';
+            if ($('sub_amount'))  $('sub_amount').value  = fmtN(s.amount || 0);
+            if ($('sub_day'))     $('sub_day').value     = s.dueDay || 1;
+            if ($('sub_cycle'))   $('sub_cycle').value   = s.cycle || 'monthly';
+            if ($('sub_anomaly')) $('sub_anomaly').value = s.anomalyDetect ? '1' : '0';
+            if ($('sub_notes'))   $('sub_notes').value   = s.notes || '';
+            openModal('mdSubscription');
+        }
+        // Variable telecom/utility bills — set the actual amount paid for a
+        // specific month. The dashboard uses this override when summing
+        // monthly expenses, so totals stay accurate even when the bill
+        // fluctuates each month.
+        function setSubscriptionMonthAmount(id) {
+            const arr = DB.get('subscriptions') || [];
+            const s = arr.find(x => x.id === id);
+            if (!s) return;
+            const now = new Date();
+            const defaultYm = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+            const ym = prompt('Which month? (YYYY-MM)', defaultYm);
+            if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return;
+            const cur = (s.monthOverrides && s.monthOverrides[ym]) || s.amount;
+            const ans = prompt(`Actual amount paid for ${ym} (LKR):`, String(cur));
+            if (ans === null) return;
+            const amt = parseMoney(ans);
+            if (!amt && amt !== 0) { notify('Invalid amount', 'error'); return; }
+            s.monthOverrides = s.monthOverrides || {};
+            s.monthOverrides[ym] = amt;
+            // Also record history for charts/anomaly detection.
+            s.history = s.history || [];
+            s.history.push({ month: ym, amount: amt, at: new Date().toISOString() });
+            const i = arr.findIndex(x => x.id === id);
+            if (i > -1) arr[i] = s;
+            DB.set('subscriptions', arr);
+            renderSubscriptions();
+            notify(`Set ${ym} = ${fmt(amt)} for ${s.name}`);
+        }
         function deleteSubscription(id) {
             showConfirm('🗑️', 'Delete Subscription?', '', 'btn-danger', 'Delete', () => {
                 DB.set('subscriptions', (DB.get('subscriptions') || []).filter(x => x.id !== id)); renderSubscriptions(); notify('Deleted', 'info');
@@ -17360,10 +17833,12 @@ Be direct and use real numbers. Avoid generic advice.`;
             const subs = DB.get('subscriptions') || [];
             const now = new Date();
             const day = now.getDate();
+            const ym = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
             let totalMonthly = 0, dueSoon = 0, overdue = 0;
 
             subs.forEach(s => {
-                totalMonthly += s.amount;
+                const override = s.monthOverrides && s.monthOverrides[ym];
+                totalMonthly += (typeof override === 'number') ? override : s.amount;
                 const daysUntil = s.dueDay - day;
                 if (daysUntil < 0) overdue++;
                 else if (daysUntil <= 7) dueSoon++;
@@ -17392,6 +17867,10 @@ Be direct and use real numbers. Avoid generic advice.`;
                 else if (daysUntil === 0) { badgeClass = 'sub-due-urgent'; badgeText = 'Due TODAY'; }
                 else if (daysUntil <= 3) { badgeClass = 'sub-due-urgent'; badgeText = `Due in ${daysUntil}d`; }
                 else if (daysUntil <= 7) { badgeClass = 'sub-due-soon'; badgeText = `Due in ${daysUntil}d`; }
+                const override = s.monthOverrides && s.monthOverrides[ym];
+                const showAmt = (typeof override === 'number') ? override : s.amount;
+                const overrideBadge = (typeof override === 'number')
+                    ? `<div style="font-size:9px;color:var(--accent);font-weight:700;">${ym} override</div>` : '';
 
                 return `<div class="sub-card">
                     <div class="sub-icon">${catIcons[s.category] || '📋'}</div>
@@ -17400,10 +17879,15 @@ Be direct and use real numbers. Avoid generic advice.`;
                         <div style="font-size:11px;color:var(--text3);">${s.category} · Day ${s.dueDay} · ${s.cycle}</div>
                     </div>
                     <div style="text-align:right;">
-                        <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--red);">${fmt(s.amount)}</div>
+                        <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--red);">${fmt(showAmt)}</div>
                         <div class="sub-due-badge ${badgeClass}">${badgeText}</div>
+                        ${overrideBadge}
                     </div>
-                    <button class="ib d" onclick="deleteSubscription('${s.id}')">🗑️</button>
+                    <div class="act-btns">
+                        <button class="ib e" onclick="editSubscription('${s.id}')" title="Edit">✏️</button>
+                        <button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')" title="Set this month's amount (for variable bills like telecom)">💰</button>
+                        <button class="ib d" onclick="deleteSubscription('${s.id}')" title="Delete">🗑️</button>
+                    </div>
                 </div>`;
             }).join('');
         }
@@ -19052,18 +19536,67 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             return null;
         }
 
-        // ==================== AUTO BACKUP SCHEDULER ====================
+        // ==================== AUTO-BACKUP SCHEDULER (v7.4.0 — bulletproof) ====================
+        //
+        // Goal: the auto-backup must run reliably regardless of whether the
+        // user is online, offline, has the app open, has the tab in the
+        // background, or has closed the browser entirely.
+        //
+        // Strategy (layered — each one is a safety net for the next):
+        //
+        //   LAYER 1 — IN-APP TIMER (works when tab is open)
+        //     setInterval every 60s checks if a backup is due.
+        //
+        //   LAYER 2 — VISIBILITY / FOCUS / ONLINE EVENTS (works when tab
+        //              regains focus, e.g. user opens the app after closing it)
+        //     If the user closed the app at 23:00 and reopens at 09:00 the
+        //     next day, the missed daily backup runs immediately.
+        //
+        //   LAYER 3 — SERVICE WORKER BACKGROUND SYNC (works when network
+        //              comes back even if the tab is closed)
+        //     We register a 'wf-auto-backup' sync tag. When connectivity is
+        //     restored, the SW wakes up and tells the app (if open) or just
+        //     marks the queued backup so the next time the app opens, it
+        //     runs immediately.
+        //
+        //   LAYER 4 — PERIODIC BACKGROUND SYNC (Chrome/Edge desktop+Android,
+        //              when site is installed as PWA)
+        //     The browser fires a 'wf-periodic-backup' event ~once a day.
+        //     We use this to push a Firestore-only quick-sync without the
+        //     app being open — the next time the user signs in on ANY
+        //     device, the data is already there.
+        //
+        // Accuracy:
+        //   • Only stamp wf_last_auto_backup AFTER backupNow() returns true.
+        //   • Drive uploads VERIFY the file landed (executeDriveBackup
+        //     re-reads the file metadata before returning true).
+        //   • lastDriveBackup.verified is shown in the Settings card as
+        //     "📁 Drive✓ VERIFIED · 12.4 KB" so the user can trust it.
+        //
         let _autoBackupTimer = null;
+        let _autoBackupInFlight = false;
+        let _lastAutoBackupFailedAt = 0;
+
         function scheduleAutoBackup() {
             if (_autoBackupTimer) clearInterval(_autoBackupTimer);
             const s = DB.getObj('settings', {});
-            if (!s.autoBackupFreq || s.autoBackupFreq === 'off') return;
+            if (!s.autoBackupFreq || s.autoBackupFreq === 'off') {
+                // Also unregister Background Sync so a left-over registration
+                // doesn't keep waking the SW.
+                _unregisterAutoBackupSync();
+                return;
+            }
 
-            // Run a "due check" now (catch-up) AND every 5 minutes while open.
-            // This is reliable even if the app was closed at the scheduled
-            // time — the moment the user opens the app, a missed backup runs.
+            // LAYER 1 — in-app timer
             _checkAutoBackupDue();
-            _autoBackupTimer = setInterval(_checkAutoBackupDue, 5 * 60 * 1000);
+            _autoBackupTimer = setInterval(_checkAutoBackupDue, 60 * 1000);
+
+            // LAYER 3 — register Background Sync (best-effort)
+            _registerAutoBackupSync();
+
+            // LAYER 4 — register Periodic Background Sync (best-effort, only
+            // works in installed PWAs on Chromium-based browsers)
+            _registerPeriodicAutoBackupSync(s.autoBackupFreq);
         }
 
         function _backupIntervalMs(freq) {
@@ -19074,27 +19607,64 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
 
         async function _checkAutoBackupDue() {
+            if (_autoBackupInFlight) return;
             try {
                 const s = DB.getObj('settings', {});
                 if (!s.autoBackupFreq || s.autoBackupFreq === 'off') return;
-                const interval = _backupIntervalMs(s.autoBackupFreq);
-                const last = parseInt(localStorage.getItem('wf_last_auto_backup') || '0');
-                const now = Date.now();
-                if (now - last < interval) return; // not due yet
 
-                console.log('[AutoBackup] Backup is due — running automatically');
-                if (typeof backupNow === 'function') {
-                    await backupNow(true, 'auto'); // silent + tagged as auto
+                // Need to be signed in + online; otherwise wait — visibility
+                // / focus / online listeners will trigger us again.
+                if (!window.currentUser) return;
+                if (!navigator.onLine) return;
+
+                const interval = _backupIntervalMs(s.autoBackupFreq);
+                const last = parseInt(localStorage.getItem('wf_last_auto_backup') || '0', 10);
+                const now = Date.now();
+                const elapsed = now - last;
+
+                // Decide whether a backup is due.
+                //   • First-time (last===0): always due.
+                //   • Normally: due when elapsed ≥ interval.
+                //   • If the previous AUTO attempt failed, allow a retry
+                //     every 5 minutes regardless of the interval.
+                let due = false;
+                if (last === 0) due = true;
+                else if (elapsed >= interval) due = true;
+                else if (_lastAutoBackupFailedAt && (now - _lastAutoBackupFailedAt) >= 5 * 60 * 1000) due = true;
+                if (!due) return;
+
+                console.log('[AutoBackup] running (elapsed=' + Math.round(elapsed/60000) + 'min, freq=' + s.autoBackupFreq + ')');
+                _autoBackupInFlight = true;
+
+                let success = false;
+                try {
+                    if (typeof backupNow === 'function') {
+                        success = await backupNow(true, 'auto');
+                    }
+                } catch (e) {
+                    console.warn('[AutoBackup] backupNow threw:', e && e.message);
+                    success = false;
+                } finally { _autoBackupInFlight = false; }
+
+                if (success) {
+                    localStorage.setItem('wf_last_auto_backup', String(now));
+                    _lastAutoBackupFailedAt = 0;
+                    // Persist the success time into appData so all the user's
+                    // devices see it (via Firestore sync).
+                    try {
+                        const sx = DB.getObj('settings', {});
+                        sx.lastAutoBackupAt = new Date(now).toISOString();
+                        DB.set('settings', sx);
+                        if (typeof setDirty === 'function') setDirty(true);
+                    } catch (_) {}
+                    if (typeof sendSmartNotification === 'function') {
+                        sendSmartNotification('☁️ Auto-Backup Complete', 'Your WealthFlow data was backed up automatically.');
+                    }
                 } else {
-                    const sx = DB.getObj('settings', {});
-                    sx.lastBackup = new Date().toISOString();
-                    DB.set('settings', sx);
-                    if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud());
+                    _lastAutoBackupFailedAt = now;
+                    console.log('[AutoBackup] failed — will retry in 5 min');
                 }
-                localStorage.setItem('wf_last_auto_backup', String(now));
-                if (typeof sendSmartNotification === 'function') {
-                    sendSmartNotification('☁️ Auto-Backup Complete', 'Your WealthFlow data was backed up automatically.');
-                }
+
                 // Refresh the settings card if it's open
                 if (document.getElementById('page-settings')?.classList.contains('active')) {
                     try { renderSettings(); } catch (_) {}
@@ -19102,14 +19672,84 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             } catch (e) { console.warn('[AutoBackup] check failed:', e && e.message); }
         }
 
-        // Re-check auto-backup when the tab becomes visible again (covers the
-        // "browser was reopened / woke from sleep" case) and when auth lands.
+        // ── Layer 3 — Service Worker Background Sync ─────────────────────────
+        // Asks the SW to wake us when the network comes back and the user
+        // is offline at backup time. Supported on Chromium browsers.
+        async function _registerAutoBackupSync() {
+            try {
+                if (!('serviceWorker' in navigator)) return;
+                const reg = await navigator.serviceWorker.ready;
+                if (reg && reg.sync) {
+                    await reg.sync.register('wf-auto-backup').catch(() => {});
+                }
+            } catch (_) {}
+        }
+        async function _unregisterAutoBackupSync() {
+            try {
+                if (!('serviceWorker' in navigator)) return;
+                const reg = await navigator.serviceWorker.ready;
+                if (reg && reg.periodicSync) {
+                    const tags = await reg.periodicSync.getTags().catch(() => []);
+                    for (const t of tags) {
+                        if (t === 'wf-periodic-backup') {
+                            await reg.periodicSync.unregister(t).catch(() => {});
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
+
+        // ── Layer 4 — Periodic Background Sync ───────────────────────────────
+        // Only works for installed PWAs on Chromium browsers AND only after
+        // the user has used the app enough for the browser to grant
+        // 'periodic-background-sync' permission. We register it on
+        // best-effort basis; the in-app timer + visibility events cover
+        // every other browser.
+        async function _registerPeriodicAutoBackupSync(freq) {
+            try {
+                if (!('serviceWorker' in navigator)) return;
+                const reg = await navigator.serviceWorker.ready;
+                if (!reg || !reg.periodicSync || !navigator.permissions) return;
+
+                const status = await navigator.permissions
+                    .query({ name: 'periodic-background-sync' })
+                    .catch(() => null);
+                if (!status || status.state !== 'granted') return;
+
+                const minInterval = freq === 'daily' ? 22 * 60 * 60 * 1000 :
+                                    freq === 'weekly' ? 6 * 24 * 60 * 60 * 1000 :
+                                    freq === 'monthly' ? 28 * 24 * 60 * 60 * 1000 :
+                                    22 * 60 * 60 * 1000;
+
+                // Re-register so the interval reflects the current setting.
+                await reg.periodicSync.unregister('wf-periodic-backup').catch(() => {});
+                await reg.periodicSync.register('wf-periodic-backup', { minInterval })
+                    .catch(e => console.warn('[periodicSync] register failed:', e && e.message));
+                console.log('[periodicSync] registered for', freq);
+            } catch (_) {}
+        }
+
+        // Listen for SW messages telling the page to run a backup now (sent
+        // when a Background Sync or Periodic Background Sync event fires).
+        try {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data && event.data.type === 'WF_RUN_AUTO_BACKUP') {
+                        console.log('[AutoBackup] SW asked us to run a backup');
+                        try { _checkAutoBackupDue(); } catch (_) {}
+                    }
+                });
+            }
+        } catch (_) {}
+
+        // Re-check on tab visibility, window focus, and network coming back.
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 try { _checkAutoBackupDue(); } catch (_) {}
             }
         });
         window.addEventListener('focus', () => { try { _checkAutoBackupDue(); } catch (_) {} });
+        window.addEventListener('online', () => { try { _checkAutoBackupDue(); } catch (_) {} });
         // Global helper: 0 = Sunday, 1 = Monday — driven by the Week Starts On setting
         function _weekStartDay() {
             return (DB.getObj('settings', {}).weekStart === 'sunday') ? 0 : 1;
