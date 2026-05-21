@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+        content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
     <title>WealthFlow | Elite Financial System</title>
     <meta name="application-name" content="WealthFlow">
     <meta name="description" content="WealthFlow Elite Financial System - Manage your wealth with precision">
@@ -4493,7 +4493,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.3.8 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.3.9 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -9006,20 +9006,38 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     catch (de) { console.warn('[backup] drive failed', de && de.message); }
                 }
 
-                // 3. Record REAL metadata for the status card
+                // 3. Record REAL metadata for the status card — ONLY if at
+                //    least one backup target actually succeeded. Stamping
+                //    "Last backup just now" when both Cloud AND Drive failed
+                //    was misleading users into thinking their data was safe.
                 const nowIso = new Date().toISOString();
-                s.lastBackup = nowIso;
-                s.lastBackupMeta = {
-                    at: nowIso,
-                    records: recCount,
-                    cloud: cloudOk,
-                    drive: driveOk,
-                    trigger: trigger || (silent ? 'auto' : 'manual'),
-                    durationMs: Date.now() - startedAt
-                };
-                DB.set('settings', s);
-                if (cloudOk) { try { if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud()); } catch (_) {} }
-                localStorage.setItem('wf_last_auto_backup', String(Date.now()));
+                const anySuccess = cloudOk || driveOk;
+                if (anySuccess) {
+                    s.lastBackup = nowIso;
+                    s.lastBackupMeta = {
+                        at: nowIso,
+                        records: recCount,
+                        cloud: cloudOk,
+                        drive: driveOk,
+                        trigger: trigger || (silent ? 'auto' : 'manual'),
+                        durationMs: Date.now() - startedAt
+                    };
+                    // Also remember the most recent attempt for diagnostics
+                    s.lastBackupAttempt = { success: true, at: nowIso, cloud: cloudOk, drive: driveOk };
+                    DB.set('settings', s);
+                    if (cloudOk) { try { if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud()); } catch (_) {} }
+                    localStorage.setItem('wf_last_auto_backup', String(Date.now()));
+                } else {
+                    // Record the failed attempt so the UI can show an honest
+                    // "Last attempt failed — will retry" instead of a stale
+                    // success timestamp.
+                    s.lastBackupAttempt = {
+                        success: false,
+                        at: nowIso,
+                        reason: 'No backup target reachable (Firestore + Drive both failed). The scheduler will retry automatically.'
+                    };
+                    DB.set('settings', s);
+                }
 
                 if (!silent) {
                     notify('✅ Backup complete · ' + recCount + ' records · ' +
@@ -9043,12 +9061,25 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (!gapiToken) return;
             notify('Uploading backup to Google Drive...', 'info');
 
+            // CRITICAL — multi-user safety:
+            //  • Backups are written to the SIGNED-IN USER'S own Drive (the
+            //    OAuth token belongs to them, so the upload lands in their
+            //    Drive, not the developer's). No "parents" array is used —
+            //    that was forcing every user's backup into one shared folder
+            //    owned by the developer, causing concurrent-user collisions
+            //    and "I can't see my backups" issues.
+            //  • The filename embeds the user's UID + email so a single
+            //    Drive (e.g. a shared family account used by both partners)
+            //    keeps separate backup files per WealthFlow account.
+            const uid = (window.currentUser && window.currentUser.uid) || 'anon';
+            const email = (window.currentUser && window.currentUser.email) || 'user';
+            const safeEmail = String(email).replace(/[^a-zA-Z0-9._@-]/g, '_');
             const fileContent = JSON.stringify(appData);
             const file = new Blob([fileContent], { type: 'application/json' });
             const metadata = {
-                name: `WealthFlow_Backup_${today()}_${Date.now()}.json`,
+                name: `WealthFlow_${safeEmail}_${uid.slice(0, 6)}_${today()}_${Date.now()}.json`,
                 mimeType: 'application/json',
-                parents: ['12_UYwPaxvjNf5oqtW02QAlYAuJJTNO52']
+                description: `WealthFlow Elite backup · user=${email} · uid=${uid} · created=${new Date().toISOString()}`
             };
 
             const form = new FormData();
@@ -9084,8 +9115,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             sel.innerHTML = '<option>Searching Drive...</option>';
 
             try {
-                const q = encodeURIComponent(`'12_UYwPaxvjNf5oqtW02QAlYAuJJTNO52' in parents and name contains 'WealthFlow_Backup' and trashed = false`);
-                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=5&fields=files(id,name,createdTime)`, {
+                // List THIS user's WealthFlow backups in their own Drive
+                // (drive.file scope only returns files the app itself created
+                // for the signed-in user — perfect per-user isolation).
+                const uid = (window.currentUser && window.currentUser.uid) || '';
+                const uidPart = uid ? uid.slice(0, 6) : '';
+                // Match new format (uid-tagged) OR legacy format (untagged) so
+                // existing users can still see and restore their old backups.
+                const nameQuery = uidPart
+                    ? `(name contains 'WealthFlow_' and (name contains '${uidPart}' or name contains 'WealthFlow_Backup'))`
+                    : `name contains 'WealthFlow_'`;
+                const q = encodeURIComponent(`${nameQuery} and trashed = false`);
+                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=10&fields=files(id,name,createdTime)`, {
                     headers: { 'Authorization': 'Bearer ' + gapiToken }
                 });
 
@@ -15621,8 +15662,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.3.8 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.3.8 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.3.9 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.3.9 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -15631,7 +15672,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.3.8 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.3.9 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -16887,7 +16928,17 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
             notify('Generating Elite Report shareable link…', 'info');
             (async () => {
                 try {
-                    // Convert blob to base64 for embedding in HTML
+                    if (cancelled) return;
+                    setProgress(40, 'Encoding PDF…');
+
+                    // Send the PDF blob DIRECTLY to /api/share-upload (which
+                    // posts the raw PDF bytes to file.io / 0x0.st / tmpfiles).
+                    // The old approach wrapped the PDF as base64 INSIDE an
+                    // HTML <iframe>, which (a) doubled the payload size so
+                    // generation was very slow, and (b) iOS Safari blocks
+                    // `data:application/pdf;base64,…` inside iframes — the
+                    // generated link opened to a blank page. Direct upload
+                    // returns a real PDF URL every browser opens correctly.
                     const reader = new FileReader();
                     const base64 = await new Promise((resolve, reject) => {
                         reader.onload = () => resolve(reader.result.split(',')[1]);
@@ -16895,37 +16946,50 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                         reader.readAsDataURL(pdfBlob);
                     });
 
-                    // Build a beautiful HTML wrapper for the PDF
-                    const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
-                    const htmlWrapper = `<div style="width:100%;height:calc(100vh - 44px);background:#111;position:relative;overflow:hidden;">
-    <iframe src="data:application/pdf;base64,${base64}#toolbar=0" style="width:100%;height:100%;border:none;display:block;"></iframe>
-    <a download="WealthFlow_Elite_Report.pdf" href="data:application/pdf;base64,${base64}" style="position:fixed;top:64px;right:24px;z-index:99999;background:linear-gradient(135deg,#d4af37,#b8962e);color:#000;padding:12px 20px;border-radius:12px;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(212,175,55,0.4);display:flex;align-items:center;gap:8px;transition:transform 0.2s;">
-        <span style="font-size:18px;">📥</span> Download PDF
-    </a>
-</div>`;
-                if (cancelled) return;
-                setProgress(40, 'Uploading to secure cloud…');
+                    if (cancelled) return;
+                    setProgress(55, 'Uploading PDF…');
 
-                // Call the bulletproof loan sharing engine!
-                const result = await _uploadStatementForSharing(htmlWrapper, eliteName);
-                if (cancelled) return;
-                
-                if (!result || !result.url) {
-                    throw new Error("Failed to generate URL");
-                }
-                
-                setProgress(90, 'Finalizing…');
-                await new Promise(r => setTimeout(r, 100));
-                
-                const downloadURL = result.url;
+                    const proxyBase = 'https://wealthflow-personal.vercel.app';
+                    const safeMonth = MONTHS[month].replace(/[^a-zA-Z]/g, '');
+                    const fileName = `WealthFlow_Elite_Report_${safeMonth}_${year}.pdf`;
 
-                setProgress(100, 'Ready!');
-                await new Promise(r => setTimeout(r, 150));
-                closeOverlay();
+                    // 15-second hard timeout so the spinner can't sit forever.
+                    const ctrl = new AbortController();
+                    const tm = setTimeout(() => ctrl.abort(), 15000);
+                    let result = null;
+                    try {
+                        const resp = await fetch(proxyBase + '/api/share-upload', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ base64, fileName }),
+                            signal: ctrl.signal
+                        });
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            if (data && data.url) {
+                                result = { url: data.url, days: data.permanent ? 3650 : 14, via: data.service || 'proxy' };
+                            }
+                        }
+                    } finally { clearTimeout(tm); }
 
-                // Display beautiful unified Share UI
-                _showShareableUrlDialog({
-                        title: eliteName,
+                    if (cancelled) return;
+
+                    if (!result || !result.url) {
+                        throw new Error("Failed to generate URL");
+                    }
+
+                    setProgress(90, 'Finalising…');
+                    await new Promise(r => setTimeout(r, 100));
+
+                    const downloadURL = result.url;
+
+                    setProgress(100, 'Ready!');
+                    await new Promise(r => setTimeout(r, 150));
+                    closeOverlay();
+
+                    // Display beautiful unified Share UI
+                    _showShareableUrlDialog({
+                        title: 'Elite Report — ' + MONTHS[month] + ' ' + year,
                         url: downloadURL,
                         pdfBlob: pdfBlob,
                         result: result
