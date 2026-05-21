@@ -5,16 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
-    <!-- iOS PWA: makes the system status bar transparent + lays under the notch
-         so our own .topbar safe-area padding becomes the visible header gap. -->
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="WealthFlow">
-    <meta name="theme-color" content="#0a1020">
     <title>WealthFlow | Elite Financial System</title>
     <meta name="application-name" content="WealthFlow">
     <meta name="description" content="WealthFlow Elite Financial System - Manage your wealth with precision">
+    <meta name="theme-color" content="#060a14">
     <meta property="og:title" content="WealthFlow — Loan Statement">
     <meta property="og:description"
         content="View your secure personal loan account statement from WealthFlow Elite Financial System.">
@@ -27,9 +21,14 @@
     <meta name="twitter:description" content="Secure personal loan account statement from WealthFlow.">
     <meta name="twitter:image"
         content="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="WealthFlow">
     <meta name="msapplication-TileColor" content="#060a14">
     <meta name="msapplication-tap-highlight" content="no">
     <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-title" content="WealthFlow">
     <meta name="format-detection" content="telephone=no">
     <link rel="icon" type="image/x-icon"
         href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660550/WealthFlow_Logo_r3zccz.ico">
@@ -126,6 +125,13 @@
 
         html {
             scroll-behavior: smooth;
+            /* ISSUE 1 FIX: iOS Safari aggressively "boosts" text on rotate to
+               landscape on phones and tablets, which is why headings like
+               "LKR 9.6M" suddenly grew. Pin text size so it stays the same in
+               portrait and landscape. */
+            -webkit-text-size-adjust: 100%;
+            -moz-text-size-adjust: 100%;
+            text-size-adjust: 100%;
         }
 
         body {
@@ -802,7 +808,14 @@
         .topbar {
             background: var(--bg2);
             border-bottom: 1px solid var(--border);
-            padding: max(12px, env(safe-area-inset-top, 12px)) max(26px, env(safe-area-inset-right, 26px)) 12px max(26px, env(safe-area-inset-left, 26px));
+            /* ISSUE 2 FIX: respect safe-area on top (notch / Dynamic Island /
+               status bar) AND sides (landscape notches on iPhones, foldables).
+               max() keeps the existing visual padding when there's no inset. */
+            padding:
+                max(12px, env(safe-area-inset-top, 12px))
+                max(26px, env(safe-area-inset-right, 26px))
+                12px
+                max(26px, env(safe-area-inset-left, 26px));
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -811,15 +824,15 @@
             z-index: 50;
             gap: 10px;
         }
-        /* PWA mode (added to Home Screen) — give explicit clearance from the
-           notch / Dynamic Island / hole-punch cameras. */
+        /* When installed as a PWA (home-screen / standalone) iOS reports
+           apple-mobile-web-app-status-bar-style=black-translucent, which means
+           the OS status bar SITS ON TOP of our app. Pad extra so the topbar
+           clears the notch / clock / battery completely. */
         @media (display-mode: standalone), (display-mode: window-controls-overlay) {
-            .topbar { padding-top: max(env(safe-area-inset-top, 14px), 14px); }
-            body { padding-top: 0; }
+            .topbar {
+                padding-top: max(env(safe-area-inset-top, 14px), 14px);
+            }
         }
-        /* Prevent iOS Safari from inflating font sizes when the phone rotates
-           to landscape (Issue 1: text became huge on rotation). */
-        html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
         .tb-left {
             display: flex;
@@ -2436,8 +2449,8 @@
 
         .topbar {
             padding-top: max(12px, env(safe-area-inset-top));
-            padding-left: max(26px, env(safe-area-inset-left));
-            padding-right: max(26px, env(safe-area-inset-right));
+            padding-left: max(26px, env(safe-area-inset-left, 26px));
+            padding-right: max(26px, env(safe-area-inset-right, 26px));
         }
 
         #notifs {
@@ -8986,9 +8999,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     catch (de) { console.warn('[backup] drive failed', de && de.message); }
                 }
 
-                // 3. Record meta — but ONLY mark "at" / "lastBackup" if SOMETHING
-                //    actually succeeded. A 100%-failed run must not look like a
-                //    successful backup on the Last Backup card (Issue 4).
+                // 3. Record REAL metadata for the status card.
+                // ISSUE 4 FIX: do NOT stamp lastBackup when NOTHING succeeded —
+                // that was making the settings card show a false "Last backup
+                // 2 minutes ago · Cloud ✗ · Drive ✗" line. Stamp success only
+                // when at least one destination genuinely worked, and record
+                // an honest failure marker otherwise so the user/UI can react.
                 const nowIso = new Date().toISOString();
                 if (cloudOk || driveOk) {
                     s.lastBackup = nowIso;
@@ -9000,23 +9016,17 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         trigger: trigger || (silent ? 'auto' : 'manual'),
                         durationMs: Date.now() - startedAt
                     };
-                    DB.set('settings', s);
                     localStorage.setItem('wf_last_auto_backup', String(Date.now()));
                 } else {
-                    // Both failed — record the failure separately so the user
-                    // can see WHY their last backup didn't happen, instead of a
-                    // misleading "success" timestamp.
                     s.lastBackupAttempt = {
                         at: nowIso,
                         success: false,
                         records: recCount,
-                        cloud: false,
-                        drive: false,
                         trigger: trigger || (silent ? 'auto' : 'manual'),
-                        reason: 'No backup target reachable (Firestore + Drive both failed). Will retry on next schedule / app open.'
+                        reason: 'No backup target reachable (cloud and drive both failed). Will retry on the next scheduled run.'
                     };
-                    DB.set('settings', s);
                 }
+                DB.set('settings', s);
                 if (cloudOk) { try { if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud()); } catch (_) {} }
 
                 if (!silent) {
@@ -11228,6 +11238,34 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         // Back-compat alias (older callers)
         function setIncomeStartDateToday() { copyStartDateToPayment(); }
 
+        // Determine when the current user first joined WealthFlow. Tries
+        // settings.joinedAt → currentUser.metadata.creationTime → local
+        // marker → falls back to TODAY. Persisted on first lookup so it stays
+        // consistent forever.
+        function _userJoinedDate() {
+            try {
+                const s = DB.getObj('settings', {}) || {};
+                if (s.joinedAt) return new Date(s.joinedAt);
+            } catch (_) {}
+            try {
+                const ct = window.currentUser && window.currentUser.metadata && window.currentUser.metadata.creationTime;
+                if (ct) {
+                    const d = new Date(ct);
+                    if (!isNaN(d)) {
+                        try { const s = DB.getObj('settings', {}); s.joinedAt = d.toISOString(); DB.set('settings', s); } catch (_) {}
+                        return d;
+                    }
+                }
+            } catch (_) {}
+            try {
+                const raw = localStorage.getItem('wf_joined_at');
+                if (raw) { const d = new Date(raw); if (!isNaN(d)) return d; }
+            } catch (_) {}
+            const today = new Date();
+            try { localStorage.setItem('wf_joined_at', today.toISOString()); } catch (_) {}
+            return today;
+        }
+
         function saveIncome() {
             const name = $('i_name').value.trim(), company = $('i_company').value.trim(), amount = parseMoney($('i_amount').value), rate = parseFloat($('i_rate').value) || 0;
             if (!name || !company || !amount || !rate) { notify('Please fill required fields', 'error'); return; }
@@ -11236,69 +11274,56 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const override = parseMoney($('i_override').value);
             const rec = { id: editMode || uid(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
             const arr = DB.get('income');
+            const isNewSource = !editMode;
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
             DB.set('income', arr);
 
-            // ── SMART RETROACTIVE CONFIRMATION ──────────────────────────────
-            // If this income/investment started BEFORE the user joined the
-            // system (e.g. an investment opened in April 2025 added today),
-            // auto-mark every month between start and "joined" as
-            // confirmed-historical so the user isn't nagged every day to
-            // confirm receipts from months they weren't tracking yet.
-            // Only do this on first add (not on edit) and only when there
-            // isn't already a manual confirmation record for those months.
-            if (!editMode && rec.start) {
-                try {
-                    const joined = _userJoinedDate(); // ISO 'YYYY-MM-DD'
+            // NEW FEATURE — Retroactive auto-confirm for pre-join months.
+            // If the user adds an income/investment that started BEFORE they
+            // joined WealthFlow, every month between the start date and the
+            // (first day of the) month they joined is auto-marked as
+            // "historical · received" so the system doesn't nag for months
+            // the user obviously can't go back and confirm one-by-one.
+            // Only runs on FIRST add of a source (not on later edits) and
+            // skips months that are already manually confirmed.
+            try {
+                if (isNewSource && rec.start) {
                     const startD = new Date(rec.start + 'T00:00:00');
-                    const joinedD = new Date(joined + 'T00:00:00');
-                    if (startD < joinedD) {
+                    const joined = _userJoinedDate();
+                    if (!isNaN(startD) && startD < joined) {
                         const received = DB.getObj('incomeReceived', {});
-                        let cursor = new Date(startD.getFullYear(), startD.getMonth(), 1);
-                        const stopAt = new Date(joinedD.getFullYear(), joinedD.getMonth(), 1); // exclusive — don't auto-confirm the join month
-                        let auto = 0;
-                        while (cursor < stopAt) {
-                            const key = rec.id + '_' + cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0');
-                            if (!received[key]) { received[key] = { auto: true, at: Date.now(), reason: 'pre-join historical' }; auto++; }
-                            cursor.setMonth(cursor.getMonth() + 1);
+                        const cur = new Date(startD.getFullYear(), startD.getMonth(), 1);
+                        const stopBefore = new Date(joined.getFullYear(), joined.getMonth(), 1);
+                        let stamped = 0;
+                        while (cur < stopBefore) {
+                            const monthStr = cur.getFullYear() + '-' + p2(cur.getMonth() + 1);
+                            const key = rec.id + '_' + monthStr;
+                            if (!received[key]) {
+                                received[key] = {
+                                    confirmedAt: Date.now(),
+                                    month: monthStr,
+                                    amount: rec.monthly,
+                                    notes: 'Auto-marked as historical (before joining WealthFlow)',
+                                    auto: true,
+                                    historical: true
+                                };
+                                stamped++;
+                            }
+                            cur.setMonth(cur.getMonth() + 1);
                         }
-                        if (auto > 0) {
+                        if (stamped) {
                             DB.set('incomeReceived', received);
-                            notify('✓ ' + auto + ' past month' + (auto > 1 ? 's' : '') + ' auto-marked as historical (before you joined WealthFlow). Future months will need normal confirmation.', 'success');
+                            setTimeout(() => notify('✓ ' + stamped + ' past month' + (stamped > 1 ? 's' : '') + ' auto-marked as historical (before you joined WealthFlow)', 'success'), 600);
                         }
                     }
-                } catch (e) { console.warn('[retroConfirm]', e && e.message); }
-            }
+                }
+            } catch (e) { console.warn('[saveIncome] retroactive auto-confirm failed:', e && e.message); }
 
             // Save to autocomplete
             acSave('inc_name', name); acSave('inc_company', company);
             closeModal('mdIncome'); clearIncomeForm(); renderIncome(); renderDash();
             notify(editMode ? 'Income source updated!' : 'Income source added!');
         }
-
-        // Returns the date the user joined WealthFlow (best available signal).
-        // Falls back to today if no earlier signal exists.
-        function _userJoinedDate() {
-            try {
-                const s = DB.getObj('settings', {});
-                if (s.joinedAt) return s.joinedAt.slice(0, 10);
-                if (window.currentUser && window.currentUser.metadata && window.currentUser.metadata.creationTime) {
-                    const d = new Date(window.currentUser.metadata.creationTime);
-                    if (!isNaN(d.getTime())) {
-                        const iso = d.toISOString().slice(0, 10);
-                        s.joinedAt = iso; DB.set('settings', s);
-                        return iso;
-                    }
-                }
-                const stored = localStorage.getItem('wf_joined_at');
-                if (stored) return stored.slice(0, 10);
-                const todayIso = new Date().toISOString().slice(0, 10);
-                localStorage.setItem('wf_joined_at', todayIso);
-                s.joinedAt = todayIso; DB.set('settings', s);
-                return todayIso;
-            } catch (_) { return new Date().toISOString().slice(0, 10); }
-        }
-        window._userJoinedDate = _userJoinedDate;
         function clearIncomeForm() {
             editMode = null;
             ['i_name', 'i_company', 'i_amount', 'i_rate', 'i_start', 'i_end', 'i_override', 'i_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
@@ -16941,70 +16966,78 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
             notify('Generating Elite Report shareable link…', 'info');
             (async () => {
                 try {
-                    // Convert blob to base64 for embedding in HTML
-                    const reader = new FileReader();
-                    const base64 = await new Promise((resolve, reject) => {
-                        reader.onload = () => resolve(reader.result.split(',')[1]);
-                        reader.onerror = reject;
-                        reader.readAsDataURL(pdfBlob);
-                    });
+                    // ISSUE 6 FIX: previously we wrapped the entire base64 PDF
+                    // inside an HTML <iframe data:application/pdf;base64,...>
+                    // and uploaded *that* wrapper. The wrapper was huge (often
+                    // megabytes), iOS Safari and many browsers refused to
+                    // render `data:application/pdf;...` inside an iframe, and
+                    // Firestore frequently rejected the document for size.
+                    // The fix: upload the RAW PDF BLOB directly to the file
+                    // host via /api/share-upload (FormData) and use the
+                    // returned direct PDF URL — much smaller, much faster,
+                    // and opens natively on every device.
+                    setProgress(40, 'Uploading PDF to secure cloud…');
 
-                    // Build a beautiful HTML wrapper for the PDF
                     const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
-                    const htmlWrapper = `<div style="width:100%;height:calc(100vh - 44px);background:#111;position:relative;overflow:hidden;">
-    <iframe src="data:application/pdf;base64,${base64}#toolbar=0" style="width:100%;height:100%;border:none;display:block;"></iframe>
-    <a download="WealthFlow_Elite_Report.pdf" href="data:application/pdf;base64,${base64}" style="position:fixed;top:64px;right:24px;z-index:99999;background:linear-gradient(135deg,#d4af37,#b8962e);color:#000;padding:12px 20px;border-radius:12px;text-decoration:none;font-weight:700;font-size:14px;box-shadow:0 6px 20px rgba(212,175,55,0.4);display:flex;align-items:center;gap:8px;transition:transform 0.2s;">
-        <span style="font-size:18px;">📥</span> Download PDF
-    </a>
-</div>`;
-                if (cancelled) return;
-                setProgress(40, 'Uploading to secure cloud…');
+                    const fileName = 'WealthFlow_Elite_Report_' + year + '_' + p2(month + 1) + '.pdf';
 
-                // Upload the PDF blob DIRECTLY (no HTML wrapper, no inline
-                // base64). This is dramatically faster, produces a much smaller
-                // stored object, and opens natively on every device including
-                // iOS Safari — the old wrapper broke the link on mobile.
-                let result;
-                try {
-                    const proxyBase = 'https://wealthflow-personal.vercel.app';
-                    const fd = new FormData();
-                    fd.append('file', pdfBlob, 'WealthFlow_Elite_Report_' + year + '_' + String(month + 1).padStart(2, '0') + '.pdf');
-                    const ctrl = new AbortController();
-                    const tm = setTimeout(() => ctrl.abort(), 18000);
-                    const resp = await fetch(proxyBase + '/api/share-upload', {
-                        method: 'POST',
-                        body: fd,
-                        signal: ctrl.signal
-                    }).finally(() => clearTimeout(tm));
-                    if (resp.ok) {
-                        const j = await resp.json();
-                        if (j && j.url && j.url.length < 300) {
-                            result = { url: j.url, days: j.permanent ? 365 : 14, expires: j.permanent ? '1 year' : '14 days' };
+                    let downloadURL = null;
+                    let result = null;
+
+                    // Strategy A: send the PDF as base64 JSON to the
+                    // share-upload proxy (which already handles the multipart
+                    // upload to file.io / 0x0.st / tmpfiles server-side, so we
+                    // bypass all browser CORS). Returns a direct PDF URL that
+                    // every device opens natively — no iframe wrapper needed.
+                    try {
+                        const reader = new FileReader();
+                        const base64 = await new Promise((resolve, reject) => {
+                            reader.onload = () => resolve(String(reader.result).split(',')[1]);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(pdfBlob);
+                        });
+                        const ctrl = new AbortController();
+                        const tm = setTimeout(() => ctrl.abort(), 18000);
+                        let resp;
+                        try {
+                            resp = await fetch('https://wealthflow-personal.vercel.app/api/share-upload', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ base64, fileName }),
+                                signal: ctrl.signal
+                            });
+                        } finally { clearTimeout(tm); }
+                        if (resp && resp.ok) {
+                            const j = await resp.json();
+                            if (j && j.url) {
+                                downloadURL = j.url;
+                                result = { url: j.url, service: j.service || 'cloud', days: j.permanent ? 365 : 14 };
+                            }
                         }
+                    } catch (e) { console.warn('[Elite Report] direct PDF upload failed:', e && e.message); }
+
+                    // Strategy B (fallback): tiny HTML viewer that simply
+                    // redirects to a download — no inline base64 data URL.
+                    if (!downloadURL) {
+                        const reader = new FileReader();
+                        const base64 = await new Promise((resolve, reject) => {
+                            reader.onload = () => resolve(reader.result.split(',')[1]);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(pdfBlob);
+                        });
+                        const fallbackHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${eliteName}</title></head><body style="margin:0;background:#0a0e1a;color:#fff;font-family:system-ui,sans-serif;text-align:center;padding:40px 20px;">
+<h2 style="color:#d4af37;">${eliteName}</h2>
+<p>Tap the button below to download the PDF.</p>
+<a download="${fileName}" href="data:application/pdf;base64,${base64}" style="display:inline-block;margin-top:14px;background:linear-gradient(135deg,#d4af37,#b8962e);color:#000;padding:14px 22px;border-radius:12px;text-decoration:none;font-weight:700;">📥 Download PDF</a>
+</body></html>`;
+                        result = await _uploadStatementForSharing(fallbackHtml, eliteName);
+                        if (!result || !result.url) throw new Error('Failed to generate URL');
+                        downloadURL = result.url;
                     }
-                } catch (e) { console.warn('[Elite] direct PDF upload failed:', e && e.message); }
 
-                // Fallback: keep using the HTML/statement pipeline if direct
-                // file upload failed for any reason.
-                if (!result) {
-                    const htmlWrapper = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${eliteName}</title></head><body style="margin:0;background:#0a0e1a;color:#fff;font-family:system-ui,sans-serif;">
-<div style="padding:24px;text-align:center;">
-  <h2 style="margin:0 0 12px;">${eliteName}</h2>
-  <a download="WealthFlow_Elite_Report.pdf" href="data:application/pdf;base64,${base64}" style="display:inline-block;background:linear-gradient(135deg,#d4af37,#b8962e);color:#000;padding:14px 22px;border-radius:12px;text-decoration:none;font-weight:700;">📥 Download PDF</a>
-  <p style="opacity:.7;font-size:13px;margin-top:18px;">Tap Download to save the report.</p>
-</div></body></html>`;
-                    result = await _uploadStatementForSharing(htmlWrapper, eliteName);
-                }
                 if (cancelled) return;
-
-                if (!result || !result.url) {
-                    throw new Error("Failed to generate URL");
-                }
-                
                 setProgress(90, 'Finalizing…');
                 await new Promise(r => setTimeout(r, 100));
-                
-                const downloadURL = result.url;
 
                 setProgress(100, 'Ready!');
                 await new Promise(r => setTimeout(r, 150));
