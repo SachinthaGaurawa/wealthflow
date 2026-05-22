@@ -2148,6 +2148,63 @@
             cursor: default;
         }
 
+        .income-past-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            border: 1.5px solid var(--accent);
+            color: var(--accent);
+            background: rgba(212, 175, 55, .08);
+            cursor: pointer;
+            transition: all .15s;
+            white-space: nowrap;
+        }
+
+        .income-past-btn:hover {
+            background: rgba(212, 175, 55, .22);
+            transform: scale(1.04);
+        }
+
+        /* Past-month confirmation modal — month row */
+        .pm-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            background: var(--bg2);
+            border-radius: 10px;
+            margin-bottom: 8px;
+            border: 1px solid var(--border);
+            transition: all .15s;
+        }
+        .pm-row.pm-confirmed {
+            background: rgba(16,185,129,.08);
+            border-color: rgba(16,185,129,.35);
+        }
+        .pm-row.pm-historical {
+            background: rgba(124, 92, 252, .08);
+            border-color: rgba(124, 92, 252, .35);
+        }
+        .pm-row input[type="checkbox"] {
+            width: 18px; height: 18px; cursor: pointer; flex-shrink: 0; accent-color: var(--green);
+        }
+        .pm-row .pm-month {
+            font-weight: 700; font-size: 13px; min-width: 90px;
+        }
+        .pm-row .pm-tag {
+            font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 8px;
+        }
+        .pm-row input.pm-amount {
+            font-family: var(--mono); font-size: 12px; padding: 4px 8px;
+            border-radius: 6px; border: 1px solid var(--border);
+            background: var(--card); color: var(--text); width: 110px;
+        }
+        .pm-row input.pm-amount:disabled { opacity: .55; }
+
         .income-archive-card {
             opacity: 0.55;
             border-color: var(--border) !important;
@@ -5797,8 +5854,8 @@
                     onclick="closeModal('mdBalFlow')">✕</button>
             </div>
             <div class="fg"><label class="fl">Type *</label><select class="fs" id="bf_type" onchange="bfTypeChanged()">
-                    <option value="in">➕ Income In (Add to Balance)</option>
-                    <option value="out">➖ Investment Out (Reduce Balance)</option>
+                    <option value="out">📤 Investment Out (Reduce Balance)</option>
+                    <option value="in">📥 Return / Income In (Add to Balance)</option>
                     <option value="target">🎯 Saving for Target (Reduces Balance, Tracks Target)</option>
                     <option value="adjust">⚖️ Manual Adjustment (Correction)</option>
                 </select></div>
@@ -11103,16 +11160,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         // Balance Tracker clear helpers (FIXES Issue 1)
         function clearBalFlowForm() {
             editMode = null;
-            // ISSUE 3: default to "Income In" (+). Most balance flows users
-            // log are deposits / returns / paydays; investments out are the
-            // less-frequent case. Defaulting to + makes the common path one
-            // tap shorter and matches what users expect.
-            $('bf_type').value = 'in';
+            $('bf_type').value = 'out';
             ['bf_company', 'bf_amount', 'bf_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
             if ($('bf_date')) $('bf_date').value = today();
             if ($('mdBalFlowTitle')) $('mdBalFlowTitle').textContent = 'Log Balance Flow';
-            // Sync any type-dependent UI (target picker visibility, labels).
-            try { if (typeof bfTypeChanged === 'function') bfTypeChanged(); } catch (_) {}
         }
         function clearBalSetForm() {
             editMode = null;
@@ -11631,10 +11682,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             </div>
             ${!isArchived && active ? `<div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);gap:8px;flex-wrap:wrap;">
                 <div style="font-size:12px;color:var(--text3);">This month (${curMonthStr}):</div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                    <button class="btn btn-ghost btn-sm" onclick="backfillIncome('${source.id}')" title="Confirm receipts for past months">📅 Backfill</button>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     <button class="income-received-btn${isConfirmed ? ' confirmed' : ''}" onclick="${isConfirmed ? '' : `confirmIncomeReceived('${source.id}')`}" ${isConfirmed ? 'disabled' : ''}>
                         ${isConfirmed ? '✅ Received & Confirmed' : '💚 Confirm Received'}
+                    </button>
+                    <button class="income-past-btn" onclick="openPastMonthConfirm('${source.id}')" title="Confirm a previous month you missed (e.g. you were offline for a while, or this income started before you joined WealthFlow)">
+                        📅 Past months
                     </button>
                 </div>
             </div>` : ''}
@@ -11661,73 +11714,76 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         async function confirmIncomeReceived(id) {
-            // Shortcut button on the card — confirm CURRENT month.
-            const now = new Date();
-            const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
-            return confirmIncomeReceivedFor(id, curMonthStr);
-        }
-
-        // Shared confirm-for-month helper. Used by both the "this month"
-        // button and the new past-month backfill picker.
-        async function confirmIncomeReceivedFor(id, monthStr) {
             const arr = DB.get('income');
             const s = arr.find(x => x.id === id);
             if (!s) return;
+            const now = new Date();
+            const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
             const received = DB.getObj('incomeReceived', {});
-            const key = id + '_' + monthStr;
-            if (received[key] && !received[key].auto) {
-                notify('Already confirmed for ' + monthStr, 'info');
-                return;
-            }
-            const ans = await promptIncomeAmount(s, monthStr);
+            const key = id + '_' + curMonthStr;
+
+            const ans = await promptIncomeAmount(s, curMonthStr);
             if (ans === null) return;
-            received[key] = {
-                confirmedAt: Date.now(),
-                month: monthStr,
-                amount: ans.amount,
-                notes: ans.notes,
-                backfilled: monthStr !== `${new Date().getFullYear()}-${p2(new Date().getMonth() + 1)}`
-            };
+
+            received[key] = { confirmedAt: Date.now(), month: curMonthStr, amount: ans.amount, notes: ans.notes };
             DB.set('incomeReceived', received);
             triggerHaptic('success');
-            notify('✅ Income confirmed for ' + monthStr, 'success');
+            notify('✅ Income confirmed received for ' + curMonthStr + '!', 'success');
             renderIncome();
             renderDash();
         }
-        window.confirmIncomeReceivedFor = confirmIncomeReceivedFor;
 
-        // ── ISSUE 1: Backfill past months ─────────────────────────────────
-        // Many users (a) created an income source with a `start` in the past,
-        // (b) joined WealthFlow later, or (c) couldn't sign in for a few
-        // months — and there was no way to mark those past months as
-        // "received" without faking the dates. This picker shows every month
-        // from the income's start date up to the current month that's NOT yet
-        // confirmed, so users can backfill receipts one tap each.
-        async function backfillIncome(id) {
+        // ── Past-month confirmation modal ────────────────────────────────
+        // Lists every month from the income's start date up to LAST month
+        // (we don't include the current month here — that's what the main
+        //  "💚 Confirm Received" button handles). Each unconfirmed month gets
+        // a checkbox + editable amount; pre-filled with `source.monthly`.
+        // The user can tick any combination of months and Save Selected.
+        //
+        // This solves two real situations:
+        //   • Income/investment started BEFORE the user joined WealthFlow
+        //     (e.g. invested 2025-04-20, joined 2026-05-10) and the pre-join
+        //     months weren't auto-marked (or the user wants to confirm them
+        //     with real amounts instead of leaving them as "auto-historical").
+        //   • The user couldn't log in for some months, and now needs to
+        //     retroactively tick those missed months.
+        // =================================================================
+        function openPastMonthConfirm(id) {
             const arr = DB.get('income');
-            const s = arr.find(x => x.id === id);
-            if (!s) return;
+            const source = arr.find(x => x.id === id);
+            if (!source) return;
             const received = DB.getObj('incomeReceived', {});
 
-            // Build the full list of months between start and now.
-            const startD = new Date(s.start + 'T00:00:00');
-            const endD = s.end ? new Date(s.end + 'T00:00:00') : new Date();
+            // Build list of months from start → last month (inclusive of last,
+            // exclusive of current). If income has an end date and it's past,
+            // stop there.
             const now = new Date();
-            const realEnd = endD < now ? endD : now;
+            const curYM = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+            const startDate = source.start ? new Date(source.start + 'T00:00:00') : null;
+            if (!startDate) { notify('This income has no start date.', 'warning'); return; }
+            const endDate = source.end ? new Date(source.end + 'T00:00:00') : null;
+
+            // Walk month by month
             const months = [];
-            const cursor = new Date(startD.getFullYear(), startD.getMonth(), 1);
-            const stop = new Date(realEnd.getFullYear(), realEnd.getMonth(), 1);
-            while (cursor <= stop) {
+            const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+            const stopMonth = new Date(now.getFullYear(), now.getMonth(), 1); // exclude current
+            // If end date is earlier than today, stop at end's month (inclusive)
+            const hardStop = endDate && endDate < now ? new Date(endDate.getFullYear(), endDate.getMonth() + 1, 1) : stopMonth;
+            while (cursor < hardStop && cursor < stopMonth) {
                 const ym = `${cursor.getFullYear()}-${p2(cursor.getMonth() + 1)}`;
-                const rec = received[s.id + '_' + ym];
+                const recvKey = id + '_' + ym;
+                const recvVal = received[recvKey];
                 months.push({
                     ym,
-                    status: !rec ? 'open' : (rec.auto ? 'auto' : 'confirmed'),
-                    rec
+                    label: monthStrFmt(ym + '-01'),
+                    confirmed: !!recvVal && !recvVal.auto,
+                    historical: !!(recvVal && recvVal.auto),
+                    amount: (recvVal && typeof recvVal.amount === 'number') ? recvVal.amount : source.monthly
                 });
                 cursor.setMonth(cursor.getMonth() + 1);
             }
-            // Newest first — the months users most often want are recent.
+
+            // Newest at top (user usually wants to tick recent missed months first)
             months.reverse();
 
             const overlay = document.createElement('div');
@@ -11735,78 +11791,125 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             document.body.appendChild(overlay);
             requestAnimationFrame(() => overlay.classList.add('open'));
 
-            const openCount = months.filter(m => m.status === 'open').length;
-            const autoCount = months.filter(m => m.status === 'auto').length;
-            const confirmedCount = months.filter(m => m.status === 'confirmed').length;
+            const totalCount = months.length;
+            const confirmedCount = months.filter(m => m.confirmed).length;
+            const historicalCount = months.filter(m => m.historical).length;
+            const pendingCount = months.filter(m => !m.confirmed && !m.historical).length;
+
+            if (!months.length) {
+                overlay.innerHTML = `
+                    <div class="md md-sm" style="max-width:440px;">
+                        <div class="md-hdr">
+                            <div class="md-title">📅 Past months</div>
+                            <button class="md-x" onclick="this.closest('.mo').remove()">✕</button>
+                        </div>
+                        <div class="md-body" style="text-align:center;padding:30px 20px;">
+                            <div style="font-size:38px;margin-bottom:10px;">✨</div>
+                            <div style="font-weight:600;margin-bottom:6px;">All caught up</div>
+                            <div style="font-size:12px;color:var(--text3);">There are no past months to confirm for ${source.name}.</div>
+                        </div>
+                    </div>`;
+                overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+                return;
+            }
+
+            const rowsHtml = months.map((m, i) => {
+                const cls = m.confirmed ? ' pm-confirmed' : m.historical ? ' pm-historical' : '';
+                const tag = m.confirmed
+                    ? '<span class="pm-tag" style="background:rgba(16,185,129,.18);color:var(--green);">✓ Confirmed</span>'
+                    : m.historical
+                        ? '<span class="pm-tag" style="background:rgba(124,92,252,.18);color:#a78bfa;">📜 Auto-historical</span>'
+                        : '<span class="pm-tag" style="background:rgba(212,175,55,.18);color:var(--accent);">Pending</span>';
+                return `
+                    <div class="pm-row${cls}" data-ym="${m.ym}">
+                        <input type="checkbox" class="pm-check" data-ym="${m.ym}" ${m.confirmed ? 'checked disabled' : ''}>
+                        <div class="pm-month">${m.label}</div>
+                        ${tag}
+                        <div style="flex:1;"></div>
+                        <input type="text" class="pm-amount" data-ym="${m.ym}"
+                            value="${m.amount.toFixed(2)}"
+                            ${m.confirmed ? 'disabled' : ''}
+                            inputmode="decimal" placeholder="Amount">
+                    </div>`;
+            }).join('');
 
             overlay.innerHTML = `
-                <div class="md" style="background:var(--card);max-width:520px;width:92vw;max-height:84vh;display:flex;flex-direction:column;">
+                <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
-                        <div class="md-title">📅 Backfill Past Months — ${s.name}</div>
-                        <button class="md-x" id="_bf_close">✕</button>
+                        <div class="md-title">📅 Confirm past months — ${source.name}</div>
+                        <button class="md-x" id="_pm_close">✕</button>
                     </div>
-                    <div style="padding:6px 0 12px;font-size:12px;color:var(--text2);line-height:1.6;">
-                        Tap any month to mark it received. Months marked
-                        <span style="color:var(--accent);">auto-historical</span> were
-                        added when you joined — tap them to replace with the real amount.
+                    <div class="md-body" style="overflow-y:auto;flex:1;">
+                        <div style="background:var(--bg2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.5;">
+                            Tick the months you actually received this income, edit the amount if it differs from the default, then tap <b>Save selected</b>.
+                            <div style="margin-top:6px;display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text3);">
+                                <span>📊 Total: <b>${totalCount}</b></span>
+                                <span style="color:var(--green);">✓ Confirmed: <b>${confirmedCount}</b></span>
+                                <span style="color:#a78bfa;">📜 Historical: <b>${historicalCount}</b></span>
+                                <span style="color:var(--accent);">⏳ Pending: <b>${pendingCount}</b></span>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+                            <button class="btn btn-ghost btn-sm" id="_pm_all" type="button">☑ Select all pending</button>
+                            <button class="btn btn-ghost btn-sm" id="_pm_none" type="button">▢ Clear selection</button>
+                            <button class="btn btn-ghost btn-sm" id="_pm_yr" type="button">📅 Select last 12 months</button>
+                        </div>
+                        <div id="_pm_list">${rowsHtml}</div>
                     </div>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap;font-size:11px;margin-bottom:8px;">
-                        <span class="badge bg-r">${openCount} open</span>
-                        <span class="badge bg-a">${autoCount} auto-historical</span>
-                        <span class="badge bg-g">${confirmedCount} confirmed</span>
-                    </div>
-                    <div id="_bf_list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:10px;padding:6px;background:var(--bg2);">
-                        ${months.map(m => {
-                            const pretty = monthStrFmt(m.ym + '-01');
-                            const label = m.status === 'confirmed'
-                                ? `<span class="badge bg-g">✓ ${fmt(m.rec.amount || s.monthly)}</span>`
-                                : m.status === 'auto'
-                                    ? '<span class="badge bg-a">auto-historical</span>'
-                                    : '<span class="badge bg-r">open</span>';
-                            const action = m.status === 'confirmed'
-                                ? `<button class="btn btn-ghost btn-sm" data-act="undo" data-ym="${m.ym}">↺ Undo</button>`
-                                : `<button class="btn btn-primary btn-sm" data-act="confirm" data-ym="${m.ym}">${m.status === 'auto' ? 'Replace' : 'Confirm'}</button>`;
-                            return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:8px;background:var(--card);margin-bottom:5px;">
-                                <div><div style="font-weight:700;font-size:13px;">${pretty}</div><div style="font-size:11px;color:var(--text3);">${m.ym}</div></div>
-                                <div style="display:flex;align-items:center;gap:8px;">${label}${action}</div>
-                            </div>`;
-                        }).join('')}
-                    </div>
-                    <div class="md-ftr">
-                        <button class="btn btn-ghost" id="_bf_cancel">Close</button>
+                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);">
+                        <button class="btn btn-ghost" id="_pm_cancel" type="button" style="flex:1;">Cancel</button>
+                        <button class="btn btn-primary" id="_pm_save" type="button" style="flex:2;">💾 Save selected</button>
                     </div>
                 </div>`;
 
-            const close = () => {
-                overlay.classList.remove('open');
-                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
-            };
-            overlay.querySelector('#_bf_close').onclick = close;
-            overlay.querySelector('#_bf_cancel').onclick = close;
+            const $ovl = (sel) => overlay.querySelector(sel);
+            const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 200); };
+            $ovl('#_pm_close').onclick = closeOvl;
+            $ovl('#_pm_cancel').onclick = closeOvl;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOvl(); });
 
-            overlay.querySelector('#_bf_list').addEventListener('click', async (ev) => {
-                const btn = ev.target.closest('button[data-act]');
-                if (!btn) return;
-                const ym = btn.getAttribute('data-ym');
-                const act = btn.getAttribute('data-act');
-                if (act === 'confirm') {
-                    close();
-                    await confirmIncomeReceivedFor(id, ym);
-                    // Re-open so users can confirm multiple months quickly.
-                    setTimeout(() => backfillIncome(id), 250);
-                } else if (act === 'undo') {
-                    const cur = DB.getObj('incomeReceived', {});
-                    delete cur[id + '_' + ym];
-                    DB.set('incomeReceived', cur);
-                    notify('Marked ' + ym + ' as unreceived', 'info');
-                    close();
-                    setTimeout(() => backfillIncome(id), 200);
-                    renderIncome();
-                    renderDash();
+            $ovl('#_pm_all').onclick = () => {
+                overlay.querySelectorAll('.pm-check:not(:disabled)').forEach(c => { c.checked = true; });
+            };
+            $ovl('#_pm_none').onclick = () => {
+                overlay.querySelectorAll('.pm-check:not(:disabled)').forEach(c => { c.checked = false; });
+            };
+            $ovl('#_pm_yr').onclick = () => {
+                overlay.querySelectorAll('.pm-check:not(:disabled)').forEach((c, i) => {
+                    c.checked = i < 12; // first 12 = most recent 12 (list is newest-first)
+                });
+            };
+
+            $ovl('#_pm_save').onclick = () => {
+                const received = DB.getObj('incomeReceived', {});
+                let saved = 0;
+                overlay.querySelectorAll('.pm-check:not(:disabled)').forEach(c => {
+                    if (!c.checked) return;
+                    const ym = c.getAttribute('data-ym');
+                    const amtInput = overlay.querySelector(`.pm-amount[data-ym="${ym}"]`);
+                    const amount = parseMoney(amtInput && amtInput.value) || source.monthly;
+                    received[id + '_' + ym] = {
+                        confirmedAt: Date.now(),
+                        month: ym,
+                        amount: amount,
+                        notes: 'confirmed via past-months panel',
+                        retroactive: true
+                    };
+                    saved++;
+                });
+                if (saved === 0) {
+                    notify('Nothing selected.', 'warning');
+                    return;
                 }
-            });
+                DB.set('incomeReceived', received);
+                triggerHaptic('success');
+                notify(`✅ ${saved} past month${saved > 1 ? 's' : ''} confirmed for ${source.name}.`, 'success');
+                closeOvl();
+                try { renderIncome(); } catch (_) {}
+                try { renderDash(); } catch (_) {}
+            };
         }
-        window.backfillIncome = backfillIncome;
+        window.openPastMonthConfirm = openPastMonthConfirm;
 
         function promptIncomeAmount(s, monthKey) {
             return new Promise((resolve) => {
@@ -14721,21 +14824,25 @@ table.amort tbody tr { page-break-inside: avoid; }
             sel.innerHTML = '<option value="">All Months</option>' + allMonths.map(m => `<option value="${m}" ${m === cur ? 'selected' : ''}>${monthStrFmt(m + '-01')}</option>`).join('');
             let filtered = cur ? arr.filter(x => x.month === cur) : arr;
             const s = sortState['expenses'];
-            if (s?.field) filtered.sort((a, b) => {
-                if (s.field === 'date') return s.dir * a.month.localeCompare(b.month);
-                if (s.field === 'amount') return s.dir * (b.amount - a.amount);
-                return 0;
-            });
-            // ISSUE 2: when the user hasn't picked an explicit sort, show
-            // newest/upcoming months at the TOP (and newest items within a
-            // month first), instead of the old A-Z insertion order.
-            else {
-                filtered = filtered.slice().sort((a, b) => {
-                    if (a.month !== b.month) return b.month.localeCompare(a.month);
-                    // Within the same month, newer entries first (uid is
-                    // monotonic in this codebase so it's a fair proxy for
-                    // insertion time).
-                    return String(b.id).localeCompare(String(a.id));
+            if (s?.field) {
+                filtered.sort((a, b) => {
+                    if (s.field === 'date') return s.dir * a.month.localeCompare(b.month);
+                    if (s.field === 'amount') return s.dir * (b.amount - a.amount);
+                    return 0;
+                });
+            } else {
+                // Default order: newest/upcoming month at the top, oldest at
+                // the bottom. So next-month scheduled expenses appear first,
+                // then this month, then past months — matching the way the
+                // user reads their schedule. Within a month: latest entries
+                // first (createdAt desc, then id desc as a tiebreak).
+                filtered.sort((a, b) => {
+                    const m = (b.month || '').localeCompare(a.month || '');
+                    if (m !== 0) return m;
+                    const aT = a.createdAt || a.created || 0;
+                    const bT = b.createdAt || b.created || 0;
+                    if (aT !== bT) return bT - aT;
+                    return String(b.id || '').localeCompare(String(a.id || ''));
                 });
             }
             const totAmt = filtered.reduce((sum, x) => sum + x.amount, 0);
@@ -14782,10 +14889,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                     return;
                 }
 
-                // Group by YYYY-MM. Newest (and upcoming/future) months
-                // appear at the TOP — users care most about what's coming
-                // next and the current month, then look backwards into
-                // history below.
+                // Group by YYYY-MM. ORDER: newest/upcoming months at the
+                // top (descending). So the user sees their NEXT-month
+                // scheduled expenses first, then THIS month, then the past
+                // months below — instead of having to scroll down past
+                // old months to find what's coming up.
                 const groups = {};
                 filtered.forEach(x => {
                     const key = x.month;
@@ -16228,7 +16336,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.1 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.4.1 ✓</span>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
