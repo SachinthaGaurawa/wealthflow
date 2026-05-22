@@ -4493,7 +4493,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.0 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.1 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5797,8 +5797,8 @@
                     onclick="closeModal('mdBalFlow')">✕</button>
             </div>
             <div class="fg"><label class="fl">Type *</label><select class="fs" id="bf_type" onchange="bfTypeChanged()">
-                    <option value="out">📤 Investment Out (Reduce Balance)</option>
-                    <option value="in">📥 Return / Income In (Add to Balance)</option>
+                    <option value="in">➕ Income In (Add to Balance)</option>
+                    <option value="out">➖ Investment Out (Reduce Balance)</option>
                     <option value="target">🎯 Saving for Target (Reduces Balance, Tracks Target)</option>
                     <option value="adjust">⚖️ Manual Adjustment (Correction)</option>
                 </select></div>
@@ -11103,10 +11103,16 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         // Balance Tracker clear helpers (FIXES Issue 1)
         function clearBalFlowForm() {
             editMode = null;
-            $('bf_type').value = 'out';
+            // ISSUE 3: default to "Income In" (+). Most balance flows users
+            // log are deposits / returns / paydays; investments out are the
+            // less-frequent case. Defaulting to + makes the common path one
+            // tap shorter and matches what users expect.
+            $('bf_type').value = 'in';
             ['bf_company', 'bf_amount', 'bf_notes'].forEach(id => { if ($(id)) $(id).value = ''; });
             if ($('bf_date')) $('bf_date').value = today();
             if ($('mdBalFlowTitle')) $('mdBalFlowTitle').textContent = 'Log Balance Flow';
+            // Sync any type-dependent UI (target picker visibility, labels).
+            try { if (typeof bfTypeChanged === 'function') bfTypeChanged(); } catch (_) {}
         }
         function clearBalSetForm() {
             editMode = null;
@@ -11623,11 +11629,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div class="ld"><div class="ld-l">PAYMENT START</div><div class="ld-v"><span style="color:var(--accent);font-weight:700;background:rgba(212,175,55,0.1);padding:3px 8px;border-radius:4px;">📅 ${fmtDatePretty(source.day)}</span></div></div>
                 ${dLeft !== null ? `<div class="ld"><div class="ld-l">DAYS LEFT</div><div class="ld-v" style="${dLeft < 60 ? 'color:var(--red)' : ''}">${dLeft > 0 ? dLeft + ' days' : 'Ended'}</div></div>` : ''}
             </div>
-            ${!isArchived && active ? `<div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);">
+            ${!isArchived && active ? `<div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);gap:8px;flex-wrap:wrap;">
                 <div style="font-size:12px;color:var(--text3);">This month (${curMonthStr}):</div>
-                <button class="income-received-btn${isConfirmed ? ' confirmed' : ''}" onclick="${isConfirmed ? '' : `confirmIncomeReceived('${source.id}')`}" ${isConfirmed ? 'disabled' : ''}>
-                    ${isConfirmed ? '✅ Received & Confirmed' : '💚 Confirm Received'}
-                </button>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button class="btn btn-ghost btn-sm" onclick="backfillIncome('${source.id}')" title="Confirm receipts for past months">📅 Backfill</button>
+                    <button class="income-received-btn${isConfirmed ? ' confirmed' : ''}" onclick="${isConfirmed ? '' : `confirmIncomeReceived('${source.id}')`}" ${isConfirmed ? 'disabled' : ''}>
+                        ${isConfirmed ? '✅ Received & Confirmed' : '💚 Confirm Received'}
+                    </button>
+                </div>
             </div>` : ''}
             ${source.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${source.notes}</div>` : ''}
         </div>`;
@@ -11652,24 +11661,152 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         async function confirmIncomeReceived(id) {
+            // Shortcut button on the card — confirm CURRENT month.
+            const now = new Date();
+            const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+            return confirmIncomeReceivedFor(id, curMonthStr);
+        }
+
+        // Shared confirm-for-month helper. Used by both the "this month"
+        // button and the new past-month backfill picker.
+        async function confirmIncomeReceivedFor(id, monthStr) {
             const arr = DB.get('income');
             const s = arr.find(x => x.id === id);
             if (!s) return;
-            const now = new Date();
-            const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
             const received = DB.getObj('incomeReceived', {});
-            const key = id + '_' + curMonthStr;
-
-            const ans = await promptIncomeAmount(s, curMonthStr);
+            const key = id + '_' + monthStr;
+            if (received[key] && !received[key].auto) {
+                notify('Already confirmed for ' + monthStr, 'info');
+                return;
+            }
+            const ans = await promptIncomeAmount(s, monthStr);
             if (ans === null) return;
-
-            received[key] = { confirmedAt: Date.now(), month: curMonthStr, amount: ans.amount, notes: ans.notes };
+            received[key] = {
+                confirmedAt: Date.now(),
+                month: monthStr,
+                amount: ans.amount,
+                notes: ans.notes,
+                backfilled: monthStr !== `${new Date().getFullYear()}-${p2(new Date().getMonth() + 1)}`
+            };
             DB.set('incomeReceived', received);
             triggerHaptic('success');
-            notify('✅ Income confirmed received for ' + curMonthStr + '!', 'success');
+            notify('✅ Income confirmed for ' + monthStr, 'success');
             renderIncome();
             renderDash();
         }
+        window.confirmIncomeReceivedFor = confirmIncomeReceivedFor;
+
+        // ── ISSUE 1: Backfill past months ─────────────────────────────────
+        // Many users (a) created an income source with a `start` in the past,
+        // (b) joined WealthFlow later, or (c) couldn't sign in for a few
+        // months — and there was no way to mark those past months as
+        // "received" without faking the dates. This picker shows every month
+        // from the income's start date up to the current month that's NOT yet
+        // confirmed, so users can backfill receipts one tap each.
+        async function backfillIncome(id) {
+            const arr = DB.get('income');
+            const s = arr.find(x => x.id === id);
+            if (!s) return;
+            const received = DB.getObj('incomeReceived', {});
+
+            // Build the full list of months between start and now.
+            const startD = new Date(s.start + 'T00:00:00');
+            const endD = s.end ? new Date(s.end + 'T00:00:00') : new Date();
+            const now = new Date();
+            const realEnd = endD < now ? endD : now;
+            const months = [];
+            const cursor = new Date(startD.getFullYear(), startD.getMonth(), 1);
+            const stop = new Date(realEnd.getFullYear(), realEnd.getMonth(), 1);
+            while (cursor <= stop) {
+                const ym = `${cursor.getFullYear()}-${p2(cursor.getMonth() + 1)}`;
+                const rec = received[s.id + '_' + ym];
+                months.push({
+                    ym,
+                    status: !rec ? 'open' : (rec.auto ? 'auto' : 'confirmed'),
+                    rec
+                });
+                cursor.setMonth(cursor.getMonth() + 1);
+            }
+            // Newest first — the months users most often want are recent.
+            months.reverse();
+
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+
+            const openCount = months.filter(m => m.status === 'open').length;
+            const autoCount = months.filter(m => m.status === 'auto').length;
+            const confirmedCount = months.filter(m => m.status === 'confirmed').length;
+
+            overlay.innerHTML = `
+                <div class="md" style="background:var(--card);max-width:520px;width:92vw;max-height:84vh;display:flex;flex-direction:column;">
+                    <div class="md-hdr">
+                        <div class="md-title">📅 Backfill Past Months — ${s.name}</div>
+                        <button class="md-x" id="_bf_close">✕</button>
+                    </div>
+                    <div style="padding:6px 0 12px;font-size:12px;color:var(--text2);line-height:1.6;">
+                        Tap any month to mark it received. Months marked
+                        <span style="color:var(--accent);">auto-historical</span> were
+                        added when you joined — tap them to replace with the real amount.
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;font-size:11px;margin-bottom:8px;">
+                        <span class="badge bg-r">${openCount} open</span>
+                        <span class="badge bg-a">${autoCount} auto-historical</span>
+                        <span class="badge bg-g">${confirmedCount} confirmed</span>
+                    </div>
+                    <div id="_bf_list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:10px;padding:6px;background:var(--bg2);">
+                        ${months.map(m => {
+                            const pretty = monthStrFmt(m.ym + '-01');
+                            const label = m.status === 'confirmed'
+                                ? `<span class="badge bg-g">✓ ${fmt(m.rec.amount || s.monthly)}</span>`
+                                : m.status === 'auto'
+                                    ? '<span class="badge bg-a">auto-historical</span>'
+                                    : '<span class="badge bg-r">open</span>';
+                            const action = m.status === 'confirmed'
+                                ? `<button class="btn btn-ghost btn-sm" data-act="undo" data-ym="${m.ym}">↺ Undo</button>`
+                                : `<button class="btn btn-primary btn-sm" data-act="confirm" data-ym="${m.ym}">${m.status === 'auto' ? 'Replace' : 'Confirm'}</button>`;
+                            return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:8px;background:var(--card);margin-bottom:5px;">
+                                <div><div style="font-weight:700;font-size:13px;">${pretty}</div><div style="font-size:11px;color:var(--text3);">${m.ym}</div></div>
+                                <div style="display:flex;align-items:center;gap:8px;">${label}${action}</div>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                    <div class="md-ftr">
+                        <button class="btn btn-ghost" id="_bf_cancel">Close</button>
+                    </div>
+                </div>`;
+
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_bf_close').onclick = close;
+            overlay.querySelector('#_bf_cancel').onclick = close;
+
+            overlay.querySelector('#_bf_list').addEventListener('click', async (ev) => {
+                const btn = ev.target.closest('button[data-act]');
+                if (!btn) return;
+                const ym = btn.getAttribute('data-ym');
+                const act = btn.getAttribute('data-act');
+                if (act === 'confirm') {
+                    close();
+                    await confirmIncomeReceivedFor(id, ym);
+                    // Re-open so users can confirm multiple months quickly.
+                    setTimeout(() => backfillIncome(id), 250);
+                } else if (act === 'undo') {
+                    const cur = DB.getObj('incomeReceived', {});
+                    delete cur[id + '_' + ym];
+                    DB.set('incomeReceived', cur);
+                    notify('Marked ' + ym + ' as unreceived', 'info');
+                    close();
+                    setTimeout(() => backfillIncome(id), 200);
+                    renderIncome();
+                    renderDash();
+                }
+            });
+        }
+        window.backfillIncome = backfillIncome;
 
         function promptIncomeAmount(s, monthKey) {
             return new Promise((resolve) => {
@@ -14589,6 +14726,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (s.field === 'amount') return s.dir * (b.amount - a.amount);
                 return 0;
             });
+            // ISSUE 2: when the user hasn't picked an explicit sort, show
+            // newest/upcoming months at the TOP (and newest items within a
+            // month first), instead of the old A-Z insertion order.
+            else {
+                filtered = filtered.slice().sort((a, b) => {
+                    if (a.month !== b.month) return b.month.localeCompare(a.month);
+                    // Within the same month, newer entries first (uid is
+                    // monotonic in this codebase so it's a fair proxy for
+                    // insertion time).
+                    return String(b.id).localeCompare(String(a.id));
+                });
+            }
             const totAmt = filtered.reduce((sum, x) => sum + x.amount, 0);
             const catMap = {}; filtered.forEach(x => { catMap[x.cat] = (catMap[x.cat] || 0) + x.amount; });
             const topCat = Object.entries(catMap).sort((a, b) => b[1] - a[1])[0] || ['-', 0];
@@ -14633,13 +14782,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                     return;
                 }
 
-                // Group by YYYY-MM, sort ascending for timeline feel.
+                // Group by YYYY-MM. Newest (and upcoming/future) months
+                // appear at the TOP — users care most about what's coming
+                // next and the current month, then look backwards into
+                // history below.
                 const groups = {};
                 filtered.forEach(x => {
                     const key = x.month;
                     (groups[key] = groups[key] || []).push(x);
                 });
-                const monthKeys = Object.keys(groups).sort();
+                const monthKeys = Object.keys(groups).sort().reverse();
                 const now = new Date();
                 const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
 
@@ -16075,8 +16227,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.0 Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.1 Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" style="padding:6px 12px;">v7.4.1 ✓</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -16085,7 +16237,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.1 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
