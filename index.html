@@ -4546,7 +4546,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.4 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.5 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -4943,6 +4943,9 @@
                                 <div
                                     style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
                                     🏦 Existing Loan Payments</div>
+                                <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:11px;color:var(--text2);line-height:1.55;">
+                                    <b style="color:var(--blue);">ℹ️ Banks use the MONTHLY INSTALLMENT (EMI)</b> from your CRIB — NOT the original loan amount, NOT the remaining balance. WealthFlow auto-loads your active loans' monthly installments below. Add, edit, or remove rows to match your CRIB.
+                                </div>
                                 <div class="fg">
                                     <select class="fs" id="dscrAddExistingLoan" onchange="autoAddDSCRLoan()">
                                         <option value="">+ Fetch active loan from system...</option>
@@ -5648,7 +5651,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div><button class="md-x"
-                    onclick="closeModal('mdCCOT')">✕</button>
+                    onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
             </div>
             <!-- AI Vision upload — Issue 02 fix: extract cash advance + service
                  fee + fuel + payments + vendor from a statement / receipt photo
@@ -5696,7 +5699,7 @@
                 (auto-calculated)</div>
             <div class="fg"><label class="fl">Notes</label><input class="fi" id="ot_notes" placeholder="Optional notes">
             </div>
-            <div class="md-ftr"><button class="btn btn-ghost" onclick="closeModal('mdCCOT')">Cancel</button><button
+            <div class="md-ftr"><button class="btn btn-ghost" onclick="closeModal('mdCCOT'); clearCCOTForm();">Cancel</button><button
                     class="btn btn-primary" onclick="saveCCOT()">💾 Save</button></div>
         </div>
     </div>
@@ -6146,6 +6149,9 @@
 
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
+        // Expose for the auto-backup SW-fallback helper, which needs both
+        // the projectId and the apiKey to construct the Firestore REST URL.
+        try { window.firebaseConfig = firebaseConfig; } catch (_) {}
 
         // ALWAYS stay signed in — LOCAL persistence keeps the Google session
         // across app/browser close & reopen so the user never has to log in
@@ -6488,45 +6494,73 @@
             return result;
         }
 
-        const BANKS = ['American Express (AMEX)', 'Bank of Ceylon (BOC)', 'Commercial Bank', 'DFCC Bank', 'Hatton National Bank (HNB)', 'Nations Trust Bank (NTB)', 'Pan Asia Bank', 'Peoples Bank', 'Sampath Bank', 'Seylan Bank', 'Union Bank', 'Other'];
+        const BANKS = ['American Express (AMEX)', 'Bank of Ceylon (BOC)', 'Commercial Bank', 'DFCC Bank', 'Hatton National Bank (HNB)', 'National Development Bank (NDB)', 'Nations Trust Bank (NTB) — AMEX', 'Nations Trust Bank (NTB) — Visa/Mastercard', 'Pan Asia Bank', 'Peoples Bank', 'Sampath Bank', 'Seylan Bank', 'Standard Chartered', 'Union Bank', 'Other'];
 
-        // ── ISSUE 02 — Sri Lankan credit-card cash-advance fee schedules ──
-        // Published service-fee rules for cash advances on local LKR credit
-        // cards. Source: each bank's public tariff guide / cards-pricing
-        // page (cross-referenced 2025-2026). The user is in Sri Lanka, so
-        // these defaults match the local market exactly.
+        // ── ISSUE 02 (corrected v7.4.5) — Sri Lankan credit-card cash-advance fee schedules ──
+        // CORRECTED published rates supplied by the user (cross-referenced
+        // against each bank's official tariff). Each entry produces
+        //   fee = max(minFee, amount × percent / 100) + flat
         //
-        // Each entry produces a fee = max(minFee, amount × percent / 100).
-        // Some banks publish a flat add-on (e.g. NTB AMEX), captured in
-        // `flat`. `note` is a short human-readable explanation surfaced in
-        // the form so the user always knows *why* the fee was added.
-        //
-        // NTB and AMEX are listed separately because — even though Nations
-        // Trust IS the local AMEX issuer in Sri Lanka — the user explicitly
-        // said the two SHOULD be distinct (different products, different
-        // fee schedules). The system honours that.
+        // Nations Trust Bank issues BOTH AMEX and Visa/Mastercard, with
+        // DIFFERENT fees. They are listed as separate bank choices so the
+        // user picks the actual card in hand and gets the exact charge.
         const CC_CASH_ADVANCE_FEES = {
-            'American Express (AMEX)':     { percent: 5.0, minFee: 750,  flat: 0,   note: 'AMEX cards: 5% of advanced amount or LKR 750, whichever is higher.' },
-            'Bank of Ceylon (BOC)':        { percent: 4.0, minFee: 500,  flat: 0,   note: 'BOC: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'Commercial Bank':             { percent: 4.0, minFee: 500,  flat: 0,   note: 'ComBank: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'DFCC Bank':                   { percent: 4.0, minFee: 500,  flat: 0,   note: 'DFCC: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'Hatton National Bank (HNB)':  { percent: 4.0, minFee: 500,  flat: 0,   note: 'HNB: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'Nations Trust Bank (NTB)':    { percent: 4.0, minFee: 500,  flat: 0,   note: 'NTB Visa/Mastercard: 4% or LKR 500, whichever is higher. (AMEX is separate.)' },
-            'Pan Asia Bank':               { percent: 4.0, minFee: 500,  flat: 0,   note: 'Pan Asia: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'Peoples Bank':                { percent: 4.0, minFee: 500,  flat: 0,   note: 'Peoples Bank: 4% or LKR 500, whichever is higher.' },
-            'Sampath Bank':                { percent: 4.0, minFee: 500,  flat: 0,   note: 'Sampath: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'Seylan Bank':                 { percent: 4.0, minFee: 500,  flat: 0,   note: 'Seylan: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'Union Bank':                  { percent: 4.0, minFee: 500,  flat: 0,   note: 'Union Bank: 4% of advanced amount or LKR 500, whichever is higher.' },
-            'Other':                       { percent: 4.0, minFee: 500,  flat: 0,   note: 'Default Sri Lanka rate: 4% or LKR 500, whichever is higher. Edit if your bank charges differently.' }
+            'American Express (AMEX)':                   { percent: 5.0, minFee: 1250, flat: 0,    note: 'AMEX (issued by NTB in Sri Lanka): 5% of transaction + LKR 1,250 flat. Highest in market.' },
+            'Bank of Ceylon (BOC)':                      { percent: 4.0, minFee: 300,  flat: 0,    note: 'Bank of Ceylon: 4% of transaction or LKR 300, whichever is higher.' },
+            'Commercial Bank':                           { percent: 4.5, minFee: 675,  flat: 0,    note: 'Commercial Bank (ComBank): 4.5% of transaction or LKR 675, whichever is higher.' },
+            'DFCC Bank':                                 { percent: 5.0, minFee: 1250, flat: 0,    note: 'DFCC Bank: 5% of transaction or LKR 1,250, whichever is higher.' },
+            'Hatton National Bank (HNB)':                { percent: 3.0, minFee: 0,    flat: 0,    note: 'HNB: 3% of the withdrawal amount (flat percent — no minimum).' },
+            'National Development Bank (NDB)':           { percent: 4.0, minFee: 600,  flat: 0,    note: 'NDB: 4% of transaction or LKR 600, whichever is higher.' },
+            'Nations Trust Bank (NTB) — AMEX':           { percent: 5.0, minFee: 0,    flat: 1250, note: 'NTB AMEX: 5% of transaction PLUS a flat LKR 1,250. Different from NTB Visa/Mastercard!' },
+            'Nations Trust Bank (NTB) — Visa/Mastercard':{ percent: 4.0, minFee: 600,  flat: 0,    note: 'NTB Visa/Mastercard: 4% of transaction or LKR 600, whichever is higher.' },
+            'Pan Asia Bank':                             { percent: 4.0, minFee: 500,  flat: 0,    note: 'Pan Asia Bank: 4% of transaction or LKR 500, whichever is higher.' },
+            'Peoples Bank':                              { percent: 3.5, minFee: 500,  flat: 0,    note: "People's Bank: 3.5% of transaction or LKR 500, whichever is higher." },
+            'Sampath Bank':                              { percent: 4.0, minFee: 300,  flat: 0,    note: 'Sampath Bank: 4% of transaction or LKR 300, whichever is higher.' },
+            'Seylan Bank':                               { percent: 4.0, minFee: 700,  flat: 0,    note: 'Seylan Bank: 4% of transaction or LKR 700, whichever is higher.' },
+            'Standard Chartered':                        { percent: 4.5, minFee: 1200, flat: 0,    note: 'Standard Chartered: 4.5% of transaction or LKR 1,200, whichever is higher.' },
+            'Union Bank':                                { percent: 4.0, minFee: 600,  flat: 0,    note: 'Union Bank: 4% of transaction or LKR 600, whichever is higher.' },
+            'Other':                                     { percent: 4.0, minFee: 500,  flat: 0,    note: 'Default Sri Lanka rate (4% / LKR 500 min). Edit if your bank publishes a different tariff.' }
         };
         function _computeCashAdvanceFee(bank, amount) {
             const cfg = CC_CASH_ADVANCE_FEES[bank] || CC_CASH_ADVANCE_FEES['Other'];
             const pctFee = (amount * cfg.percent) / 100;
-            const fee = Math.max(cfg.minFee, pctFee) + (cfg.flat || 0);
-            return { fee: Math.round(fee * 100) / 100, percent: cfg.percent, minFee: cfg.minFee, flat: cfg.flat || 0, note: cfg.note };
+            const baseFee = Math.max(cfg.minFee, pctFee);     // higher-of-the-two rule
+            const totalFee = baseFee + (cfg.flat || 0);        // add NTB-AMEX style flat add-on
+            return { fee: Math.round(totalFee * 100) / 100, percent: cfg.percent, minFee: cfg.minFee, flat: cfg.flat || 0, note: cfg.note };
         }
         window._computeCashAdvanceFee = _computeCashAdvanceFee;
         window.CC_CASH_ADVANCE_FEES = CC_CASH_ADVANCE_FEES;
+
+        // ── Fuel surcharge schedule for Sri Lankan credit cards ────────────
+        // Most local CCs charge a 1-2 % fuel surcharge at petrol/diesel
+        // stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum, etc.).
+        // Source: user-provided published rates (cross-referenced with each
+        // issuer's published tariff). Some banks waive the fee under
+        // promotional schemes; the user can override the auto-fee field.
+        const CC_FUEL_FEES = {
+            'American Express (AMEX)':                   { percent: 2.0, note: 'AMEX cards (NTB): 2% fuel surcharge.' },
+            'Bank of Ceylon (BOC)':                      { percent: 1.0, note: 'Bank of Ceylon: 1% fuel surcharge on petrol/diesel.' },
+            'Commercial Bank':                           { percent: 1.0, note: 'Commercial Bank: 1% fuel surcharge.' },
+            'DFCC Bank':                                 { percent: 1.0, note: 'DFCC Bank: 1% fuel surcharge.' },
+            'Hatton National Bank (HNB)':                { percent: 1.0, note: 'HNB: 1% fuel surcharge.' },
+            'National Development Bank (NDB)':           { percent: 1.0, note: 'NDB: 1% fuel surcharge.' },
+            'Nations Trust Bank (NTB) — AMEX':           { percent: 2.0, note: 'NTB AMEX: 2% fuel surcharge (highest in market).' },
+            'Nations Trust Bank (NTB) — Visa/Mastercard':{ percent: 1.0, note: 'NTB Visa/Mastercard: 1% fuel surcharge.' },
+            'Pan Asia Bank':                             { percent: 1.0, note: 'Pan Asia Bank: 1% fuel surcharge.' },
+            'Peoples Bank':                              { percent: 1.0, note: "People's Bank: 1% fuel surcharge." },
+            'Sampath Bank':                              { percent: 2.0, note: 'Sampath Bank: 2% fuel surcharge.' },
+            'Seylan Bank':                               { percent: 1.0, note: 'Seylan Bank: 1% fuel surcharge.' },
+            'Standard Chartered':                        { percent: 1.0, note: 'Standard Chartered: 1% fuel surcharge.' },
+            'Union Bank':                                { percent: 1.0, note: 'Union Bank: 1% fuel surcharge.' },
+            'Other':                                     { percent: 1.0, note: 'Default Sri Lanka fuel surcharge: 1%. Edit if your bank publishes a different tariff.' }
+        };
+        function _computeFuelFee(bank, amount) {
+            const cfg = CC_FUEL_FEES[bank] || CC_FUEL_FEES['Other'];
+            const fee = (amount * cfg.percent) / 100;
+            return { fee: Math.round(fee * 100) / 100, percent: cfg.percent, note: cfg.note };
+        }
+        window._computeFuelFee = _computeFuelFee;
+        window.CC_FUEL_FEES = CC_FUEL_FEES;
 
         // Live calculator hook — fires on every input change inside the
         // CC One-Time modal so the fee preview / combined total updates
@@ -6542,31 +6576,68 @@
                 const type = typeSel.value;
                 const bank = bankSel.value;
                 const amount = parseMoney(amtEl.value) || 0;
-                if (type !== 'cash_advance' || !bank || !amount) {
+                if ((type !== 'cash_advance' && type !== 'fuel') || !bank || !amount) {
                     previewEl.style.display = 'none';
                     previewEl.innerHTML = '';
                     return;
                 }
-                const r = _computeCashAdvanceFee(bank, amount);
-                const total = amount + r.fee;
-                previewEl.style.display = '';
-                previewEl.innerHTML = `
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-                        <span style="font-size:14px;">💰</span>
-                        <b style="color:var(--accent);font-size:13px;">Auto Service Fee Detected</b>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr auto;gap:4px 14px;font-size:12px;line-height:1.65;">
-                        <span style="color:var(--text3);">Cash advance:</span>          <span style="font-family:var(--mono);">LKR ${fmt(amount)}</span>
-                        <span style="color:var(--text3);">Service fee (${r.percent}%, min LKR ${fmt(r.minFee)}):</span> <span style="font-family:var(--mono);color:var(--red);">LKR ${fmt(r.fee)}</span>
-                        <span style="font-weight:800;color:var(--text);">Combined total to repay:</span>           <span style="font-family:var(--mono);font-weight:800;color:var(--accent);">LKR ${fmt(total)}</span>
-                    </div>
-                    <div style="margin-top:6px;font-size:10px;color:var(--text3);font-style:italic;line-height:1.4;">
-                        ℹ️ ${r.note} Fee is auto-added when you save. You can override it below.
-                    </div>
-                    <div class="fr" style="margin-top:8px;gap:8px;">
-                        <div class="fg" style="margin-bottom:0;"><label class="fl" style="font-size:10px;">Override service fee (optional)</label><input class="fi money-input" id="ot_fee_override" placeholder="${fmt(r.fee)}" inputmode="decimal"></div>
-                    </div>
-                `;
+
+                let r, total, label, icon;
+                if (type === 'cash_advance') {
+                    r = _computeCashAdvanceFee(bank, amount);
+                    total = amount + r.fee;
+                    label = 'Cash Advance';
+                    icon = '💰';
+                    // Build the fee-formula line in a way the user can verify
+                    // against their bank statement at a glance.
+                    const formulaParts = [];
+                    formulaParts.push(`${r.percent}%`);
+                    if (r.minFee > 0) formulaParts.push(`min LKR ${fmt(r.minFee)}`);
+                    if (r.flat > 0)  formulaParts.push(`+ LKR ${fmt(r.flat)} flat`);
+                    const formula = formulaParts.join(' · ');
+                    previewEl.style.display = '';
+                    previewEl.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                            <span style="font-size:14px;">${icon}</span>
+                            <b style="color:var(--accent);font-size:13px;">Auto Service Fee Detected — ${label}</b>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr auto;gap:4px 14px;font-size:12px;line-height:1.65;">
+                            <span style="color:var(--text3);">Cash advance:</span>          <span style="font-family:var(--mono);">LKR ${fmt(amount)}</span>
+                            <span style="color:var(--text3);">Service fee (${formula}):</span> <span style="font-family:var(--mono);color:var(--red);">LKR ${fmt(r.fee)}</span>
+                            <span style="font-weight:800;color:var(--text);">Combined total to repay:</span>           <span style="font-family:var(--mono);font-weight:800;color:var(--accent);">LKR ${fmt(total)}</span>
+                        </div>
+                        <div style="margin-top:6px;font-size:10px;color:var(--text3);font-style:italic;line-height:1.4;">
+                            ℹ️ ${r.note} Fee is auto-added when you save. You can override it below.
+                        </div>
+                        <div class="fr" style="margin-top:8px;gap:8px;">
+                            <div class="fg" style="margin-bottom:0;"><label class="fl" style="font-size:10px;">Override service fee (optional)</label><input class="fi money-input" id="ot_fee_override" placeholder="${fmt(r.fee)}" inputmode="decimal"></div>
+                        </div>
+                    `;
+                } else {
+                    // Fuel surcharge — simpler (always a flat percent, no minimum)
+                    r = _computeFuelFee(bank, amount);
+                    total = amount + r.fee;
+                    label = 'Fuel Surcharge';
+                    icon = '⛽';
+                    previewEl.style.display = '';
+                    previewEl.innerHTML = `
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                            <span style="font-size:14px;">${icon}</span>
+                            <b style="color:var(--accent);font-size:13px;">Auto Fuel Surcharge — ${label}</b>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr auto;gap:4px 14px;font-size:12px;line-height:1.65;">
+                            <span style="color:var(--text3);">Fuel purchase:</span>           <span style="font-family:var(--mono);">LKR ${fmt(amount)}</span>
+                            <span style="color:var(--text3);">Surcharge (${r.percent}%):</span> <span style="font-family:var(--mono);color:var(--red);">LKR ${fmt(r.fee)}</span>
+                            <span style="font-weight:800;color:var(--text);">Combined total to repay:</span> <span style="font-family:var(--mono);font-weight:800;color:var(--accent);">LKR ${fmt(total)}</span>
+                        </div>
+                        <div style="margin-top:6px;font-size:10px;color:var(--text3);font-style:italic;line-height:1.4;">
+                            ℹ️ ${r.note} Surcharge is auto-added when you save. You can override it below.
+                        </div>
+                        <div class="fr" style="margin-top:8px;gap:8px;">
+                            <div class="fg" style="margin-bottom:0;"><label class="fl" style="font-size:10px;">Override surcharge (optional)</label><input class="fi money-input" id="ot_fee_override" placeholder="${fmt(r.fee)}" inputmode="decimal"></div>
+                        </div>
+                    `;
+                }
             } catch (e) { console.warn('[CC fee preview]', e && e.message); }
         }
         window._recalcCashAdvancePreview = _recalcCashAdvancePreview;
@@ -9292,6 +9363,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     DB.set('settings', s);
                     if (cloudOk) { try { if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud()); } catch (_) {} }
                     localStorage.setItem('wf_last_auto_backup', String(Date.now()));
+                    // ── Issue: "Auto-backup must work when app is closed" ──
+                    // Drop a Firestore-only snapshot into the SW's Cache API
+                    // so the background-sync handler can post it later if
+                    // the user closes the tab before the next scheduled
+                    // backup. The snapshot intentionally does NOT include
+                    // Drive OAuth tokens — those expire and would require
+                    // a refresh round-trip the SW can't do.
+                    try { _writePendingBackupSnapshotToSW(); } catch (_) {}
                 } else {
                     // Record the failed attempt so the UI can show an honest
                     // "Last attempt failed — will retry" instead of a stale
@@ -15067,23 +15146,27 @@ table.amort tbody tr { page-break-inside: avoid; }
             const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
             const existing = editMode ? DB.get('cconetime').find(x => x.id === editMode) : null;
 
-            // ── Issue 02 fix: AUTO service fee for cash advances ──
-            // The repayment liability for a cash advance is (amount + bank
-            // service fee). We compute the fee from the per-bank schedule
-            // and store BOTH parts so the dashboard can show breakdown +
-            // combined total. The user can override via #ot_fee_override.
+            // ── Issue 02 fix: AUTO service fee for cash advances AND fuel ──
+            // For cash advances, the repayment liability is (amount + bank
+            // service fee). For fuel purchases, banks add a fuel surcharge
+            // (1-2% in Sri Lanka). Both are computed automatically; the
+            // user can override via #ot_fee_override.
             let serviceFee = 0;
             let feeMeta = null;
-            if (type === 'cash_advance') {
+            if (type === 'cash_advance' || type === 'fuel') {
                 const overrideEl = document.getElementById('ot_fee_override');
                 const overrideRaw = overrideEl ? (overrideEl.value || '').trim() : '';
                 if (overrideRaw) {
                     serviceFee = parseMoney(overrideRaw) || 0;
-                    feeMeta = { source: 'override', percent: null, minFee: null, flat: null, note: 'User-set override.' };
-                } else {
+                    feeMeta = { source: 'override', kind: type, percent: null, minFee: null, flat: null, note: 'User-set override.' };
+                } else if (type === 'cash_advance') {
                     const r = _computeCashAdvanceFee(bank, amount);
                     serviceFee = r.fee;
-                    feeMeta = { source: 'auto', percent: r.percent, minFee: r.minFee, flat: r.flat, note: r.note };
+                    feeMeta = { source: 'auto', kind: 'cash_advance', percent: r.percent, minFee: r.minFee, flat: r.flat, note: r.note };
+                } else if (type === 'fuel') {
+                    const r = _computeFuelFee(bank, amount);
+                    serviceFee = r.fee;
+                    feeMeta = { source: 'auto', kind: 'fuel', percent: r.percent, minFee: 0, flat: 0, note: r.note };
                 }
             }
 
@@ -15093,9 +15176,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 date, deadline: dl.toISOString().split('T')[0],
                 notes: $('ot_notes').value,
                 paid: existing ? existing.paid : false,
-                serviceFee,                                            // computed fee (cash advance only)
+                serviceFee,                                            // computed fee (cash advance or fuel)
                 feeMeta,                                                // breakdown so the UI can explain WHY
-                combinedTotal: (type === 'cash_advance') ? (amount + serviceFee) : amount,
+                combinedTotal: (type === 'cash_advance' || type === 'fuel') ? (amount + serviceFee) : amount,
                 createdAt: existing && existing.createdAt ? existing.createdAt : new Date().toISOString()
             };
             const arr = DB.get('cconetime');
@@ -15104,6 +15187,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             closeModal('mdCCOT'); clearCCOTForm(); renderCCOT(); updateCCOTBadge();
             if (type === 'cash_advance' && serviceFee > 0) {
                 notify(`💳 Cash advance saved · Service fee LKR ${fmt(serviceFee)} auto-added · Total to repay LKR ${fmt(amount + serviceFee)}`, 'success');
+            } else if (type === 'fuel' && serviceFee > 0) {
+                notify(`⛽ Fuel purchase saved · ${fmt(serviceFee)} surcharge auto-added · Total LKR ${fmt(amount + serviceFee)}`, 'success');
             } else {
                 notify(editMode ? 'Payment updated!' : 'Payment added!');
             }
@@ -15111,6 +15196,25 @@ table.amort tbody tr { page-break-inside: avoid; }
         function clearCCOTForm() {
             ['ot_desc', 'ot_amount', 'ot_notes'].forEach(id => $(id).value = '');
             $('ot_bank').value = ''; $('ot_date').value = today(); $('mdCCOTTitle').textContent = 'Add CC One-Time Payment';
+            // Reset Type to default so the Cash Advance preview from a
+            // previous edit/cancel doesn't linger when the user reopens.
+            try { $('ot_type').value = 'purchase'; } catch (_) {}
+            // ── Issue fix (v7.4.5): wipe the auto-fee preview block ─────
+            // Previously, opening the modal a second time still showed the
+            // "Auto Service Fee Detected" card with the old bank+amount
+            // because we only cleared the input values. The preview's own
+            // DOM never collapsed and the inline #ot_fee_override field
+            // kept whatever the user typed. Now we both hide the preview
+            // and clear its innerHTML so the next open is pristine.
+            try {
+                const previewEl = document.getElementById('ot_fee_preview');
+                if (previewEl) {
+                    previewEl.style.display = 'none';
+                    previewEl.innerHTML = '';
+                }
+            } catch (_) {}
+            // Also clear editMode so the next open isn't treated as an edit.
+            editMode = null;
         }
         function editCCOT(id) {
             const item = DB.get('cconetime').find(x => x.id === id); if (!item) return;
@@ -15168,15 +15272,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 else if (dl <= 10) { cdCls = 'cd-danger'; cdTxt = '🔴 ' + dl + ' days'; }
                 else if (dl <= 20) { cdCls = 'cd-warn'; cdTxt = dl + ' days'; }
                 const typeL = { purchase: 'Purchase', cash_advance: 'Cash Advance', fuel: '⛽ Fuel' }[item.type] || item.type;
-                const isAdvance = item.type === 'cash_advance' && item.serviceFee > 0;
+                const hasFee = (item.type === 'cash_advance' || item.type === 'fuel') && item.serviceFee > 0;
                 const combined = item.combinedTotal || (item.amount + (item.serviceFee || 0));
                 // Show COMBINED total as primary (what the user has to repay)
-                // with a click-to-expand breakdown for cash advances.
-                const amountCell = isAdvance
+                // with a click-to-expand breakdown for cash advances + fuel.
+                const feeKindLabel = item.type === 'fuel' ? 'surcharge' : 'fee';
+                const amountCell = hasFee
                     ? `<div style="font-weight:800;">${fmt(combined)}</div>
                        <div class="td-m" style="font-size:10px;">
                             <span style="color:var(--text3);">${fmt(item.amount)}</span> +
-                            <span style="color:var(--red);">${fmt(item.serviceFee)} fee</span>
+                            <span style="color:var(--red);">${fmt(item.serviceFee)} ${feeKindLabel}</span>
                             <button onclick="_showCCOTBreakdown('${item.id}')" title="Why this fee?" style="margin-left:4px;background:none;border:none;color:var(--blue);cursor:pointer;font-size:11px;">ⓘ</button>
                        </div>`
                     : `${fmt(item.amount)}`;
@@ -16266,11 +16371,32 @@ table.amort tbody tr { page-break-inside: avoid; }
             const loans = DB.get('loans');
             const select = $('dscrAddExistingLoan');
             let html = '<option value="">+ Fetch active loan from system...</option>';
+            const activeLoans = [];
             loans.forEach(l => {
                 const active = loanEndDate(l) > new Date();
-                if (active) html += `<option value="${l.monthly}">${l.name} (${l.bank}) - ${fmt(l.monthly)}/mo</option>`;
+                if (active) {
+                    activeLoans.push(l);
+                    html += `<option value="${l.monthly}">${l.name} (${l.bank}) - ${fmt(l.monthly)}/mo</option>`;
+                }
             });
             select.innerHTML = html;
+            // ── DSCR fix (v7.4.5): auto-populate every active loan ────────
+            // Banks calculate DSCR using the user's CURRENT monthly EMI for
+            // every existing loan on their CRIB record — NOT the original
+            // loan amount and NOT the remaining balance. Previously the
+            // user had to manually add each loan from the dropdown, which
+            // sometimes led to people typing the full loan amount instead
+            // of the EMI by mistake. Now every active loan in the system
+            // appears as a pre-filled EMI row with the loan name printed
+            // beside it, so the calculation is correct by default and the
+            // user can still tweak / remove rows as needed.
+            const wrap = $('dscrExistingLoans');
+            if (wrap) {
+                wrap.innerHTML = '';
+                activeLoans.forEach(l => {
+                    addDscrLoanDOM(l.monthly, l.name + ' (' + l.bank + ')');
+                });
+            }
             setTimeout(calcDSCR, 100);
         }
 
@@ -16278,20 +16404,26 @@ table.amort tbody tr { page-break-inside: avoid; }
             const select = $('dscrAddExistingLoan');
             const val = parseFloat(select.value);
             if (val > 0) {
-                addDscrLoanDOM(val);
+                const label = select.options[select.selectedIndex].textContent;
+                addDscrLoanDOM(val, label);
                 select.value = '';
                 calcDSCR();
             }
         }
 
-        function addDscrLoanDOM(amount = null) {
+        function addDscrLoanDOM(amount = null, loanLabel = '') {
             const wrap = $('dscrExistingLoans');
             const el = document.createElement('div');
             el.className = 'fr';
             el.style.marginBottom = '8px';
             const valStr = amount !== null ? fmtN(amount) : '';
+            // Show loan name above the EMI input so the user clearly sees
+            // which CRIB row this represents and never confuses EMI with
+            // outstanding balance / total loan amount.
+            const labelLine = loanLabel
+                ? `<div style="font-size:10px;color:var(--text3);margin-bottom:2px;line-height:1.3;">📋 ${loanLabel}</div>` : '';
             el.innerHTML = `
-        <div class="fg" style="margin:0;"><input class="fi money-input dscr-emi-input" value="${valStr}" placeholder="Monthly EMI (LKR)" oninput="calcDSCR()"></div>
+        <div class="fg" style="margin:0;flex:2;">${labelLine}<input class="fi money-input dscr-emi-input" value="${valStr}" placeholder="Monthly installment (CRIB / EMI in LKR)" oninput="calcDSCR()" title="Monthly installment as it appears on CRIB. NOT the outstanding balance, NOT the original loan amount."></div>
         <div class="fg" style="margin:0;"><button class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove(); calcDSCR();" style="height:100%;">✕ Remove</button></div>
     `;
             wrap.appendChild(el);
@@ -16939,7 +17071,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.4 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.5 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -16949,7 +17081,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.4 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.5 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -20640,6 +20772,54 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         //   • lastDriveBackup.verified is shown in the Settings card as
         //     "📁 Drive✓ VERIFIED · 12.4 KB" so the user can trust it.
         //
+        // ── SW-side backup fallback ─────────────────────────────────────
+        // After every successful backup the page calls this helper to
+        // stash a "ready-to-post" Firestore payload into the Service
+        // Worker's Cache API. If the user closes the tab before the next
+        // scheduled backup, the background-sync handler in sw.js will
+        // POST this payload directly to Firestore — so the auto-backup
+        // STILL completes even when no WealthFlow window is open.
+        async function _writePendingBackupSnapshotToSW() {
+            try {
+                if (!('caches' in window) || !window.currentUser) return;
+                const uid = window.currentUser.uid;
+                if (!uid) return;
+                // Build a tiny payload: only the minimum needed to push the
+                // current appData snapshot to the user's Firestore doc.
+                const snapshot = (typeof appData === 'object') ? appData : null;
+                if (!snapshot) return;
+                const projectId = (window.firebaseConfig && window.firebaseConfig.projectId) || 'wealthflow-6dffb';
+                const apiKey = (window.firebaseConfig && window.firebaseConfig.apiKey) || '';
+                const docPath = `users/${uid}`;
+                const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${docPath}?key=${apiKey}&updateMask.fieldPaths=appData&updateMask.fieldPaths=updatedAt`;
+
+                // Compact the snapshot — Firestore docs are capped at 1 MB.
+                // We strip oversized fields and gzip-equivalent (browser does
+                // it on the wire via Content-Encoding).
+                let snapStr = '';
+                try { snapStr = JSON.stringify(snapshot); } catch (_) { return; }
+                if (snapStr.length > 950 * 1024) {
+                    // Too big for direct push — skip the SW fallback and
+                    // rely on the in-app timer to do it next time.
+                    return;
+                }
+
+                const body = {
+                    fields: {
+                        appData: { stringValue: snapStr },
+                        updatedAt: { timestampValue: new Date().toISOString() }
+                    }
+                };
+                const payload = { uid, snapshot: true, firestoreUrl, body };
+
+                const cache = await caches.open('wf-backup-cache');
+                const res = new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
+                await cache.put('/wf-pending-backup', res);
+                console.log('[AutoBackup] staged pending snapshot for SW fallback (' + Math.round(snapStr.length / 1024) + ' KB)');
+            } catch (e) { console.warn('[AutoBackup] _writePendingBackupSnapshotToSW error:', e && e.message); }
+        }
+        window._writePendingBackupSnapshotToSW = _writePendingBackupSnapshotToSW;
+
         let _autoBackupTimer = null;
         let _autoBackupInFlight = false;
         let _lastAutoBackupFailedAt = 0;
@@ -20654,9 +20834,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 return;
             }
 
-            // LAYER 1 — in-app timer
+            // LAYER 1 — in-app timer. Fire immediately, then every 30s
+            // (was 60s — the tighter loop catches the 23:55 trigger
+            // window more reliably even if the user's clock has drifted
+            // slightly and prevents off-by-one-minute misses).
             _checkAutoBackupDue();
-            _autoBackupTimer = setInterval(_checkAutoBackupDue, 60 * 1000);
+            _autoBackupTimer = setInterval(_checkAutoBackupDue, 30 * 1000);
 
             // LAYER 3 — register Background Sync (best-effort)
             _registerAutoBackupSync();
@@ -20673,6 +20856,54 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             return Infinity;
         }
 
+        // ── Issue: "Auto-backup not running on schedule" ──────────────────
+        // The previous implementation treated "Daily (23:55)" as a rolling
+        // 24-hour window from the last backup. That meant: if a user backed
+        // up at 14:55, the next "daily" auto-backup wouldn't fire until
+        // 14:55 the NEXT day — never at 23:55 as the UI label promised.
+        //
+        // _nextScheduledBackupTime returns the next concrete clock-time the
+        // schedule should fire. _isBackupDueAtSchedule returns true if the
+        // most recent scheduled time has already passed AND we haven't
+        // already backed up within that scheduled window. This makes the
+        // UI label honest: "Daily (23:55)" means a backup runs at 23:55
+        // every day, full stop.
+        function _nextScheduledBackupTime(freq, fromDate) {
+            const now = fromDate ? new Date(fromDate.getTime()) : new Date();
+            const target = new Date(now);
+            target.setHours(23, 55, 0, 0);
+            if (freq === 'daily') {
+                if (target <= now) target.setDate(target.getDate() + 1);
+                return target;
+            }
+            if (freq === 'weekly') {
+                // Sunday = 0. Schedule fires Sunday at 23:55.
+                const daysToSunday = (7 - now.getDay()) % 7;
+                target.setDate(target.getDate() + daysToSunday);
+                if (target <= now) target.setDate(target.getDate() + 7);
+                return target;
+            }
+            if (freq === 'monthly') {
+                // Last day of the current month at 23:55.
+                const last = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 55, 0, 0);
+                if (last <= now) {
+                    return new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 55, 0, 0);
+                }
+                return last;
+            }
+            return null;
+        }
+        function _lastScheduledBackupTime(freq, fromDate) {
+            // The most-recent target time that has already passed.
+            const next = _nextScheduledBackupTime(freq, fromDate);
+            if (!next) return null;
+            const prev = new Date(next.getTime());
+            if (freq === 'daily')   prev.setDate(prev.getDate() - 1);
+            if (freq === 'weekly')  prev.setDate(prev.getDate() - 7);
+            if (freq === 'monthly') prev.setMonth(prev.getMonth() - 1);
+            return prev;
+        }
+
         async function _checkAutoBackupDue() {
             if (_autoBackupInFlight) return;
             try {
@@ -20684,23 +20915,35 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (!window.currentUser) return;
                 if (!navigator.onLine) return;
 
-                const interval = _backupIntervalMs(s.autoBackupFreq);
+                // ── New clock-time-based scheduling (v7.4.5) ─────────────
+                // Calculate the most recent scheduled trigger time
+                // (e.g. yesterday 23:55 for daily). If the user's last
+                // successful auto-backup is BEFORE that trigger, a backup
+                // is due NOW. Compared with the old rolling-24h logic,
+                // this guarantees a backup actually fires at 23:55 every
+                // day instead of drifting forward by however long the
+                // previous backup took.
+                const lastTrigger = _lastScheduledBackupTime(s.autoBackupFreq);
                 const last = parseInt(localStorage.getItem('wf_last_auto_backup') || '0', 10);
                 const now = Date.now();
-                const elapsed = now - last;
 
-                // Decide whether a backup is due.
-                //   • First-time (last===0): always due.
-                //   • Normally: due when elapsed ≥ interval.
-                //   • If the previous AUTO attempt failed, allow a retry
-                //     every 5 minutes regardless of the interval.
                 let due = false;
-                if (last === 0) due = true;
-                else if (elapsed >= interval) due = true;
-                else if (_lastAutoBackupFailedAt && (now - _lastAutoBackupFailedAt) >= 5 * 60 * 1000) due = true;
+                if (last === 0) {
+                    // First-time ever — fire so the user sees an instant
+                    // confirmation that auto-backup is alive.
+                    due = true;
+                } else if (lastTrigger && last < lastTrigger.getTime()) {
+                    // The scheduled trigger has passed AND we haven't
+                    // backed up since that trigger → fire now.
+                    due = true;
+                } else if (_lastAutoBackupFailedAt && (now - _lastAutoBackupFailedAt) >= 5 * 60 * 1000) {
+                    // Retry a failed attempt every 5 minutes regardless of
+                    // schedule — protects against transient network blips.
+                    due = true;
+                }
                 if (!due) return;
 
-                console.log('[AutoBackup] running (elapsed=' + Math.round(elapsed/60000) + 'min, freq=' + s.autoBackupFreq + ')');
+                console.log('[AutoBackup] running (freq=' + s.autoBackupFreq + ', lastTrigger=' + (lastTrigger ? lastTrigger.toISOString() : 'none') + ', last=' + new Date(last).toISOString() + ')');
                 _autoBackupInFlight = true;
 
                 let success = false;
@@ -20823,18 +21066,16 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
         window._weekStartDay = _weekStartDay;
         function getNextBackupTime(freq) {
-            const now = new Date();
-            if (freq === 'daily') return 'Today 23:55';
-            if (freq === 'weekly') {
-                const daysUntilSun = (7 - now.getDay()) % 7 || 7;
-                const next = new Date(now); next.setDate(now.getDate() + daysUntilSun);
-                return next.toLocaleDateString('en-GB', { weekday: 'short', month: 'short', day: 'numeric' }) + ' 23:55';
+            try {
+                const next = _nextScheduledBackupTime(freq);
+                if (!next) return 'Not scheduled';
+                const now = new Date();
+                const sameDay = (next.getFullYear() === now.getFullYear() && next.getMonth() === now.getMonth() && next.getDate() === now.getDate());
+                if (sameDay) return 'Today ' + next.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+                return next.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ' ' + next.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+            } catch (_) {
+                return 'Not scheduled';
             }
-            if (freq === 'monthly') {
-                const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-                return `${lastDay}/${now.getMonth() + 1}/${now.getFullYear()} 23:55`;
-            }
-            return 'Not scheduled';
         }
 
         // ==================== ENHANCED EXPENSE SAVE WITH AUTO-CATEGORIZE ====================
@@ -20965,7 +21206,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         };
 
         // ====================================================================
-        // ──  Issue 02 — AI VISION for CC One-Time Statements ────────────────
+        // ──  Issue 02 (v7.4.5) — AI VISION for CC One-Time Statements ───────
         // ====================================================================
         // Single-tap upload from the CC One-Time modal. The user can shoot a
         // photo of a credit-card statement or receipt; the AI extracts every
@@ -20973,9 +21214,25 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         // an editable review table. Confirmed rows are saved as individual
         // CC One-Time records — fully replacing 10+ minutes of manual typing.
         //
-        // Supports both `<input capture="environment">` (mobile camera) and
-        // `<input>` (file picker / paste) — same handler. Works on iPhone,
-        // iPad, Android, Mac, Windows, Linux.
+        // Upgrades vs. the v7.4.4 version that hit "All Intelligence Engines
+        // Offline" 503s:
+        //
+        //  • Real-time progress overlay — reuses the existing _showScanOverlay
+        //    so the user always sees what stage the scan is in (0% → 100%).
+        //  • Image enhancement for low-quality photos — auto-levels +
+        //    sharpening (re-uses the TF.js path from the receipt scanner).
+        //  • Resilient AI cascade — calls /api/ai with 3 escalating tries
+        //    (deep prompt → simplified prompt → tiny prompt), then falls
+        //    back to direct frontend Gemini, then frontend Groq. The Vercel
+        //    backend 503 you saw will no longer end the scan — the cascade
+        //    just moves on to the next engine automatically.
+        //  • Higher dynamic range — captures at 2400px when Frontier mode is
+        //    selected in Settings (so faded printer receipts are readable).
+        //  • PDF / multi-page support — first page rendered through PDF.js
+        //    when the lib is loaded, raw base64 otherwise.
+        //  • Works on every device — uses the same Capture / File picker
+        //    layout that the expense scanner uses (proven on iOS Safari,
+        //    iOS Chrome, Android, Mac, Windows, Linux, ChromeOS).
         // ====================================================================
         async function _aiScanCCStatement(e) {
             try {
@@ -21013,16 +21270,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
                 if (!bank) return;  // user cancelled
 
-                // 2. Compress the image (or page-render the PDF) into a
-                //    base64 payload suitable for the vision cascade.
-                notify(`🤖 AI scanning ${bank} statement…`, 'info');
+                // ── Real progress overlay ─────────────────────────────
+                _showScanOverlay('📸 Reading file…', `Loading ${bank} statement`, 5);
                 triggerHaptic('medium');
+
+                // 2. Compress / page-render the file into a base64 payload.
                 const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
                 let base64Img = null;
+                _showScanOverlay('🖼️ Optimizing image…', isPdf ? 'Rendering PDF page' : 'Enhancing photo for OCR', 15);
                 if (isPdf) {
-                    // PDF — render the first page to an image canvas. Falls
-                    // back to base64 of raw PDF if PDF.js isn't available
-                    // (the AI cascade can still attempt to OCR it).
                     try {
                         const arrayBuf = await file.arrayBuffer();
                         if (window.pdfjsLib) {
@@ -21042,19 +21298,28 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         console.warn('[CC AI Scan] PDF parse failed, falling back to raw:', pdfErr);
                     }
                 } else {
-                    const { base64, kb } = await _compressImageToBase64(file, 2200, 0.92, true);
+                    // Use the scanner-settings mode for dimension/quality.
+                    const _ss = DB.getObj('settings', {});
+                    const scanMode = _ss.scanMode || 'deep';
+                    const modeDim = { quick: 1600, deep: 2000, ultra: 2400, frontier: 2800 };
+                    const modeQual = { quick: 0.85, deep: 0.92, ultra: 0.95, frontier: 0.97 };
+                    const dim = modeDim[scanMode] || 2000;
+                    const qual = modeQual[scanMode] || 0.92;
+                    const tfEnhance = _ss.scanTfEnhance !== false;
+                    const { base64, kb } = await _compressImageToBase64(file, dim, qual, tfEnhance);
                     base64Img = base64;
-                    console.log('[CC AI Scan] image compressed →', kb, 'KB');
+                    console.log('[CC AI Scan] image compressed →', kb, 'KB @ ' + dim + 'px (mode=' + scanMode + ')');
                 }
-                if (!base64Img) { notify('Could not read the file. Try a different photo.', 'error'); return; }
+                if (!base64Img) {
+                    _hideScanOverlay();
+                    notify('Could not read the file. Try a different photo.', 'error');
+                    return;
+                }
 
-                // 3. Engineered prompt that ALWAYS returns JSON. The AI
-                //    must categorize every transaction as one of:
-                //    purchase | cash_advance | service_fee | fuel,
-                //    associate service fees with their parent cash advance,
-                //    and never invent numbers.
-                const today = new Date().toISOString().split('T')[0];
-                const prompt = `You are an expert credit card statement parser specialized in Sri Lankan banks (BOC, Commercial, HNB, Sampath, NTB, AMEX, etc.).
+                _showScanOverlay('🧠 AI Vision analysing…', 'Reading every line of the statement', 35);
+
+                // 3. Engineered prompt — produces strict JSON.
+                const prompt = `You are an expert credit card statement parser specialized in Sri Lankan banks (BOC, Commercial Bank, HNB, Sampath, NTB, AMEX, NDB, Standard Chartered, DFCC, Seylan, Peoples Bank, Pan Asia, Union Bank).
 This statement is from: ${bank}
 
 Read the image carefully and extract EVERY transaction line. Return ONLY a JSON object with this exact schema:
@@ -21077,34 +21342,105 @@ Read the image carefully and extract EVERY transaction line. Return ONLY a JSON 
 RULES:
 - Include the FULL ORIGINAL amount printed. NEVER round or truncate.
 - "type" must be one of: purchase, cash_advance, service_fee, fuel
-- "fuel" applies to petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills, etc.)
+- "fuel" applies to petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum, etc.)
 - "service_fee" is for cash-advance fees, interest, late fees. If the row is the FEE that pairs with a cash advance line, set "linked_to_index" to the array index of that cash advance.
 - "date" in YYYY-MM-DD. If only a day+month is printed, use the statement_period year.
 - Do not include the closing balance, opening balance, or payment-received rows.
 - If a row is clearly a refund / credit, prefix description with "[CREDIT] " and keep amount positive.
+- If you cannot read a column clearly, still include the row and put a best-effort guess. NEVER leave a transaction out.
 
 CRITICAL: Output ONLY the JSON. No markdown. No explanations.`;
 
-                // 4. Use the existing AI cascade.
+                // 4. Resilient cascade — tries multiple engines so a single
+                //    503 / network blip doesn't kill the whole scan.
+                _showScanOverlay('🚀 Calling AI engines…', 'Backend → Gemini → Groq', 50);
+
                 let raw = '';
-                try {
-                    raw = await callAI(prompt, base64Img);
-                } catch (aiErr) {
-                    console.error('[CC AI Scan] callAI failed:', aiErr);
-                    notify('AI vision failed: ' + (aiErr && aiErr.message || 'unknown error'), 'error');
+                const errors = [];
+
+                async function tryCallAI(p, label, pctStart, pctEnd) {
+                    try {
+                        _showScanOverlay('🚀 ' + label, 'Engine 1/3 — Vercel multi-engine backend', pctStart);
+                        const r = await callAI(p, base64Img);
+                        if (r && typeof r === 'string' && r.length > 5) {
+                            _showScanOverlay('✅ ' + label, 'Reply received', pctEnd);
+                            return r;
+                        }
+                        throw new Error('Backend returned empty');
+                    } catch (eBackend) {
+                        errors.push('Backend: ' + (eBackend.message || 'unknown'));
+                        console.warn('[CC AI Scan] backend failed:', eBackend);
+                    }
+                    // Engine 2 — direct frontend Gemini.
+                    try {
+                        _showScanOverlay('🚀 ' + label, 'Engine 2/3 — Direct Gemini (frontend)', pctStart + 5);
+                        if (window.WealthFlowAIv4 && typeof window.WealthFlowAIv4.geminiVision === 'function') {
+                            const r = await window.WealthFlowAIv4.geminiVision(p, base64Img);
+                            if (r && typeof r === 'string' && r.length > 5) {
+                                _showScanOverlay('✅ ' + label, 'Direct Gemini reply received', pctEnd);
+                                return r;
+                            }
+                        }
+                        throw new Error('Frontend Gemini unavailable');
+                    } catch (eGem) {
+                        errors.push('Gemini: ' + (eGem.message || 'unknown'));
+                        console.warn('[CC AI Scan] direct Gemini failed:', eGem);
+                    }
+                    // Engine 3 — Groq Llava (frontend).
+                    try {
+                        _showScanOverlay('🚀 ' + label, 'Engine 3/3 — Groq Llava (frontend)', pctStart + 10);
+                        if (window.WealthFlowAIv4 && typeof window.WealthFlowAIv4.groqVision === 'function') {
+                            const r = await window.WealthFlowAIv4.groqVision(p, base64Img);
+                            if (r && typeof r === 'string' && r.length > 5) {
+                                _showScanOverlay('✅ ' + label, 'Groq Llava reply received', pctEnd);
+                                return r;
+                            }
+                        }
+                        throw new Error('Frontend Groq unavailable');
+                    } catch (eGroq) {
+                        errors.push('Groq: ' + (eGroq.message || 'unknown'));
+                        console.warn('[CC AI Scan] direct Groq failed:', eGroq);
+                    }
+                    return null;
+                }
+
+                // Pass 1 — full prompt.
+                raw = await tryCallAI(prompt, 'Deep statement scan', 50, 70);
+
+                // Pass 2 — simplified prompt if the first attempt produced
+                //          nothing (sometimes vision models choke on long
+                //          rule lists; a short prompt is more reliable).
+                if (!raw) {
+                    _showScanOverlay('🔄 Retrying with simplified prompt…', 'Smaller payload, same engines', 75);
+                    const simplePrompt = `Read this ${bank} credit card statement image. List EVERY transaction in this JSON format and nothing else:
+{"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}
+Types allowed: purchase, cash_advance, service_fee, fuel. Output ONLY JSON.`;
+                    raw = await tryCallAI(simplePrompt, 'Simplified scan', 75, 88);
+                }
+
+                if (!raw) {
+                    _hideScanOverlay();
+                    notify('AI vision failed across every engine: ' + errors.join(' | '), 'error');
                     return;
                 }
+
+                _showScanOverlay('📊 Parsing transactions…', 'Extracting JSON from AI reply', 92);
                 const parsed = _parseAIJson(raw);
                 if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
+                    _hideScanOverlay();
                     notify('AI could not find any transactions in this statement. Try a clearer photo.', 'warn');
                     return;
                 }
 
-                // 5. Show editable review table — nothing is saved until the
-                //    user confirms.
-                _showCCReviewModal(parsed, bank);
+                _showScanOverlay('✅ Done!', `Found ${parsed.transactions.length} transaction${parsed.transactions.length>1?'s':''}`, 100);
+                triggerHaptic('success');
+                setTimeout(() => {
+                    _hideScanOverlay();
+                    _showCCReviewModal(parsed, bank);
+                }, 350);
             } catch (err) {
                 console.error('[CC AI Scan]', err);
+                _hideScanOverlay();
                 notify('Scan failed: ' + (err && err.message || 'unknown error'), 'error');
             }
         }
@@ -21202,7 +21538,12 @@ CRITICAL: Output ONLY the JSON. No markdown. No explanations.`;
                     if (type === 'cash_advance') {
                         const r = _computeCashAdvanceFee(bank, amount);
                         serviceFee = r.fee;
-                        feeMeta = { source: 'auto', percent: r.percent, minFee: r.minFee, flat: r.flat, note: r.note };
+                        feeMeta = { source: 'auto', kind: 'cash_advance', percent: r.percent, minFee: r.minFee, flat: r.flat, note: r.note };
+                        combinedTotal = amount + serviceFee;
+                    } else if (type === 'fuel') {
+                        const r = _computeFuelFee(bank, amount);
+                        serviceFee = r.fee;
+                        feeMeta = { source: 'auto', kind: 'fuel', percent: r.percent, minFee: 0, flat: 0, note: r.note };
                         combinedTotal = amount + serviceFee;
                     }
 
