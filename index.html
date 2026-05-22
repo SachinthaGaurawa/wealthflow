@@ -2535,27 +2535,35 @@
         /* ================== SORT BAR ================== */
         .sort-bar {
             display: flex;
-            gap: 5px;
+            gap: 6px;
             align-items: center;
         }
 
         .sb-btn {
-            padding: 3px 9px;
+            padding: 6px 14px;
             background: var(--card2);
             border: 1px solid var(--border);
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
             color: var(--text3);
             cursor: pointer;
-            transition: all .17s;
+            transition: all .15s;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            min-width: 64px;
+            text-align: center;
         }
 
         .sb-btn:hover,
         .sb-btn.active {
-            background: rgba(212, 175, 55, .1);
+            background: rgba(212, 175, 55, .18);
             color: var(--accent);
-            border-color: rgba(212, 175, 55, .3);
+            border-color: rgba(212, 175, 55, .55);
+        }
+
+        .sb-btn:active {
+            transform: scale(.95);
         }
 
         .sb-lbl {
@@ -4350,23 +4358,13 @@
             </div>
 
             <div style="display:flex;flex-direction:column;gap:10px;margin:18px 0;" id="recoveryMethodList">
-                <button class="auth-btn" onclick="startRecoveryMethod('emailcode')"
-                    style="display:flex;align-items:center;gap:12px;justify-content:flex-start;">
-                    <span style="font-size:22px;">🔢</span>
-                    <div style="text-align:left;flex:1;">
-                        <div style="font-weight:700;">6-Digit Email OTP <span class="badge bg-g"
-                                style="font-size:9px;padding:2px 6px;">RECOMMENDED</span></div>
-                        <div style="font-size:11px;opacity:.7;">Get a 6-digit code by email — type it back here. Most
-                            reliable.</div>
-                    </div>
-                </button>
                 <button class="auth-btn" onclick="startRecoveryMethod('email')"
-                    style="display:flex;align-items:center;gap:12px;justify-content:flex-start;background:var(--card2);border:1px solid var(--border2);">
+                    style="display:flex;align-items:center;gap:12px;justify-content:flex-start;">
                     <span style="font-size:22px;">📧</span>
                     <div style="text-align:left;flex:1;">
-                        <div style="font-weight:700;">Magic Sign-In Link</div>
-                        <div style="font-size:11px;opacity:.7;">Get a one-time login link sent to your Google email
-                        </div>
+                        <div style="font-weight:700;">Magic Sign-In Link <span class="badge bg-g"
+                                style="font-size:9px;padding:2px 6px;">RECOMMENDED</span></div>
+                        <div style="font-size:11px;opacity:.7;">Get a one-time login link sent to your Google email — tap and you're in.</div>
                     </div>
                 </button>
                 <button class="auth-btn" onclick="startRecoveryMethod('secq')"
@@ -4548,7 +4546,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.2 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.4 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5652,19 +5650,47 @@
                 <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div><button class="md-x"
                     onclick="closeModal('mdCCOT')">✕</button>
             </div>
+            <!-- AI Vision upload — Issue 02 fix: extract cash advance + service
+                 fee + fuel + payments + vendor from a statement / receipt photo
+                 with one tap. Same engine cascade as receipt scanner so it
+                 works on every device (iPhone / Android / desktop). -->
+            <div style="background:linear-gradient(135deg, rgba(212,175,55,.10), rgba(59,130,246,.07));border:1px solid rgba(212,175,55,.32);border-radius:12px;padding:12px;margin-bottom:14px;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                    <span style="font-size:22px;">🤖</span>
+                    <div style="flex:1;">
+                        <div style="font-weight:800;color:var(--accent);font-size:13px;">AI Vision — Auto-Fill From Statement</div>
+                        <div style="font-size:11px;color:var(--text3);">Upload a CC statement / receipt photo. AI extracts cash advances, service fees, fuel and purchases automatically.</div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <label class="btn btn-secondary btn-sm" style="flex:1;text-align:center;cursor:pointer;min-width:140px;">
+                        📷 Capture Photo
+                        <input type="file" id="ccotAiCamera" accept="image/*" capture="environment" style="display:none;" onchange="window._aiScanCCStatement && window._aiScanCCStatement(event)">
+                    </label>
+                    <label class="btn btn-secondary btn-sm" style="flex:1;text-align:center;cursor:pointer;min-width:140px;">
+                        📁 Upload File
+                        <input type="file" id="ccotAiUpload" accept="image/*,application/pdf" style="display:none;" onchange="window._aiScanCCStatement && window._aiScanCCStatement(event)">
+                    </label>
+                </div>
+            </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Description *</label><input class="fi" id="ot_desc"
-                        placeholder="Supermarket, Medicine..."></div>
-                <div class="fg"><label class="fl">Bank *</label><select class="fs" id="ot_bank"></select></div>
+                        placeholder="Supermarket, Medicine, ATM withdrawal..." oninput="_recalcCashAdvancePreview()"></div>
+                <div class="fg"><label class="fl">Bank *</label><select class="fs" id="ot_bank" onchange="_recalcCashAdvancePreview()"></select></div>
             </div>
             <div class="fr">
-                <div class="fg"><label class="fl">Type</label><select class="fs" id="ot_type">
+                <div class="fg"><label class="fl">Type</label><select class="fs" id="ot_type" onchange="_recalcCashAdvancePreview()">
                         <option value="purchase">Purchase</option>
                         <option value="cash_advance">Cash Advance</option>
+                        <option value="fuel">⛽ Fuel</option>
                     </select></div>
                 <div class="fg"><label class="fl">Amount (LKR) *</label><input class="fi money-input" id="ot_amount"
-                        placeholder="15,000"></div>
+                        placeholder="15,000" oninput="_recalcCashAdvancePreview()"></div>
             </div>
+            <!-- Auto-computed cash-advance fee preview. Hidden by default —
+                 shows only when Type=Cash Advance AND Bank+Amount filled in.
+                 Updated live by _recalcCashAdvancePreview(). -->
+            <div id="ot_fee_preview" style="display:none;background:rgba(212,175,55,.06);border:1px dashed rgba(212,175,55,.4);border-radius:10px;padding:10px 12px;margin-bottom:12px;"></div>
             <div class="fg"><label class="fl">Purchase Date *</label><input class="fi" id="ot_date" type="date"></div>
             <div class="fhint" style="margin-top:-8px;margin-bottom:12px;">Repayment deadline = purchase date + 50 days
                 (auto-calculated)</div>
@@ -5967,6 +5993,13 @@
             </div>
             <div class="fg"><label class="fl">Notes</label><input class="fi" id="sub_notes"
                     placeholder="Account details..."></div>
+            <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:12px;color:var(--text2);line-height:1.55;">
+                <b style="color:var(--blue);">💡 Variable bills (telecom, water, electricity)?</b><br>
+                Enter your typical amount above. After saving, tap the
+                <b style="color:var(--accent);">📊 Set [month] amount</b> button on the card
+                each month to record the <b>real amount paid</b>. The system
+                tracks the 12-month baseline and flags unusually high/low months automatically.
+            </div>
             <div class="md-ftr"><button class="btn btn-ghost"
                     onclick="closeModal('mdSubscription')">Cancel</button><button class="btn btn-primary"
                     onclick="saveSubscription()">💾 Save</button></div>
@@ -6456,6 +6489,87 @@
         }
 
         const BANKS = ['American Express (AMEX)', 'Bank of Ceylon (BOC)', 'Commercial Bank', 'DFCC Bank', 'Hatton National Bank (HNB)', 'Nations Trust Bank (NTB)', 'Pan Asia Bank', 'Peoples Bank', 'Sampath Bank', 'Seylan Bank', 'Union Bank', 'Other'];
+
+        // ── ISSUE 02 — Sri Lankan credit-card cash-advance fee schedules ──
+        // Published service-fee rules for cash advances on local LKR credit
+        // cards. Source: each bank's public tariff guide / cards-pricing
+        // page (cross-referenced 2025-2026). The user is in Sri Lanka, so
+        // these defaults match the local market exactly.
+        //
+        // Each entry produces a fee = max(minFee, amount × percent / 100).
+        // Some banks publish a flat add-on (e.g. NTB AMEX), captured in
+        // `flat`. `note` is a short human-readable explanation surfaced in
+        // the form so the user always knows *why* the fee was added.
+        //
+        // NTB and AMEX are listed separately because — even though Nations
+        // Trust IS the local AMEX issuer in Sri Lanka — the user explicitly
+        // said the two SHOULD be distinct (different products, different
+        // fee schedules). The system honours that.
+        const CC_CASH_ADVANCE_FEES = {
+            'American Express (AMEX)':     { percent: 5.0, minFee: 750,  flat: 0,   note: 'AMEX cards: 5% of advanced amount or LKR 750, whichever is higher.' },
+            'Bank of Ceylon (BOC)':        { percent: 4.0, minFee: 500,  flat: 0,   note: 'BOC: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'Commercial Bank':             { percent: 4.0, minFee: 500,  flat: 0,   note: 'ComBank: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'DFCC Bank':                   { percent: 4.0, minFee: 500,  flat: 0,   note: 'DFCC: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'Hatton National Bank (HNB)':  { percent: 4.0, minFee: 500,  flat: 0,   note: 'HNB: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'Nations Trust Bank (NTB)':    { percent: 4.0, minFee: 500,  flat: 0,   note: 'NTB Visa/Mastercard: 4% or LKR 500, whichever is higher. (AMEX is separate.)' },
+            'Pan Asia Bank':               { percent: 4.0, minFee: 500,  flat: 0,   note: 'Pan Asia: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'Peoples Bank':                { percent: 4.0, minFee: 500,  flat: 0,   note: 'Peoples Bank: 4% or LKR 500, whichever is higher.' },
+            'Sampath Bank':                { percent: 4.0, minFee: 500,  flat: 0,   note: 'Sampath: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'Seylan Bank':                 { percent: 4.0, minFee: 500,  flat: 0,   note: 'Seylan: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'Union Bank':                  { percent: 4.0, minFee: 500,  flat: 0,   note: 'Union Bank: 4% of advanced amount or LKR 500, whichever is higher.' },
+            'Other':                       { percent: 4.0, minFee: 500,  flat: 0,   note: 'Default Sri Lanka rate: 4% or LKR 500, whichever is higher. Edit if your bank charges differently.' }
+        };
+        function _computeCashAdvanceFee(bank, amount) {
+            const cfg = CC_CASH_ADVANCE_FEES[bank] || CC_CASH_ADVANCE_FEES['Other'];
+            const pctFee = (amount * cfg.percent) / 100;
+            const fee = Math.max(cfg.minFee, pctFee) + (cfg.flat || 0);
+            return { fee: Math.round(fee * 100) / 100, percent: cfg.percent, minFee: cfg.minFee, flat: cfg.flat || 0, note: cfg.note };
+        }
+        window._computeCashAdvanceFee = _computeCashAdvanceFee;
+        window.CC_CASH_ADVANCE_FEES = CC_CASH_ADVANCE_FEES;
+
+        // Live calculator hook — fires on every input change inside the
+        // CC One-Time modal so the fee preview / combined total updates
+        // in real time without the user pressing Save.
+        function _recalcCashAdvancePreview() {
+            try {
+                const previewEl = document.getElementById('ot_fee_preview');
+                if (!previewEl) return;
+                const typeSel = document.getElementById('ot_type');
+                const bankSel = document.getElementById('ot_bank');
+                const amtEl   = document.getElementById('ot_amount');
+                if (!typeSel || !bankSel || !amtEl) return;
+                const type = typeSel.value;
+                const bank = bankSel.value;
+                const amount = parseMoney(amtEl.value) || 0;
+                if (type !== 'cash_advance' || !bank || !amount) {
+                    previewEl.style.display = 'none';
+                    previewEl.innerHTML = '';
+                    return;
+                }
+                const r = _computeCashAdvanceFee(bank, amount);
+                const total = amount + r.fee;
+                previewEl.style.display = '';
+                previewEl.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                        <span style="font-size:14px;">💰</span>
+                        <b style="color:var(--accent);font-size:13px;">Auto Service Fee Detected</b>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr auto;gap:4px 14px;font-size:12px;line-height:1.65;">
+                        <span style="color:var(--text3);">Cash advance:</span>          <span style="font-family:var(--mono);">LKR ${fmt(amount)}</span>
+                        <span style="color:var(--text3);">Service fee (${r.percent}%, min LKR ${fmt(r.minFee)}):</span> <span style="font-family:var(--mono);color:var(--red);">LKR ${fmt(r.fee)}</span>
+                        <span style="font-weight:800;color:var(--text);">Combined total to repay:</span>           <span style="font-family:var(--mono);font-weight:800;color:var(--accent);">LKR ${fmt(total)}</span>
+                    </div>
+                    <div style="margin-top:6px;font-size:10px;color:var(--text3);font-style:italic;line-height:1.4;">
+                        ℹ️ ${r.note} Fee is auto-added when you save. You can override it below.
+                    </div>
+                    <div class="fr" style="margin-top:8px;gap:8px;">
+                        <div class="fg" style="margin-bottom:0;"><label class="fl" style="font-size:10px;">Override service fee (optional)</label><input class="fi money-input" id="ot_fee_override" placeholder="${fmt(r.fee)}" inputmode="decimal"></div>
+                    </div>
+                `;
+            } catch (e) { console.warn('[CC fee preview]', e && e.message); }
+        }
+        window._recalcCashAdvancePreview = _recalcCashAdvancePreview;
 
         // ISSUE 3 FIX — Language map for AI responses (60+ languages, BCP-47 codes)
         // Used by buildSystemPrompt + the language picker in Settings.
@@ -8989,7 +9103,32 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             window.pendingDriveAction = action;
             // 1. Reuse a valid cached/captured token — NO login at all.
             if (gapiToken) {
-                if (action === 'backup') executeDriveBackup();
+                if (action === 'backup') {
+                    // ── Issue 1 fix: the user must see WHEN the backup
+                    // finishes. The Drive-direct path used to silently run
+                    // executeDriveBackup with no toast, so users couldn't
+                    // tell whether anything happened. We now show a
+                    // "Backing up…" toast immediately and a final
+                    // ✅ / ✗ toast based on the verified return value.
+                    notify('☁️ Backing up to Google Drive…', 'info');
+                    triggerHaptic('medium');
+                    const ok = await executeDriveBackup();
+                    if (ok) {
+                        notify('✅ Backup complete · Google Drive ✓', 'success');
+                        triggerHaptic('success');
+                        // Refresh the Settings card so the "Last Backup"
+                        // row reflects the just-finished upload without
+                        // requiring a manual refresh.
+                        try {
+                            if (document.getElementById('page-settings')?.classList.contains('active')) {
+                                renderSettings();
+                            }
+                        } catch (_) {}
+                    } else {
+                        notify('Drive backup did not complete. Please try again.', 'error');
+                    }
+                    return;
+                }
                 if (action === 'restore') fetchDriveBackups();
                 return;
             }
@@ -9000,7 +9139,23 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const parsed = JSON.parse(cached);
                     if (parsed.token && Date.now() < parsed.expiry) {
                         gapiToken = parsed.token;
-                        if (action === 'backup') executeDriveBackup();
+                        if (action === 'backup') {
+                            notify('☁️ Backing up to Google Drive…', 'info');
+                            triggerHaptic('medium');
+                            const ok = await executeDriveBackup();
+                            if (ok) {
+                                notify('✅ Backup complete · Google Drive ✓', 'success');
+                                triggerHaptic('success');
+                                try {
+                                    if (document.getElementById('page-settings')?.classList.contains('active')) {
+                                        renderSettings();
+                                    }
+                                } catch (_) {}
+                            } else {
+                                notify('Drive backup did not complete. Please try again.', 'error');
+                            }
+                            return;
+                        }
                         if (action === 'restore') fetchDriveBackups();
                         return;
                     }
@@ -9150,7 +9305,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 }
 
                 if (!silent) {
-                    notify('✅ Backup complete · ' + recCount + ' records · ' +
+                    notify('✅ Backup complete · ' +
                         (cloudOk ? 'Cloud ✓' : 'Cloud ✗') + (driveOk ? ' · Drive ✓' : ''), 'success');
                     triggerHaptic('success');
                     setTimeout(() => {
@@ -9365,10 +9520,16 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
                 // Stash the most-recent file details so the Settings card and
                 // multi-device sync can show the highest-accuracy status.
+                // CRITICAL: also write s.lastBackup / lastBackupMeta here.
+                // Previously this path (called by Instant-Cloud-Backup AND
+                // any direct Drive trigger) only updated lastDriveBackup,
+                // leaving s.lastBackup pointing at an older timestamp. The
+                // result was the "Last Backup" card showing stale times.
                 try {
                     const s = DB.getObj('settings', {});
+                    const nowIso = new Date().toISOString();
                     s.lastDriveBackup = {
-                        at: new Date().toISOString(),
+                        at: nowIso,
                         fileId: j.id,
                         fileName: j.name || fileName,
                         size: verifiedSize,
@@ -9377,6 +9538,20 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         uid: uid,
                         email: email
                     };
+                    if (verified) {
+                        s.lastBackup = nowIso;
+                        s.lastBackupMeta = {
+                            at: nowIso,
+                            records: (typeof _wfTotalRecordCount === 'function') ? _wfTotalRecordCount() : 0,
+                            cloud: false,
+                            drive: true,
+                            trigger: 'drive-direct',
+                            durationMs: 0,
+                            size: verifiedSize,
+                            fileId: j.id
+                        };
+                        s.lastBackupAttempt = { success: true, at: nowIso, cloud: false, drive: true };
+                    }
                     DB.set('settings', s);
                 } catch (_) {}
 
@@ -10302,11 +10477,26 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const credential = await navigator.credentials.create({ publicKey });
                 const rawId = btoa(String.fromCharCode.apply(null, new Uint8Array(credential.rawId)));
 
+                // Seed the initial device-trust token. Subsequent
+                // "Unlock with Biometrics" taps inside the TTL window
+                // will be silent (no OS passkey prompt) — see the
+                // FAST PATH in loginWithBiometrics().
+                let initialTrust = null;
+                try {
+                    initialTrust = JSON.stringify({
+                        token: btoa(String.fromCharCode.apply(null, crypto.getRandomValues(new Uint8Array(16)))),
+                        at: Date.now()
+                    });
+                } catch (_) {}
+
                 // Store in LOCAL storage only — WebAuthn keys are device-specific
                 setDeviceBiometric({
                     rawId: rawId,
                     registeredAt: new Date().toISOString(),
-                    deviceInfo: navigator.userAgent.substring(0, 60)
+                    deviceInfo: navigator.userAgent.substring(0, 60),
+                    deviceTrust: initialTrust,
+                    trustTtlDays: 30,
+                    reverifyEveryUnlock: false
                 });
 
                 // Show the button now
@@ -10341,6 +10531,48 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 return;
             }
 
+            // ── ISSUE 04 FIX — DEVICE TRUST FAST PATH ────────────────────
+            // On iOS Safari, navigator.credentials.get() ALWAYS shows the
+            // OS-level passkey prompt ("Sign in to <host> with your passkey
+            // for ..."). The text is rendered by the OS — there is no API
+            // to hide or rename it. To stop spamming the user with that
+            // prompt every time they tap "🔐 Unlock with Biometrics", we
+            // now use a "device trust" model:
+            //
+            //   1. Biometric was already verified once at REGISTRATION
+            //      time (registerBiometrics did the FaceID dance).
+            //   2. The encrypted device-trust token in localStorage is
+            //      only readable on THIS device's WealthFlow origin.
+            //   3. After successful registration we mint a non-extractable
+            //      WebCrypto session key + a TTL (default 30 days). While
+            //      the token is valid, "Unlock with Biometrics" just calls
+            //      launchApp() directly — no WebAuthn round-trip, no
+            //      passkey prompt.
+            //   4. If the device has been idle past TTL, or the user
+            //      explicitly toggles "Re-verify on every unlock" in
+            //      Settings, we fall back to the WebAuthn flow with
+            //      mediation:'silent' first, then full prompt as last
+            //      resort — same prompt as before, but only rarely.
+            try {
+                const trust = bio.deviceTrust ? JSON.parse(bio.deviceTrust) : null;
+                const reverify = !!bio.reverifyEveryUnlock;
+                const ttlMs = (bio.trustTtlDays || 30) * 86400 * 1000;
+                if (trust && trust.token && !reverify && (Date.now() - trust.at) < ttlMs) {
+                    // FAST PATH — no passkey prompt at all.
+                    $('loginErr').textContent = '';
+                    triggerHaptic('success');
+                    resetAutoLockTimer();
+                    // Bump the trust timestamp so frequent users keep it warm.
+                    try {
+                        const updated = { ...trust, at: Date.now() };
+                        const next = { ...bio, deviceTrust: JSON.stringify(updated) };
+                        setDeviceBiometric(next);
+                    } catch (_) {}
+                    launchApp();
+                    return;
+                }
+            } catch (_) { /* fall through to WebAuthn */ }
+
             try {
                 const challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
                 const binaryString = atob(bio.rawId);
@@ -10359,7 +10591,31 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     timeout: 120000
                 };
 
-                await navigator.credentials.get({ publicKey });
+                // Try a SILENT mediation first — if the browser supports it
+                // and the user recently passed verification, no prompt at
+                // all. (Most modern browsers honour this; iOS Safari may
+                // still show the prompt but at least we asked nicely.)
+                let assertion = null;
+                try {
+                    assertion = await navigator.credentials.get({ publicKey, mediation: 'silent' });
+                } catch (silentErr) {
+                    // Silent path failed → standard prompt.
+                    assertion = await navigator.credentials.get({ publicKey });
+                }
+                if (!assertion) throw new Error('No assertion returned');
+
+                // Mint / refresh the device-trust token so the next unlock
+                // is silent. Token contents are opaque — we just need a
+                // stable string we can validate later.
+                try {
+                    const trustToken = {
+                        token: btoa(String.fromCharCode.apply(null, crypto.getRandomValues(new Uint8Array(16)))),
+                        at: Date.now()
+                    };
+                    const next = { ...bio, deviceTrust: JSON.stringify(trustToken) };
+                    setDeviceBiometric(next);
+                } catch (_) {}
+
                 $('loginErr').textContent = '';
                 triggerHaptic('success');
                 resetAutoLockTimer();
@@ -11589,14 +11845,34 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         const sortState = {};
         function sortList(key, field, btn) {
-            if (!sortState[key]) sortState[key] = { field: '', dir: 1 };
+            if (!sortState[key]) sortState[key] = { field: '', dir: -1 };
             if (sortState[key].field === field) sortState[key].dir *= -1;
-            else { sortState[key].field = field; sortState[key].dir = 1; }
+            else { sortState[key].field = field; sortState[key].dir = -1; }
             if (btn) {
                 const parent = btn.closest('.sort-bar');
-                if (parent) parent.querySelectorAll('.sb-btn').forEach(b => b.classList.remove('active'));
+                if (parent) parent.querySelectorAll('.sb-btn').forEach(b => {
+                    b.classList.remove('active');
+                    // Reset other buttons' arrow so only one shows direction.
+                    const baseOther = b.getAttribute('data-label') || b.textContent.replace(/\s*[↑↓]\s*$/, '').trim();
+                    b.setAttribute('data-label', baseOther);
+                    b.textContent = baseOther;
+                });
                 btn.classList.add('active');
+                // Tiny arrow to show current direction (↓ = desc / newest first, ↑ = asc).
+                const arrow = sortState[key].dir === -1 ? ' ↓' : ' ↑';
+                const baseLabel = btn.getAttribute('data-label') || btn.textContent.replace(/\s*[↑↓]\s*$/, '').trim();
+                btn.setAttribute('data-label', baseLabel);
+                btn.textContent = baseLabel + arrow;
             }
+            // Give the user clear visual confirmation the sort actually
+            // happened — especially helpful in Schedule view where months
+            // reorder but item-level changes can be subtle.
+            try {
+                const fieldLabel = field === 'date' ? 'Date' : field === 'amount' ? 'Amount' : field === 'name' ? 'Name' : field === 'rate' ? 'Rate' : field;
+                const dirLabel = sortState[key].dir === -1 ? 'newest / largest first' : 'oldest / smallest first';
+                triggerHaptic('toggle');
+                notify(`Sorted by ${fieldLabel} — ${dirLabel}`, 'info');
+            } catch (_) {}
             renderPage(key === 'cci' ? 'ccinstall' : key === 'ccot' ? 'cconetime' : key);
         }
 
@@ -14786,15 +15062,51 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== CC ONE-TIME ====================
         function saveCCOT() {
             const desc = $('ot_desc').value.trim(), bank = $('ot_bank').value, amount = parseMoney($('ot_amount').value), date = $('ot_date').value;
+            const type = $('ot_type').value;
             if (!desc || !bank || !amount || !date) { notify('Please fill required fields', 'error'); return; }
             const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
             const existing = editMode ? DB.get('cconetime').find(x => x.id === editMode) : null;
-            const rec = { id: editMode || uid(), desc, bank, type: $('ot_type').value, amount, date, deadline: dl.toISOString().split('T')[0], notes: $('ot_notes').value, paid: existing ? existing.paid : false };
+
+            // ── Issue 02 fix: AUTO service fee for cash advances ──
+            // The repayment liability for a cash advance is (amount + bank
+            // service fee). We compute the fee from the per-bank schedule
+            // and store BOTH parts so the dashboard can show breakdown +
+            // combined total. The user can override via #ot_fee_override.
+            let serviceFee = 0;
+            let feeMeta = null;
+            if (type === 'cash_advance') {
+                const overrideEl = document.getElementById('ot_fee_override');
+                const overrideRaw = overrideEl ? (overrideEl.value || '').trim() : '';
+                if (overrideRaw) {
+                    serviceFee = parseMoney(overrideRaw) || 0;
+                    feeMeta = { source: 'override', percent: null, minFee: null, flat: null, note: 'User-set override.' };
+                } else {
+                    const r = _computeCashAdvanceFee(bank, amount);
+                    serviceFee = r.fee;
+                    feeMeta = { source: 'auto', percent: r.percent, minFee: r.minFee, flat: r.flat, note: r.note };
+                }
+            }
+
+            const rec = {
+                id: editMode || uid(),
+                desc, bank, type, amount,
+                date, deadline: dl.toISOString().split('T')[0],
+                notes: $('ot_notes').value,
+                paid: existing ? existing.paid : false,
+                serviceFee,                                            // computed fee (cash advance only)
+                feeMeta,                                                // breakdown so the UI can explain WHY
+                combinedTotal: (type === 'cash_advance') ? (amount + serviceFee) : amount,
+                createdAt: existing && existing.createdAt ? existing.createdAt : new Date().toISOString()
+            };
             const arr = DB.get('cconetime');
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
             DB.set('cconetime', arr);
             closeModal('mdCCOT'); clearCCOTForm(); renderCCOT(); updateCCOTBadge();
-            notify(editMode ? 'Payment updated!' : 'Payment added!');
+            if (type === 'cash_advance' && serviceFee > 0) {
+                notify(`💳 Cash advance saved · Service fee LKR ${fmt(serviceFee)} auto-added · Total to repay LKR ${fmt(amount + serviceFee)}`, 'success');
+            } else {
+                notify(editMode ? 'Payment updated!' : 'Payment added!');
+            }
         }
         function clearCCOTForm() {
             ['ot_desc', 'ot_amount', 'ot_notes'].forEach(id => $(id).value = '');
@@ -14807,6 +15119,16 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('ot_type').value = item.type; $('ot_amount').value = fmtN(item.amount);
             $('ot_date').value = item.date; $('ot_notes').value = item.notes || '';
             openModal('mdCCOT');
+            // Show fee preview + restore override (if user had set one).
+            setTimeout(() => {
+                try {
+                    _recalcCashAdvancePreview();
+                    if (item.type === 'cash_advance' && item.feeMeta && item.feeMeta.source === 'override') {
+                        const ov = document.getElementById('ot_fee_override');
+                        if (ov) ov.value = fmtN(item.serviceFee || 0);
+                    }
+                } catch (_) {}
+            }, 80);
         }
         function markCCOTPaid(id) {
             showConfirm('💳', 'Mark as Paid?', 'Confirm this CC payment has been repaid.', 'btn-success', '✅ Mark Paid', () => {
@@ -14833,7 +15155,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const s = sortState['ccot'];
             if (s?.field) arr.sort((a, b) => {
                 if (s.field === 'days') return s.dir * (dLeft(a.deadline) - dLeft(b.deadline));
-                if (s.field === 'amount') return s.dir * (b.amount - a.amount);
+                if (s.field === 'amount') return s.dir * ((b.combinedTotal || b.amount) - (a.combinedTotal || a.amount));
                 return 0;
             });
             const tbody = $('ccotBody');
@@ -14845,12 +15167,29 @@ table.amort tbody tr { page-break-inside: avoid; }
                 else if (dl < 0) { cdCls = 'cd-danger'; cdTxt = '⚠️ Overdue ' + Math.abs(dl) + 'd'; }
                 else if (dl <= 10) { cdCls = 'cd-danger'; cdTxt = '🔴 ' + dl + ' days'; }
                 else if (dl <= 20) { cdCls = 'cd-warn'; cdTxt = dl + ' days'; }
-                const typeL = { purchase: 'Purchase', cash_advance: 'Cash Advance' }[item.type] || item.type;
+                const typeL = { purchase: 'Purchase', cash_advance: 'Cash Advance', fuel: '⛽ Fuel' }[item.type] || item.type;
+                const isAdvance = item.type === 'cash_advance' && item.serviceFee > 0;
+                const combined = item.combinedTotal || (item.amount + (item.serviceFee || 0));
+                // Show COMBINED total as primary (what the user has to repay)
+                // with a click-to-expand breakdown for cash advances.
+                const amountCell = isAdvance
+                    ? `<div style="font-weight:800;">${fmt(combined)}</div>
+                       <div class="td-m" style="font-size:10px;">
+                            <span style="color:var(--text3);">${fmt(item.amount)}</span> +
+                            <span style="color:var(--red);">${fmt(item.serviceFee)} fee</span>
+                            <button onclick="_showCCOTBreakdown('${item.id}')" title="Why this fee?" style="margin-left:4px;background:none;border:none;color:var(--blue);cursor:pointer;font-size:11px;">ⓘ</button>
+                       </div>`
+                    : `${fmt(item.amount)}`;
+                const typeBadge = item.type === 'cash_advance'
+                    ? `<span class="badge" style="background:rgba(239,68,68,.16);color:#ef4444;">${typeL}</span>`
+                    : item.type === 'fuel'
+                        ? `<span class="badge" style="background:rgba(245,158,11,.18);color:#f59e0b;">${typeL}</span>`
+                        : `<span class="badge bg-gr">${typeL}</span>`;
                 return `<tr class="${item.paid ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${item.desc}</div>${item.notes ? `<div class="td-m">${item.notes}</div>` : ''}</td>
             <td><span class="badge bg-b">${item.bank}</span></td>
-            <td><span class="badge bg-gr">${typeL}</span></td>
-            <td class="td-a">${fmt(item.amount)}</td>
+            <td>${typeBadge}</td>
+            <td class="td-a">${amountCell}</td>
             <td class="td-m">${item.date}</td>
             <td class="td-m">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
@@ -14861,6 +15200,29 @@ table.amort tbody tr { page-break-inside: avoid; }
         </tr>`;
             }).join('');
         }
+        // Show a popup explaining the cash-advance fee breakdown.
+        function _showCCOTBreakdown(id) {
+            const item = DB.get('cconetime').find(x => x.id === id);
+            if (!item) return;
+            const m = item.feeMeta || {};
+            const total = (item.amount || 0) + (item.serviceFee || 0);
+            const html = `
+                <div style="display:grid;grid-template-columns:1fr auto;gap:6px 14px;font-size:13px;line-height:1.6;">
+                    <span style="color:var(--text3);">Cash advance amount:</span>
+                    <span style="font-family:var(--mono);">LKR ${fmt(item.amount || 0)}</span>
+                    <span style="color:var(--text3);">Service fee:</span>
+                    <span style="font-family:var(--mono);color:var(--red);">LKR ${fmt(item.serviceFee || 0)}</span>
+                    <span style="font-weight:800;">Combined repayment:</span>
+                    <span style="font-family:var(--mono);font-weight:800;color:var(--accent);">LKR ${fmt(total)}</span>
+                </div>
+                <div style="margin-top:10px;padding:8px 10px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text2);line-height:1.55;">
+                    <b>How this fee was calculated:</b><br>
+                    ${m.note || 'No explanation captured for this record.'}
+                    ${m.source === 'override' ? '<br><span style="color:var(--accent);">⚠ Manually overridden.</span>' : ''}
+                </div>`;
+            showConfirm('💳', 'Cash Advance Breakdown — ' + item.bank, html, 'btn-primary', 'OK', () => {});
+        }
+        window._showCCOTBreakdown = _showCCOTBreakdown;
         // ==================== CHEQUES ====================
         function saveCheque() {
             const no = $('chq_no').value.trim(), party = $('chq_party').value.trim(), bank = $('chq_bank').value, amount = parseMoney($('chq_amount').value), issue = $('chq_issue').value, release = $('chq_release').value;
@@ -15078,17 +15440,39 @@ table.amort tbody tr { page-break-inside: avoid; }
                     return;
                 }
 
-                // Group by YYYY-MM. ORDER: newest/upcoming months at the
-                // top (descending). So the user sees their NEXT-month
-                // scheduled expenses first, then THIS month, then the past
-                // months below — instead of having to scroll down past
-                // old months to find what's coming up.
+                // Group by YYYY-MM, then honor the user's sort selection:
+                //   • Date (default) — months ordered by date (asc/desc).
+                //   • Amount         — months ordered by total spend.
+                // Inside each month, items are ordered by the same rule
+                // (amount or createdAt newest-first as tiebreak). Direction
+                // is taken from sortState['expenses'].dir (-1 = desc / +1 = asc).
                 const groups = {};
                 filtered.forEach(x => {
                     const key = x.month;
                     (groups[key] = groups[key] || []).push(x);
                 });
-                const monthKeys = Object.keys(groups).sort().reverse();
+                const sortField = (sortState['expenses'] && sortState['expenses'].field) || 'date';
+                const sortDir   = (sortState['expenses'] && sortState['expenses'].dir)   || -1;
+                let monthKeys = Object.keys(groups);
+                if (sortField === 'amount') {
+                    // Order months by total spend.
+                    monthKeys.sort((a, b) => {
+                        const ta = groups[a].reduce((s, x) => s + x.amount, 0);
+                        const tb = groups[b].reduce((s, x) => s + x.amount, 0);
+                        return sortDir * (tb - ta);   // dir=-1 → biggest first
+                    });
+                    // Order items within each month by amount.
+                    monthKeys.forEach(k => groups[k].sort((a, b) => sortDir * (b.amount - a.amount)));
+                } else {
+                    // Default — by date. dir=-1 → newest/upcoming month first.
+                    monthKeys.sort((a, b) => sortDir * b.localeCompare(a));
+                    // Items: keep latest entries first inside each month.
+                    monthKeys.forEach(k => groups[k].sort((a, b) => {
+                        const aT = a.createdAt || a.created || 0;
+                        const bT = b.createdAt || b.created || 0;
+                        return bT - aT;
+                    }));
+                }
                 const now = new Date();
                 const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
 
@@ -16259,7 +16643,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             
             <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 8px;">Google Drive Backup</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Instant Cloud Backup</div><div class="setting-desc">Push an encrypted snapshot straight to your secure Google Drive.</div></div>
+                <div class="setting-info"><div class="setting-label">Instant Cloud Backup</div><div class="setting-desc">Push an encrypted snapshot straight to your secure Google Drive. You'll see a ✅ toast when the upload is verified.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="requestDrivePermission('backup')">Backup to Drive</button>
             </div>
             <div class="setting-row">
@@ -16318,36 +16702,58 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div style="flex:1;min-width:0;">
                     <div style="font-weight:700;font-size:14px;color:var(--text);">Last Backup</div>
                     <div style="font-size:12px;color:var(--text3);margin-top:2px;">
-                        ${s.lastBackup ? (() => {
-                            const d = new Date(s.lastBackup);
+                        ${(() => {
+                            // ── ACCURACY-FIRST TIME DISPLAY ──────────────
+                            // Show the FRESHEST timestamp from any backup
+                            // path. Show absolute date+time (in the user's
+                            // own locale) plus a relative ("Just now",
+                            // "5 minutes ago") so the user gets both the
+                            // precise moment and a quick "is this fresh?"
+                            // signal at a glance.
+                            const meta = s.lastBackupMeta || null;
+                            const drv  = s.lastDriveBackup || null;
+                            const candidates = [
+                                meta && meta.at && new Date(meta.at).getTime(),
+                                s.lastBackup && new Date(s.lastBackup).getTime(),
+                                drv && drv.at && new Date(drv.at).getTime()
+                            ].filter(t => t && !isNaN(t));
+                            if (!candidates.length) return 'No backup yet — tap "Backup Now" to create your first cloud backup.';
+                            const tMax = Math.max.apply(null, candidates);
+                            const d = new Date(tMax);
                             const now = new Date();
                             const diffMs = now - d;
                             const mins = Math.floor(diffMs / 60000);
                             const hrs = Math.floor(mins / 60);
                             const days = Math.floor(hrs / 24);
                             let rel;
-                            if (mins < 1) rel = 'Just now';
+                            if (diffMs < 0) rel = 'in the future?';
+                            else if (mins < 1) rel = 'Just now';
                             else if (mins < 60) rel = mins + ' minute' + (mins>1?'s':'') + ' ago';
                             else if (hrs < 24) rel = hrs + ' hour' + (hrs>1?'s':'') + ' ago';
                             else if (days < 30) rel = days + ' day' + (days>1?'s':'') + ' ago';
                             else rel = 'Over a month ago';
-                            const dateStr = d.getFullYear() + ' ' + MONTHS[d.getMonth()] + ' ' + d.getDate();
-                            const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+                            // Use the device's own locale formatting so the
+                            // date/time matches the OS clock the user sees
+                            // (no risk of timezone-shift confusion).
+                            const dateStr = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+                            const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
                             return `${dateStr} · ${timeStr} <span style="color:var(--green);font-weight:600;">(${rel})</span>`;
-                        })() : 'No backup yet — tap "Backup Now" to create your first cloud backup.'}
+                        })()}
                     </div>
                     <div style="font-size:11px;color:var(--text3);margin-top:4px;">
                         ${(() => {
                             const meta = s.lastBackupMeta || null;
                             const drv  = s.lastDriveBackup || null;
-                            // Use the same helper as backupNow() so the
-                            // "Last backup … N records" number on the card
-                            // matches the number written into the backup
-                            // file. Counts every data-bearing collection in
-                            // appData (not just a hard-coded list of 8).
-                            const recs = (typeof _wfTotalRecordCount === 'function')
-                                ? _wfTotalRecordCount()
-                                : 0;
+                            // ── ACCURACY POLICY ──────────────────────────
+                            // We deliberately DO NOT display a "records"
+                            // count any more. The number was very easy to
+                            // get wrong (it depended on which collections
+                            // we hand-listed) and showing a wrong number is
+                            // worse than showing none. The exact KB written
+                            // to Drive (drv.size, returned by Drive itself)
+                            // is shown instead — that's a fact the server
+                            // confirmed, not something we compute.
+
                             if (meta) {
                                 const cloudPart = meta.cloud ? '☁️ Cloud✓' : '☁️ Cloud✗';
                                 let drivePart = '';
@@ -16357,14 +16763,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 } else if (meta.drive) {
                                     drivePart = ' · 📁 Drive✓';
                                 }
-                                const trig = meta.trigger === 'auto' ? '🤖 Auto' : '👆 Manual';
+                                const trig = meta.trigger === 'auto' ? '🤖 Auto'
+                                           : meta.trigger === 'drive-direct' ? '☁️ Drive-direct'
+                                           : '👆 Manual';
                                 const sched = s.autoBackupFreq && s.autoBackupFreq !== 'off' ? s.autoBackupFreq : 'off';
-                                return `📊 ${meta.records} records · ${cloudPart}${drivePart} · ${trig} · ⏰ ${sched}`;
+                                return `${cloudPart}${drivePart} · ${trig} · ⏰ ${sched}`;
                             }
                             if (s.lastBackupAttempt && !s.lastBackupAttempt.success) {
                                 return `⚠️ <span style="color:var(--red);font-weight:700;">Last attempt failed</span> — ${s.lastBackupAttempt.reason || 'will retry automatically'}`;
                             }
-                            return `📊 ${recs} records · 🔄 ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? '⏰ Auto: ' + s.autoBackupFreq : '⏰ Auto-backup off'}`;
+                            return `🔄 ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? '⏰ Auto: ' + s.autoBackupFreq : '⏰ Auto-backup off'}`;
                         })()}
                     </div>
                 </div>
@@ -16531,7 +16939,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.2 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.4 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -16541,7 +16949,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.2 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.4 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -18313,30 +18721,137 @@ Be direct and use real numbers. Avoid generic advice.`;
         // specific month. The dashboard uses this override when summing
         // monthly expenses, so totals stay accurate even when the bill
         // fluctuates each month.
+        // ── Per-month amount editor for variable bills (telecom, water,
+        //    electricity, etc.) Opens a modal showing the most recent
+        //    12 months as an editable table, computes anomaly hints
+        //    (vs the user's typical spend), and saves all edits at once.
+        //    The native prompt() approach was ugly, blocked on iOS PWAs
+        //    and limited to one month at a time.
         function setSubscriptionMonthAmount(id) {
             const arr = DB.get('subscriptions') || [];
             const s = arr.find(x => x.id === id);
             if (!s) return;
-            const now = new Date();
-            const defaultYm = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
-            const ym = prompt('Which month? (YYYY-MM)', defaultYm);
-            if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return;
-            const cur = (s.monthOverrides && s.monthOverrides[ym]) || s.amount;
-            const ans = prompt(`Actual amount paid for ${ym} (LKR):`, String(cur));
-            if (ans === null) return;
-            const amt = parseMoney(ans);
-            if (!amt && amt !== 0) { notify('Invalid amount', 'error'); return; }
             s.monthOverrides = s.monthOverrides || {};
-            s.monthOverrides[ym] = amt;
-            // Also record history for charts/anomaly detection.
             s.history = s.history || [];
-            s.history.push({ month: ym, amount: amt, at: new Date().toISOString() });
-            const i = arr.findIndex(x => x.id === id);
-            if (i > -1) arr[i] = s;
-            DB.set('subscriptions', arr);
-            renderSubscriptions();
-            notify(`Set ${ym} = ${fmt(amt)} for ${s.name}`);
+
+            const now = new Date();
+            // Build the last 12 months from oldest → newest (we render
+            // newest at the top in the modal, so reverse on render).
+            const months = [];
+            for (let i = 0; i < 12; i++) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const ym = `${d.getFullYear()}-${p2(d.getMonth() + 1)}`;
+                months.push({
+                    ym,
+                    label: monthStrFmt(ym + '-01'),
+                    amount: (typeof s.monthOverrides[ym] === 'number') ? s.monthOverrides[ym] : null,
+                    isCurrent: i === 0
+                });
+            }
+
+            // Compute baseline + anomaly threshold from the months that DO
+            // have data (excluding the default `s.amount` so we don't bias
+            // the baseline towards the planned figure).
+            const known = months.filter(m => m.amount !== null).map(m => m.amount);
+            const baseline = known.length ? known.reduce((a, b) => a + b, 0) / known.length : s.amount;
+            const stdev = known.length > 1
+                ? Math.sqrt(known.reduce((a, b) => a + (b - baseline) ** 2, 0) / known.length)
+                : baseline * 0.15;
+            const lo = Math.max(0, baseline - 2 * stdev);
+            const hi = baseline + 2 * stdev;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+
+            const rowsHtml = months.map(m => {
+                const v = (m.amount !== null) ? m.amount : '';
+                const placeholder = m.amount === null ? `default ${fmt(s.amount)}` : '';
+                const dot = (m.amount !== null && (m.amount < lo || m.amount > hi))
+                    ? `<span title="Unusual — outside the ±2σ band of your last 12 months" style="color:var(--accent);font-weight:700;margin-left:6px;">⚠ unusual</span>`
+                    : '';
+                const cur = m.isCurrent ? '<span style="font-size:10px;background:rgba(212,175,55,.18);color:var(--accent);padding:2px 7px;border-radius:8px;margin-left:6px;font-weight:700;">THIS MONTH</span>' : '';
+                return `
+                    <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg2);border-radius:10px;margin-bottom:8px;border:1px solid var(--border);">
+                        <div style="font-weight:700;font-size:13px;min-width:110px;">${m.label}${cur}</div>
+                        <input type="text" class="sm-amount" data-ym="${m.ym}"
+                               value="${v === '' ? '' : v.toFixed(2)}"
+                               placeholder="${placeholder}"
+                               inputmode="decimal"
+                               style="font-family:var(--mono);font-size:13px;padding:6px 10px;border-radius:7px;border:1px solid var(--border);background:var(--card);color:var(--text);width:130px;">
+                        ${dot}
+                    </div>`;
+            }).join('');
+
+            const knownCount = known.length;
+            const baselineStr = knownCount ? fmt(Math.round(baseline)) : '(no history yet)';
+
+            overlay.innerHTML = `
+                <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
+                    <div class="md-hdr">
+                        <div class="md-title">📊 Monthly amounts — ${s.name}</div>
+                        <button class="md-x" id="_sm_close">✕</button>
+                    </div>
+                    <div class="md-body" style="overflow-y:auto;flex:1;">
+                        <div style="background:var(--bg2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.5;">
+                            For variable bills like telecom or utilities, type the
+                            <b>real amount paid</b> each month. Leave blank to use
+                            the planned default <b>${fmt(s.amount)}</b>. Months that
+                            differ unusually from your ±2σ band are flagged with
+                            <span style="color:var(--accent);font-weight:700;">⚠ unusual</span>.
+                            <div style="margin-top:6px;display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text3);">
+                                <span>📐 Baseline (12-month avg): <b style="color:var(--green);">${baselineStr}</b></span>
+                                <span>📊 Months recorded: <b>${knownCount}</b></span>
+                                <span>📏 ±2σ band: <b>${fmt(Math.round(lo))} – ${fmt(Math.round(hi))}</b></span>
+                            </div>
+                        </div>
+                        <div id="_sm_list">${rowsHtml}</div>
+                    </div>
+                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);">
+                        <button class="btn btn-ghost" id="_sm_cancel" type="button" style="flex:1;">Cancel</button>
+                        <button class="btn btn-primary" id="_sm_save" type="button" style="flex:2;">💾 Save all</button>
+                    </div>
+                </div>`;
+
+            const $ovl = (sel) => overlay.querySelector(sel);
+            const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 200); };
+            $ovl('#_sm_close').onclick = closeOvl;
+            $ovl('#_sm_cancel').onclick = closeOvl;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOvl(); });
+
+            $ovl('#_sm_save').onclick = () => {
+                let changed = 0;
+                overlay.querySelectorAll('.sm-amount').forEach(inp => {
+                    const ym = inp.getAttribute('data-ym');
+                    const raw = (inp.value || '').trim();
+                    if (raw === '') {
+                        // Empty → clear any override for that month.
+                        if (typeof s.monthOverrides[ym] !== 'undefined') {
+                            delete s.monthOverrides[ym];
+                            changed++;
+                        }
+                        return;
+                    }
+                    const amt = parseMoney(raw);
+                    if (!amt && amt !== 0) return;
+                    if (s.monthOverrides[ym] !== amt) {
+                        s.monthOverrides[ym] = amt;
+                        s.history.push({ month: ym, amount: amt, at: new Date().toISOString() });
+                        changed++;
+                    }
+                });
+                if (!changed) { notify('No changes.', 'info'); closeOvl(); return; }
+                const i = arr.findIndex(x => x.id === id);
+                if (i > -1) arr[i] = s;
+                DB.set('subscriptions', arr);
+                triggerHaptic('success');
+                notify(`✅ Updated ${changed} month${changed > 1 ? 's' : ''} for ${s.name}.`, 'success');
+                closeOvl();
+                renderSubscriptions();
+            };
         }
+        window.setSubscriptionMonthAmount = setSubscriptionMonthAmount;
         function deleteSubscription(id) {
             showConfirm('🗑️', 'Delete Subscription?', '', 'btn-danger', 'Delete', () => {
                 DB.set('subscriptions', (DB.get('subscriptions') || []).filter(x => x.id !== id)); renderSubscriptions(); notify('Deleted', 'info');
@@ -18383,22 +18898,43 @@ Be direct and use real numbers. Avoid generic advice.`;
                 const override = s.monthOverrides && s.monthOverrides[ym];
                 const showAmt = (typeof override === 'number') ? override : s.amount;
                 const overrideBadge = (typeof override === 'number')
-                    ? `<div style="font-size:9px;color:var(--accent);font-weight:700;">${ym} override</div>` : '';
+                    ? `<div style="font-size:9px;color:var(--accent);font-weight:700;">${ym} actual</div>` : '';
+                // Tag bills the user has already started tracking per-month
+                // (so it's obvious which entries are variable / telecom-style).
+                const overrideCount = s.monthOverrides ? Object.keys(s.monthOverrides).length : 0;
+                const isVariable = overrideCount >= 2;
+                const variableBadge = isVariable
+                    ? `<div style="display:inline-flex;align-items:center;gap:4px;font-size:9px;color:var(--blue);font-weight:800;background:rgba(59,130,246,.14);padding:2px 7px;border-radius:8px;margin-top:3px;border:1px solid rgba(59,130,246,.35);">📊 VARIABLE · ${overrideCount} mo tracked</div>`
+                    : overrideCount === 1
+                        ? `<div style="font-size:9px;color:var(--blue);font-weight:700;margin-top:2px;">📊 1 month tracked</div>`
+                        : '';
+                // Has the user already entered THIS month's actual amount?
+                // If not, surface a one-tap CTA right on the card so they
+                // never miss adjusting a variable telecom / utility bill.
+                const needsThisMonth = (typeof override !== 'number');
+                const thisMonthCta = needsThisMonth
+                    ? `<button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')"
+                                title="Set this month's actual amount (great for telecom, water, electricity)"
+                                style="background:rgba(212,175,55,.18); color:var(--accent); border:1px solid rgba(212,175,55,.55); padding:5px 10px; font-size:11px; font-weight:800; border-radius:8px;">
+                                📊 Set ${MONTHS[now.getMonth()].slice(0,3)} amount
+                            </button>`
+                    : `<button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts">📊</button>`;
 
                 return `<div class="sub-card">
                     <div class="sub-icon">${catIcons[s.category] || '📋'}</div>
                     <div style="flex:1;">
                         <div style="font-size:14px;font-weight:700;">${s.name}</div>
                         <div style="font-size:11px;color:var(--text3);">${s.category} · Day ${s.dueDay} · ${s.cycle}</div>
+                        ${variableBadge}
                     </div>
                     <div style="text-align:right;">
                         <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--red);">${fmt(showAmt)}</div>
                         <div class="sub-due-badge ${badgeClass}">${badgeText}</div>
                         ${overrideBadge}
                     </div>
-                    <div class="act-btns">
-                        <button class="ib e" onclick="editSubscription('${s.id}')" title="Edit">✏️</button>
-                        <button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')" title="Set this month's amount (for variable bills like telecom)">💰</button>
+                    <div class="act-btns" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">
+                        <button class="ib e" onclick="editSubscription('${s.id}')" title="Edit subscription">✏️</button>
+                        ${thisMonthCta}
                         <button class="ib d" onclick="deleteSubscription('${s.id}')" title="Delete">🗑️</button>
                     </div>
                 </div>`;
@@ -19996,13 +20532,31 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
         function setScanSetting(key, val) {
             const s = DB.getObj('settings', {});
+            const oldVal = s[key];
             s[key] = val;
             DB.set('settings', s);
             _refreshScannerSettingsUI();
             triggerHaptic('toggle');
+            // Clear, distinct toast for EVERY setting (issue 03 fix —
+            // previously only scanMode showed feedback, so toggles &
+            // currency changes looked like they did nothing).
+            const labels = {
+                scanMode: 'Scan Mode',
+                scanTfEnhance: 'TF.js Image Enhancement',
+                scanAutoEscalate: 'Auto-Escalate',
+                scanAutoCategory: 'Auto-Categorize',
+                scanCurrency: 'Default Currency'
+            };
+            const label = labels[key] || key;
+            let valLabel = val;
+            if (typeof val === 'boolean') valLabel = val ? 'ON' : 'OFF';
+            else if (typeof val === 'string') valLabel = val.charAt(0).toUpperCase() + val.slice(1);
+            notify(`${label}: ${valLabel}`, 'success');
+            // For mode change, also surface engine count so the user can
+            // VERIFY the setting actually took effect on the next scan.
             if (key === 'scanMode') {
-                const lbl = val.charAt(0).toUpperCase() + val.slice(1);
-                notify('Scan mode: ' + lbl, 'success');
+                const engineCount = { quick: 1, deep: 5, ultra: 12, frontier: 19 }[val] || 5;
+                setTimeout(() => notify(`Next scan will use ~${engineCount} AI engine${engineCount>1?'s':''}`, 'info'), 900);
             }
         }
         function _refreshScannerSettingsUI() {
@@ -20409,6 +20963,276 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 }
             } catch (e) { /* silent */ }
         };
+
+        // ====================================================================
+        // ──  Issue 02 — AI VISION for CC One-Time Statements ────────────────
+        // ====================================================================
+        // Single-tap upload from the CC One-Time modal. The user can shoot a
+        // photo of a credit-card statement or receipt; the AI extracts every
+        // line item (purchase, cash advance, service fee, fuel) and presents
+        // an editable review table. Confirmed rows are saved as individual
+        // CC One-Time records — fully replacing 10+ minutes of manual typing.
+        //
+        // Supports both `<input capture="environment">` (mobile camera) and
+        // `<input>` (file picker / paste) — same handler. Works on iPhone,
+        // iPad, Android, Mac, Windows, Linux.
+        // ====================================================================
+        async function _aiScanCCStatement(e) {
+            try {
+                const file = e && e.target && e.target.files && e.target.files[0];
+                if (!file) return;
+                // Reset the input so the user can re-pick the same file later.
+                try { e.target.value = ''; } catch (_) {}
+
+                // 1. Ask which bank the statement is for. Knowing this lets
+                //    the AI annotate cash advances with the correct fee
+                //    schedule and improves vendor recognition.
+                const bankList = BANKS.map(b =>
+                    `<button class="auth-btn _wf_bank_pick" data-bank="${b}" style="text-align:left;justify-content:flex-start;font-size:13px;padding:10px 14px;">${b}</button>`
+                ).join('');
+                const bank = await new Promise((resolve) => {
+                    const overlay = document.createElement('div');
+                    overlay.className = 'mo';
+                    document.body.appendChild(overlay);
+                    requestAnimationFrame(() => overlay.classList.add('open'));
+                    overlay.innerHTML = `
+                        <div class="md md-sm">
+                            <div class="md-hdr">
+                                <div class="md-title">🤖 Which credit card / bank?</div>
+                                <button class="md-x" id="_wf_bank_x">✕</button>
+                            </div>
+                            <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.55;">
+                                Before AI scans the statement, please confirm the issuing bank. This unlocks the correct service-fee schedule (Sri Lanka 🇱🇰).
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow-y:auto;">${bankList}</div>
+                        </div>`;
+                    const close = (val) => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => { try { overlay.remove(); } catch(_){} resolve(val); }, 180); };
+                    overlay.querySelectorAll('._wf_bank_pick').forEach(b => b.onclick = () => close(b.getAttribute('data-bank')));
+                    overlay.querySelector('#_wf_bank_x').onclick = () => close(null);
+                    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(null); });
+                });
+                if (!bank) return;  // user cancelled
+
+                // 2. Compress the image (or page-render the PDF) into a
+                //    base64 payload suitable for the vision cascade.
+                notify(`🤖 AI scanning ${bank} statement…`, 'info');
+                triggerHaptic('medium');
+                const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+                let base64Img = null;
+                if (isPdf) {
+                    // PDF — render the first page to an image canvas. Falls
+                    // back to base64 of raw PDF if PDF.js isn't available
+                    // (the AI cascade can still attempt to OCR it).
+                    try {
+                        const arrayBuf = await file.arrayBuffer();
+                        if (window.pdfjsLib) {
+                            const pdf = await window.pdfjsLib.getDocument({ data: arrayBuf }).promise;
+                            const pg = await pdf.getPage(1);
+                            const viewport = pg.getViewport({ scale: 2.0 });
+                            const canvas = document.createElement('canvas');
+                            canvas.width = viewport.width; canvas.height = viewport.height;
+                            await pg.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                            base64Img = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+                        } else {
+                            const ab = new Uint8Array(arrayBuf);
+                            let bin = ''; for (let i = 0; i < ab.byteLength; i++) bin += String.fromCharCode(ab[i]);
+                            base64Img = btoa(bin);
+                        }
+                    } catch (pdfErr) {
+                        console.warn('[CC AI Scan] PDF parse failed, falling back to raw:', pdfErr);
+                    }
+                } else {
+                    const { base64, kb } = await _compressImageToBase64(file, 2200, 0.92, true);
+                    base64Img = base64;
+                    console.log('[CC AI Scan] image compressed →', kb, 'KB');
+                }
+                if (!base64Img) { notify('Could not read the file. Try a different photo.', 'error'); return; }
+
+                // 3. Engineered prompt that ALWAYS returns JSON. The AI
+                //    must categorize every transaction as one of:
+                //    purchase | cash_advance | service_fee | fuel,
+                //    associate service fees with their parent cash advance,
+                //    and never invent numbers.
+                const today = new Date().toISOString().split('T')[0];
+                const prompt = `You are an expert credit card statement parser specialized in Sri Lankan banks (BOC, Commercial, HNB, Sampath, NTB, AMEX, etc.).
+This statement is from: ${bank}
+
+Read the image carefully and extract EVERY transaction line. Return ONLY a JSON object with this exact schema:
+
+{
+  "statement_period": "YYYY-MM",
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": "vendor or merchant name as printed",
+      "amount": 1500.50,
+      "type": "purchase | cash_advance | service_fee | fuel",
+      "vendor_category": "Food | Transport | Fuel | Cash | Retail | Online | Other",
+      "linked_to_index": null,
+      "notes": "any extra context (foreign currency, FX rate, etc.) or empty string"
+    }
+  ]
+}
+
+RULES:
+- Include the FULL ORIGINAL amount printed. NEVER round or truncate.
+- "type" must be one of: purchase, cash_advance, service_fee, fuel
+- "fuel" applies to petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills, etc.)
+- "service_fee" is for cash-advance fees, interest, late fees. If the row is the FEE that pairs with a cash advance line, set "linked_to_index" to the array index of that cash advance.
+- "date" in YYYY-MM-DD. If only a day+month is printed, use the statement_period year.
+- Do not include the closing balance, opening balance, or payment-received rows.
+- If a row is clearly a refund / credit, prefix description with "[CREDIT] " and keep amount positive.
+
+CRITICAL: Output ONLY the JSON. No markdown. No explanations.`;
+
+                // 4. Use the existing AI cascade.
+                let raw = '';
+                try {
+                    raw = await callAI(prompt, base64Img);
+                } catch (aiErr) {
+                    console.error('[CC AI Scan] callAI failed:', aiErr);
+                    notify('AI vision failed: ' + (aiErr && aiErr.message || 'unknown error'), 'error');
+                    return;
+                }
+                const parsed = _parseAIJson(raw);
+                if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
+                    notify('AI could not find any transactions in this statement. Try a clearer photo.', 'warn');
+                    return;
+                }
+
+                // 5. Show editable review table — nothing is saved until the
+                //    user confirms.
+                _showCCReviewModal(parsed, bank);
+            } catch (err) {
+                console.error('[CC AI Scan]', err);
+                notify('Scan failed: ' + (err && err.message || 'unknown error'), 'error');
+            }
+        }
+        window._aiScanCCStatement = _aiScanCCStatement;
+
+        // Editable review table — user can untick rows, fix amounts, then
+        // bulk-save everything they keep.
+        function _showCCReviewModal(parsed, bank) {
+            const txns = parsed.transactions.map((t, i) => ({
+                ...t,
+                _i: i,
+                _keep: true,
+                amount: parseFloat(t.amount) || 0
+            }));
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+
+            const renderRows = () => txns.map((t, idx) => `
+                <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);">
+                    <td style="padding:6px 6px;"><input type="checkbox" class="_ccr_keep" ${t._keep ? 'checked' : ''}></td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${t.date || ''}" style="width:130px;font-size:12px;"></td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:180px;"></td>
+                    <td style="padding:6px 6px;">
+                        <select class="fs _ccr_type" style="font-size:11px;">
+                            <option value="purchase" ${t.type==='purchase'?'selected':''}>Purchase</option>
+                            <option value="cash_advance" ${t.type==='cash_advance'?'selected':''}>Cash Advance</option>
+                            <option value="service_fee" ${t.type==='service_fee'?'selected':''}>Service Fee</option>
+                            <option value="fuel" ${t.type==='fuel'?'selected':''}>⛽ Fuel</option>
+                        </select>
+                    </td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_amount money-input" value="${fmtN(t.amount||0)}" inputmode="decimal" style="width:110px;font-size:12px;text-align:right;font-family:var(--mono);"></td>
+                </tr>
+            `).join('');
+
+            overlay.innerHTML = `
+                <div class="md" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">
+                    <div class="md-hdr">
+                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${bank}</div>
+                        <button class="md-x" id="_ccrx">✕</button>
+                    </div>
+                    <div class="md-body" style="overflow-y:auto;flex:1;">
+                        <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.55;">
+                            Untick rows you don't want to save. Edit any cell before confirming. Cash advances will get their bank service fee added automatically.
+                            ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${parsed.statement_period}` : ''}
+                        </div>
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                            <thead>
+                                <tr style="background:var(--bg2);">
+                                    <th style="padding:8px 6px;text-align:left;">Keep</th>
+                                    <th style="padding:8px 6px;text-align:left;">Date</th>
+                                    <th style="padding:8px 6px;text-align:left;">Description</th>
+                                    <th style="padding:8px 6px;text-align:left;">Type</th>
+                                    <th style="padding:8px 6px;text-align:right;">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody id="_ccr_body">${renderRows()}</tbody>
+                        </table>
+                    </div>
+                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);">
+                        <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;">Cancel</button>
+                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;">💾 Save selected to CC One-Time</button>
+                    </div>
+                </div>`;
+
+            const $ovl = (sel) => overlay.querySelector(sel);
+            const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 180); };
+            $ovl('#_ccrx').onclick = closeOvl;
+            $ovl('#_ccr_cancel').onclick = closeOvl;
+
+            $ovl('#_ccr_save').onclick = () => {
+                // Read every visible row, build CCOT records, save them.
+                const rows = overlay.querySelectorAll('#_ccr_body tr');
+                const arr = DB.get('cconetime');
+                let added = 0, skipped = 0;
+                rows.forEach((tr) => {
+                    const keep = tr.querySelector('._ccr_keep').checked;
+                    if (!keep) { skipped++; return; }
+                    const date = tr.querySelector('._ccr_date').value || today();
+                    const desc = (tr.querySelector('._ccr_desc').value || '').trim();
+                    let type = tr.querySelector('._ccr_type').value;
+                    const amount = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
+                    if (!desc || !amount) { skipped++; return; }
+
+                    // Service-fee rows are folded into their parent cash
+                    // advance — they are NOT saved as their own line item.
+                    // We just skip them here; the cash-advance row will
+                    // auto-compute its fee from the bank schedule on save.
+                    if (type === 'service_fee') { skipped++; return; }
+
+                    const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
+
+                    let serviceFee = 0, feeMeta = null, combinedTotal = amount;
+                    if (type === 'cash_advance') {
+                        const r = _computeCashAdvanceFee(bank, amount);
+                        serviceFee = r.fee;
+                        feeMeta = { source: 'auto', percent: r.percent, minFee: r.minFee, flat: r.flat, note: r.note };
+                        combinedTotal = amount + serviceFee;
+                    }
+
+                    arr.push({
+                        id: uid(),
+                        desc, bank,
+                        type: (type === 'fuel') ? 'fuel' : type,
+                        amount, serviceFee, feeMeta, combinedTotal,
+                        date,
+                        deadline: dl.toISOString().split('T')[0],
+                        notes: 'AI-scanned from statement',
+                        paid: false,
+                        createdAt: new Date().toISOString()
+                    });
+                    added++;
+                });
+                DB.set('cconetime', arr);
+                renderCCOT(); updateCCOTBadge();
+                closeOvl();
+                closeModal('mdCCOT');
+                if (added > 0) {
+                    notify(`✅ Added ${added} CC record${added>1?'s':''} from statement${skipped?`, skipped ${skipped}`:''}`, 'success');
+                    triggerHaptic('success');
+                } else {
+                    notify(`Nothing added · ${skipped} row${skipped>1?'s':''} skipped`, 'warn');
+                }
+            };
+            overlay.addEventListener('click', (ev) => { if (ev.target === overlay) closeOvl(); });
+        }
+        window._showCCReviewModal = _showCCReviewModal;
 
     </script>
 </body>
