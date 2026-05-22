@@ -4546,7 +4546,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.5 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.6 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6505,7 +6505,7 @@
         // DIFFERENT fees. They are listed as separate bank choices so the
         // user picks the actual card in hand and gets the exact charge.
         const CC_CASH_ADVANCE_FEES = {
-            'American Express (AMEX)':                   { percent: 5.0, minFee: 1250, flat: 0,    note: 'AMEX (issued by NTB in Sri Lanka): 5% of transaction + LKR 1,250 flat. Highest in market.' },
+            'American Express (AMEX)':                   { percent: 5.0, minFee: 0,    flat: 1250, note: 'AMEX (issued by NTB in Sri Lanka): 5% of transaction PLUS a flat LKR 1,250 — no minimum, the flat charge is always added on top of the percentage.' },
             'Bank of Ceylon (BOC)':                      { percent: 4.0, minFee: 300,  flat: 0,    note: 'Bank of Ceylon: 4% of transaction or LKR 300, whichever is higher.' },
             'Commercial Bank':                           { percent: 4.5, minFee: 675,  flat: 0,    note: 'Commercial Bank (ComBank): 4.5% of transaction or LKR 675, whichever is higher.' },
             'DFCC Bank':                                 { percent: 5.0, minFee: 1250, flat: 0,    note: 'DFCC Bank: 5% of transaction or LKR 1,250, whichever is higher.' },
@@ -8080,6 +8080,26 @@ YOUR PERSONALITY & CRITICAL RULES:
    • Keep them short, specific, and genuinely useful.
 
 5. SRI LANKAN CONTEXT: Always use LKR. Reference local banks (BOC, HNB, Sampath, NDB, Commercial), CBSL rates, NIC, EPF/ETF when relevant.
+
+5a. SRI LANKAN CC CASH-ADVANCE & FUEL FEES (authoritative — use these exact rates when the user asks about credit-card cash advances or fuel surcharges):
+
+| Bank | Cash Advance | Fuel Surcharge |
+|------|--------------|----------------|
+| Bank of Ceylon (BOC) | 4% or LKR 300 min | 1% |
+| Commercial Bank | 4.5% or LKR 675 min | 1% |
+| DFCC Bank | 5% or LKR 1,250 min | 1% |
+| HNB | 3% (no minimum) | 1% |
+| NDB | 4% or LKR 600 min | 1% |
+| NTB AMEX | 5% + flat LKR 1,250 (always added) | 2% |
+| NTB Visa/Mastercard | 4% or LKR 600 min | 1% |
+| Pan Asia Bank | 4% or LKR 500 min | 1% |
+| People's Bank | 3.5% or LKR 500 min | 1% |
+| Sampath Bank | 4% or LKR 300 min | 2% |
+| Seylan Bank | 4% or LKR 700 min | 1% |
+| Standard Chartered | 4.5% or LKR 1,200 min | 1% |
+| Union Bank | 4% or LKR 600 min | 1% |
+
+Rule for "or X min": fee = max(percent_of_amount, min). Rule for NTB AMEX: fee = (5% × amount) + 1,250 (no min — flat is always added).
 
 6. SPECIFICITY: When giving financial advice, use real numbers from their snapshot — not generic platitudes. "Cut your dining budget by LKR 8,000/month" beats "spend less on food".
 
@@ -17071,7 +17091,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.5 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.6 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17081,7 +17101,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.5 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.6 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -21351,84 +21371,97 @@ RULES:
 
 CRITICAL: Output ONLY the JSON. No markdown. No explanations.`;
 
-                // 4. Resilient cascade — tries multiple engines so a single
-                //    503 / network blip doesn't kill the whole scan.
-                _showScanOverlay('🚀 Calling AI engines…', 'Backend → Gemini → Groq', 50);
+                // 4. RESILIENT cascade — three engines, each given multiple
+                //    tries. callAI() already wraps the multi-provider AI
+                //    backend (Gemini → Groq → DeepSeek → Ollama → HF) so
+                //    we get cross-provider failover for free; on top of
+                //    that we add a SHORT retry and TWO independent OCR
+                //    fallbacks (OCR.space + Tesseract.js) so even a total
+                //    AI outage still produces a usable result.
+                _showScanOverlay('🚀 Engine 1/4 — multi-provider AI…', 'Calling /api/ai cascade', 45);
 
                 let raw = '';
                 const errors = [];
 
-                async function tryCallAI(p, label, pctStart, pctEnd) {
-                    try {
-                        _showScanOverlay('🚀 ' + label, 'Engine 1/3 — Vercel multi-engine backend', pctStart);
-                        const r = await callAI(p, base64Img);
-                        if (r && typeof r === 'string' && r.length > 5) {
-                            _showScanOverlay('✅ ' + label, 'Reply received', pctEnd);
-                            return r;
+                async function _callAIWithRetry(p, attempts) {
+                    for (let i = 0; i < attempts; i++) {
+                        try {
+                            const r = await callAI(p, base64Img);
+                            if (r && typeof r === 'string' && r.trim().length > 5) return r;
+                            throw new Error('empty reply');
+                        } catch (eAi) {
+                            errors.push(`callAI try ${i + 1}: ${eAi.message || eAi}`);
+                            console.warn(`[CC AI Scan] callAI try ${i + 1} failed:`, eAi);
+                            if (i + 1 < attempts) await new Promise(res => setTimeout(res, 700 * (i + 1)));
                         }
-                        throw new Error('Backend returned empty');
-                    } catch (eBackend) {
-                        errors.push('Backend: ' + (eBackend.message || 'unknown'));
-                        console.warn('[CC AI Scan] backend failed:', eBackend);
-                    }
-                    // Engine 2 — direct frontend Gemini.
-                    try {
-                        _showScanOverlay('🚀 ' + label, 'Engine 2/3 — Direct Gemini (frontend)', pctStart + 5);
-                        if (window.WealthFlowAIv4 && typeof window.WealthFlowAIv4.geminiVision === 'function') {
-                            const r = await window.WealthFlowAIv4.geminiVision(p, base64Img);
-                            if (r && typeof r === 'string' && r.length > 5) {
-                                _showScanOverlay('✅ ' + label, 'Direct Gemini reply received', pctEnd);
-                                return r;
-                            }
-                        }
-                        throw new Error('Frontend Gemini unavailable');
-                    } catch (eGem) {
-                        errors.push('Gemini: ' + (eGem.message || 'unknown'));
-                        console.warn('[CC AI Scan] direct Gemini failed:', eGem);
-                    }
-                    // Engine 3 — Groq Llava (frontend).
-                    try {
-                        _showScanOverlay('🚀 ' + label, 'Engine 3/3 — Groq Llava (frontend)', pctStart + 10);
-                        if (window.WealthFlowAIv4 && typeof window.WealthFlowAIv4.groqVision === 'function') {
-                            const r = await window.WealthFlowAIv4.groqVision(p, base64Img);
-                            if (r && typeof r === 'string' && r.length > 5) {
-                                _showScanOverlay('✅ ' + label, 'Groq Llava reply received', pctEnd);
-                                return r;
-                            }
-                        }
-                        throw new Error('Frontend Groq unavailable');
-                    } catch (eGroq) {
-                        errors.push('Groq: ' + (eGroq.message || 'unknown'));
-                        console.warn('[CC AI Scan] direct Groq failed:', eGroq);
                     }
                     return null;
                 }
 
-                // Pass 1 — full prompt.
-                raw = await tryCallAI(prompt, 'Deep statement scan', 50, 70);
+                // Pass 1 — full prompt, up to 2 tries on the AI cascade.
+                raw = await _callAIWithRetry(prompt, 2);
 
-                // Pass 2 — simplified prompt if the first attempt produced
-                //          nothing (sometimes vision models choke on long
-                //          rule lists; a short prompt is more reliable).
+                // Pass 2 — simplified prompt (vision models sometimes choke
+                // on long rule lists; a short prompt is more reliable).
                 if (!raw) {
-                    _showScanOverlay('🔄 Retrying with simplified prompt…', 'Smaller payload, same engines', 75);
+                    _showScanOverlay('🔄 Engine 2/4 — simplified prompt…', 'Smaller payload, same cascade', 60);
                     const simplePrompt = `Read this ${bank} credit card statement image. List EVERY transaction in this JSON format and nothing else:
 {"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}
 Types allowed: purchase, cash_advance, service_fee, fuel. Output ONLY JSON.`;
-                    raw = await tryCallAI(simplePrompt, 'Simplified scan', 75, 88);
+                    raw = await _callAIWithRetry(simplePrompt, 2);
+                }
+
+                // Pass 3 — OCR.space text extraction → parse client-side.
+                // This bypasses the AI cascade entirely so a Vercel 503 or
+                // total Gemini/Groq outage still yields a result.
+                let ocrFallbackTransactions = null;
+                if (!raw && typeof _tryOCRSpace === 'function') {
+                    try {
+                        _showScanOverlay('☁️ Engine 3/4 — Cloud OCR (OCR.space)…', 'Bypassing AI, reading raw text', 72);
+                        const ocrText = await _tryOCRSpace(base64Img);
+                        if (ocrText && ocrText.length > 20) {
+                            ocrFallbackTransactions = _ccOcrTextToTransactions(ocrText, bank);
+                            if (ocrFallbackTransactions && ocrFallbackTransactions.length) {
+                                raw = JSON.stringify({ transactions: ocrFallbackTransactions });
+                                console.log('[CC AI Scan] OCR.space yielded', ocrFallbackTransactions.length, 'transactions');
+                            }
+                        }
+                    } catch (eOcr) {
+                        errors.push('OCR.space: ' + (eOcr.message || eOcr));
+                        console.warn('[CC AI Scan] OCR.space failed:', eOcr);
+                    }
+                }
+
+                // Pass 4 — Tesseract.js (runs entirely in the browser, no
+                // API calls). Slowest but ALWAYS works as long as JS can run.
+                if (!raw && typeof _ocrWithTesseract === 'function' && !isPdf) {
+                    try {
+                        _showScanOverlay('🖥️ Engine 4/4 — Tesseract.js (offline OCR)…', 'On-device OCR — slowest but always available', 82);
+                        const ocrText = await _ocrWithTesseract(file);
+                        if (ocrText && ocrText.length > 20) {
+                            ocrFallbackTransactions = _ccOcrTextToTransactions(ocrText, bank);
+                            if (ocrFallbackTransactions && ocrFallbackTransactions.length) {
+                                raw = JSON.stringify({ transactions: ocrFallbackTransactions });
+                                console.log('[CC AI Scan] Tesseract yielded', ocrFallbackTransactions.length, 'transactions');
+                            }
+                        }
+                    } catch (eTes) {
+                        errors.push('Tesseract: ' + (eTes.message || eTes));
+                        console.warn('[CC AI Scan] Tesseract failed:', eTes);
+                    }
                 }
 
                 if (!raw) {
                     _hideScanOverlay();
-                    notify('AI vision failed across every engine: ' + errors.join(' | '), 'error');
+                    notify('AI vision failed across all 4 engines. Last errors: ' + errors.slice(-3).join(' | ') + '. Try a clearer photo with all text visible.', 'error');
                     return;
                 }
 
-                _showScanOverlay('📊 Parsing transactions…', 'Extracting JSON from AI reply', 92);
+                _showScanOverlay('📊 Parsing transactions…', 'Extracting structured data', 92);
                 const parsed = _parseAIJson(raw);
                 if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
                     _hideScanOverlay();
-                    notify('AI could not find any transactions in this statement. Try a clearer photo.', 'warn');
+                    notify('AI returned a response but could not find any transactions in this image. Make sure the statement is well-lit, in focus, and shows the transaction lines clearly.', 'warn');
                     return;
                 }
 
@@ -21445,6 +21478,57 @@ Types allowed: purchase, cash_advance, service_fee, fuel. Output ONLY JSON.`;
             }
         }
         window._aiScanCCStatement = _aiScanCCStatement;
+
+        // ── OCR-text → transactions fallback ───────────────────────────────
+        // When the AI cascade is unreachable, OCR.space / Tesseract still
+        // give us plain text. This parser walks the lines and pulls every
+        // row that looks like "date description amount" — good enough to
+        // get the user 80% of the way before they hand-edit in the review
+        // table. Better than failing outright.
+        function _ccOcrTextToTransactions(text, bank) {
+            try {
+                const out = [];
+                if (!text) return out;
+                const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+                // Match common Sri Lankan statement formats:
+                //   DD/MM | DD-MM-YYYY | DD MMM | DD MMM YYYY
+                const dateRe = /^(\d{1,2}[\/\-\s]\d{1,2}(?:[\/\-\s]\d{2,4})?|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+\d{2,4})?)\b/i;
+                // Amounts: 1,500.00 | 1500.00 | LKR 1,500
+                const amtRe = /(?:LKR\s*|Rs\.?\s*)?([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:CR|DR)?$/;
+                const fuelTerms = /\b(ceypetco|cargills\s+petroleum|ioc|lanka\s+ioc|filling\s+station|fuel|petrol|diesel)\b/i;
+                const advanceTerms = /\b(cash\s+advance|atm|withdrawal|cash\s+w\/d)\b/i;
+                const feeTerms = /\b(fee|charge|interest|finance\s+charge|service)\b/i;
+                lines.forEach(line => {
+                    const dateMatch = line.match(dateRe);
+                    const amtMatch = line.match(amtRe);
+                    if (!dateMatch || !amtMatch) return;
+                    let amt = parseFloat((amtMatch[1] || '0').replace(/,/g, ''));
+                    if (!amt || amt < 1 || amt > 10000000) return;
+                    let desc = line.replace(dateRe, '').replace(amtRe, '').trim();
+                    desc = desc.replace(/\s{2,}/g, ' ').replace(/^[-|]+\s*/, '').trim();
+                    if (!desc || desc.length < 2) desc = '(unreadable vendor)';
+                    let type = 'purchase';
+                    if (advanceTerms.test(line)) type = 'cash_advance';
+                    else if (fuelTerms.test(line)) type = 'fuel';
+                    else if (feeTerms.test(line)) type = 'service_fee';
+                    // Normalise date — store best-effort YYYY-MM-DD using current year
+                    const dt = (function (d) {
+                        try {
+                            const m = d.match(/^(\d{1,2})[\/\-\s](\d{1,2})(?:[\/\-\s](\d{2,4}))?/);
+                            if (m) {
+                                let yr = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+                                if (yr < 100) yr += 2000;
+                                return `${yr}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+                            }
+                        } catch (_) {}
+                        return new Date().toISOString().split('T')[0];
+                    })(dateMatch[1]);
+                    out.push({ date: dt, description: desc.slice(0, 80), amount: amt, type, notes: '' });
+                });
+                return out;
+            } catch (e) { console.warn('[_ccOcrTextToTransactions]', e); return []; }
+        }
+        window._ccOcrTextToTransactions = _ccOcrTextToTransactions;
 
         // Editable review table — user can untick rows, fix amounts, then
         // bulk-save everything they keep.
