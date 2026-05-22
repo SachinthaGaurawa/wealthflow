@@ -4521,8 +4521,6 @@
                     Expenses</div>
                 <div class="nav-item" onclick="showPage('targets',this)"><span class="nav-icon">🎯</span> Targets &
                     Savings</div>
-                <div class="nav-item" onclick="showPage('balance',this)"><span class="nav-icon">⚖️</span> Balance
-                    Tracker</div>
                 <div class="sb-group">Tools</div>
                 <div class="nav-item" onclick="showPage('dscr',this)"><span class="nav-icon">📐</span> DSCR Calculator
                 </div>
@@ -4550,7 +4548,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.1 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.2 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -9028,15 +9026,32 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             }
         }
 
+        // Total record count across EVERY data-bearing collection in
+        // appData. The previous version forgot 'balance' (and any future
+        // collection added), so the Settings card showed "8 records" when
+        // the backup file actually contained 13. This helper iterates every
+        // array-valued top-level key in appData, so it stays accurate even
+        // when new data types are added.
+        function _wfTotalRecordCount() {
+            try {
+                const skip = new Set(['settings', 'auth', 'sessions', 'incomeReceived', 'aiHistory', 'aiChats', 'memory']);
+                let total = 0;
+                Object.keys(appData || {}).forEach(k => {
+                    if (skip.has(k)) return;
+                    const v = appData[k];
+                    if (Array.isArray(v)) total += v.length;
+                });
+                return total;
+            } catch (_) { return 0; }
+        }
+        window._wfTotalRecordCount = _wfTotalRecordCount;
+
         // Manual / auto "Backup Now" — pushes to Firestore (always) + Drive
         // (if authed), and records REAL metadata so the status card is accurate.
         async function backupNow(silent, trigger) {
             const startedAt = Date.now();
             let cloudOk = false, driveOk = false;
-            const recCount = (DB.get('income').length + DB.get('loans').length +
-                DB.get('expenses').length + DB.get('targets').length +
-                DB.get('ccinstall').length + DB.get('cconetime').length +
-                DB.get('cheques').length + DB.get('subscriptions').length);
+            const recCount = _wfTotalRecordCount();
             try {
                 if (!silent) { notify('☁️ Backing up…', 'info'); triggerHaptic('medium'); }
                 const s = DB.getObj('settings', {});
@@ -9227,6 +9242,57 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             return WF_MASTER_BACKUP_FOLDER;
         }
 
+        // ── RETENTION HELPER ─────────────────────────────────────────────
+        // Keep MAX 6 latest WealthFlow backups for THIS user in Drive.
+        // Older files are moved to Drive's Trash (which is reversible if the
+        // user wants to recover them within 30 days). The filename prefix
+        // `WealthFlow_<safeEmail>_<uid6>_` is unique-per-user so we never
+        // touch another user's backups even if they share a Drive folder.
+        const _WF_BACKUP_KEEP = 6;
+        async function _pruneOldDriveBackups(uid, safeEmail, parentId) {
+            if (!gapiToken) return;
+            try {
+                const uidPart = uid ? uid.slice(0, 6) : '';
+                // Build a query that only returns this user's backups
+                const namePart = `name contains 'WealthFlow_${safeEmail}_${uidPart}'`;
+                const folderPart = parentId ? ` and '${parentId}' in parents` : '';
+                const q = encodeURIComponent(`${namePart}${folderPart} and trashed = false and mimeType = 'application/json'`);
+                const r = await fetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=50&fields=files(id,name,createdTime)`,
+                    { headers: { 'Authorization': 'Bearer ' + gapiToken } }
+                );
+                if (!r.ok) { console.warn('[Drive prune] list HTTP', r.status); return; }
+                const j = await r.json().catch(() => null);
+                if (!j || !Array.isArray(j.files) || j.files.length <= _WF_BACKUP_KEEP) return;
+
+                // Drive already gave us newest-first. Everything from index
+                // _WF_BACKUP_KEEP onwards is "old" and should be pruned.
+                const toDelete = j.files.slice(_WF_BACKUP_KEEP);
+                let pruned = 0;
+                for (const f of toDelete) {
+                    try {
+                        // PATCH trashed=true (reversible, gives user 30-day
+                        // recovery in Drive's Trash) instead of hard DELETE.
+                        const del = await fetch(
+                            'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id),
+                            {
+                                method: 'PATCH',
+                                headers: {
+                                    'Authorization': 'Bearer ' + gapiToken,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ trashed: true })
+                            }
+                        );
+                        if (del.ok) pruned++;
+                    } catch (e) { /* keep going — one failure shouldn't stop others */ }
+                }
+                if (pruned > 0) {
+                    console.log(`[Drive prune] kept latest ${_WF_BACKUP_KEEP}, moved ${pruned} older backup(s) to Trash`);
+                }
+            } catch (e) { console.warn('[Drive prune] error:', e && e.message); }
+        }
+
         async function executeDriveBackup() {
             if (!gapiToken) return false;
             // (silent during auto-backups; manual flow shows its own toast)
@@ -9313,6 +9379,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     };
                     DB.set('settings', s);
                 } catch (_) {}
+
+                // ── RETENTION: keep MAX 6 latest backups for THIS user ─────
+                // Fire-and-forget — don't block the return. Lists every
+                // existing backup of this user inside their subfolder
+                // (filename prefix encodes uid+email), sorts by createdTime
+                // descending, and deletes anything beyond position #6.
+                _pruneOldDriveBackups(uid, safeEmail, parentId).catch(()=>{});
 
                 return verified;
             } catch (e) {
@@ -11029,11 +11102,84 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         // ==================== LUXURY HAPTIC FEEDBACK ENGINE v3 ====================
-        // Android: Real vibration via navigator.vibrate
-        // iOS: AudioContext click + visual pulse (iOS blocks web vibration)
+        // Android: Real vibration via navigator.vibrate (when truly supported)
+        // iOS:     Real Taptic Engine via hidden <input switch> click trick
+        //          (works on iOS 17.4+, Safari/Chrome) OR audio fallback
         // Desktop: Visual ripple animation
 
         let _audioCtx = null;
+        let _audioCtxUnlocked = false;
+        let _iosTapticEl = null;
+        let _hapticPlatform = null; // 'ios' | 'android' | 'desktop' | null
+
+        function _detectHapticPlatform() {
+            if (_hapticPlatform) return _hapticPlatform;
+            try {
+                const ua = navigator.userAgent || '';
+                const platform = navigator.platform || '';
+                const isIOS = /iPhone|iPad|iPod/i.test(ua) ||
+                              (platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                              /iPhone|iPad|iPod/i.test(platform);
+                if (isIOS) _hapticPlatform = 'ios';
+                else if (/Android/i.test(ua)) _hapticPlatform = 'android';
+                else if (/Mobi|Mobile|Tablet/i.test(ua)) _hapticPlatform = 'android'; // best-guess
+                else _hapticPlatform = 'desktop';
+            } catch (_) { _hapticPlatform = 'desktop'; }
+            return _hapticPlatform;
+        }
+
+        // Lazy-create a hidden <label><input switch> pair. On iOS 17.4+ Safari
+        // & Chrome trigger the real Taptic Engine when an `input` of type
+        // checkbox styled as `switch` is programmatically clicked from inside
+        // a user-gesture-derived call stack. This is currently the only
+        // reliable cross-browser way to get actual hardware haptics on iPhone
+        // from a web page (since iOS Safari refuses to honour navigator.vibrate).
+        function _ensureIOSTapticEl() {
+            if (_iosTapticEl) return _iosTapticEl;
+            try {
+                const wrap = document.createElement('label');
+                wrap.setAttribute('aria-hidden', 'true');
+                wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+                const inp = document.createElement('input');
+                inp.type = 'checkbox';
+                inp.setAttribute('switch', '');                    // iOS-specific
+                inp.setAttribute('aria-hidden', 'true');
+                inp.tabIndex = -1;
+                wrap.appendChild(inp);
+                document.body.appendChild(wrap);
+                _iosTapticEl = inp;
+            } catch (_) {}
+            return _iosTapticEl;
+        }
+
+        function _iosTaptic(intensity /* 'light'|'medium'|'heavy' */) {
+            const inp = _ensureIOSTapticEl();
+            if (!inp) return false;
+            try {
+                // Click count emulates intensity (one click = light tap;
+                // a couple of fast clicks = medium/heavy feel).
+                const count = intensity === 'heavy' ? 3 : intensity === 'medium' ? 2 : 1;
+                let i = 0;
+                const tick = () => {
+                    try { inp.click(); } catch (_) {}
+                    i++;
+                    if (i < count) setTimeout(tick, 35);
+                };
+                tick();
+                return true;
+            } catch (_) { return false; }
+        }
+
+        // Detect real navigator.vibrate support. iOS Safari exposes the
+        // method but it's a no-op — we must reject it explicitly, otherwise
+        // _vibrate returns true and the iOS fallback never runs.
+        function _hasRealVibrate() {
+            try {
+                if (!('vibrate' in navigator)) return false;
+                if (_detectHapticPlatform() === 'ios') return false;
+                return true;
+            } catch (_) { return false; }
+        }
 
         function _getAudioCtx() {
             if (!_audioCtx) {
@@ -11042,8 +11188,37 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             return _audioCtx;
         }
 
+        // First user gesture anywhere on the page unlocks AudioContext so
+        // the iOS audio-fallback can fire from anywhere (notifications,
+        // timers etc.) without needing a fresh gesture each time.
+        function _unlockAudioOnce() {
+            if (_audioCtxUnlocked) return;
+            try {
+                const ctx = _getAudioCtx();
+                if (!ctx) return;
+                if (ctx.state === 'suspended') ctx.resume();
+                // Tiny silent buffer to fully unlock the context on Safari.
+                const buf = ctx.createBuffer(1, 1, 22050);
+                const src = ctx.createBufferSource();
+                src.buffer = buf;
+                src.connect(ctx.destination);
+                src.start(0);
+                _audioCtxUnlocked = true;
+            } catch (_) {}
+        }
+        // Attach the unlock to the first real interaction.
+        ['pointerdown', 'touchstart', 'keydown'].forEach(evt => {
+            try { window.addEventListener(evt, _unlockAudioOnce, { once: false, passive: true }); } catch (_) {}
+        });
+
         function _iosHaptic(type) {
-            // iOS haptic simulation via brief audio click (triggers taptic engine on some devices)
+            // 1) Try real Taptic Engine first (iOS 17.4+ via switch trick).
+            const intensity = (type === 'heavy' || type === 'error' || type === 'celebration') ? 'heavy'
+                            : (type === 'medium' || type === 'success' || type === 'warning' || type === 'warn' || type === 'delete') ? 'medium'
+                            : 'light';
+            if (_iosTaptic(intensity)) return;
+            // 2) Audio click fallback (older iOS — produces a brief tick
+            //    that the user perceives as feedback).
             try {
                 const ctx = _getAudioCtx();
                 if (!ctx) return;
@@ -11053,8 +11228,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 osc.connect(gain);
                 gain.connect(ctx.destination);
                 const intensityMap = { light: 0.01, medium: 0.02, heavy: 0.04, success: 0.03, error: 0.05, keypress: 0.005, toggle: 0.015 };
-                const intensity = intensityMap[type] || 0.01;
-                gain.gain.setValueAtTime(intensity, ctx.currentTime);
+                const amp = intensityMap[type] || 0.01;
+                gain.gain.setValueAtTime(amp, ctx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
                 osc.frequency.setValueAtTime(type === 'error' ? 80 : type === 'success' ? 440 : 200, ctx.currentTime);
                 osc.start(ctx.currentTime);
@@ -11063,7 +11238,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         function _visualHaptic(type) {
-            // Visual ripple on the focused/active element
+            // Visual ripple on the focused/active element. Last-resort
+            // confirmation that *something* happened on platforms with no
+            // physical haptics at all (e.g. desktop).
             const el = document.activeElement || document.body;
             if (el && el !== document.body) {
                 el.classList.remove('haptic-pulse');
@@ -11081,15 +11258,17 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         function _vibrate(pattern) {
             const mult = _getHapticMultiplier();
-            // Android/Chrome: Real vibration
-            if ('vibrate' in navigator) {
+            // Only call navigator.vibrate where it actually does something
+            // (i.e. NOT on iOS, where the method exists but is a silent
+            // no-op — this was the bug that made the iOS fallback never run).
+            if (_hasRealVibrate()) {
                 try {
                     const scaled = Array.isArray(pattern)
                         ? pattern.map((v, i) => i % 2 === 0 ? Math.max(1, Math.round(v * mult)) : v)
                         : Math.max(1, Math.round(pattern * mult));
                     navigator.vibrate(0); // Cancel any previous
-                    navigator.vibrate(scaled);
-                    return true;
+                    const ok = navigator.vibrate(scaled);
+                    if (ok !== false) return true;
                 } catch (e) { }
             }
             return false;
@@ -11099,7 +11278,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const settings = DB.getObj('settings', { haptics: true });
             if (!settings.haptics) return;
 
-            // Try real vibration first (Android)
+            // 1) Real navigator.vibrate (Android/Chrome with motor support).
             let vibrated = false;
             switch (type) {
                 case 'light': vibrated = _vibrate([8, 30, 8]); break;
@@ -11117,9 +11296,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 default: vibrated = _vibrate([8, 25, 8]); break;
             }
 
-            // iOS fallback — audio + visual
+            // 2) iOS — real Taptic Engine (or audio fallback on old iOS).
+            //    Always also run the visual pulse so something is felt/seen
+            //    even when the user is on a device with no haptics at all.
             if (!vibrated) {
-                _iosHaptic(type);
+                if (_detectHapticPlatform() === 'ios') _iosHaptic(type);
                 _visualHaptic(type);
             }
         }
@@ -11331,7 +11512,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         // ==================== SIDEBAR ====================
-        const pgTitles = { dashboard: '📊 Dashboard', monthly: '📅 Monthly Plan', income: '💰 Income & Investments', loans: '🏦 Bank Loans', ccinstall: '💳 CC Installments', cconetime: '⏱️ CC One-Time Payments', cheques: '📄 Cheque Tracker', expenses: '🧾 Monthly Expenses', targets: '🎯 Targets & Savings', balance: '⚖️ Balance Tracker', dscr: '📐 DSCR Calculator', settings: '⚙️ System Settings', ai: '🤖 <span style="color:var(--accent)">AI Advisor</span>', score: '🏆 WealthFlow Score', subscriptions: '🔔 Subscriptions', debtdemo: '💣 Debt Demolisher', montecarlo: '🔮 Wealth Simulator', cashflow3d: '🌐 3D Cash Flow', sessions: '📱 Active Sessions' };
+        const pgTitles = { dashboard: '📊 Dashboard', monthly: '📅 Monthly Plan', income: '💰 Income & Investments', loans: '🏦 Bank Loans', ccinstall: '💳 CC Installments', cconetime: '⏱️ CC One-Time Payments', cheques: '📄 Cheque Tracker', expenses: '🧾 Monthly Expenses', targets: '🎯 Targets & Savings', dscr: '📐 DSCR Calculator', settings: '⚙️ System Settings', ai: '🤖 <span style="color:var(--accent)">AI Advisor</span>', score: '🏆 WealthFlow Score', subscriptions: '🔔 Subscriptions', debtdemo: '💣 Debt Demolisher', montecarlo: '🔮 Wealth Simulator', cashflow3d: '🌐 3D Cash Flow', sessions: '📱 Active Sessions' };
 
         function showPage(name, navEl) {
             // RESTORED v6.9.2: biometric guard for sensitive zones
@@ -11383,7 +11564,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
 
         function renderPage(name) {
-            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, balance: renderBalance, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions };
+            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions };
             if (fn[name]) fn[name]();
         }
 
@@ -11549,10 +11730,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const joinedDate = _userJoinedDate();
                     if (startDate < joinedDate) {
                         const received = DB.getObj('incomeReceived', {});
-                        // Walk every month from startDate up to (but not
-                        // including) joinedDate. Each month gets a key
-                        // `<id>_YYYY-MM` valued as a "historical" stamp.
-                        const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+                        // Walk every FIRST-INCOME month from (start+1) up to
+                        // (but not including) joinedDate. First income lands
+                        // ONE MONTH after the investment is placed — a
+                        // 2026-04-15 investment first pays on 2026-05-15, so
+                        // April must not be auto-marked.
+                        const cursor = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 1);
                         const joinedMonth = new Date(joinedDate.getFullYear(), joinedDate.getMonth(), 1);
                         while (cursor < joinedMonth) {
                             const ym = `${cursor.getFullYear()}-${p2(cursor.getMonth() + 1)}`;
@@ -11763,9 +11946,15 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (!startDate) { notify('This income has no start date.', 'warning'); return; }
             const endDate = source.end ? new Date(source.end + 'T00:00:00') : null;
 
-            // Walk month by month
+            // Walk month by month.
+            //
+            // CRITICAL — first income month is the month AFTER the start
+            // date, not the start month itself. An investment placed on
+            // 2026-04-15 returns its first monthly income on 2026-05-15,
+            // so April must NOT appear in this list. We advance the cursor
+            // by one month before listing.
             const months = [];
-            const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+            const cursor = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 1);
             const stopMonth = new Date(now.getFullYear(), now.getMonth(), 1); // exclude current
             // If end date is earlier than today, stop at end's month (inclusive)
             const hardStop = endDate && endDate < now ? new Date(endDate.getFullYear(), endDate.getMonth() + 1, 1) : stopMonth;
@@ -16151,7 +16340,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                         ${(() => {
                             const meta = s.lastBackupMeta || null;
                             const drv  = s.lastDriveBackup || null;
-                            const recs = (DB.get('income').length + DB.get('loans').length + DB.get('expenses').length + DB.get('targets').length + DB.get('ccinstall').length + DB.get('cconetime').length + DB.get('cheques').length + DB.get('subscriptions').length);
+                            // Use the same helper as backupNow() so the
+                            // "Last backup … N records" number on the card
+                            // matches the number written into the backup
+                            // file. Counts every data-bearing collection in
+                            // appData (not just a hard-coded list of 8).
+                            const recs = (typeof _wfTotalRecordCount === 'function')
+                                ? _wfTotalRecordCount()
+                                : 0;
                             if (meta) {
                                 const cloudPart = meta.cloud ? '☁️ Cloud✓' : '☁️ Cloud✗';
                                 let drivePart = '';
@@ -16335,7 +16531,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.1 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.2 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -16345,7 +16541,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.1 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.2 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -17618,36 +17814,93 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     });
 
                     if (cancelled) return;
-                    setProgress(55, 'Storing on WealthFlow servers…');
-
                     const proxyBase = 'https://wealthflow-personal.vercel.app';
                     const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
 
-                    // 18-second hard timeout; PDFs are larger than HTML so
-                    // the server-side Firestore write needs a bit more room.
-                    const ctrl = new AbortController();
-                    const tm = setTimeout(() => ctrl.abort(), 18000);
+                    // Two-stage upload chain — guarantees a working URL:
+                    //
+                    //  Stage A (preferred): /api/statement-store with the
+                    //    PDF — gives a branded wealthflow-personal.vercel.app
+                    //    URL served by /api/statement-view as native PDF.
+                    //    Works for PDFs that fit Firestore's per-doc limit
+                    //    (~900 KB after base64 expansion).
+                    //
+                    //  Stage B (fallback): /api/share-upload — the SAME
+                    //    proven path the Loan Statement uses. Posts the PDF
+                    //    to file.io → 0x0.st → tmpfiles and returns a direct
+                    //    PDF link. Used when the PDF is too large for
+                    //    Firestore, or when Stage A is momentarily unreachable.
+                    //
+                    // The screenshot's "File stored locally" came from BOTH
+                    // failing because Vercel's default 1 MB body limit
+                    // rejected the request. That's now lifted to 10 MB on
+                    // share-upload, and Stage B is always reached as a real
+                    // fallback (not just a silent error path).
                     let result = null;
-                    try {
-                        const resp = await fetch(proxyBase + '/api/statement-store', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ pdfBase64: base64, name: eliteName }),
-                            signal: ctrl.signal
-                        });
-                        if (resp.ok) {
-                            const data = await resp.json();
-                            if (data && data.url) {
-                                result = {
-                                    url: data.url,
-                                    days: data.days || 30,
-                                    via: data.via || 'firestore',
-                                    kind: data.kind || 'pdf',
-                                    shortId: data.id
-                                };
+
+                    // ── Stage A: statement-store (branded URL) ────────────
+                    if (base64.length < 850 * 1024) {
+                        setProgress(55, 'Storing on WealthFlow servers…');
+                        const ctrlA = new AbortController();
+                        const tmA = setTimeout(() => ctrlA.abort(), 18000);
+                        try {
+                            const resp = await fetch(proxyBase + '/api/statement-store', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ pdfBase64: base64, name: eliteName }),
+                                signal: ctrlA.signal
+                            });
+                            if (resp.ok) {
+                                const data = await resp.json();
+                                if (data && data.url) {
+                                    result = {
+                                        url: data.url,
+                                        days: data.days || 30,
+                                        via: data.via || 'firestore',
+                                        kind: data.kind || 'pdf',
+                                        shortId: data.id
+                                    };
+                                }
+                            } else {
+                                console.warn('[Elite Report] statement-store HTTP', resp.status);
                             }
-                        }
-                    } finally { clearTimeout(tm); }
+                        } catch (eA) { console.warn('[Elite Report] statement-store failed:', eA && eA.message); }
+                        finally { clearTimeout(tmA); }
+                    } else {
+                        console.log('[Elite Report] PDF too large for statement-store, going straight to share-upload');
+                    }
+
+                    // ── Stage B: share-upload (file.io / 0x0.st / tmpfiles) ─
+                    if (!result || !result.url) {
+                        if (cancelled) return;
+                        setProgress(70, 'Uploading PDF (large file path)…');
+                        const safeMonth = MONTHS[month].replace(/[^a-zA-Z]/g, '');
+                        const fileName = `WealthFlow_Elite_Report_${safeMonth}_${year}.pdf`;
+                        const ctrlB = new AbortController();
+                        const tmB = setTimeout(() => ctrlB.abort(), 25000);
+                        try {
+                            const resp = await fetch(proxyBase + '/api/share-upload', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ base64, fileName }),
+                                signal: ctrlB.signal
+                            });
+                            if (resp.ok) {
+                                const data = await resp.json();
+                                if (data && data.url) {
+                                    result = {
+                                        url: data.url,
+                                        days: data.permanent ? 3650 : 14,
+                                        via: data.service || 'share-upload',
+                                        kind: 'pdf'
+                                    };
+                                }
+                            } else {
+                                console.warn('[Elite Report] share-upload HTTP', resp.status);
+                            }
+                        } catch (eB) { console.warn('[Elite Report] share-upload failed:', eB && eB.message); }
+                        finally { clearTimeout(tmB); }
+                    }
 
                     if (cancelled) return;
 
