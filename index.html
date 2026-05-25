@@ -4546,7 +4546,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.6 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.7 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5649,31 +5649,31 @@
 
     <div class="mo" id="mdCCOT">
         <div class="md md-sm">
-            <div class="md-hdr">
-                <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div><button class="md-x"
-                    onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
-            </div>
-            <!-- AI Vision upload — Issue 02 fix: extract cash advance + service
-                 fee + fuel + payments + vendor from a statement / receipt photo
-                 with one tap. Same engine cascade as receipt scanner so it
-                 works on every device (iPhone / Android / desktop). -->
-            <div style="background:linear-gradient(135deg, rgba(212,175,55,.10), rgba(59,130,246,.07));border:1px solid rgba(212,175,55,.32);border-radius:12px;padding:12px;margin-bottom:14px;">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-                    <span style="font-size:22px;">🤖</span>
-                    <div style="flex:1;">
-                        <div style="font-weight:800;color:var(--accent);font-size:13px;">AI Vision — Auto-Fill From Statement</div>
-                        <div style="font-size:11px;color:var(--text3);">Upload a CC statement / receipt photo. AI extracts cash advances, service fees, fuel and purchases automatically.</div>
-                    </div>
+            <!-- Scanning Progress Overlay (same proven pattern as expense modal) -->
+            <div id="ccotAiScanOverlay" style="display:none; position:absolute; inset:0; z-index:50; background:rgba(10,10,15,0.92); backdrop-filter:blur(12px); border-radius:inherit; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px;">
+                <div style="width:64px; height:64px; border-radius:50%; border:3px solid rgba(212,175,55,0.15); border-top-color:var(--accent); animation:spin 0.8s linear infinite;"></div>
+                <div id="ccotAiScanStage" style="font-size:15px; font-weight:700; color:var(--accent); text-align:center; letter-spacing:0.3px;">📸 Optimizing Image…</div>
+                <div id="ccotAiScanDetail" style="font-size:12px; color:var(--text3); text-align:center; max-width:260px; line-height:1.5;">Compressing and enhancing for AI vision</div>
+                <div style="width:80%; max-width:240px; height:4px; background:var(--bg2); border-radius:4px; overflow:hidden; margin-top:4px;">
+                    <div id="ccotAiScanBar" style="height:100%; width:0%; background:linear-gradient(90deg,var(--accent),#f5c542); border-radius:4px; transition:width 0.5s ease;"></div>
                 </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <label class="btn btn-secondary btn-sm" style="flex:1;text-align:center;cursor:pointer;min-width:140px;">
-                        📷 Capture Photo
-                        <input type="file" id="ccotAiCamera" accept="image/*" capture="environment" style="display:none;" onchange="window._aiScanCCStatement && window._aiScanCCStatement(event)">
+            </div>
+
+            <div class="md-hdr" style="position:relative;">
+                <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <!-- AI Scan button — same pattern as expense/subscription modals
+                         that are known to work on iPhone, iPad, Android, desktop.
+                         Single label wrapping a hidden <input type=file>. NO
+                         capture="environment" attribute — letting the browser
+                         show its native picker (Camera / Photo Library / Files)
+                         is what makes this reliable across every device. -->
+                    <label id="ccotAiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan statement with AI Vision">
+                        <span style="position:relative;z-index:1;">📸 AI Scan</span>
+                        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ccot_ai_scan" style="display:none;"
+                            onchange="handleAIScan(event, 'ccot')">
                     </label>
-                    <label class="btn btn-secondary btn-sm" style="flex:1;text-align:center;cursor:pointer;min-width:140px;">
-                        📁 Upload File
-                        <input type="file" id="ccotAiUpload" accept="image/*,application/pdf" style="display:none;" onchange="window._aiScanCCStatement && window._aiScanCCStatement(event)">
-                    </label>
+                    <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
                 </div>
             </div>
             <div class="fr">
@@ -7579,6 +7579,60 @@ Keep total under 200 words. No markdown, no asterisks.`;
         }
         window._fallbackSingleImageVision = _fallbackSingleImageVision;
 
+        // CC One-Time AI Scan helpers (v7.4.7) — self-contained overlay
+        // inside the CC modal so the scan UI doesn't clash with the
+        // global expense scanner that uses #aiScanOverlay.
+        function _showCcotScanOverlay(stage, detail, pct) {
+            try {
+                const ov = document.getElementById('ccotAiScanOverlay');
+                if (!ov) return;
+                ov.style.display = 'flex';
+                const s = document.getElementById('ccotAiScanStage');     if (s) s.textContent = stage;
+                const d = document.getElementById('ccotAiScanDetail');    if (d) d.textContent = detail;
+                const b = document.getElementById('ccotAiScanBar');       if (b) b.style.width = (pct || 0) + '%';
+            } catch (_) {}
+        }
+        function _hideCcotScanOverlay() {
+            try {
+                const ov = document.getElementById('ccotAiScanOverlay');
+                if (ov) ov.style.display = 'none';
+            } catch (_) {}
+        }
+
+        // Bank-picker dialog used by the CCOT AI scan flow. Returns
+        // the selected bank string (or null on cancel) via a Promise.
+        function _ccotPickBankAsync() {
+            return new Promise((resolve) => {
+                const banks = (typeof BANKS !== 'undefined' && Array.isArray(BANKS)) ? BANKS : ['Other'];
+                const bankList = banks.map(b =>
+                    `<button class="auth-btn _wf_bank_pick" data-bank="${b}" style="text-align:left;justify-content:flex-start;font-size:13px;padding:10px 14px;">${b}</button>`
+                ).join('');
+                const overlay = document.createElement('div');
+                overlay.className = 'mo';
+                document.body.appendChild(overlay);
+                requestAnimationFrame(() => overlay.classList.add('open'));
+                overlay.innerHTML = `
+                    <div class="md md-sm">
+                        <div class="md-hdr">
+                            <div class="md-title">🤖 Which credit card / bank?</div>
+                            <button class="md-x" id="_wf_bank_x">✕</button>
+                        </div>
+                        <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.55;">
+                            Before AI scans the statement, please confirm the issuing bank. This unlocks the correct service-fee schedule (Sri Lanka 🇱🇰).
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow-y:auto;">${bankList}</div>
+                    </div>`;
+                const close = (val) => {
+                    try { overlay.classList.remove('open'); } catch(_){}
+                    setTimeout(() => { try { overlay.remove(); } catch(_){} resolve(val); }, 180);
+                };
+                overlay.querySelectorAll('._wf_bank_pick').forEach(b =>
+                    b.onclick = () => close(b.getAttribute('data-bank')));
+                overlay.querySelector('#_wf_bank_x').onclick = () => close(null);
+                overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(null); });
+            });
+        }
+
         async function handleAIScan(e, type) {
             const file = e.target.files[0];
             if (!file) return;
@@ -7588,6 +7642,97 @@ Keep total under 200 words. No markdown, no asterisks.`;
             triggerHaptic('medium');
 
             const isExpense = type === 'expense';
+            const isCCOT = type === 'ccot';
+            // ── CC One-Time branch (v7.4.7) ───────────────────────────────
+            // Uses the same compress → callAI → parse pipeline that
+            // proven-works on Expense/Subscription scans. Before sending
+            // the image, we ask the user which BANK the statement is for
+            // (so we get the right fee schedule). After the AI replies,
+            // we show the same review modal you saw in v7.4.5/6 — but
+            // now the AI call itself goes through the universal handler
+            // that the user has confirmed works on iPhone/iPad/Android.
+            if (isCCOT) {
+                try {
+                    const bank = await _ccotPickBankAsync();
+                    if (!bank) { e.target.value = ''; return; }
+                    _showCcotScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
+
+                    const _ss = DB.getObj('settings', {});
+                    const scanMode = _ss.scanMode || 'deep';
+                    const tfEnhance = _ss.scanTfEnhance !== false;
+                    const modeQuality = { quick: 0.85, deep: 0.92, ultra: 0.95, frontier: 0.97 };
+                    const modeDim = { quick: 1600, deep: 2000, ultra: 2400, frontier: 2800 };
+                    const q = modeQuality[scanMode] || 0.92;
+                    const dim = modeDim[scanMode] || 2000;
+
+                    // Step 1 — compress
+                    const { base64: base64Img, kb } = await _compressImageToBase64(file, dim, q, tfEnhance);
+                    console.log(`[CCOT AI Scan v7.4.7] Mode=${scanMode} Compressed: ${sizeMB}MB → ${kb}KB @ ${dim}px`);
+                    _showCcotScanOverlay('🧠 AI Vision Analyzing…', `${scanMode.toUpperCase()} scan of ${bank} statement`, 35);
+
+                    const prompt = `You are an expert credit card statement parser specialized in Sri Lankan banks (BOC, Commercial Bank, HNB, Sampath, NTB, AMEX, NDB, Standard Chartered, DFCC, Seylan, Peoples Bank, Pan Asia, Union Bank).
+This statement is from: ${bank}
+
+Read the image carefully and extract EVERY transaction line. Return ONLY a JSON object with this exact schema:
+
+{"statement_period":"YYYY-MM","transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":1500.50,"type":"purchase|cash_advance|service_fee|fuel","linked_to_index":null,"notes":""}]}
+
+RULES:
+- Include the FULL ORIGINAL amount printed. NEVER round or truncate.
+- "type" must be one of: purchase, cash_advance, service_fee, fuel
+- "fuel" = petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum)
+- "service_fee" = cash-advance fees, interest, late fees. If row pairs with a cash advance line, set "linked_to_index" to that index.
+- "date" in YYYY-MM-DD. If only day+month printed, use the statement_period year.
+- Skip closing balance, opening balance, payment-received rows.
+- If a row is a credit/refund, prefix description with "[CREDIT] " and keep amount positive.
+- If you cannot read a column clearly, still include the row with best-effort. NEVER omit a transaction.
+
+CRITICAL: Output ONLY the JSON. No markdown. No explanation.`;
+
+                    // Step 2 — call AI (with one retry on transient failures)
+                    _showCcotScanOverlay('🚀 Calling AI Vision…', 'Extracting transactions', 55);
+                    let raw = null;
+                    try {
+                        raw = await callAI(prompt, base64Img);
+                    } catch (eAi) {
+                        console.warn('[CCOT AI Scan] first try failed:', eAi);
+                        // Step 3 — simplified prompt retry
+                        _showCcotScanOverlay('🔄 Retrying with simpler prompt…', 'Smaller payload', 70);
+                        await new Promise(res => setTimeout(res, 700));
+                        const simplePrompt = `Read this ${bank} credit card statement. Return ONLY this JSON (no markdown):
+{"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}
+Types: purchase, cash_advance, service_fee, fuel.`;
+                        raw = await callAI(simplePrompt, base64Img);
+                    }
+                    if (!raw || raw.length < 5) throw new Error('AI returned empty');
+
+                    _showCcotScanOverlay('📊 Parsing transactions…', 'Extracting structured data', 88);
+                    const parsed = _parseAIJson(raw);
+                    if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
+                        _hideCcotScanOverlay();
+                        notify('AI returned a response but could not find transactions. Try a clearer photo (good lighting, all rows visible).', 'warn');
+                        e.target.value = '';
+                        return;
+                    }
+
+                    _showCcotScanOverlay('✅ Done!', `Found ${parsed.transactions.length} transaction${parsed.transactions.length>1?'s':''}`, 100);
+                    triggerHaptic('success');
+                    setTimeout(() => {
+                        _hideCcotScanOverlay();
+                        _showCCReviewModal(parsed, bank);
+                    }, 350);
+                    e.target.value = '';
+                    return;
+                } catch (ccotErr) {
+                    console.error('[CCOT AI Scan v7.4.7]', ccotErr);
+                    _hideCcotScanOverlay();
+                    notify('Scan failed: ' + (ccotErr.message || 'unknown error') + '. Try a clearer, well-lit photo of the full statement.', 'error');
+                    triggerHaptic('error');
+                    e.target.value = '';
+                    return;
+                }
+            }
+
             if (isExpense) _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
             else notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
 
@@ -10630,48 +10775,20 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 return;
             }
 
-            // ── ISSUE 04 FIX — DEVICE TRUST FAST PATH ────────────────────
-            // On iOS Safari, navigator.credentials.get() ALWAYS shows the
-            // OS-level passkey prompt ("Sign in to <host> with your passkey
-            // for ..."). The text is rendered by the OS — there is no API
-            // to hide or rename it. To stop spamming the user with that
-            // prompt every time they tap "🔐 Unlock with Biometrics", we
-            // now use a "device trust" model:
+            // ── ISSUE 02 FIX (v7.4.7) — ALWAYS RUN WEBAUTHN ──────────────
             //
-            //   1. Biometric was already verified once at REGISTRATION
-            //      time (registerBiometrics did the FaceID dance).
-            //   2. The encrypted device-trust token in localStorage is
-            //      only readable on THIS device's WealthFlow origin.
-            //   3. After successful registration we mint a non-extractable
-            //      WebCrypto session key + a TTL (default 30 days). While
-            //      the token is valid, "Unlock with Biometrics" just calls
-            //      launchApp() directly — no WebAuthn round-trip, no
-            //      passkey prompt.
-            //   4. If the device has been idle past TTL, or the user
-            //      explicitly toggles "Re-verify on every unlock" in
-            //      Settings, we fall back to the WebAuthn flow with
-            //      mediation:'silent' first, then full prompt as last
-            //      resort — same prompt as before, but only rarely.
-            try {
-                const trust = bio.deviceTrust ? JSON.parse(bio.deviceTrust) : null;
-                const reverify = !!bio.reverifyEveryUnlock;
-                const ttlMs = (bio.trustTtlDays || 30) * 86400 * 1000;
-                if (trust && trust.token && !reverify && (Date.now() - trust.at) < ttlMs) {
-                    // FAST PATH — no passkey prompt at all.
-                    $('loginErr').textContent = '';
-                    triggerHaptic('success');
-                    resetAutoLockTimer();
-                    // Bump the trust timestamp so frequent users keep it warm.
-                    try {
-                        const updated = { ...trust, at: Date.now() };
-                        const next = { ...bio, deviceTrust: JSON.stringify(updated) };
-                        setDeviceBiometric(next);
-                    } catch (_) {}
-                    launchApp();
-                    return;
-                }
-            } catch (_) { /* fall through to WebAuthn */ }
-
+            // v7.4.5 introduced a "device-trust fast path" that skipped
+            // navigator.credentials.get() entirely and just trusted a
+            // localStorage token. That made FaceID / TouchID never fire,
+            // which the user correctly identified as "biometrics not
+            // working". It was also a security regression — anyone holding
+            // the unlocked phone could tap the button and bypass FaceID.
+            //
+            // The right answer is to ALWAYS call WebAuthn so the OS
+            // biometric prompt fires every time. The "Sign in to github.io
+            // with your passkey for …" wording IS rendered by the OS and
+            // cannot be removed by JavaScript — but the actual mechanism
+            // is FaceID/TouchID, which is what the user wants.
             try {
                 const challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
                 const binaryString = atob(bio.rawId);
@@ -10690,22 +10807,15 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     timeout: 120000
                 };
 
-                // Try a SILENT mediation first — if the browser supports it
-                // and the user recently passed verification, no prompt at
-                // all. (Most modern browsers honour this; iOS Safari may
-                // still show the prompt but at least we asked nicely.)
-                let assertion = null;
-                try {
-                    assertion = await navigator.credentials.get({ publicKey, mediation: 'silent' });
-                } catch (silentErr) {
-                    // Silent path failed → standard prompt.
-                    assertion = await navigator.credentials.get({ publicKey });
-                }
+                // Run WebAuthn — this is what triggers FaceID / TouchID /
+                // Windows Hello / Android fingerprint. The OS will show
+                // its own biometric prompt; nothing JavaScript can do
+                // changes that wording, but the user IS authenticating
+                // against the platform authenticator the way they expect.
+                const assertion = await navigator.credentials.get({ publicKey });
                 if (!assertion) throw new Error('No assertion returned');
 
-                // Mint / refresh the device-trust token so the next unlock
-                // is silent. Token contents are opaque — we just need a
-                // stable string we can validate later.
+                // Refresh the trust timestamp on each successful unlock.
                 try {
                     const trustToken = {
                         token: btoa(String.fromCharCode.apply(null, crypto.getRandomValues(new Uint8Array(16)))),
@@ -10723,8 +10833,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 console.error("Biometric Login Error:", err);
                 if (err.name === 'NotAllowedError') {
                     notify('Biometric verification cancelled. Use your PIN instead.', 'warn');
+                } else if (err.name === 'InvalidStateError') {
+                    notify('No matching biometric key found. Re-register via Settings.', 'warn');
                 } else {
-                    notify('Biometric failed: ' + err.message + '. Please use PIN.', 'warn');
+                    notify('Biometric failed: ' + (err.message || err.name || 'unknown') + '. Please use PIN.', 'warn');
                 }
             }
         }
@@ -15494,6 +15606,29 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         function renderExpenses() {
+            // ── Default sort: newest month first ─ Issue (v7.4.7) ──────────
+            // Initialise sortState['expenses'] to { field:'date', dir:-1 }
+            // so the visible Date button always starts with the ↓ arrow
+            // (newest / upcoming first) instead of looking unset. Without
+            // this the button still SORTED newest-first by default (via the
+            // else branch below) but the arrow never appeared, so the user
+            // couldn't tell which direction was active and a single click
+            // accidentally flipped to ascending without warning.
+            if (!sortState['expenses'] || !sortState['expenses'].field) {
+                sortState['expenses'] = { field: 'date', dir: -1 };
+                try {
+                    const sortBar = document.querySelector('#page-expenses .sort-bar');
+                    if (sortBar) {
+                        const dateBtn = sortBar.querySelector('.sb-btn');
+                        if (dateBtn && !/[↑↓]\s*$/.test(dateBtn.textContent)) {
+                            const base = dateBtn.textContent.trim();
+                            dateBtn.setAttribute('data-label', base);
+                            dateBtn.textContent = base + ' ↓';
+                            dateBtn.classList.add('active');
+                        }
+                    }
+                } catch (_) {}
+            }
             let arr = DB.get('expenses');
             const allMonths = [...new Set(arr.map(x => x.month))].sort().reverse();
             const sel = $('expMonth'); const cur = sel.value;
@@ -17091,7 +17226,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.6 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.7 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17101,7 +17236,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.6 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.7 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -20930,10 +21065,31 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const s = DB.getObj('settings', {});
                 if (!s.autoBackupFreq || s.autoBackupFreq === 'off') return;
 
-                // Need to be signed in + online; otherwise wait — visibility
-                // / focus / online listeners will trigger us again.
-                if (!window.currentUser) return;
-                if (!navigator.onLine) return;
+                // ── v7.4.7 fix: wait briefly for auth to restore ──────────
+                // On iOS / PWA / cold reload the page often reaches this
+                // check BEFORE Firebase auth has finished restoring
+                // window.currentUser from cache. We previously bailed out
+                // immediately, which meant a missed daily backup wouldn't
+                // fire until the user clicked something later. Now we
+                // wait up to 8 seconds for auth to populate. The 30s
+                // interval timer will retry too, but waiting here makes
+                // the FIRST check after app-reopen actually succeed.
+                if (!window.currentUser) {
+                    for (let i = 0; i < 16; i++) {
+                        await new Promise(r => setTimeout(r, 500));
+                        if (window.currentUser) break;
+                    }
+                    if (!window.currentUser) return;
+                }
+                if (!navigator.onLine) {
+                    // We're offline — register the SW background sync tag so
+                    // the moment the network comes back, the SW pokes us.
+                    try {
+                        const reg = await navigator.serviceWorker.ready;
+                        if (reg && reg.sync) await reg.sync.register('wf-auto-backup').catch(() => {});
+                    } catch (_) {}
+                    return;
+                }
 
                 // ── New clock-time-based scheduling (v7.4.5) ─────────────
                 // Calculate the most recent scheduled trigger time
@@ -21225,259 +21381,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             } catch (e) { /* silent */ }
         };
 
-        // ====================================================================
-        // ──  Issue 02 (v7.4.5) — AI VISION for CC One-Time Statements ───────
-        // ====================================================================
-        // Single-tap upload from the CC One-Time modal. The user can shoot a
-        // photo of a credit-card statement or receipt; the AI extracts every
-        // line item (purchase, cash advance, service fee, fuel) and presents
-        // an editable review table. Confirmed rows are saved as individual
-        // CC One-Time records — fully replacing 10+ minutes of manual typing.
-        //
-        // Upgrades vs. the v7.4.4 version that hit "All Intelligence Engines
-        // Offline" 503s:
-        //
-        //  • Real-time progress overlay — reuses the existing _showScanOverlay
-        //    so the user always sees what stage the scan is in (0% → 100%).
-        //  • Image enhancement for low-quality photos — auto-levels +
-        //    sharpening (re-uses the TF.js path from the receipt scanner).
-        //  • Resilient AI cascade — calls /api/ai with 3 escalating tries
-        //    (deep prompt → simplified prompt → tiny prompt), then falls
-        //    back to direct frontend Gemini, then frontend Groq. The Vercel
-        //    backend 503 you saw will no longer end the scan — the cascade
-        //    just moves on to the next engine automatically.
-        //  • Higher dynamic range — captures at 2400px when Frontier mode is
-        //    selected in Settings (so faded printer receipts are readable).
-        //  • PDF / multi-page support — first page rendered through PDF.js
-        //    when the lib is loaded, raw base64 otherwise.
-        //  • Works on every device — uses the same Capture / File picker
-        //    layout that the expense scanner uses (proven on iOS Safari,
-        //    iOS Chrome, Android, Mac, Windows, Linux, ChromeOS).
-        // ====================================================================
-        async function _aiScanCCStatement(e) {
-            try {
-                const file = e && e.target && e.target.files && e.target.files[0];
-                if (!file) return;
-                // Reset the input so the user can re-pick the same file later.
-                try { e.target.value = ''; } catch (_) {}
-
-                // 1. Ask which bank the statement is for. Knowing this lets
-                //    the AI annotate cash advances with the correct fee
-                //    schedule and improves vendor recognition.
-                const bankList = BANKS.map(b =>
-                    `<button class="auth-btn _wf_bank_pick" data-bank="${b}" style="text-align:left;justify-content:flex-start;font-size:13px;padding:10px 14px;">${b}</button>`
-                ).join('');
-                const bank = await new Promise((resolve) => {
-                    const overlay = document.createElement('div');
-                    overlay.className = 'mo';
-                    document.body.appendChild(overlay);
-                    requestAnimationFrame(() => overlay.classList.add('open'));
-                    overlay.innerHTML = `
-                        <div class="md md-sm">
-                            <div class="md-hdr">
-                                <div class="md-title">🤖 Which credit card / bank?</div>
-                                <button class="md-x" id="_wf_bank_x">✕</button>
-                            </div>
-                            <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.55;">
-                                Before AI scans the statement, please confirm the issuing bank. This unlocks the correct service-fee schedule (Sri Lanka 🇱🇰).
-                            </div>
-                            <div style="display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow-y:auto;">${bankList}</div>
-                        </div>`;
-                    const close = (val) => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => { try { overlay.remove(); } catch(_){} resolve(val); }, 180); };
-                    overlay.querySelectorAll('._wf_bank_pick').forEach(b => b.onclick = () => close(b.getAttribute('data-bank')));
-                    overlay.querySelector('#_wf_bank_x').onclick = () => close(null);
-                    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(null); });
-                });
-                if (!bank) return;  // user cancelled
-
-                // ── Real progress overlay ─────────────────────────────
-                _showScanOverlay('📸 Reading file…', `Loading ${bank} statement`, 5);
-                triggerHaptic('medium');
-
-                // 2. Compress / page-render the file into a base64 payload.
-                const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-                let base64Img = null;
-                _showScanOverlay('🖼️ Optimizing image…', isPdf ? 'Rendering PDF page' : 'Enhancing photo for OCR', 15);
-                if (isPdf) {
-                    try {
-                        const arrayBuf = await file.arrayBuffer();
-                        if (window.pdfjsLib) {
-                            const pdf = await window.pdfjsLib.getDocument({ data: arrayBuf }).promise;
-                            const pg = await pdf.getPage(1);
-                            const viewport = pg.getViewport({ scale: 2.0 });
-                            const canvas = document.createElement('canvas');
-                            canvas.width = viewport.width; canvas.height = viewport.height;
-                            await pg.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-                            base64Img = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
-                        } else {
-                            const ab = new Uint8Array(arrayBuf);
-                            let bin = ''; for (let i = 0; i < ab.byteLength; i++) bin += String.fromCharCode(ab[i]);
-                            base64Img = btoa(bin);
-                        }
-                    } catch (pdfErr) {
-                        console.warn('[CC AI Scan] PDF parse failed, falling back to raw:', pdfErr);
-                    }
-                } else {
-                    // Use the scanner-settings mode for dimension/quality.
-                    const _ss = DB.getObj('settings', {});
-                    const scanMode = _ss.scanMode || 'deep';
-                    const modeDim = { quick: 1600, deep: 2000, ultra: 2400, frontier: 2800 };
-                    const modeQual = { quick: 0.85, deep: 0.92, ultra: 0.95, frontier: 0.97 };
-                    const dim = modeDim[scanMode] || 2000;
-                    const qual = modeQual[scanMode] || 0.92;
-                    const tfEnhance = _ss.scanTfEnhance !== false;
-                    const { base64, kb } = await _compressImageToBase64(file, dim, qual, tfEnhance);
-                    base64Img = base64;
-                    console.log('[CC AI Scan] image compressed →', kb, 'KB @ ' + dim + 'px (mode=' + scanMode + ')');
-                }
-                if (!base64Img) {
-                    _hideScanOverlay();
-                    notify('Could not read the file. Try a different photo.', 'error');
-                    return;
-                }
-
-                _showScanOverlay('🧠 AI Vision analysing…', 'Reading every line of the statement', 35);
-
-                // 3. Engineered prompt — produces strict JSON.
-                const prompt = `You are an expert credit card statement parser specialized in Sri Lankan banks (BOC, Commercial Bank, HNB, Sampath, NTB, AMEX, NDB, Standard Chartered, DFCC, Seylan, Peoples Bank, Pan Asia, Union Bank).
-This statement is from: ${bank}
-
-Read the image carefully and extract EVERY transaction line. Return ONLY a JSON object with this exact schema:
-
-{
-  "statement_period": "YYYY-MM",
-  "transactions": [
-    {
-      "date": "YYYY-MM-DD",
-      "description": "vendor or merchant name as printed",
-      "amount": 1500.50,
-      "type": "purchase | cash_advance | service_fee | fuel",
-      "vendor_category": "Food | Transport | Fuel | Cash | Retail | Online | Other",
-      "linked_to_index": null,
-      "notes": "any extra context (foreign currency, FX rate, etc.) or empty string"
-    }
-  ]
-}
-
-RULES:
-- Include the FULL ORIGINAL amount printed. NEVER round or truncate.
-- "type" must be one of: purchase, cash_advance, service_fee, fuel
-- "fuel" applies to petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum, etc.)
-- "service_fee" is for cash-advance fees, interest, late fees. If the row is the FEE that pairs with a cash advance line, set "linked_to_index" to the array index of that cash advance.
-- "date" in YYYY-MM-DD. If only a day+month is printed, use the statement_period year.
-- Do not include the closing balance, opening balance, or payment-received rows.
-- If a row is clearly a refund / credit, prefix description with "[CREDIT] " and keep amount positive.
-- If you cannot read a column clearly, still include the row and put a best-effort guess. NEVER leave a transaction out.
-
-CRITICAL: Output ONLY the JSON. No markdown. No explanations.`;
-
-                // 4. RESILIENT cascade — three engines, each given multiple
-                //    tries. callAI() already wraps the multi-provider AI
-                //    backend (Gemini → Groq → DeepSeek → Ollama → HF) so
-                //    we get cross-provider failover for free; on top of
-                //    that we add a SHORT retry and TWO independent OCR
-                //    fallbacks (OCR.space + Tesseract.js) so even a total
-                //    AI outage still produces a usable result.
-                _showScanOverlay('🚀 Engine 1/4 — multi-provider AI…', 'Calling /api/ai cascade', 45);
-
-                let raw = '';
-                const errors = [];
-
-                async function _callAIWithRetry(p, attempts) {
-                    for (let i = 0; i < attempts; i++) {
-                        try {
-                            const r = await callAI(p, base64Img);
-                            if (r && typeof r === 'string' && r.trim().length > 5) return r;
-                            throw new Error('empty reply');
-                        } catch (eAi) {
-                            errors.push(`callAI try ${i + 1}: ${eAi.message || eAi}`);
-                            console.warn(`[CC AI Scan] callAI try ${i + 1} failed:`, eAi);
-                            if (i + 1 < attempts) await new Promise(res => setTimeout(res, 700 * (i + 1)));
-                        }
-                    }
-                    return null;
-                }
-
-                // Pass 1 — full prompt, up to 2 tries on the AI cascade.
-                raw = await _callAIWithRetry(prompt, 2);
-
-                // Pass 2 — simplified prompt (vision models sometimes choke
-                // on long rule lists; a short prompt is more reliable).
-                if (!raw) {
-                    _showScanOverlay('🔄 Engine 2/4 — simplified prompt…', 'Smaller payload, same cascade', 60);
-                    const simplePrompt = `Read this ${bank} credit card statement image. List EVERY transaction in this JSON format and nothing else:
-{"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}
-Types allowed: purchase, cash_advance, service_fee, fuel. Output ONLY JSON.`;
-                    raw = await _callAIWithRetry(simplePrompt, 2);
-                }
-
-                // Pass 3 — OCR.space text extraction → parse client-side.
-                // This bypasses the AI cascade entirely so a Vercel 503 or
-                // total Gemini/Groq outage still yields a result.
-                let ocrFallbackTransactions = null;
-                if (!raw && typeof _tryOCRSpace === 'function') {
-                    try {
-                        _showScanOverlay('☁️ Engine 3/4 — Cloud OCR (OCR.space)…', 'Bypassing AI, reading raw text', 72);
-                        const ocrText = await _tryOCRSpace(base64Img);
-                        if (ocrText && ocrText.length > 20) {
-                            ocrFallbackTransactions = _ccOcrTextToTransactions(ocrText, bank);
-                            if (ocrFallbackTransactions && ocrFallbackTransactions.length) {
-                                raw = JSON.stringify({ transactions: ocrFallbackTransactions });
-                                console.log('[CC AI Scan] OCR.space yielded', ocrFallbackTransactions.length, 'transactions');
-                            }
-                        }
-                    } catch (eOcr) {
-                        errors.push('OCR.space: ' + (eOcr.message || eOcr));
-                        console.warn('[CC AI Scan] OCR.space failed:', eOcr);
-                    }
-                }
-
-                // Pass 4 — Tesseract.js (runs entirely in the browser, no
-                // API calls). Slowest but ALWAYS works as long as JS can run.
-                if (!raw && typeof _ocrWithTesseract === 'function' && !isPdf) {
-                    try {
-                        _showScanOverlay('🖥️ Engine 4/4 — Tesseract.js (offline OCR)…', 'On-device OCR — slowest but always available', 82);
-                        const ocrText = await _ocrWithTesseract(file);
-                        if (ocrText && ocrText.length > 20) {
-                            ocrFallbackTransactions = _ccOcrTextToTransactions(ocrText, bank);
-                            if (ocrFallbackTransactions && ocrFallbackTransactions.length) {
-                                raw = JSON.stringify({ transactions: ocrFallbackTransactions });
-                                console.log('[CC AI Scan] Tesseract yielded', ocrFallbackTransactions.length, 'transactions');
-                            }
-                        }
-                    } catch (eTes) {
-                        errors.push('Tesseract: ' + (eTes.message || eTes));
-                        console.warn('[CC AI Scan] Tesseract failed:', eTes);
-                    }
-                }
-
-                if (!raw) {
-                    _hideScanOverlay();
-                    notify('AI vision failed across all 4 engines. Last errors: ' + errors.slice(-3).join(' | ') + '. Try a clearer photo with all text visible.', 'error');
-                    return;
-                }
-
-                _showScanOverlay('📊 Parsing transactions…', 'Extracting structured data', 92);
-                const parsed = _parseAIJson(raw);
-                if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
-                    _hideScanOverlay();
-                    notify('AI returned a response but could not find any transactions in this image. Make sure the statement is well-lit, in focus, and shows the transaction lines clearly.', 'warn');
-                    return;
-                }
-
-                _showScanOverlay('✅ Done!', `Found ${parsed.transactions.length} transaction${parsed.transactions.length>1?'s':''}`, 100);
-                triggerHaptic('success');
-                setTimeout(() => {
-                    _hideScanOverlay();
-                    _showCCReviewModal(parsed, bank);
-                }, 350);
-            } catch (err) {
-                console.error('[CC AI Scan]', err);
-                _hideScanOverlay();
-                notify('Scan failed: ' + (err && err.message || 'unknown error'), 'error');
-            }
-        }
-        window._aiScanCCStatement = _aiScanCCStatement;
+        // ──  CC One-Time AI Scan was moved into handleAIScan(event, 'ccot')
+        // ──  in v7.4.7. The old standalone _aiScanCCStatement was removed
+        // ──  because it diverged from the proven Expense scanner pipeline
+        // ──  and broke on iOS/Android. The new flow lives near line 7582.
 
         // ── OCR-text → transactions fallback ───────────────────────────────
         // When the AI cascade is unreachable, OCR.space / Tesseract still
