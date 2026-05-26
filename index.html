@@ -3574,7 +3574,42 @@
             display: flex;
             align-items: center;
             gap: 14px;
+            flex-wrap: wrap;            /* v7.5.4 — let wide button rows drop down */
             transition: all .2s;
+        }
+
+        .sub-card > *:not(.sub-icon) {
+            min-width: 0;               /* v7.5.4 — allow flex children to shrink past content */
+        }
+
+        .sub-card .sub-amount {
+            flex-shrink: 0;
+            text-align: right;
+            white-space: nowrap;        /* keep "LKR 10,000.00" on one line */
+        }
+
+        .sub-card .act-btns {
+            flex-shrink: 0;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            justify-content: flex-end;
+            margin-left: auto;          /* push to far right of the row */
+        }
+
+        @media (max-width: 480px) {
+            /* On narrow phones, action buttons drop to their own line so
+               the wide "📊 Set <Month> amount" pill never crashes into the
+               amount column. The amount keeps its right alignment. */
+            .sub-card .act-btns {
+                flex-basis: 100%;
+                margin-left: 0;
+                justify-content: flex-end;
+                margin-top: 8px;
+                padding-top: 8px;
+                border-top: 1px solid var(--border);
+                flex-wrap: wrap;
+            }
         }
 
         .sub-card:hover {
@@ -4608,7 +4643,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.3 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.4 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5212,7 +5247,14 @@
                         <div class="card-header">
                             <div class="card-title">📊 Wealth Trajectory</div>
                         </div>
-                        <div style="height:300px;"><canvas id="mcChart"></canvas></div>
+                        <!-- v7.5.4 — light-background wrapper so the chart legend
+                             (P95/P50/P5 labels + colour swatches) is readable in
+                             dark mode. The Chart.js legend's text colour is set
+                             below to a literal hex (#e6e7eb) because Chart.js
+                             does NOT resolve CSS variables. -->
+                        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;">
+                            <div style="height:300px;"><canvas id="mcChart"></canvas></div>
+                        </div>
                     </div>
                     <div class="card"
                         style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
@@ -17328,7 +17370,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.3 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.4 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17338,7 +17380,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.3 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.4 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -19319,17 +19361,17 @@ Be direct and use real numbers. Avoid generic advice.`;
 
                 return `<div class="sub-card">
                     <div class="sub-icon">${catIcons[s.category] || '📋'}</div>
-                    <div style="flex:1;">
-                        <div style="font-size:14px;font-weight:700;">${s.name}</div>
-                        <div style="font-size:11px;color:var(--text3);">${s.category} · Day ${s.dueDay} · ${s.cycle}</div>
+                    <div style="flex:1 1 0;min-width:0;">
+                        <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${s.name}</div>
+                        <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${s.category} · Day ${s.dueDay} · ${s.cycle}</div>
                         ${variableBadge}
                     </div>
-                    <div style="text-align:right;">
+                    <div class="sub-amount">
                         <div style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--red);">${fmt(showAmt)}</div>
                         <div class="sub-due-badge ${badgeClass}">${badgeText}</div>
                         ${overrideBadge}
                     </div>
-                    <div class="act-btns" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">
+                    <div class="act-btns">
                         <button class="ib e" onclick="editSubscription('${s.id}')" title="Edit subscription">✏️</button>
                         ${thisMonthCta}
                         <button class="ib d" onclick="deleteSubscription('${s.id}')" title="Delete">🗑️</button>
@@ -19882,19 +19924,47 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
                     data: {
                         labels,
                         datasets: [
-                            { label: 'P95 (5% chance higher)', data: pct.p95, borderColor: 'rgba(16,185,129,.4)', backgroundColor: 'rgba(16,185,129,0.05)', fill: '+1', tension: 0.3, borderWidth: 0.8, pointRadius: 0 },
+                            { label: 'P95 (5% chance higher)', data: pct.p95, borderColor: 'rgba(16,185,129,.95)', backgroundColor: 'rgba(16,185,129,0.05)', fill: '+1', tension: 0.3, borderWidth: 1.2, pointRadius: 0 },
                             { label: 'P90', data: pct.p90, borderColor: 'rgba(16,185,129,.6)', backgroundColor: 'rgba(16,185,129,0.05)', fill: '+1', tension: 0.3, borderWidth: 0.8, pointRadius: 0 },
                             { label: 'P75', data: pct.p75, borderColor: 'rgba(212,175,55,.5)', backgroundColor: 'rgba(212,175,55,0.05)', fill: '+1', tension: 0.3, borderWidth: 0.8, pointRadius: 0 },
-                            { label: 'P50 (Median)', data: pct.p50, borderColor: '#d4af37', backgroundColor: 'rgba(212,175,55,0.04)', fill: false, tension: 0.3, borderWidth: 2.5, pointRadius: 0 },
+                            { label: 'P50 (Median)', data: pct.p50, borderColor: '#f5c542', backgroundColor: 'rgba(212,175,55,0.04)', fill: false, tension: 0.3, borderWidth: 2.5, pointRadius: 0 },
                             { label: 'P25', data: pct.p25, borderColor: 'rgba(212,175,55,.5)', backgroundColor: 'rgba(212,175,55,0.04)', fill: '+1', tension: 0.3, borderWidth: 0.8, pointRadius: 0 },
                             { label: 'P10', data: pct.p10, borderColor: 'rgba(239,68,68,.6)', backgroundColor: 'rgba(239,68,68,0.04)', fill: '+1', tension: 0.3, borderWidth: 0.8, pointRadius: 0 },
-                            { label: 'P5 (5% chance lower)', data: pct.p5, borderColor: 'rgba(239,68,68,.4)', backgroundColor: 'rgba(239,68,68,0.04)', fill: false, tension: 0.3, borderWidth: 0.8, pointRadius: 0 }
+                            { label: 'P5 (5% chance lower)', data: pct.p5, borderColor: 'rgba(239,68,68,.95)', backgroundColor: 'rgba(239,68,68,0.04)', fill: false, tension: 0.3, borderWidth: 1.2, pointRadius: 0 }
                         ]
                     },
                     options: {
                         maintainAspectRatio: false,
-                        plugins: { legend: { position: 'bottom', labels: { color: 'var(--text2)', font: { size: 10 }, filter: (l) => /Median|P5\b|P95/.test(l.text) } } },
-                        scales: { y: { beginAtZero: true, ticks: { callback: v => fmtS(v) } } }
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                // v7.5.4 — Chart.js does NOT resolve var(--*) so
+                                // we pass real colors. Light text + bigger swatch
+                                // so P95 / P50 / P5 are clearly visible in dark
+                                // mode. boxWidth bumps the colour pill so the
+                                // line colour is easy to read at a glance.
+                                labels: {
+                                    color: '#e6e7eb',
+                                    font: { size: 11, weight: '600' },
+                                    boxWidth: 18,
+                                    boxHeight: 12,
+                                    padding: 14,
+                                    usePointStyle: false,
+                                    filter: (l) => /Median|P5\b|P95/.test(l.text)
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: { color: '#9aa0a6', callback: v => fmtS(v) },
+                                grid:  { color: 'rgba(255,255,255,0.06)' }
+                            },
+                            x: {
+                                ticks: { color: '#9aa0a6' },
+                                grid:  { color: 'rgba(255,255,255,0.06)' }
+                            }
+                        }
                     }
                 });
             }
@@ -20887,192 +20957,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         // Start watcher once Firebase auth is ready (and again whenever user logs in)
         document.addEventListener('DOMContentLoaded', () => setTimeout(_startSessionRevokeWatcher, 2000));
 
-        // ==================== PULL-TO-REFRESH (v7.4.8) ====================
-        // Native browser-style pull-to-refresh. On any device that supports
-        // touch, swiping down from the top of a scroll-position-zero page
-        // shows an indicator at +50px and commits a full page reload at
-        // +90px — the same threshold Safari / Chrome mobile use. On a
-        // commit reload, ALL state is reloaded: every script, every cached
-        // module, the service worker re-checks for updates, and the user
-        // sees a fully fresh app exactly like Cmd+Shift+R on desktop.
-        //
-        // We do NOT prevent the browser's own native pull-to-refresh on
-        // mobile Safari/Chrome — they already do this for free in the
-        // address-bar area. Our handler is for the in-app body region
-        // which on installed PWAs has no browser chrome, so the OS won't
-        // refresh it. Without this, a PWA user has no easy way to force-
-        // reload short of killing the app.
-        (function setupPullToRefresh() {
-            if (!('ontouchstart' in window)) return;     // touch-only feature
-            // v7.5.2 — smoother animation per user request. Key changes:
-            //   • All style writes batched via requestAnimationFrame (60fps)
-            //   • Longer travel so the indicator slides down further when
-            //     past the threshold (more professional, more visible)
-            //   • cubic-bezier easing instead of plain linear
-            //   • Arrow rotates as the user pulls (iOS/Twitter pattern)
-            //   • Indicator parks deeper (40px below top, not 0px) when
-            //     fully engaged so "Release to refresh" reads cleanly
-            let startY = 0, lastY = 0, startX = 0, lastX = 0, pulling = false, committed = false;
-            let pendingDistance = 0, rafQueued = false;
-            const THRESHOLD = 90;                         // pixels to commit
-            const SHOW_AT   = 20;                         // pixels to start showing
-            const MAX_TRAVEL = 110;                       // how far down the indicator can slide
-            const PARK_OFFSET = 18;                       // resting top offset when engaged
+        // ==================== PULL-TO-REFRESH ====================
+        // v7.5.4 — Pull-to-refresh REMOVED per user request.
+        // The gesture was conflicting with normal list scrolling,
+        // pinch-zoom, and content-save flows. Users now refresh
+        // via the existing 🔄 button in the top bar, the browser's
+        // own swipe-down (mobile Safari/Chrome address bar), or
+        // Cmd/Ctrl-R on desktop. No JavaScript handler is bound.
 
-            // Build the indicator once and keep it hidden.
-            const ind = document.createElement('div');
-            ind.id = '_wfPtrIndicator';
-            ind.style.cssText = [
-                'position:fixed', 'top:0', 'left:50%',
-                'transform:translate(-50%,-72px)',
-                'z-index:99999',
-                'background:linear-gradient(180deg, var(--bg2, #1c1f24) 0%, var(--bg, #14171c) 100%)',
-                'border:1px solid var(--accent, #d4af37)',
-                'color:var(--accent, #d4af37)',
-                'padding:11px 22px',
-                'border-radius:0 0 16px 16px',
-                'font-size:13px', 'font-weight:700', 'letter-spacing:.3px',
-                'box-shadow:0 10px 30px rgba(0,0,0,.55), 0 0 24px rgba(212,175,55,.08)',
-                'pointer-events:none',
-                'transition:transform .32s cubic-bezier(.22,.61,.36,1), opacity .25s ease, background .25s ease',
-                'opacity:0',
-                'display:flex', 'gap:9px', 'align-items:center',
-                'will-change:transform,opacity'   // promote to GPU layer
-            ].join(';');
-            ind.innerHTML =
-                '<span id="_wfPtrIcon" style="display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;font-size:15px;transform:rotate(0deg);transition:transform .25s cubic-bezier(.22,.61,.36,1);">↓</span>' +
-                '<span id="_wfPtrText">Pull to refresh</span>';
-            const attach = () => { if (!ind.parentNode && document.body) document.body.appendChild(ind); };
-            if (document.readyState !== 'loading') attach(); else document.addEventListener('DOMContentLoaded', attach);
-
-            function paint() {
-                rafQueued = false;
-                if (!ind.parentNode) attach();
-                const distance = pendingDistance;
-                // Eased displacement: travel slows as user pulls further.
-                // Asymptote at MAX_TRAVEL+PARK_OFFSET so it never runs off.
-                const eased = MAX_TRAVEL * (1 - Math.exp(-distance / 130));
-                const yOffset = -72 + eased + PARK_OFFSET;   // -72 = fully hidden above the chrome
-                ind.style.transform = `translate(-50%, ${yOffset}px)`;
-                ind.style.opacity = distance > SHOW_AT ? '1' : Math.max(0, distance / SHOW_AT).toString();
-
-                const engaged = distance >= THRESHOLD;
-                const icon = ind.querySelector('#_wfPtrIcon');
-                const text = ind.querySelector('#_wfPtrText');
-                if (icon) icon.style.transform = engaged ? 'rotate(180deg)' : 'rotate(0deg)';
-                if (text) text.textContent = engaged ? 'Release to refresh' : 'Pull to refresh';
-                ind.style.background = engaged
-                    ? 'linear-gradient(180deg, rgba(212,175,55,.18) 0%, var(--bg, #14171c) 100%)'
-                    : 'linear-gradient(180deg, var(--bg2, #1c1f24) 0%, var(--bg, #14171c) 100%)';
-            }
-
-            function setIndicator(distance) {
-                pendingDistance = distance;
-                if (rafQueued) return;
-                rafQueued = true;
-                requestAnimationFrame(paint);
-            }
-
-            function hideIndicator() {
-                pendingDistance = 0;
-                rafQueued = false;
-                ind.style.transform = 'translate(-50%, -72px)';
-                ind.style.opacity = '0';
-            }
-
-            function commitRefresh() {
-                committed = true;
-                const text = ind.querySelector('#_wfPtrText');
-                const icon = ind.querySelector('#_wfPtrIcon');
-                if (text) text.textContent = 'Refreshing…';
-                if (icon) { icon.textContent = '⟳'; icon.style.animation = 'spin .8s linear infinite'; icon.style.transform = 'rotate(0deg)'; }
-                // Park the indicator at its final visible spot during reload.
-                ind.style.transform = `translate(-50%, ${-72 + MAX_TRAVEL * 0.55 + PARK_OFFSET}px)`;
-                ind.style.opacity = '1';
-                try { triggerHaptic && triggerHaptic('success'); } catch(_) {}
-                // Bust the SW so on-device caches don't deliver stale code.
-                if ('serviceWorker' in navigator) {
-                    try {
-                        navigator.serviceWorker.getRegistrations().then(rs => {
-                            rs.forEach(r => { try { r.update(); } catch(_) {} });
-                        });
-                    } catch(_) {}
-                }
-                setTimeout(() => {
-                    try { window.location.reload(); } catch(_) {}
-                }, 320);
-            }
-
-            // ── v7.5.3 — Robust pull-to-refresh that does NOT fire when
-            //   scrolling a long list. Three independent guards:
-            //   (1) Touch must start with the page AND every ancestor
-            //       scrollable at scrollTop=0. Without checking ancestors,
-            //       a scrollable <div> at the top of the page (e.g. a
-            //       horizontal list, a sticky filter bar, the AI chat
-            //       transcript) could swallow the gesture's intent.
-            //   (2) Touch must start in the top 80px of the viewport.
-            //       That's where mobile browsers physically render their
-            //       own pull-to-refresh. Starting lower means the user
-            //       is gesturing on the list itself.
-            //   (3) The vertical delta must dominate the horizontal delta.
-            //       If the user swipes diagonally or horizontally we let
-            //       the page scroll naturally without showing the bar.
-            const PULL_EDGE_ZONE = 80;          // px from top where PTR can begin
-            const HORIZONTAL_TOLERANCE = 1.4;   // |dx| ≤ |dy| * this → still vertical
-            let startedAtTop = false;
-            function _isPageScrolledToTop(ev) {
-                if ((window.scrollY || document.documentElement.scrollTop) > 0) return false;
-                // Walk the touch target's ancestors; if any is scrollable AND
-                // not at the top, this is a list-scroll gesture, not PTR.
-                let node = ev && ev.target;
-                while (node && node !== document.body && node !== document.documentElement) {
-                    if (node.scrollHeight - node.clientHeight > 2 && node.scrollTop > 0) {
-                        return false;
-                    }
-                    node = node.parentElement;
-                }
-                return true;
-            }
-
-            document.addEventListener('touchstart', (ev) => {
-                if (committed) return;
-                if (ev.touches.length !== 1) return;
-                const t = ev.touches[0];
-                startY = t.clientY;
-                lastY = startY;
-                startX = t.clientX;
-                lastX = startX;
-                startedAtTop = _isPageScrolledToTop(ev) && startY <= PULL_EDGE_ZONE;
-                pulling = startedAtTop;
-            }, { passive: true });
-
-            document.addEventListener('touchmove', (ev) => {
-                if (!pulling || committed) return;
-                const t = ev.touches[0];
-                lastY = t.clientY;
-                lastX = t.clientX;
-                const dx = lastX - startX;
-                const dy = lastY - startY;
-                // Guard 3: horizontal swipe → abort silently.
-                if (Math.abs(dx) > Math.abs(dy) * HORIZONTAL_TOLERANCE) {
-                    pulling = false; hideIndicator(); return;
-                }
-                if (dy <= 0) { hideIndicator(); return; }
-                setIndicator(dy);
-            }, { passive: true });
-
-            document.addEventListener('touchend', () => {
-                if (!pulling || committed) return;
-                pulling = false;
-                const distance = lastY - startY;
-                if (distance >= THRESHOLD) commitRefresh();
-                else hideIndicator();
-            }, { passive: true });
-
-            document.addEventListener('touchcancel', () => {
-                pulling = false; hideIndicator();
-            }, { passive: true });
-        })();
 
         // ==================== DECOY / PANIC MODE ====================
         function setupDecoyPin() {
