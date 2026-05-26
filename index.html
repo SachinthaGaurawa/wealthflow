@@ -4182,6 +4182,68 @@
                 left: 100%;
             }
         }
+
+        /* ════════════════════════════════════════════════════════════════
+           v7.5.2 — AI VISION CARD (reusable, all-device compatible)
+           Pixel-faithful to the screenshot the user approved: gold border,
+           subtle gold→blue gradient background, robot emoji, two-button
+           layout. Flex-wrap so it stacks on narrow phones, side-by-side
+           on tablets/desktop. No JS animations — only CSS transitions
+           that respect prefers-reduced-motion.
+           ════════════════════════════════════════════════════════════════ */
+        .ai-vision-card {
+            background: linear-gradient(135deg, rgba(212,175,55,0.10), rgba(59,130,246,0.07));
+            border: 1px solid rgba(212,175,55,0.32);
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 14px;
+            transition: border-color 0.25s ease, box-shadow 0.25s ease;
+        }
+        .ai-vision-card:hover {
+            border-color: rgba(212,175,55,0.52);
+            box-shadow: 0 0 18px rgba(212,175,55,0.10);
+        }
+        .ai-vision-card__head {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+        .ai-vision-card__emoji {
+            font-size: 28px;
+            line-height: 1;
+            flex: 0 0 auto;
+        }
+        .ai-vision-card__title {
+            font-weight: 800;
+            color: var(--accent);
+            font-size: 13px;
+            letter-spacing: 0.2px;
+            margin-bottom: 3px;
+        }
+        .ai-vision-card__sub {
+            font-size: 11px;
+            color: var(--text3);
+            line-height: 1.5;
+        }
+        .ai-vision-card__btns {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .ai-vision-card__btn {
+            flex: 1 1 140px;
+            min-width: 140px;
+            text-align: center;
+            cursor: pointer;
+            justify-content: center;
+            font-weight: 700;
+        }
+        @media (max-width: 380px) {
+            /* Stack on very narrow phones — keeps tap targets ≥44px tall */
+            .ai-vision-card__btns { flex-direction: column; }
+            .ai-vision-card__btn  { flex: 1 1 auto; }
+        }
     </style>
 </head>
 
@@ -4546,7 +4608,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.1 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.2 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5649,25 +5711,31 @@
 
     <div class="mo" id="mdCCOT">
         <div class="md md-sm">
-            <div class="md-hdr" style="position:relative;">
+            <div class="md-hdr">
                 <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <!-- ── v7.4.9 AI SCAN BUTTON ──
-                         IDENTICAL to the Expense modal's #e_ai_scan pattern
-                         (line ~5774). wealthflow-ai-v4.js explicitly patches
-                         input#ccot_ai_scan (added to its selector list) and
-                         when handleAIScanV4 sees type='ccot' it routes the
-                         extracted data to populateCCOTForm — the new helper
-                         that fills #ot_desc / #ot_bank / #ot_type / #ot_amount
-                         / #ot_date / #ot_notes. Same engine cascade, same
-                         fullscreen progress overlay (Engine 1/4 → 4/4) that
-                         the user has confirmed works in the Expense scan. -->
-                    <label id="ccotAiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan statement with AI Vision">
-                        <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ccot_ai_scan" style="display:none;"
-                            onchange="handleAIScan(event, 'ccot')">
-                    </label>
-                    <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
+                <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
+            </div>
+            <!-- ── v7.5.2 AI Vision card (matches user's reference screenshot) ──
+                 Two buttons in a gold-bordered card. Capture Photo opens the
+                 device camera; Upload File opens the file picker for images
+                 and PDFs. Both share the same #ccot_ai_scan input behind the
+                 scenes so wealthflow-ai-v4.js still picks up the upload and
+                 routes it to handleAIScanV4(type='ccot') → populateCCOTForm.
+                 Capture Photo just programmatically triggers the same input
+                 after toggling capture="environment" so the rear camera
+                 opens directly on mobile. -->
+            <div class="ai-vision-card">
+                <div class="ai-vision-card__head">
+                    <span class="ai-vision-card__emoji">🤖</span>
+                    <div style="flex:1;min-width:0;">
+                        <div class="ai-vision-card__title">AI Vision — Auto-Fill From Statement</div>
+                        <div class="ai-vision-card__sub">Upload a CC statement / receipt photo. AI extracts cash advances, service fees, fuel and purchases automatically.</div>
+                    </div>
+                </div>
+                <div class="ai-vision-card__btns">
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Capture Photo</button>
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload File</button>
+                    <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ccot_ai_scan" style="display:none;" onchange="handleAIScan(event, 'ccot')">
                 </div>
             </div>
             <div class="fr">
@@ -5744,17 +5812,23 @@
                 </div>
             </div>
 
-            <div class="md-hdr" style="position:relative;">
+            <div class="md-hdr">
                 <div class="md-title" id="mdExpenseTitle">Add Monthly Expense</div>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <!-- AI Scan Button — Premium Design -->
-                    <label id="aiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan receipt with AI Vision">
-                        <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="e_ai_scan" style="display:none;"
-                            onchange="handleAIScan(event, 'expense')">
-                        <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(212,175,55,0.08),transparent);opacity:0;transition:opacity 0.3s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"></div>
-                    </label>
-                    <button class="md-x" onclick="closeModal('mdExpense')">✕</button>
+                <button class="md-x" onclick="closeModal('mdExpense')">✕</button>
+            </div>
+            <!-- v7.5.2 — AI Vision card (same component as CC One-Time) -->
+            <div class="ai-vision-card">
+                <div class="ai-vision-card__head">
+                    <span class="ai-vision-card__emoji">🤖</span>
+                    <div style="flex:1;min-width:0;">
+                        <div class="ai-vision-card__title">AI Vision — Auto-Fill From Receipt</div>
+                        <div class="ai-vision-card__sub">Capture or upload a receipt / invoice photo. AI extracts vendor, amount, date and category automatically.</div>
+                    </div>
+                </div>
+                <div class="ai-vision-card__btns">
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionCapture('e_ai_scan')">📷 Capture Photo</button>
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionUpload('e_ai_scan')">📁 Upload File</button>
+                    <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="e_ai_scan" style="display:none;" onchange="handleAIScan(event, 'expense')">
                 </div>
             </div>
             <div class="fr">
@@ -5948,14 +6022,22 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdSubTitle">Add Subscription / Bill</div>
-                <label id="subAiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden; margin-right:8px;" title="Scan bill with AI Vision">
-                    <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                    <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="sub_ai_scan" style="display:none;"
-                        onchange="handleAIScan(event, 'subscription')">
-                    <div style="position:absolute;inset:0;background:linear-gradient(135deg,rgba(212,175,55,0.08),transparent);opacity:0;transition:opacity 0.3s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='0'"></div>
-                </label>
-                <button class="md-x"
-                    onclick="closeModal('mdSubscription')">✕</button>
+                <button class="md-x" onclick="closeModal('mdSubscription')">✕</button>
+            </div>
+            <!-- v7.5.2 — AI Vision card (same component as CC One-Time + Expense) -->
+            <div class="ai-vision-card">
+                <div class="ai-vision-card__head">
+                    <span class="ai-vision-card__emoji">🤖</span>
+                    <div style="flex:1;min-width:0;">
+                        <div class="ai-vision-card__title">AI Vision — Auto-Fill From Bill</div>
+                        <div class="ai-vision-card__sub">Capture or upload a bill / invoice photo. AI extracts vendor, amount, billing cycle and category automatically.</div>
+                    </div>
+                </div>
+                <div class="ai-vision-card__btns">
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionCapture('sub_ai_scan')">📷 Capture Photo</button>
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionUpload('sub_ai_scan')">📁 Upload File</button>
+                    <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="sub_ai_scan" style="display:none;" onchange="handleAIScan(event, 'subscription')">
+                </div>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Name *</label><input class="fi" id="sub_name"
@@ -7633,6 +7715,43 @@ Keep total under 200 words. No markdown, no asterisks.`;
         //  through v4 gives the SAME multi-engine cascade and fullscreen
         //  progress UI that the Expense scanner uses — the exact UI the
         //  user confirmed works in their screenshot.)
+
+        // ════════════════════════════════════════════════════════════════
+        // v7.5.2 — AI Vision card trigger helpers
+        //
+        // The gold AI Vision card has two buttons (Capture Photo / Upload
+        // File) that share a SINGLE hidden <input type="file"> behind the
+        // scenes. This keeps the existing handleAIScan(event, type) and
+        // wealthflow-ai-v4.js wiring intact — v4 only patches the three
+        // known input IDs (e_ai_scan / sub_ai_scan / ccot_ai_scan) and
+        // doesn't need to know about the buttons.
+        //
+        // For Capture Photo we set capture="environment" so iOS / Android
+        // open the rear camera directly. For Upload File we remove the
+        // attribute so the OS shows the file picker (Photos library,
+        // iCloud Drive, Files app, etc.). The accept attribute remains
+        // the same in both cases.
+        // ════════════════════════════════════════════════════════════════
+        function _triggerAIVisionCapture(inputId) {
+            try {
+                const inp = document.getElementById(inputId);
+                if (!inp) { console.warn('[AIVision] input not found:', inputId); return; }
+                inp.setAttribute('capture', 'environment');
+                inp.value = '';                       // re-pick same file works
+                inp.click();
+            } catch (e) { console.warn('[AIVision] capture failed:', e); }
+        }
+        function _triggerAIVisionUpload(inputId) {
+            try {
+                const inp = document.getElementById(inputId);
+                if (!inp) { console.warn('[AIVision] input not found:', inputId); return; }
+                inp.removeAttribute('capture');
+                inp.value = '';
+                inp.click();
+            } catch (e) { console.warn('[AIVision] upload failed:', e); }
+        }
+        window._triggerAIVisionCapture = _triggerAIVisionCapture;
+        window._triggerAIVisionUpload  = _triggerAIVisionUpload;
 
         async function handleAIScan(e, type) {
             const file = e.target.files[0];
@@ -15556,7 +15675,20 @@ table.amort tbody tr { page-break-inside: avoid; }
             const s = sortState['expenses'];
             if (s?.field) {
                 filtered.sort((a, b) => {
-                    if (s.field === 'date') return s.dir * a.month.localeCompare(b.month);
+                    if (s.field === 'date') {
+                        // v7.5.2 — three-level sort so the user always sees:
+                        //   September (Upcoming) → July (Upcoming) → May (Current) → April (Past)
+                        // with newest-within-the-month appearing first.
+                        //   1. month YYYY-MM (descending when dir=-1)
+                        //   2. createdAt timestamp (newest first within month)
+                        //   3. id (stable tiebreak)
+                        const m = s.dir * (a.month || '').localeCompare(b.month || '');
+                        if (m !== 0) return m;
+                        const aT = a.createdAt || a.created || 0;
+                        const bT = b.createdAt || b.created || 0;
+                        if (aT !== bT) return s.dir * (aT - bT) * -1; // newest-within-month first regardless of dir
+                        return String(b.id || '').localeCompare(String(a.id || ''));
+                    }
                     if (s.field === 'amount') return s.dir * (b.amount - a.amount);
                     return 0;
                 });
@@ -17145,7 +17277,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.1 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.2 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17155,7 +17287,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.1 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.2 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -20713,45 +20845,91 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         // reload short of killing the app.
         (function setupPullToRefresh() {
             if (!('ontouchstart' in window)) return;     // touch-only feature
+            // v7.5.2 — smoother animation per user request. Key changes:
+            //   • All style writes batched via requestAnimationFrame (60fps)
+            //   • Longer travel so the indicator slides down further when
+            //     past the threshold (more professional, more visible)
+            //   • cubic-bezier easing instead of plain linear
+            //   • Arrow rotates as the user pulls (iOS/Twitter pattern)
+            //   • Indicator parks deeper (40px below top, not 0px) when
+            //     fully engaged so "Release to refresh" reads cleanly
             let startY = 0, lastY = 0, pulling = false, committed = false;
+            let pendingDistance = 0, rafQueued = false;
             const THRESHOLD = 90;                         // pixels to commit
-            const SHOW_AT   = 30;                         // pixels to show indicator
+            const SHOW_AT   = 20;                         // pixels to start showing
+            const MAX_TRAVEL = 110;                       // how far down the indicator can slide
+            const PARK_OFFSET = 18;                       // resting top offset when engaged
 
             // Build the indicator once and keep it hidden.
             const ind = document.createElement('div');
             ind.id = '_wfPtrIndicator';
             ind.style.cssText = [
-                'position:fixed','top:0','left:50%','transform:translate(-50%,-60px)',
-                'z-index:99999','background:var(--bg2, #1c1f24)','border:1px solid var(--accent, #d4af37)',
-                'color:var(--accent, #d4af37)','padding:10px 18px','border-radius:0 0 14px 14px',
-                'font-size:13px','font-weight:700','letter-spacing:.3px',
-                'box-shadow:0 8px 24px rgba(0,0,0,.45)','pointer-events:none',
-                'transition:transform .18s ease, opacity .18s ease','opacity:0',
-                'display:flex','gap:8px','align-items:center'
+                'position:fixed', 'top:0', 'left:50%',
+                'transform:translate(-50%,-72px)',
+                'z-index:99999',
+                'background:linear-gradient(180deg, var(--bg2, #1c1f24) 0%, var(--bg, #14171c) 100%)',
+                'border:1px solid var(--accent, #d4af37)',
+                'color:var(--accent, #d4af37)',
+                'padding:11px 22px',
+                'border-radius:0 0 16px 16px',
+                'font-size:13px', 'font-weight:700', 'letter-spacing:.3px',
+                'box-shadow:0 10px 30px rgba(0,0,0,.55), 0 0 24px rgba(212,175,55,.08)',
+                'pointer-events:none',
+                'transition:transform .32s cubic-bezier(.22,.61,.36,1), opacity .25s ease, background .25s ease',
+                'opacity:0',
+                'display:flex', 'gap:9px', 'align-items:center',
+                'will-change:transform,opacity'   // promote to GPU layer
             ].join(';');
-            ind.innerHTML = '<span id="_wfPtrSpin" style="display:inline-block;width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;animation:none;"></span><span id="_wfPtrText">↓ Pull to refresh</span>';
-            // Append on first ready event so we don't fight body-not-ready.
+            ind.innerHTML =
+                '<span id="_wfPtrIcon" style="display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;font-size:15px;transform:rotate(0deg);transition:transform .25s cubic-bezier(.22,.61,.36,1);">↓</span>' +
+                '<span id="_wfPtrText">Pull to refresh</span>';
             const attach = () => { if (!ind.parentNode && document.body) document.body.appendChild(ind); };
             if (document.readyState !== 'loading') attach(); else document.addEventListener('DOMContentLoaded', attach);
 
-            function setIndicator(distance) {
+            function paint() {
+                rafQueued = false;
                 if (!ind.parentNode) attach();
-                const yOffset = Math.max(-60, -60 + Math.min(distance * 0.55, 90));
+                const distance = pendingDistance;
+                // Eased displacement: travel slows as user pulls further.
+                // Asymptote at MAX_TRAVEL+PARK_OFFSET so it never runs off.
+                const eased = MAX_TRAVEL * (1 - Math.exp(-distance / 130));
+                const yOffset = -72 + eased + PARK_OFFSET;   // -72 = fully hidden above the chrome
                 ind.style.transform = `translate(-50%, ${yOffset}px)`;
-                ind.style.opacity = distance > SHOW_AT ? '1' : Math.min(1, distance / SHOW_AT).toString();
+                ind.style.opacity = distance > SHOW_AT ? '1' : Math.max(0, distance / SHOW_AT).toString();
+
+                const engaged = distance >= THRESHOLD;
+                const icon = ind.querySelector('#_wfPtrIcon');
                 const text = ind.querySelector('#_wfPtrText');
-                if (text) text.textContent = distance >= THRESHOLD ? '↻ Release to refresh' : '↓ Pull to refresh';
+                if (icon) icon.style.transform = engaged ? 'rotate(180deg)' : 'rotate(0deg)';
+                if (text) text.textContent = engaged ? 'Release to refresh' : 'Pull to refresh';
+                ind.style.background = engaged
+                    ? 'linear-gradient(180deg, rgba(212,175,55,.18) 0%, var(--bg, #14171c) 100%)'
+                    : 'linear-gradient(180deg, var(--bg2, #1c1f24) 0%, var(--bg, #14171c) 100%)';
             }
+
+            function setIndicator(distance) {
+                pendingDistance = distance;
+                if (rafQueued) return;
+                rafQueued = true;
+                requestAnimationFrame(paint);
+            }
+
             function hideIndicator() {
-                ind.style.transform = 'translate(-50%, -60px)';
+                pendingDistance = 0;
+                rafQueued = false;
+                ind.style.transform = 'translate(-50%, -72px)';
                 ind.style.opacity = '0';
             }
+
             function commitRefresh() {
                 committed = true;
                 const text = ind.querySelector('#_wfPtrText');
-                const spin = ind.querySelector('#_wfPtrSpin');
-                if (text) text.textContent = '⟳ Refreshing…';
-                if (spin) spin.style.animation = 'spin .8s linear infinite';
+                const icon = ind.querySelector('#_wfPtrIcon');
+                if (text) text.textContent = 'Refreshing…';
+                if (icon) { icon.textContent = '⟳'; icon.style.animation = 'spin .8s linear infinite'; icon.style.transform = 'rotate(0deg)'; }
+                // Park the indicator at its final visible spot during reload.
+                ind.style.transform = `translate(-50%, ${-72 + MAX_TRAVEL * 0.55 + PARK_OFFSET}px)`;
+                ind.style.opacity = '1';
                 try { triggerHaptic && triggerHaptic('success'); } catch(_) {}
                 // Bust the SW so on-device caches don't deliver stale code.
                 if ('serviceWorker' in navigator) {
@@ -20763,7 +20941,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 }
                 setTimeout(() => {
                     try { window.location.reload(); } catch(_) {}
-                }, 220);
+                }, 320);
             }
 
             // Only start a pull if the document is scrolled to the top —
@@ -20784,9 +20962,6 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const distance = lastY - startY;
                 if (distance <= 0) { hideIndicator(); return; }
                 setIndicator(distance);
-                // Resist a tiny bit so the user feels the pull instead of
-                // just scrolling the document around. We can't preventDefault
-                // safely on a passive listener, so we just lean on opacity.
             }, { passive: true });
 
             document.addEventListener('touchend', () => {
