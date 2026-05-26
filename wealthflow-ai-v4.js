@@ -197,7 +197,17 @@
 
             // Adaptive scale-down — keep MUCH higher resolution & quality for
             // accurate recognition of text, badges, models, fine detail.
-            var dims = [2600, 2200, 1800, 1500, 1200, 1000];
+            // v7.5.1: the caller can pass opts.maxDim to anchor the ladder
+            // to a specific resolution (e.g. Frontier mode wants 3000 px,
+            // Quick mode wants 1800 px). We always include smaller
+            // fallback rungs so we still fit under maxBytes if the
+            // network is constrained.
+            var capDim = opts.maxDim || 2600;
+            var dims;
+            if (capDim >= 2800) dims = [capDim, 2400, 2000, 1600, 1300, 1000];
+            else if (capDim >= 2200) dims = [capDim, 1900, 1600, 1300, 1000];
+            else if (capDim >= 1800) dims = [capDim, 1500, 1200, 1000];
+            else dims = [capDim, 1300, 1000];
             var quals = [0.95, 0.90, 0.82, 0.72, 0.6];
             for (var di = 0; di < dims.length; di++) {
                 var maxDim = dims[di];
@@ -838,9 +848,33 @@
             else if (typeof window.notify === 'function')
                 window.notify(isPdf ? '📄 Processing PDF…' : '📸 Reading image…', 'info');
 
+            // ── v7.5.1 — honour the user's Scanner Settings (TF.js +
+            //   scan mode) when extracting the image. Previously every
+            //   scan ran TF.js enhancement and capped at the same
+            //   resolution regardless of mode, which meant:
+            //     - the "TF.js Image Enhancement" toggle in Settings
+            //       had no effect at all
+            //     - Frontier mode was no sharper than Quick mode for
+            //       AI vision purposes
+            //   Now the per-mode dim cap matches what the host UI
+            //   advertises (Quick 1800 → Deep 2200 → Ultra 2600 →
+            //   Frontier 3000), and `enhance` is gated by the user's
+            //   TF.js toggle. CC statements are denser than receipts
+            //   so we get an extra 200 px for them.
+            var _scanModeNow = (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.mode) || 'deep';
+            var _tfOn = (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.preprocessing !== false);
+            var _modeMaxDim = { quick: 1800, deep: 2200, ultra: 2600, frontier: 3000 }[_scanModeNow] || 2200;
+            if (isCCOT) _modeMaxDim = Math.min(3200, _modeMaxDim + 200); // CC statements have small text
+            var _modeMaxBytes = { quick: 2.2, deep: 3, ultra: 3.6, frontier: 3.8 }[_scanModeNow] || 3;
+
             var imgBundle;
             try {
-                imgBundle = await fileToImagesV4(file, { maxPages: 3, maxBytes: 3 * 1024 * 1024 });
+                imgBundle = await fileToImagesV4(file, {
+                    maxPages: isCCOT ? 5 : 3,
+                    maxBytes: _modeMaxBytes * 1024 * 1024,
+                    maxDim: _modeMaxDim,
+                    enhance: _tfOn
+                });
             } catch (ee) {
                 throw new Error((isPdf ? 'PDF' : 'Image') + ' could not be read: ' + ee.message);
             }
@@ -848,7 +882,8 @@
             var pageCount = imgBundle.pageCount;
 
             console.log('[' + V + '] extracted', pageCount, 'page(s) from',
-                file.name || 'file', '→', imgBundle.dimensions);
+                file.name || 'file', '→', imgBundle.dimensions,
+                '· mode=' + _scanModeNow, '· tfEnhance=' + _tfOn);
 
             // ---- AI CHAT: route to chat handler ----
             if (isAiChat) {
@@ -924,6 +959,106 @@
                         ccotLastErr = eP2;
                         console.warn('[' + V + '] CCOT pass 2 failed:', eP2.message);
                     }
+                }
+
+                // Pass 3 — Auto-Escalate (gated by user setting). When the
+                // direct AI cascade returns nothing, escalate to the full
+                // multi-engine vision-scan endpoint with ultra mode + an
+                // explicit "expect transactions[] array" hint. This is
+                // SLOWER but pulls in Gemini Pro / GPT-4o / Claude voting,
+                // catching statements the single-model path missed.
+                var _autoEsc = (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.autoEscalate !== false);
+                if (!ccotTxns && _autoEsc) {
+                    if (showsOverlay && typeof window._showScanOverlay === 'function')
+                        window._showScanOverlay('🚀 Auto-escalating to Ultra…',
+                            'Multi-engine vision-scan with Gemini Pro', 65);
+                    try {
+                        var hasVS = await isEndpointAvailable('/vision-scan');
+                        if (hasVS) {
+                            var ccotHints = {
+                                currency: (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.currency) || 'LKR',
+                                today: new Date().toISOString().split('T')[0],
+                                locale: navigator.language || 'en-LK',
+                                docType: 'cc_statement_multi_row',
+                                bank: ccotBank,
+                                expectMultipleTransactions: true,
+                                schema: '{"transactions":[{"date":"YYYY-MM-DD","description":"","amount":0,"type":"purchase|cash_advance|service_fee|fuel"}]}'
+                            };
+                            var ultraScan = await visionScanCall(firstImage, 'ultra', ccotHints, 58000);
+                            if (ultraScan && ultraScan.result) {
+                                // The vision-scan endpoint may return either a transactions[]
+                                // array directly OR a single-row result we need to wrap.
+                                if (Array.isArray(ultraScan.result.transactions) && ultraScan.result.transactions.length > 0) {
+                                    ccotTxns = ultraScan.result.transactions;
+                                } else if (ultraScan.result.amount) {
+                                    // Single-row fallback — still better than nothing
+                                    ccotTxns = [{
+                                        date: ultraScan.result.date,
+                                        description: ultraScan.result.vendor || ultraScan.result.raw_text,
+                                        amount: ultraScan.result.amount,
+                                        type: 'purchase',
+                                        notes: ''
+                                    }];
+                                }
+                            }
+                        }
+                    } catch (eP3) {
+                        ccotLastErr = eP3;
+                        console.warn('[' + V + '] CCOT auto-escalate failed:', eP3.message);
+                    }
+                }
+
+                // Pass 4 — Tesseract.js offline OCR fallback. Last resort
+                // when every cloud AI engine is unreachable (offline mode,
+                // network down, all providers throttled). Slower but always
+                // works as long as JS can run.
+                if (!ccotTxns && !isPdf && typeof window._ocrWithTesseract === 'function') {
+                    if (showsOverlay && typeof window._showScanOverlay === 'function')
+                        window._showScanOverlay('🔤 Offline OCR fallback…',
+                            'Tesseract.js reading raw text', 80);
+                    try {
+                        var ocrTxt = await window._ocrWithTesseract(file);
+                        if (ocrTxt && ocrTxt.length > 20 && typeof window._ccOcrTextToTransactions === 'function') {
+                            var ocrRows = window._ccOcrTextToTransactions(ocrTxt, ccotBank);
+                            if (ocrRows && ocrRows.length > 0) {
+                                ccotTxns = ocrRows;
+                                console.log('[' + V + '] CCOT Tesseract yielded', ocrRows.length, 'rows');
+                            }
+                        }
+                    } catch (eP4) {
+                        ccotLastErr = eP4;
+                        console.warn('[' + V + '] CCOT Tesseract fallback failed:', eP4.message);
+                    }
+                }
+
+                // Pass 5 — multi-page PDF: if we have multiple pages and the
+                // first page yielded nothing OR fewer rows than expected,
+                // try the remaining pages and merge.
+                if (imgBundle.images.length > 1) {
+                    var mergedRows = ccotTxns ? ccotTxns.slice() : [];
+                    for (var pgi = 1; pgi < imgBundle.images.length; pgi++) {
+                        if (showsOverlay && typeof window._showScanOverlay === 'function')
+                            window._showScanOverlay('📄 Page ' + (pgi + 1) + ' of ' + imgBundle.images.length + '…',
+                                'Scanning remaining pages', 70 + (pgi * 5));
+                        try {
+                            var pageResp = await legacyAICall(ccotPrompt, imgBundle.images[pgi], 40000);
+                            var pageParsed = extractJSON(pageResp.reply);
+                            if (pageParsed && Array.isArray(pageParsed.transactions)) {
+                                pageParsed.transactions.forEach(function (t) {
+                                    // Skip duplicates: same date + same description + same amount
+                                    var isDup = mergedRows.some(function (r) {
+                                        return r.date === t.date &&
+                                               String(r.description || '').toLowerCase() === String(t.description || '').toLowerCase() &&
+                                               normaliseAmount(r.amount) === normaliseAmount(t.amount);
+                                    });
+                                    if (!isDup) mergedRows.push(t);
+                                });
+                            }
+                        } catch (eMulti) {
+                            console.warn('[' + V + '] CCOT page ' + (pgi + 1) + ' scan failed:', eMulti.message);
+                        }
+                    }
+                    if (mergedRows.length > 0) ccotTxns = mergedRows;
                 }
 
                 if (!ccotTxns || ccotTxns.length === 0) {
