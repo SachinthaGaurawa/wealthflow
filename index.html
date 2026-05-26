@@ -3,8 +3,12 @@
 
 <head>
     <meta charset="UTF-8">
+    <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
+         "address-bar collapses when user pinches" behaviour that was
+         showing up as a sudden full app refresh. Tap-to-zoom on form
+         fields still works (the OS handles that independently). -->
     <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>WealthFlow | Elite Financial System</title>
     <meta name="application-name" content="WealthFlow">
     <meta name="description" content="WealthFlow Elite Financial System - Manage your wealth with precision">
@@ -128,6 +132,14 @@
             -webkit-text-size-adjust: 100%;
             -moz-text-size-adjust: 100%;
             text-size-adjust: 100%;
+            /* v7.5.5 — KILL ALL PULL-TO-REFRESH including the browser's own
+               native one. overscroll-behavior-y:contain prevents Safari/Chrome
+               from interpreting a swipe-down at the top of the page as a
+               refresh gesture. Set on BOTH html and body for full coverage —
+               some browsers honour the property only on the root scrollable
+               element, others on the actual scroller. */
+            overscroll-behavior-y: contain;
+            overscroll-behavior-x: contain;
         }
 
         body {
@@ -137,6 +149,14 @@
             min-height: 100vh;
             overflow-x: hidden;
             transition: background .3s, color .3s;
+            /* v7.5.5 — same overscroll guard at the body level. Also
+               touch-action:pan-x pan-y disables the double-tap-to-zoom
+               and pinch-zoom GESTURES that were occasionally triggering
+               a layout-change reload on iOS Safari when the viewport
+               metric changed. Single taps + scrolling still work. */
+            overscroll-behavior-y: contain;
+            overscroll-behavior-x: contain;
+            touch-action: pan-x pan-y;
         }
 
         ::-webkit-scrollbar {
@@ -3600,7 +3620,13 @@
         @media (max-width: 480px) {
             /* On narrow phones, action buttons drop to their own line so
                the wide "📊 Set <Month> amount" pill never crashes into the
-               amount column. The amount keeps its right alignment. */
+               amount column. The amount keeps its right alignment.
+               v7.5.5 — also add right-padding so action buttons + the
+               Overdue badge don't slide under the 54px floating AI bot
+               which lives at right:16px on mobile. */
+            .sub-card {
+                padding-right: 84px;       /* 54 fab + 16 right + 14 gap */
+            }
             .sub-card .act-btns {
                 flex-basis: 100%;
                 margin-left: 0;
@@ -3609,6 +3635,7 @@
                 padding-top: 8px;
                 border-top: 1px solid var(--border);
                 flex-wrap: wrap;
+                gap: 8px;                  /* a bit more breathing room */
             }
         }
 
@@ -4643,7 +4670,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.4 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.5 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -17370,7 +17397,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.4 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.5 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17380,7 +17407,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.4 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.5 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -19351,11 +19378,17 @@ Be direct and use real numbers. Avoid generic advice.`;
                 // If not, surface a one-tap CTA right on the card so they
                 // never miss adjusting a variable telecom / utility bill.
                 const needsThisMonth = (typeof override !== 'number');
+                // v7.5.5 — keep the CTA narrow so the action row doesn't
+                // get crushed against the AI floating bot. white-space:nowrap
+                // prevents the label from wrapping inside the pill (which
+                // was producing the "Set\nMay\namount" stacked text the
+                // user saw in the screenshot). Single-letter month code
+                // ("May" → "May") plus tight padding gives us a compact pill.
                 const thisMonthCta = needsThisMonth
                     ? `<button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')"
                                 title="Set this month's actual amount (great for telecom, water, electricity)"
-                                style="background:rgba(212,175,55,.18); color:var(--accent); border:1px solid rgba(212,175,55,.55); padding:5px 10px; font-size:11px; font-weight:800; border-radius:8px;">
-                                📊 Set ${MONTHS[now.getMonth()].slice(0,3)} amount
+                                style="background:rgba(212,175,55,.18); color:var(--accent); border:1px solid rgba(212,175,55,.55); padding:5px 9px; font-size:11px; font-weight:800; border-radius:8px; white-space:nowrap; line-height:1.1;">
+                                📊 Set ${MONTHS[now.getMonth()].slice(0,3)}
                             </button>`
                     : `<button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts">📊</button>`;
 
