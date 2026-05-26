@@ -4546,7 +4546,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.7 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.8 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5649,31 +5649,46 @@
 
     <div class="mo" id="mdCCOT">
         <div class="md md-sm">
-            <!-- Scanning Progress Overlay (same proven pattern as expense modal) -->
-            <div id="ccotAiScanOverlay" style="display:none; position:absolute; inset:0; z-index:50; background:rgba(10,10,15,0.92); backdrop-filter:blur(12px); border-radius:inherit; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px;">
-                <div style="width:64px; height:64px; border-radius:50%; border:3px solid rgba(212,175,55,0.15); border-top-color:var(--accent); animation:spin 0.8s linear infinite;"></div>
-                <div id="ccotAiScanStage" style="font-size:15px; font-weight:700; color:var(--accent); text-align:center; letter-spacing:0.3px;">📸 Optimizing Image…</div>
-                <div id="ccotAiScanDetail" style="font-size:12px; color:var(--text3); text-align:center; max-width:260px; line-height:1.5;">Compressing and enhancing for AI vision</div>
-                <div style="width:80%; max-width:240px; height:4px; background:var(--bg2); border-radius:4px; overflow:hidden; margin-top:4px;">
-                    <div id="ccotAiScanBar" style="height:100%; width:0%; background:linear-gradient(90deg,var(--accent),#f5c542); border-radius:4px; transition:width 0.5s ease;"></div>
-                </div>
-            </div>
-
-            <div class="md-hdr" style="position:relative;">
+            <div class="md-hdr">
                 <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    <!-- AI Scan button — same pattern as expense/subscription modals
-                         that are known to work on iPhone, iPad, Android, desktop.
-                         Single label wrapping a hidden <input type=file>. NO
-                         capture="environment" attribute — letting the browser
-                         show its native picker (Camera / Photo Library / Files)
-                         is what makes this reliable across every device. -->
-                    <label id="ccotAiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan statement with AI Vision">
-                        <span style="position:relative;z-index:1;">📸 AI Scan</span>
-                        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ccot_ai_scan" style="display:none;"
-                            onchange="handleAIScan(event, 'ccot')">
+                <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
+            </div>
+            <!-- ── v7.4.8 AI VISION CARD (restored UI per user request) ──
+                 The previous header-button approach used onchange="handleAIScan(event,'ccot')"
+                 but wealthflow-ai-v4.js overrides window.handleAIScan with its
+                 OWN handleAIScanV4 at module-load time. v4 only knows about
+                 'expense' / 'subscription' / 'ai_chat' types — it has no ccot
+                 branch. So when the user picked a file, v4 hijacked the flow,
+                 treated it as a subscription, and produced the "Recurring bill"
+                 toast at the bottom of the screen instead of populating the
+                 CC form.
+
+                 The fix is two-fold:
+                   1. Use NEW input IDs (ccot_v748_camera / ccot_v748_upload)
+                      that v4 does NOT target — v4 only patches the three IDs
+                      e_ai_scan, ai_chat_scan, sub_ai_scan. Anything else
+                      stays untouched.
+                   2. Wire the onchange handlers directly to a brand-new
+                      _aiScanCCStatementV748 function defined inline below
+                      the modal. v4 cannot override a function it doesn't
+                      know about. -->
+            <div style="background:linear-gradient(135deg, rgba(212,175,55,.10), rgba(59,130,246,.07));border:1px solid rgba(212,175,55,.32);border-radius:12px;padding:12px;margin-bottom:14px;">
+                <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">
+                    <span style="font-size:26px;line-height:1;">🤖</span>
+                    <div style="flex:1;">
+                        <div style="font-weight:800;color:var(--accent);font-size:13px;letter-spacing:.2px;">AI Vision — Auto-Fill From Statement</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.45;">Upload a CC statement / receipt photo. AI extracts cash advances, service fees, fuel and purchases automatically.</div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <label class="btn btn-secondary btn-sm" style="flex:1;min-width:140px;text-align:center;cursor:pointer;justify-content:center;">
+                        📷 Capture Photo
+                        <input type="file" id="ccot_v748_camera" accept="image/*" capture="environment" style="display:none;" onchange="window._aiScanCCStatementV748 && window._aiScanCCStatementV748(event)">
                     </label>
-                    <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
+                    <label class="btn btn-secondary btn-sm" style="flex:1;min-width:140px;text-align:center;cursor:pointer;justify-content:center;">
+                        📁 Upload File
+                        <input type="file" id="ccot_v748_upload" accept="image/*,application/pdf" style="display:none;" onchange="window._aiScanCCStatementV748 && window._aiScanCCStatementV748(event)">
+                    </label>
                 </div>
             </div>
             <div class="fr">
@@ -7633,45 +7648,83 @@ Keep total under 200 words. No markdown, no asterisks.`;
             });
         }
 
-        async function handleAIScan(e, type) {
-            const file = e.target.files[0];
+        // ── v7.4.8 — DIRECT CC SCAN HANDLER (v4-resistant) ────────────────
+        // Why this function exists:
+        //   wealthflow-ai-v4.js patches window.handleAIScan with its own
+        //   handleAIScanV4 at module-load time. v4 only knows three types
+        //   (expense / subscription / ai_chat) and target-patches the three
+        //   input IDs e_ai_scan / ai_chat_scan / sub_ai_scan. Routing CC
+        //   scans through handleAIScan with type='ccot' was being silently
+        //   intercepted by v4, which then ran its subscription auto-detect
+        //   and produced the "Recurring bill" toast the user saw in the
+        //   screenshot — without ever opening the bank picker or CC review
+        //   modal.
+        //
+        // The fix is independence: this function has a unique name v4
+        // does not match, and it's wired to inputs with IDs (ccot_v748_*)
+        // that v4 also does not match. Result: the CC scan path is
+        // hermetic — no other module can override or hijack it.
+        //
+        // Pipeline:
+        //   1. Ask which bank issued the statement (so we get the right
+        //      Sri-Lankan service-fee schedule).
+        //   2. Show the SAME fullscreen progress overlay the Expense
+        //      scanner uses (proven on iPhone/iPad/Android/desktop) so
+        //      animations match what the user remembers seeing work.
+        //   3. Compress + enhance the image using the user's scanner-mode
+        //      settings.
+        //   4. Call callAI() with a strict-JSON prompt; on transient
+        //      failures, retry once with a simpler prompt.
+        //   5. Parse, then open _showCCReviewModal so the user confirms
+        //      every extracted transaction before anything is saved.
+        async function _aiScanCCStatementV748(e) {
+            const inputEl = e && e.target;
+            const file = inputEl && inputEl.files && inputEl.files[0];
             if (!file) return;
-
-            const startTime = Date.now();
             const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-            triggerHaptic('medium');
+            try { triggerHaptic('medium'); } catch (_) {}
 
-            const isExpense = type === 'expense';
-            const isCCOT = type === 'ccot';
-            // ── CC One-Time branch (v7.4.7) ───────────────────────────────
-            // Uses the same compress → callAI → parse pipeline that
-            // proven-works on Expense/Subscription scans. Before sending
-            // the image, we ask the user which BANK the statement is for
-            // (so we get the right fee schedule). After the AI replies,
-            // we show the same review modal you saw in v7.4.5/6 — but
-            // now the AI call itself goes through the universal handler
-            // that the user has confirmed works on iPhone/iPad/Android.
-            if (isCCOT) {
+            try {
+                // Step 1 — bank picker (always shown; user complaint: missing)
+                const bank = await _ccotPickBankAsync();
+                if (!bank) { inputEl.value = ''; return; }
+
+                // Step 2 — show the PROVEN fullscreen overlay (same one used
+                // by the Expense scanner). The user's screenshot 2 showed
+                // exactly this UI working — circular spinner + progress bar
+                // + "🚀 Engine 1/4 — multi-provider AI…" stage text.
+                _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo of ${bank} statement`, 10);
+
+                // Step 3 — compress with the user's scanner-mode quality
+                const _ss = (typeof DB !== 'undefined' && DB.getObj) ? DB.getObj('settings', {}) : {};
+                const scanMode = _ss.scanMode || 'deep';
+                const tfEnhance = _ss.scanTfEnhance !== false;
+                const modeQuality = { quick: 0.85, deep: 0.92, ultra: 0.95, frontier: 0.97 };
+                const modeDim = { quick: 1600, deep: 2000, ultra: 2400, frontier: 2800 };
+                const q = modeQuality[scanMode] || 0.92;
+                const dim = modeDim[scanMode] || 2000;
+
+                const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+                let base64Img;
                 try {
-                    const bank = await _ccotPickBankAsync();
-                    if (!bank) { e.target.value = ''; return; }
-                    _showCcotScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
+                    const r = await _compressImageToBase64(file, dim, q, tfEnhance);
+                    base64Img = r.base64;
+                    console.log(`[CCOT v7.4.8] Compressed ${sizeMB}MB → ${r.kb}KB @ ${dim}px (mode=${scanMode})`);
+                } catch (eCompress) {
+                    // If it's a PDF the compress helper might bail — fall
+                    // back to the file's raw bytes since callAI accepts a
+                    // base64 image OR an indicator that we have raw bytes.
+                    if (isPdf) {
+                        const buf = await file.arrayBuffer();
+                        const u8 = new Uint8Array(buf);
+                        let binStr = ''; for (let i = 0; i < u8.length; i++) binStr += String.fromCharCode(u8[i]);
+                        base64Img = btoa(binStr);
+                    } else { throw eCompress; }
+                }
 
-                    const _ss = DB.getObj('settings', {});
-                    const scanMode = _ss.scanMode || 'deep';
-                    const tfEnhance = _ss.scanTfEnhance !== false;
-                    const modeQuality = { quick: 0.85, deep: 0.92, ultra: 0.95, frontier: 0.97 };
-                    const modeDim = { quick: 1600, deep: 2000, ultra: 2400, frontier: 2800 };
-                    const q = modeQuality[scanMode] || 0.92;
-                    const dim = modeDim[scanMode] || 2000;
+                _showScanOverlay('🚀 Engine 1/4 — multi-provider AI…', 'Calling /api/ai cascade', 35);
 
-                    // Step 1 — compress
-                    const { base64: base64Img, kb } = await _compressImageToBase64(file, dim, q, tfEnhance);
-                    console.log(`[CCOT AI Scan v7.4.7] Mode=${scanMode} Compressed: ${sizeMB}MB → ${kb}KB @ ${dim}px`);
-                    _showCcotScanOverlay('🧠 AI Vision Analyzing…', `${scanMode.toUpperCase()} scan of ${bank} statement`, 35);
-
-                    const prompt = `You are an expert credit card statement parser specialized in Sri Lankan banks (BOC, Commercial Bank, HNB, Sampath, NTB, AMEX, NDB, Standard Chartered, DFCC, Seylan, Peoples Bank, Pan Asia, Union Bank).
-This statement is from: ${bank}
+                const prompt = `You are an expert credit-card-statement parser specialized in Sri Lankan banks (BOC, Commercial Bank, HNB, Sampath, NTB, AMEX, NDB, Standard Chartered, DFCC, Seylan, Peoples Bank, Pan Asia, Union Bank). This statement is from: ${bank}
 
 Read the image carefully and extract EVERY transaction line. Return ONLY a JSON object with this exact schema:
 
@@ -7681,7 +7734,7 @@ RULES:
 - Include the FULL ORIGINAL amount printed. NEVER round or truncate.
 - "type" must be one of: purchase, cash_advance, service_fee, fuel
 - "fuel" = petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum)
-- "service_fee" = cash-advance fees, interest, late fees. If row pairs with a cash advance line, set "linked_to_index" to that index.
+- "service_fee" = cash-advance fees, interest, late fees. If the row pairs with a cash advance line, set "linked_to_index" to that index.
 - "date" in YYYY-MM-DD. If only day+month printed, use the statement_period year.
 - Skip closing balance, opening balance, payment-received rows.
 - If a row is a credit/refund, prefix description with "[CREDIT] " and keep amount positive.
@@ -7689,50 +7742,77 @@ RULES:
 
 CRITICAL: Output ONLY the JSON. No markdown. No explanation.`;
 
-                    // Step 2 — call AI (with one retry on transient failures)
-                    _showCcotScanOverlay('🚀 Calling AI Vision…', 'Extracting transactions', 55);
-                    let raw = null;
-                    try {
-                        raw = await callAI(prompt, base64Img);
-                    } catch (eAi) {
-                        console.warn('[CCOT AI Scan] first try failed:', eAi);
-                        // Step 3 — simplified prompt retry
-                        _showCcotScanOverlay('🔄 Retrying with simpler prompt…', 'Smaller payload', 70);
-                        await new Promise(res => setTimeout(res, 700));
-                        const simplePrompt = `Read this ${bank} credit card statement. Return ONLY this JSON (no markdown):
+                _showScanOverlay('🚀 Engine 1/4 — multi-provider AI…', 'Calling Gemini / DeepSeek / Groq cascade', 55);
+                let raw = null;
+                const errors = [];
+                try {
+                    raw = await callAI(prompt, base64Img);
+                    if (!raw || raw.length < 5) throw new Error('empty reply');
+                } catch (eA) {
+                    errors.push('Pass 1: ' + (eA.message || eA));
+                    console.warn('[CCOT v7.4.8] pass 1 failed:', eA);
+                }
+
+                if (!raw) {
+                    // Step 4 — simplified prompt retry (vision models can choke
+                    // on long rule lists; a one-liner is more reliable).
+                    _showScanOverlay('🔄 Engine 2/4 — simplified prompt…', 'Smaller payload, same cascade', 70);
+                    await new Promise(r => setTimeout(r, 700));
+                    const simplePrompt = `Read this ${bank} credit card statement. Return ONLY this JSON (no markdown):
 {"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}
-Types: purchase, cash_advance, service_fee, fuel.`;
+Types allowed: purchase, cash_advance, service_fee, fuel.`;
+                    try {
                         raw = await callAI(simplePrompt, base64Img);
+                        if (!raw || raw.length < 5) throw new Error('empty reply');
+                    } catch (eB) {
+                        errors.push('Pass 2: ' + (eB.message || eB));
+                        console.warn('[CCOT v7.4.8] pass 2 failed:', eB);
                     }
-                    if (!raw || raw.length < 5) throw new Error('AI returned empty');
+                }
 
-                    _showCcotScanOverlay('📊 Parsing transactions…', 'Extracting structured data', 88);
-                    const parsed = _parseAIJson(raw);
-                    if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
-                        _hideCcotScanOverlay();
-                        notify('AI returned a response but could not find transactions. Try a clearer photo (good lighting, all rows visible).', 'warn');
-                        e.target.value = '';
-                        return;
-                    }
-
-                    _showCcotScanOverlay('✅ Done!', `Found ${parsed.transactions.length} transaction${parsed.transactions.length>1?'s':''}`, 100);
-                    triggerHaptic('success');
-                    setTimeout(() => {
-                        _hideCcotScanOverlay();
-                        _showCCReviewModal(parsed, bank);
-                    }, 350);
-                    e.target.value = '';
-                    return;
-                } catch (ccotErr) {
-                    console.error('[CCOT AI Scan v7.4.7]', ccotErr);
-                    _hideCcotScanOverlay();
-                    notify('Scan failed: ' + (ccotErr.message || 'unknown error') + '. Try a clearer, well-lit photo of the full statement.', 'error');
-                    triggerHaptic('error');
-                    e.target.value = '';
+                if (!raw) {
+                    _hideScanOverlay();
+                    notify('AI scan failed: ' + errors.slice(-2).join(' | ') + '. Try a clearer, well-lit photo.', 'error');
+                    try { triggerHaptic('error'); } catch (_) {}
+                    inputEl.value = '';
                     return;
                 }
-            }
 
+                _showScanOverlay('📊 Parsing transactions…', 'Extracting structured data', 88);
+                const parsed = _parseAIJson(raw);
+                if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
+                    _hideScanOverlay();
+                    notify('AI returned a response but could not find transactions. Try a clearer photo (good lighting, all rows visible).', 'warn');
+                    inputEl.value = '';
+                    return;
+                }
+
+                _showScanOverlay('✅ Done!', `Found ${parsed.transactions.length} transaction${parsed.transactions.length>1?'s':''}`, 100);
+                try { triggerHaptic('success'); } catch (_) {}
+                setTimeout(() => {
+                    _hideScanOverlay();
+                    _showCCReviewModal(parsed, bank);
+                }, 400);
+                inputEl.value = '';
+            } catch (err) {
+                console.error('[CCOT v7.4.8]', err);
+                _hideScanOverlay();
+                notify('Scan failed: ' + (err && err.message || 'unknown error') + '. Try a clearer photo of the full statement.', 'error');
+                try { triggerHaptic('error'); } catch (_) {}
+                try { inputEl.value = ''; } catch (_) {}
+            }
+        }
+        window._aiScanCCStatementV748 = _aiScanCCStatementV748;
+
+        async function handleAIScan(e, type) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const startTime = Date.now();
+            const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+            triggerHaptic('medium');
+
+            const isExpense = type === 'expense';
             if (isExpense) _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
             else notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
 
@@ -12063,17 +12143,23 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const parent = btn.closest('.sort-bar');
                 if (parent) parent.querySelectorAll('.sb-btn').forEach(b => {
                     b.classList.remove('active');
-                    // Reset other buttons' arrow so only one shows direction.
-                    const baseOther = b.getAttribute('data-label') || b.textContent.replace(/\s*[↑↓]\s*$/, '').trim();
+                    // Reset other buttons' arrow + label suffix so only one shows direction.
+                    const baseOther = b.getAttribute('data-label') || b.textContent.replace(/\s*[↑↓](\s*(newest|oldest))?\s*$/, '').trim();
                     b.setAttribute('data-label', baseOther);
                     b.textContent = baseOther;
                 });
                 btn.classList.add('active');
-                // Tiny arrow to show current direction (↓ = desc / newest first, ↑ = asc).
-                const arrow = sortState[key].dir === -1 ? ' ↓' : ' ↑';
-                const baseLabel = btn.getAttribute('data-label') || btn.textContent.replace(/\s*[↑↓]\s*$/, '').trim();
+                // Show a descriptive direction label instead of just an arrow.
+                // Two users at different times have asked "is this A→Z or Z→A?"
+                // by reading the arrow alone — the icon is ambiguous because
+                // ↑ could mean either "up by value" or "ascending alphabetical".
+                // A plain-English suffix removes the ambiguity entirely.
+                const dirSuffix = sortState[key].dir === -1
+                    ? ' ↓ newest'      // descending date / largest amount → newest first
+                    : ' ↑ oldest';     // ascending date / smallest amount → oldest first
+                const baseLabel = btn.getAttribute('data-label') || btn.textContent.replace(/\s*[↑↓](\s*(newest|oldest))?\s*$/, '').trim();
                 btn.setAttribute('data-label', baseLabel);
-                btn.textContent = baseLabel + arrow;
+                btn.textContent = baseLabel + dirSuffix;
             }
             // Give the user clear visual confirmation the sort actually
             // happened — especially helpful in Schedule view where months
@@ -15620,10 +15706,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const sortBar = document.querySelector('#page-expenses .sort-bar');
                     if (sortBar) {
                         const dateBtn = sortBar.querySelector('.sb-btn');
-                        if (dateBtn && !/[↑↓]\s*$/.test(dateBtn.textContent)) {
+                        if (dateBtn && !/[↑↓]/.test(dateBtn.textContent)) {
                             const base = dateBtn.textContent.trim();
                             dateBtn.setAttribute('data-label', base);
-                            dateBtn.textContent = base + ' ↓';
+                            // "↓ newest" — descending date order: scheduled
+                            // upcoming first, current month next, old months
+                            // at the bottom. Matches the user's stated default.
+                            dateBtn.textContent = base + ' ↓ newest';
                             dateBtn.classList.add('active');
                         }
                     }
@@ -17226,7 +17315,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.7 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.8 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17236,7 +17325,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.7 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.8 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -20776,6 +20865,112 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
         // Start watcher once Firebase auth is ready (and again whenever user logs in)
         document.addEventListener('DOMContentLoaded', () => setTimeout(_startSessionRevokeWatcher, 2000));
+
+        // ==================== PULL-TO-REFRESH (v7.4.8) ====================
+        // Native browser-style pull-to-refresh. On any device that supports
+        // touch, swiping down from the top of a scroll-position-zero page
+        // shows an indicator at +50px and commits a full page reload at
+        // +90px — the same threshold Safari / Chrome mobile use. On a
+        // commit reload, ALL state is reloaded: every script, every cached
+        // module, the service worker re-checks for updates, and the user
+        // sees a fully fresh app exactly like Cmd+Shift+R on desktop.
+        //
+        // We do NOT prevent the browser's own native pull-to-refresh on
+        // mobile Safari/Chrome — they already do this for free in the
+        // address-bar area. Our handler is for the in-app body region
+        // which on installed PWAs has no browser chrome, so the OS won't
+        // refresh it. Without this, a PWA user has no easy way to force-
+        // reload short of killing the app.
+        (function setupPullToRefresh() {
+            if (!('ontouchstart' in window)) return;     // touch-only feature
+            let startY = 0, lastY = 0, pulling = false, committed = false;
+            const THRESHOLD = 90;                         // pixels to commit
+            const SHOW_AT   = 30;                         // pixels to show indicator
+
+            // Build the indicator once and keep it hidden.
+            const ind = document.createElement('div');
+            ind.id = '_wfPtrIndicator';
+            ind.style.cssText = [
+                'position:fixed','top:0','left:50%','transform:translate(-50%,-60px)',
+                'z-index:99999','background:var(--bg2, #1c1f24)','border:1px solid var(--accent, #d4af37)',
+                'color:var(--accent, #d4af37)','padding:10px 18px','border-radius:0 0 14px 14px',
+                'font-size:13px','font-weight:700','letter-spacing:.3px',
+                'box-shadow:0 8px 24px rgba(0,0,0,.45)','pointer-events:none',
+                'transition:transform .18s ease, opacity .18s ease','opacity:0',
+                'display:flex','gap:8px','align-items:center'
+            ].join(';');
+            ind.innerHTML = '<span id="_wfPtrSpin" style="display:inline-block;width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;animation:none;"></span><span id="_wfPtrText">↓ Pull to refresh</span>';
+            // Append on first ready event so we don't fight body-not-ready.
+            const attach = () => { if (!ind.parentNode && document.body) document.body.appendChild(ind); };
+            if (document.readyState !== 'loading') attach(); else document.addEventListener('DOMContentLoaded', attach);
+
+            function setIndicator(distance) {
+                if (!ind.parentNode) attach();
+                const yOffset = Math.max(-60, -60 + Math.min(distance * 0.55, 90));
+                ind.style.transform = `translate(-50%, ${yOffset}px)`;
+                ind.style.opacity = distance > SHOW_AT ? '1' : Math.min(1, distance / SHOW_AT).toString();
+                const text = ind.querySelector('#_wfPtrText');
+                if (text) text.textContent = distance >= THRESHOLD ? '↻ Release to refresh' : '↓ Pull to refresh';
+            }
+            function hideIndicator() {
+                ind.style.transform = 'translate(-50%, -60px)';
+                ind.style.opacity = '0';
+            }
+            function commitRefresh() {
+                committed = true;
+                const text = ind.querySelector('#_wfPtrText');
+                const spin = ind.querySelector('#_wfPtrSpin');
+                if (text) text.textContent = '⟳ Refreshing…';
+                if (spin) spin.style.animation = 'spin .8s linear infinite';
+                try { triggerHaptic && triggerHaptic('success'); } catch(_) {}
+                // Bust the SW so on-device caches don't deliver stale code.
+                if ('serviceWorker' in navigator) {
+                    try {
+                        navigator.serviceWorker.getRegistrations().then(rs => {
+                            rs.forEach(r => { try { r.update(); } catch(_) {} });
+                        });
+                    } catch(_) {}
+                }
+                setTimeout(() => {
+                    try { window.location.reload(); } catch(_) {}
+                }, 220);
+            }
+
+            // Only start a pull if the document is scrolled to the top —
+            // matches browser behaviour exactly. Otherwise it's a normal
+            // scroll gesture and we don't interfere.
+            document.addEventListener('touchstart', (ev) => {
+                if (committed) return;
+                if ((window.scrollY || document.documentElement.scrollTop) > 0) return;
+                if (ev.touches.length !== 1) return;
+                startY = ev.touches[0].clientY;
+                lastY = startY;
+                pulling = true;
+            }, { passive: true });
+
+            document.addEventListener('touchmove', (ev) => {
+                if (!pulling || committed) return;
+                lastY = ev.touches[0].clientY;
+                const distance = lastY - startY;
+                if (distance <= 0) { hideIndicator(); return; }
+                setIndicator(distance);
+                // Resist a tiny bit so the user feels the pull instead of
+                // just scrolling the document around. We can't preventDefault
+                // safely on a passive listener, so we just lean on opacity.
+            }, { passive: true });
+
+            document.addEventListener('touchend', () => {
+                if (!pulling || committed) return;
+                pulling = false;
+                const distance = lastY - startY;
+                if (distance >= THRESHOLD) commitRefresh();
+                else hideIndicator();
+            }, { passive: true });
+
+            document.addEventListener('touchcancel', () => {
+                pulling = false; hideIndicator();
+            }, { passive: true });
+        })();
 
         // ==================== DECOY / PANIC MODE ====================
         function setupDecoyPin() {
