@@ -4608,7 +4608,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.2 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.3 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -11024,6 +11024,24 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                         // items whose IDs are not in cloud (they're queued for sync).
                                         // Mark dirty so they get pushed to cloud after init completes.
                                         let _localOnlyCount = 0;
+                                        // v7.5.3 — auth-recovery guard. If the cloud document is missing
+                                        // auth (e.g. old cloud doc, fresh sign-in to a clean Firestore
+                                        // collection, or partial write), the original code would let
+                                        // appData.auth stay at `{}` from boot — wiping the user's local
+                                        // PIN + security questions + biometric flag — and force them to
+                                        // re-create the password from scratch. The fix: pre-load local
+                                        // wf2_auth into appData.auth BEFORE the cloud merge, so cloud
+                                        // can only enrich it, never blank it.
+                                        try {
+                                            const localAuthRaw = localStorage.getItem('wf2_auth');
+                                            if (localAuthRaw) {
+                                                const localAuth = JSON.parse(localAuthRaw);
+                                                if (localAuth && (localAuth.pin || localAuth.securityQuestion || localAuth.securityAnswerHash || localAuth.decoyPin)) {
+                                                    appData.auth = localAuth;
+                                                }
+                                            }
+                                        } catch (_) {}
+
                                         Object.keys(cloudData).forEach(key => {
                                             if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
 
@@ -11392,8 +11410,37 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         }
 
                         if (!auth.pin) {
-                            pinMode = 'setup';
-                            showAuthView('authSetup');
+                            // v7.5.3 — last-line-of-defence cloud recheck. If we
+                            // got here with no PIN but the user IS signed in, do
+                            // one direct server fetch to make absolutely sure the
+                            // cloud also has no auth before forcing setup. This
+                            // catches the race where the initial sync hit cache,
+                            // missed the auth field, and would otherwise force
+                            // the user to recreate their PIN + security answers
+                            // every time they reload on a flaky connection.
+                            if (userDocRef && currentUser) {
+                                (async () => {
+                                    try {
+                                        const fresh = await userDocRef.get({ source: 'server' });
+                                        const cAuth = fresh && fresh.exists ? (fresh.data() || {}).auth : null;
+                                        if (cAuth && cAuth.pin) {
+                                            appData.auth = Object.assign({}, appData.auth, cAuth);
+                                            try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch(_) {}
+                                            console.log('[BOOT] 🛡️ Cloud PIN recovered — sending to login');
+                                            pinMode = 'login';
+                                            showAuthView('authLogin');
+                                            return;
+                                        }
+                                    } catch (e) {
+                                        console.warn('[BOOT] Cloud auth recheck failed:', e && e.message);
+                                    }
+                                    pinMode = 'setup';
+                                    showAuthView('authSetup');
+                                })();
+                            } else {
+                                pinMode = 'setup';
+                                showAuthView('authSetup');
+                            }
                         } else {
                             pinMode = 'login';
                             showAuthView('authLogin');
@@ -15718,9 +15765,13 @@ table.amort tbody tr { page-break-inside: avoid; }
     `;
             const catBadge = { Food: 'bg-g', Transport: 'bg-b', Utilities: 'bg-a', Medical: 'bg-r', Education: 'bg-p', Entertainment: 'bg-c', Clothing: 'bg-gr', Other: 'bg-gr' };
 
-            // ── View mode: Table (default) or Schedule (month-grouped timeline) ──
+            // ── View mode: Schedule (month-grouped timeline, default) or Table ──
+            // v7.5.3 — defaults to the Schedule timeline. The user's screenshots
+            // show that's the expected first view: months grouped with
+            // "UPCOMING / THIS MONTH / PAST" badges, descending newest-first.
+            // Existing users with localStorage.wf_exp_view='table' keep that.
             const mode = window._expViewMode || (function(){
-                try { return localStorage.getItem('wf_exp_view') || 'table'; } catch (_) { return 'table'; }
+                try { return localStorage.getItem('wf_exp_view') || 'schedule'; } catch (_) { return 'schedule'; }
             })();
             // Sync the toggle buttons to the active mode (handles page-reload).
             try {
@@ -15796,14 +15847,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const tone = isCurrent ? 'var(--accent)' : isPast ? 'var(--text3)' : 'var(--blue)';
                     const tag = isCurrent ? 'THIS MONTH' : isPast ? 'PAST' : 'UPCOMING';
                     const itemRows = items.map(x => `
-                        <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
-                            <span class="badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;">${x.cat}</span>
-                            <div style="flex:1;min-width:0;">
-                                <div style="font-weight:600;font-size:13px;">${x.desc}</div>
-                                ${x.notes ? `<div style="font-size:11px;color:var(--text3);">${x.notes}</div>` : ''}
+                        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
+                            <span class="badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.cat}</span>
+                            <div style="flex:1 1 0;min-width:0;overflow:hidden;">
+                                <div style="font-weight:600;font-size:13px;word-wrap:break-word;overflow-wrap:break-word;line-height:1.35;">${x.desc}</div>
+                                ${x.notes ? `<div style="font-size:11px;color:var(--text3);word-wrap:break-word;overflow-wrap:break-word;margin-top:2px;">${x.notes}</div>` : ''}
                             </div>
-                            <div style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};">${fmt(x.amount)}</div>
-                            <div class="act-btns">
+                            <div style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
+                            <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
                                 ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid">✅</button>` : ''}
                                 <button class="ib e" onclick="editExpense('${x.id}')" title="Edit">✏️</button>
                                 <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete">🗑️</button>
@@ -17277,7 +17328,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.2 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.3 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17287,7 +17338,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.2 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.3 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -19113,7 +19164,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 return `
                     <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg2);border-radius:10px;margin-bottom:8px;border:1px solid var(--border);">
                         <div style="font-weight:700;font-size:13px;min-width:110px;">${m.label}${cur}</div>
-                        <input type="text" class="sm-amount" data-ym="${m.ym}"
+                        <input type="text" class="sm-amount money-input" data-ym="${m.ym}"
                                value="${v === '' ? '' : v.toFixed(2)}"
                                placeholder="${placeholder}"
                                inputmode="decimal"
@@ -19157,6 +19208,14 @@ Be direct and use real numbers. Avoid generic advice.`;
             $ovl('#_sm_close').onclick = closeOvl;
             $ovl('#_sm_cancel').onclick = closeOvl;
             overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOvl(); });
+
+            // v7.5.3 — wire the comma-formatting money handler onto the
+            // dynamically-rendered monthly amount inputs. Without this
+            // they'd accept "2000" but never show "2,000.00" the way every
+            // other money field in the app does. initMoneyInputs is
+            // idempotent (it checks `_wfMoneyAttached`) so calling it
+            // again on already-static inputs is safe.
+            try { initMoneyInputs(); } catch (_) {}
 
             $ovl('#_sm_save').onclick = () => {
                 let changed = 0;
@@ -20853,7 +20912,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             //   • Arrow rotates as the user pulls (iOS/Twitter pattern)
             //   • Indicator parks deeper (40px below top, not 0px) when
             //     fully engaged so "Release to refresh" reads cleanly
-            let startY = 0, lastY = 0, pulling = false, committed = false;
+            let startY = 0, lastY = 0, startX = 0, lastX = 0, pulling = false, committed = false;
             let pendingDistance = 0, rafQueued = false;
             const THRESHOLD = 90;                         // pixels to commit
             const SHOW_AT   = 20;                         // pixels to start showing
@@ -20944,24 +21003,62 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 }, 320);
             }
 
-            // Only start a pull if the document is scrolled to the top —
-            // matches browser behaviour exactly. Otherwise it's a normal
-            // scroll gesture and we don't interfere.
+            // ── v7.5.3 — Robust pull-to-refresh that does NOT fire when
+            //   scrolling a long list. Three independent guards:
+            //   (1) Touch must start with the page AND every ancestor
+            //       scrollable at scrollTop=0. Without checking ancestors,
+            //       a scrollable <div> at the top of the page (e.g. a
+            //       horizontal list, a sticky filter bar, the AI chat
+            //       transcript) could swallow the gesture's intent.
+            //   (2) Touch must start in the top 80px of the viewport.
+            //       That's where mobile browsers physically render their
+            //       own pull-to-refresh. Starting lower means the user
+            //       is gesturing on the list itself.
+            //   (3) The vertical delta must dominate the horizontal delta.
+            //       If the user swipes diagonally or horizontally we let
+            //       the page scroll naturally without showing the bar.
+            const PULL_EDGE_ZONE = 80;          // px from top where PTR can begin
+            const HORIZONTAL_TOLERANCE = 1.4;   // |dx| ≤ |dy| * this → still vertical
+            let startedAtTop = false;
+            function _isPageScrolledToTop(ev) {
+                if ((window.scrollY || document.documentElement.scrollTop) > 0) return false;
+                // Walk the touch target's ancestors; if any is scrollable AND
+                // not at the top, this is a list-scroll gesture, not PTR.
+                let node = ev && ev.target;
+                while (node && node !== document.body && node !== document.documentElement) {
+                    if (node.scrollHeight - node.clientHeight > 2 && node.scrollTop > 0) {
+                        return false;
+                    }
+                    node = node.parentElement;
+                }
+                return true;
+            }
+
             document.addEventListener('touchstart', (ev) => {
                 if (committed) return;
-                if ((window.scrollY || document.documentElement.scrollTop) > 0) return;
                 if (ev.touches.length !== 1) return;
-                startY = ev.touches[0].clientY;
+                const t = ev.touches[0];
+                startY = t.clientY;
                 lastY = startY;
-                pulling = true;
+                startX = t.clientX;
+                lastX = startX;
+                startedAtTop = _isPageScrolledToTop(ev) && startY <= PULL_EDGE_ZONE;
+                pulling = startedAtTop;
             }, { passive: true });
 
             document.addEventListener('touchmove', (ev) => {
                 if (!pulling || committed) return;
-                lastY = ev.touches[0].clientY;
-                const distance = lastY - startY;
-                if (distance <= 0) { hideIndicator(); return; }
-                setIndicator(distance);
+                const t = ev.touches[0];
+                lastY = t.clientY;
+                lastX = t.clientX;
+                const dx = lastX - startX;
+                const dy = lastY - startY;
+                // Guard 3: horizontal swipe → abort silently.
+                if (Math.abs(dx) > Math.abs(dy) * HORIZONTAL_TOLERANCE) {
+                    pulling = false; hideIndicator(); return;
+                }
+                if (dy <= 0) { hideIndicator(); return; }
+                setIndicator(dy);
             }, { passive: true });
 
             document.addEventListener('touchend', () => {
@@ -21308,7 +21405,16 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // day instead of drifting forward by however long the
                 // previous backup took.
                 const lastTrigger = _lastScheduledBackupTime(s.autoBackupFreq);
-                const last = parseInt(localStorage.getItem('wf_last_auto_backup') || '0', 10);
+                // v7.5.3 — read BOTH timestamps and use the freshest of the
+                // two. wf_last_auto_backup is local-only (per-device), while
+                // s.lastBackup is in DB.settings which syncs across devices
+                // via Firestore. Previously we only read localStorage, so a
+                // backup that ran on Device A wouldn't suppress an immediate
+                // re-run on Device B → the user saw the two backup times
+                // disagree. Picking max(local, cloud) reflects reality.
+                const lsLast = parseInt(localStorage.getItem('wf_last_auto_backup') || '0', 10);
+                const dbLast = s.lastBackup ? new Date(s.lastBackup).getTime() : 0;
+                const last = Math.max(lsLast || 0, dbLast || 0);
                 const now = Date.now();
 
                 let due = false;
