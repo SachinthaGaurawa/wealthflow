@@ -362,6 +362,103 @@
     }
 
     /* =========================================================================
+     * 7b. CC STATEMENT PROMPT (v7.5.0 — multi-transaction extraction)
+     *   Returns one JSON with a transactions[] array. The AI is told upfront
+     *   that this is a CC statement with multiple rows so it doesn't squash
+     *   everything into a single descriptor.
+     * ========================================================================= */
+    function buildCCStatementPrompt(bank) {
+        var today = new Date().toISOString().split('T')[0];
+        var thisYear = today.substring(0, 4);
+        var bankLine = bank ? ('This statement is from: ' + bank + '\n') : '';
+        return 'You are an expert credit-card-statement parser specialised in Sri Lankan banks ' +
+            '(BOC, Commercial Bank, HNB, Sampath, NTB, AMEX, NDB, Standard Chartered, DFCC, Seylan, ' +
+            'Peoples Bank, Pan Asia, Union Bank).\n' + bankLine +
+            '\nRead the image and extract EVERY transaction line. Return ONLY a single JSON object ' +
+            'with this exact schema (no markdown, no comments, no prose):\n\n' +
+            '{"statement_period":"YYYY-MM","transactions":[' +
+            '{"date":"YYYY-MM-DD","description":"merchant or vendor","amount":1500.50,' +
+            '"type":"purchase","merchant_category":"","notes":""}' +
+            ']}\n\n' +
+            'Rules:\n' +
+            '- Include the FULL ORIGINAL amount printed. NEVER round or truncate.\n' +
+            '- "type" must be EXACTLY one of: purchase, cash_advance, service_fee, fuel\n' +
+            '  • cash_advance = ATM withdrawals, cash advance entries, "MB"/"DE" cash w/d codes\n' +
+            '  • fuel = petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum, ' +
+            '    Shell, fuel station names ending in "Filling Station"/"Fuel Station"/"Pvt Ltd")\n' +
+            '  • service_fee = cash-advance fees, interest charges, finance charges, late fees, ' +
+            '    fuel surcharges, fees that pair with another row\n' +
+            '  • purchase = everything else (groceries, restaurants, online, retail)\n' +
+            '- "date" in YYYY-MM-DD; if only day+month is printed, use ' + thisYear + ' as the year.\n' +
+            '- Skip the closing balance row, opening balance row, and payment-received rows.\n' +
+            '- If a row is clearly a credit/refund, prefix description with "[CREDIT] " and keep ' +
+            '  amount positive.\n' +
+            '- If you cannot read a column clearly, still include the row with a best-effort guess. ' +
+            '  NEVER omit a transaction.\n\n' +
+            'CRITICAL: Output ONLY the JSON object. No markdown fences, no explanations.';
+    }
+
+    /* =========================================================================
+     * 7c. CCOT ROW CLASSIFIER (v7.5.0)
+     *   Final safety net — if the AI guesses wrong, our regex catches it.
+     *   Order matters: cash_advance and fuel are checked before service_fee
+     *   because a row reading "Cash advance fee" should classify as
+     *   service_fee, not cash_advance — handled by the explicit FEE check.
+     * ========================================================================= */
+    function classifyCCOTRow(rawText, aiHint) {
+        var hay = String(rawText || '').toLowerCase();
+        // Service fees first — they often CONTAIN the word "advance"
+        if (/\b(cash[\s\-]*advance[\s\-]*fee|service[\s\-]*fee|finance[\s\-]*charge|interest|late[\s\-]*fee|fuel[\s\-]*surcharge|\(de\)|\(fe\))\b/.test(hay))
+            return 'service_fee';
+        // Cash advance proper
+        if (/\b(cash[\s\-]*advance|\batm\b|withdrawal|cash[\s\-]*w\/?d|\bmb\b|cash[\s\-]*advance[\s\-]*from)\b/.test(hay))
+            return 'cash_advance';
+        // Fuel stations (Sri Lanka)
+        if (/\b(ceypetco|cargills[\s\-]*petroleum|lanka[\s\-]*ioc|\bioc\b|shell|filling[\s\-]*station|fuel[\s\-]*station|petrol|diesel|fuel)\b/.test(hay))
+            return 'fuel';
+        // Honour AI hint as last resort if it's one of our valid types
+        if (aiHint && /^(purchase|cash_advance|service_fee|fuel)$/.test(aiHint)) return aiHint;
+        return 'purchase';
+    }
+
+    /* =========================================================================
+     * 7d. CCOT DATE NORMALISER (v7.5.0)
+     *   Handles DD/MM/YYYY, DD-MM-YYYY, DD MMM, "May 22", etc.
+     * ========================================================================= */
+    function normaliseCCOTDate(s) {
+        if (!s) return new Date().toISOString().split('T')[0];
+        var str = String(s).trim();
+        // Already ISO?
+        if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.substring(0, 10);
+        // DD/MM/YYYY or DD-MM-YYYY
+        var m = str.match(/^(\d{1,2})[\/\-\.\s](\d{1,2})(?:[\/\-\.\s](\d{2,4}))?$/);
+        if (m) {
+            var d = parseInt(m[1], 10);
+            var mo = parseInt(m[2], 10);
+            var yr = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+            if (yr < 100) yr += 2000;
+            return yr + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+        }
+        // DD MMM YYYY  or  MMM DD YYYY
+        var months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+        var mm = str.toLowerCase().match(/^(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*(?:\s+(\d{2,4}))?$/);
+        if (mm) {
+            var d2 = parseInt(mm[1], 10);
+            var mo2 = months[mm[2]];
+            var yr2 = mm[3] ? parseInt(mm[3], 10) : new Date().getFullYear();
+            if (yr2 < 100) yr2 += 2000;
+            return yr2 + '-' + String(mo2).padStart(2, '0') + '-' + String(d2).padStart(2, '0');
+        }
+        // Last resort — Date.parse
+        try {
+            var d3 = new Date(str);
+            if (!isNaN(d3)) return d3.toISOString().split('T')[0];
+        } catch (_) {}
+        return new Date().toISOString().split('T')[0];
+    }
+
+
+    /* =========================================================================
      * 8. JSON EXTRACTION (mirror of server's robustness)
      * ========================================================================= */
     function extractJSON(text) {
@@ -765,6 +862,142 @@
                 window._showScanOverlay('🔌 Connecting…', 'Checking AI services', 18);
             var hasVisionScan = await isEndpointAvailable('/vision-scan');
             console.log('[' + V + '] vision-scan available:', hasVisionScan);
+
+            // ── STEP B.5 (v7.5.0) — DEDICATED CCOT MULTI-TRANSACTION PATH ──
+            // CC statements typically list MANY rows (cash advances, fuel
+            // surcharges, purchases, fees). The vision-scan endpoint returns
+            // a single-row receipt result, which forced everything into one
+            // entry. That's why the user's screenshot showed one row with
+            // "Cash advance from MB, Fuel Surcharge, Caravan Fresh Kottawa,
+            // Local Cash Advance Fee (DE), Morawaka Fuel Station Pvt"
+            // concatenated into the description.
+            //
+            // The right design: when isCCOT, skip the receipt-style cascade
+            // and call /api/ai directly with a CC-statement-aware prompt
+            // that explicitly asks for a transactions[] array. Then loop
+            // through every row and create one CC entry per transaction,
+            // each auto-classified as purchase / cash_advance / fuel by
+            // a dedicated classifier function.
+            //
+            // This is also FASTER — one API call instead of the 12-engine
+            // voting cascade — and MORE ACCURATE because the model is told
+            // upfront "this is a CC statement, expect many rows".
+            if (isCCOT) {
+                if (showsOverlay && typeof window._showScanOverlay === 'function')
+                    window._showScanOverlay('🧠 AI parsing CC statement…',
+                        'Extracting every transaction row', 35);
+
+                var ccotPrompt = buildCCStatementPrompt(ccotBank);
+                var ccotTxns = null;
+                var ccotLastErr = null;
+
+                // Primary attempt — full structured prompt
+                try {
+                    var ccotResp = await legacyAICall(ccotPrompt, firstImage, 45000);
+                    var ccotParsed = extractJSON(ccotResp.reply);
+                    if (ccotParsed && Array.isArray(ccotParsed.transactions) && ccotParsed.transactions.length > 0) {
+                        ccotTxns = ccotParsed.transactions;
+                    }
+                } catch (eP1) {
+                    ccotLastErr = eP1;
+                    console.warn('[' + V + '] CCOT pass 1 failed:', eP1.message);
+                }
+
+                // Retry with simpler prompt if the first attempt was empty.
+                // Vision models occasionally choke on long rule lists.
+                if (!ccotTxns) {
+                    if (showsOverlay && typeof window._showScanOverlay === 'function')
+                        window._showScanOverlay('🔄 Simplified prompt retry…',
+                            'Smaller payload, same image', 55);
+                    try {
+                        var simplePrompt = 'Read this ' + (ccotBank || '') +
+                            ' credit card statement image. Return ONLY this JSON (no markdown, no explanation):\n' +
+                            '{"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}\n' +
+                            '"type" must be one of: purchase, cash_advance, service_fee, fuel.\n' +
+                            'Include EVERY transaction row. Skip the closing balance, opening balance, and payment-received rows.';
+                        var ccotResp2 = await legacyAICall(simplePrompt, firstImage, 35000);
+                        var ccotParsed2 = extractJSON(ccotResp2.reply);
+                        if (ccotParsed2 && Array.isArray(ccotParsed2.transactions) && ccotParsed2.transactions.length > 0) {
+                            ccotTxns = ccotParsed2.transactions;
+                        }
+                    } catch (eP2) {
+                        ccotLastErr = eP2;
+                        console.warn('[' + V + '] CCOT pass 2 failed:', eP2.message);
+                    }
+                }
+
+                if (!ccotTxns || ccotTxns.length === 0) {
+                    if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                    var ccotFailMsg = '⚠️ AI could not find any transactions.';
+                    if (ccotLastErr && ccotLastErr.message) ccotFailMsg += ' (' + ccotLastErr.message + ')';
+                    ccotFailMsg += ' Try a clearer, well-lit photo of the full statement.';
+                    if (typeof window.notify === 'function') window.notify(ccotFailMsg, 'error');
+                    if (typeof window.triggerHaptic === 'function') window.triggerHaptic('error');
+                    inputEl.value = '';
+                    return;
+                }
+
+                if (showsOverlay && typeof window._showScanOverlay === 'function')
+                    window._showScanOverlay('✅ Found ' + ccotTxns.length + ' transaction' +
+                        (ccotTxns.length > 1 ? 's' : '') + '…', 'Opening review modal', 90);
+
+                // Normalise + classify every row before handing off to UI.
+                var normalised = ccotTxns.map(function (t, idx) {
+                    var raw = (String(t.description || t.vendor || '') + ' ' +
+                              String(t.notes || '') + ' ' + String(t.merchant_category || ''));
+                    var type = classifyCCOTRow(raw, t.type);
+                    var dateStr = normaliseCCOTDate(t.date);
+                    return {
+                        id: 'tx_' + idx,
+                        date: dateStr,
+                        description: String(t.description || t.vendor || '(unknown)').slice(0, 80),
+                        amount: normaliseAmount(t.amount),
+                        type: type,
+                        notes: t.notes || '',
+                        bank: ccotBank
+                    };
+                }).filter(function (t) { return t.amount && t.amount > 0; });
+
+                if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+
+                if (!normalised.length) {
+                    if (typeof window.notify === 'function')
+                        window.notify('⚠️ Found rows but none had valid amounts. Try a clearer photo.', 'warn');
+                    inputEl.value = '';
+                    return;
+                }
+
+                // Open the existing review modal — user confirms each row,
+                // can edit before bulk-save. Defined in index.html.
+                if (typeof window._showCCReviewModal === 'function') {
+                    window._showCCReviewModal({ transactions: normalised, statement_period: '' }, ccotBank);
+                } else {
+                    // Fallback: bulk-save directly (review modal not present)
+                    if (typeof window._bulkSaveCCOT === 'function') {
+                        window._bulkSaveCCOT(normalised, ccotBank);
+                    } else if (typeof window.notify === 'function') {
+                        window.notify('Found ' + normalised.length + ' transactions but review modal not loaded', 'warn');
+                    }
+                }
+
+                if (typeof window.triggerHaptic === 'function') window.triggerHaptic('success');
+                var elapsedC = ((Date.now() - startTime) / 1000).toFixed(1);
+                var byType = normalised.reduce(function (acc, t) { acc[t.type] = (acc[t.type] || 0) + 1; return acc; }, {});
+                var summary = Object.keys(byType).map(function (k) {
+                    var label = k === 'cash_advance' ? '💵 cash' : (k === 'fuel' ? '⛽ fuel' : (k === 'service_fee' ? '🧾 fees' : '🛒 purchases'));
+                    return byType[k] + ' ' + label;
+                }).join(' · ');
+                if (typeof window.notify === 'function')
+                    window.notify('💳 ' + (ccotBank || 'CC') + ' · ' + normalised.length +
+                        ' transaction' + (normalised.length > 1 ? 's' : '') + ' · ' +
+                        summary + ' · ' + elapsedC + 's', 'success');
+                console.group('[' + V + '] CCOT multi-transaction scan complete');
+                console.log('Elapsed:', elapsedC + 's', '· Bank:', ccotBank);
+                console.table(normalised);
+                console.groupEnd();
+                inputEl.value = '';
+                return;
+            }
 
             // ---- STEP C: multi-engine vision (or fallback to /api/ai) ----
             if (showsOverlay && typeof window._showScanOverlay === 'function')
@@ -1300,21 +1533,53 @@
      * ========================================================================= */
     if (!window.WF_SCAN_SETTINGS) {
         try {
+            // Prefer the host app's settings store (DB.getObj('settings')) —
+            // that's the source of truth the user edits via the in-app
+            // Scanner Settings panel. Fall back to legacy localStorage key
+            // only if the host store isn't ready yet.
+            var hostSettings = (typeof window.DB === 'object' && window.DB && typeof window.DB.getObj === 'function')
+                ? window.DB.getObj('settings', {}) : {};
             var stored = JSON.parse(localStorage.getItem('wf_scan_settings') || '{}');
             window.WF_SCAN_SETTINGS = {
-                mode: stored.mode || 'deep',
-                preprocessing: stored.preprocessing !== false,
-                currency: stored.currency || 'LKR',
-                showEngines: stored.showEngines === true
+                mode: hostSettings.scanMode || stored.mode || 'deep',
+                preprocessing: hostSettings.scanTfEnhance !== false &&
+                    (stored.preprocessing !== false),
+                currency: hostSettings.scanCurrency || stored.currency || 'LKR',
+                showEngines: stored.showEngines === true,
+                autoEscalate: hostSettings.scanAutoEscalate !== false,
+                autoCategory: hostSettings.scanAutoCategory !== false
             };
         } catch (_) {
-            window.WF_SCAN_SETTINGS = { mode: 'deep', preprocessing: true, currency: 'LKR', showEngines: false };
+            window.WF_SCAN_SETTINGS = { mode: 'deep', preprocessing: true, currency: 'LKR', showEngines: false, autoEscalate: true, autoCategory: true };
         }
     }
+    // v7.5.0 — keep WF_SCAN_SETTINGS in sync with the host's settings store.
+    // The host fires this whenever the user toggles anything in the in-app
+    // Scanner Settings modal. Without this listener, v4 was reading from a
+    // stale localStorage copy and ignoring the user's choices.
+    window.addEventListener('wf-scan-settings-updated', function (ev) {
+        try {
+            var d = (ev && ev.detail) || {};
+            if (d.scanMode) window.WF_SCAN_SETTINGS.mode = d.scanMode;
+            if (d.scanCurrency) window.WF_SCAN_SETTINGS.currency = d.scanCurrency;
+            if (typeof d.scanTfEnhance === 'boolean') window.WF_SCAN_SETTINGS.preprocessing = d.scanTfEnhance;
+            if (typeof d.scanAutoEscalate === 'boolean') window.WF_SCAN_SETTINGS.autoEscalate = d.scanAutoEscalate;
+            if (typeof d.scanAutoCategory === 'boolean') window.WF_SCAN_SETTINGS.autoCategory = d.scanAutoCategory;
+            console.log('[' + V + '] settings refreshed from host:', window.WF_SCAN_SETTINGS);
+        } catch (_) {}
+    });
     function _saveScanSettings() {
         try { localStorage.setItem('wf_scan_settings', JSON.stringify(window.WF_SCAN_SETTINGS)); } catch (_) { }
     }
-    window.openScannerSettings = function () {
+    // v7.5.0 — DO NOT overwrite window.openScannerSettings if the host app
+    // already defines one. The host's modal is the user-facing one with
+    // per-mode cards (Quick / Deep / Ultra / Frontier), Auto-Escalate,
+    // Auto-Categorize, TF.js enhancement toggle, and a currency picker —
+    // it persists changes into DB.set('settings', ...) so they sync
+    // across devices. v4's old built-in modal is kept as a fallback only
+    // for the case where the host modal hasn't been registered.
+    if (typeof window.openScannerSettings !== 'function') {
+        window.openScannerSettings = function () {
         var s = window.WF_SCAN_SETTINGS;
         var c = _ensureModalContainer();
         c.innerHTML =
@@ -1375,6 +1640,7 @@
             if (typeof window.notify === 'function') window.notify('✅ Scanner settings saved', 'success');
         };
     };
+    }  // end: if (typeof window.openScannerSettings !== 'function')
 
     /* =========================================================================
      * 17. PATCH FILE INPUTS to accept PDFs
