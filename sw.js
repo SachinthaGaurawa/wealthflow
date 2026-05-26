@@ -1,11 +1,11 @@
 // ==================== WealthFlow Infinity Service Worker ====================
 // Handles PWA push notifications, offline caching, and background sync
 
-const CACHE_NAME = 'wealthflow-v7.4.8';
+const CACHE_NAME = 'wealthflow-v7.4.9';
 
 // Install event — cache core assets
 self.addEventListener('install', (event) => {
-    console.log('[SW] Installing WealthFlow Service Worker v7.4.8...');
+    console.log('[SW] Installing WealthFlow Service Worker v7.4.9...');
     self.skipWaiting();
 });
 

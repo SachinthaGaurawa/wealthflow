@@ -4546,7 +4546,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.4.8 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.4.9 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -5649,46 +5649,25 @@
 
     <div class="mo" id="mdCCOT">
         <div class="md md-sm">
-            <div class="md-hdr">
+            <div class="md-hdr" style="position:relative;">
                 <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div>
-                <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
-            </div>
-            <!-- ── v7.4.8 AI VISION CARD (restored UI per user request) ──
-                 The previous header-button approach used onchange="handleAIScan(event,'ccot')"
-                 but wealthflow-ai-v4.js overrides window.handleAIScan with its
-                 OWN handleAIScanV4 at module-load time. v4 only knows about
-                 'expense' / 'subscription' / 'ai_chat' types — it has no ccot
-                 branch. So when the user picked a file, v4 hijacked the flow,
-                 treated it as a subscription, and produced the "Recurring bill"
-                 toast at the bottom of the screen instead of populating the
-                 CC form.
-
-                 The fix is two-fold:
-                   1. Use NEW input IDs (ccot_v748_camera / ccot_v748_upload)
-                      that v4 does NOT target — v4 only patches the three IDs
-                      e_ai_scan, ai_chat_scan, sub_ai_scan. Anything else
-                      stays untouched.
-                   2. Wire the onchange handlers directly to a brand-new
-                      _aiScanCCStatementV748 function defined inline below
-                      the modal. v4 cannot override a function it doesn't
-                      know about. -->
-            <div style="background:linear-gradient(135deg, rgba(212,175,55,.10), rgba(59,130,246,.07));border:1px solid rgba(212,175,55,.32);border-radius:12px;padding:12px;margin-bottom:14px;">
-                <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;">
-                    <span style="font-size:26px;line-height:1;">🤖</span>
-                    <div style="flex:1;">
-                        <div style="font-weight:800;color:var(--accent);font-size:13px;letter-spacing:.2px;">AI Vision — Auto-Fill From Statement</div>
-                        <div style="font-size:11px;color:var(--text3);margin-top:2px;line-height:1.45;">Upload a CC statement / receipt photo. AI extracts cash advances, service fees, fuel and purchases automatically.</div>
-                    </div>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <label class="btn btn-secondary btn-sm" style="flex:1;min-width:140px;text-align:center;cursor:pointer;justify-content:center;">
-                        📷 Capture Photo
-                        <input type="file" id="ccot_v748_camera" accept="image/*" capture="environment" style="display:none;" onchange="window._aiScanCCStatementV748 && window._aiScanCCStatementV748(event)">
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <!-- ── v7.4.9 AI SCAN BUTTON ──
+                         IDENTICAL to the Expense modal's #e_ai_scan pattern
+                         (line ~5774). wealthflow-ai-v4.js explicitly patches
+                         input#ccot_ai_scan (added to its selector list) and
+                         when handleAIScanV4 sees type='ccot' it routes the
+                         extracted data to populateCCOTForm — the new helper
+                         that fills #ot_desc / #ot_bank / #ot_type / #ot_amount
+                         / #ot_date / #ot_notes. Same engine cascade, same
+                         fullscreen progress overlay (Engine 1/4 → 4/4) that
+                         the user has confirmed works in the Expense scan. -->
+                    <label id="ccotAiScanBtn" class="btn btn-secondary btn-sm" style="cursor:pointer; padding:5px 12px; font-size:11px; font-weight:700; border:1px solid var(--accent); background:linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); box-shadow:0 0 15px rgba(212,175,55,0.15), inset 0 1px 0 rgba(255,255,255,0.05); transition:all 0.3s ease; border-radius:8px; position:relative; overflow:hidden;" title="Scan statement with AI Vision">
+                        <span style="position:relative;z-index:1;">📸 AI Scan</span>
+                        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ccot_ai_scan" style="display:none;"
+                            onchange="handleAIScan(event, 'ccot')">
                     </label>
-                    <label class="btn btn-secondary btn-sm" style="flex:1;min-width:140px;text-align:center;cursor:pointer;justify-content:center;">
-                        📁 Upload File
-                        <input type="file" id="ccot_v748_upload" accept="image/*,application/pdf" style="display:none;" onchange="window._aiScanCCStatementV748 && window._aiScanCCStatementV748(event)">
-                    </label>
+                    <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
                 </div>
             </div>
             <div class="fr">
@@ -7648,161 +7627,12 @@ Keep total under 200 words. No markdown, no asterisks.`;
             });
         }
 
-        // ── v7.4.8 — DIRECT CC SCAN HANDLER (v4-resistant) ────────────────
-        // Why this function exists:
-        //   wealthflow-ai-v4.js patches window.handleAIScan with its own
-        //   handleAIScanV4 at module-load time. v4 only knows three types
-        //   (expense / subscription / ai_chat) and target-patches the three
-        //   input IDs e_ai_scan / ai_chat_scan / sub_ai_scan. Routing CC
-        //   scans through handleAIScan with type='ccot' was being silently
-        //   intercepted by v4, which then ran its subscription auto-detect
-        //   and produced the "Recurring bill" toast the user saw in the
-        //   screenshot — without ever opening the bank picker or CC review
-        //   modal.
-        //
-        // The fix is independence: this function has a unique name v4
-        // does not match, and it's wired to inputs with IDs (ccot_v748_*)
-        // that v4 also does not match. Result: the CC scan path is
-        // hermetic — no other module can override or hijack it.
-        //
-        // Pipeline:
-        //   1. Ask which bank issued the statement (so we get the right
-        //      Sri-Lankan service-fee schedule).
-        //   2. Show the SAME fullscreen progress overlay the Expense
-        //      scanner uses (proven on iPhone/iPad/Android/desktop) so
-        //      animations match what the user remembers seeing work.
-        //   3. Compress + enhance the image using the user's scanner-mode
-        //      settings.
-        //   4. Call callAI() with a strict-JSON prompt; on transient
-        //      failures, retry once with a simpler prompt.
-        //   5. Parse, then open _showCCReviewModal so the user confirms
-        //      every extracted transaction before anything is saved.
-        async function _aiScanCCStatementV748(e) {
-            const inputEl = e && e.target;
-            const file = inputEl && inputEl.files && inputEl.files[0];
-            if (!file) return;
-            const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-            try { triggerHaptic('medium'); } catch (_) {}
-
-            try {
-                // Step 1 — bank picker (always shown; user complaint: missing)
-                const bank = await _ccotPickBankAsync();
-                if (!bank) { inputEl.value = ''; return; }
-
-                // Step 2 — show the PROVEN fullscreen overlay (same one used
-                // by the Expense scanner). The user's screenshot 2 showed
-                // exactly this UI working — circular spinner + progress bar
-                // + "🚀 Engine 1/4 — multi-provider AI…" stage text.
-                _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo of ${bank} statement`, 10);
-
-                // Step 3 — compress with the user's scanner-mode quality
-                const _ss = (typeof DB !== 'undefined' && DB.getObj) ? DB.getObj('settings', {}) : {};
-                const scanMode = _ss.scanMode || 'deep';
-                const tfEnhance = _ss.scanTfEnhance !== false;
-                const modeQuality = { quick: 0.85, deep: 0.92, ultra: 0.95, frontier: 0.97 };
-                const modeDim = { quick: 1600, deep: 2000, ultra: 2400, frontier: 2800 };
-                const q = modeQuality[scanMode] || 0.92;
-                const dim = modeDim[scanMode] || 2000;
-
-                const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-                let base64Img;
-                try {
-                    const r = await _compressImageToBase64(file, dim, q, tfEnhance);
-                    base64Img = r.base64;
-                    console.log(`[CCOT v7.4.8] Compressed ${sizeMB}MB → ${r.kb}KB @ ${dim}px (mode=${scanMode})`);
-                } catch (eCompress) {
-                    // If it's a PDF the compress helper might bail — fall
-                    // back to the file's raw bytes since callAI accepts a
-                    // base64 image OR an indicator that we have raw bytes.
-                    if (isPdf) {
-                        const buf = await file.arrayBuffer();
-                        const u8 = new Uint8Array(buf);
-                        let binStr = ''; for (let i = 0; i < u8.length; i++) binStr += String.fromCharCode(u8[i]);
-                        base64Img = btoa(binStr);
-                    } else { throw eCompress; }
-                }
-
-                _showScanOverlay('🚀 Engine 1/4 — multi-provider AI…', 'Calling /api/ai cascade', 35);
-
-                const prompt = `You are an expert credit-card-statement parser specialized in Sri Lankan banks (BOC, Commercial Bank, HNB, Sampath, NTB, AMEX, NDB, Standard Chartered, DFCC, Seylan, Peoples Bank, Pan Asia, Union Bank). This statement is from: ${bank}
-
-Read the image carefully and extract EVERY transaction line. Return ONLY a JSON object with this exact schema:
-
-{"statement_period":"YYYY-MM","transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":1500.50,"type":"purchase|cash_advance|service_fee|fuel","linked_to_index":null,"notes":""}]}
-
-RULES:
-- Include the FULL ORIGINAL amount printed. NEVER round or truncate.
-- "type" must be one of: purchase, cash_advance, service_fee, fuel
-- "fuel" = petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum)
-- "service_fee" = cash-advance fees, interest, late fees. If the row pairs with a cash advance line, set "linked_to_index" to that index.
-- "date" in YYYY-MM-DD. If only day+month printed, use the statement_period year.
-- Skip closing balance, opening balance, payment-received rows.
-- If a row is a credit/refund, prefix description with "[CREDIT] " and keep amount positive.
-- If you cannot read a column clearly, still include the row with best-effort. NEVER omit a transaction.
-
-CRITICAL: Output ONLY the JSON. No markdown. No explanation.`;
-
-                _showScanOverlay('🚀 Engine 1/4 — multi-provider AI…', 'Calling Gemini / DeepSeek / Groq cascade', 55);
-                let raw = null;
-                const errors = [];
-                try {
-                    raw = await callAI(prompt, base64Img);
-                    if (!raw || raw.length < 5) throw new Error('empty reply');
-                } catch (eA) {
-                    errors.push('Pass 1: ' + (eA.message || eA));
-                    console.warn('[CCOT v7.4.8] pass 1 failed:', eA);
-                }
-
-                if (!raw) {
-                    // Step 4 — simplified prompt retry (vision models can choke
-                    // on long rule lists; a one-liner is more reliable).
-                    _showScanOverlay('🔄 Engine 2/4 — simplified prompt…', 'Smaller payload, same cascade', 70);
-                    await new Promise(r => setTimeout(r, 700));
-                    const simplePrompt = `Read this ${bank} credit card statement. Return ONLY this JSON (no markdown):
-{"transactions":[{"date":"YYYY-MM-DD","description":"vendor","amount":0,"type":"purchase"}]}
-Types allowed: purchase, cash_advance, service_fee, fuel.`;
-                    try {
-                        raw = await callAI(simplePrompt, base64Img);
-                        if (!raw || raw.length < 5) throw new Error('empty reply');
-                    } catch (eB) {
-                        errors.push('Pass 2: ' + (eB.message || eB));
-                        console.warn('[CCOT v7.4.8] pass 2 failed:', eB);
-                    }
-                }
-
-                if (!raw) {
-                    _hideScanOverlay();
-                    notify('AI scan failed: ' + errors.slice(-2).join(' | ') + '. Try a clearer, well-lit photo.', 'error');
-                    try { triggerHaptic('error'); } catch (_) {}
-                    inputEl.value = '';
-                    return;
-                }
-
-                _showScanOverlay('📊 Parsing transactions…', 'Extracting structured data', 88);
-                const parsed = _parseAIJson(raw);
-                if (!parsed || !Array.isArray(parsed.transactions) || !parsed.transactions.length) {
-                    _hideScanOverlay();
-                    notify('AI returned a response but could not find transactions. Try a clearer photo (good lighting, all rows visible).', 'warn');
-                    inputEl.value = '';
-                    return;
-                }
-
-                _showScanOverlay('✅ Done!', `Found ${parsed.transactions.length} transaction${parsed.transactions.length>1?'s':''}`, 100);
-                try { triggerHaptic('success'); } catch (_) {}
-                setTimeout(() => {
-                    _hideScanOverlay();
-                    _showCCReviewModal(parsed, bank);
-                }, 400);
-                inputEl.value = '';
-            } catch (err) {
-                console.error('[CCOT v7.4.8]', err);
-                _hideScanOverlay();
-                notify('Scan failed: ' + (err && err.message || 'unknown error') + '. Try a clearer photo of the full statement.', 'error');
-                try { triggerHaptic('error'); } catch (_) {}
-                try { inputEl.value = ''; } catch (_) {}
-            }
-        }
-        window._aiScanCCStatementV748 = _aiScanCCStatementV748;
+        // (v7.4.9 — CC AI Scan now goes through v4's handleAIScanV4 via
+        //  populateCCOTForm in wealthflow-ai-v4.js. The old standalone
+        //  _aiScanCCStatementV748 from v7.4.8 was removed because routing
+        //  through v4 gives the SAME multi-engine cascade and fullscreen
+        //  progress UI that the Expense scanner uses — the exact UI the
+        //  user confirmed works in their screenshot.)
 
         async function handleAIScan(e, type) {
             const file = e.target.files[0];
@@ -17315,7 +17145,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.8 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.4.9 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17325,7 +17155,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.4.8 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.4.9 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
