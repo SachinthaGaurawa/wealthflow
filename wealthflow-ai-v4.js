@@ -509,6 +509,99 @@
     }
 
     /* =========================================================================
+     * 10a. CCOT FORM: map vision-scan results into the CC One-Time modal.
+     *   - Vendor / amount / date come straight from result.
+     *   - The user-confirmed BANK is passed via opts.bank (from the bank
+     *     picker) and slotted into #ot_bank.
+     *   - If the AI tagged the line as "cash advance" / "atm" / "withdrawal",
+     *     we set Type=Cash Advance and let the live preview compute the
+     *     per-bank service fee automatically.
+     *   - Fuel station hits (ceypetco / IOC / Lanka IOC / Cargills Petroleum)
+     *     get Type=Fuel so the per-bank fuel surcharge applies.
+     * ========================================================================= */
+    function populateCCOTForm(result, opts) {
+        opts = opts || {};
+        var $ = function (id) { return document.getElementById(id); };
+        if (!result) return false;
+        var filled = false;
+
+        // Description (vendor)
+        if ($('ot_desc') && result.vendor) {
+            $('ot_desc').value = result.vendor;
+            filled = true;
+        }
+
+        // Amount
+        if ($('ot_amount') && typeof result.amount === 'number') {
+            var fmt = (typeof window.fmtN === 'function') ? window.fmtN(result.amount) : result.amount.toFixed(2);
+            $('ot_amount').value = fmt;
+            filled = true;
+        }
+
+        // Bank — prefer the user-confirmed bank from the picker;
+        // fall back to AI-extracted bank if the picker was skipped.
+        if ($('ot_bank')) {
+            var bankSel = $('ot_bank');
+            var targetBank = opts.bank || result.bank || '';
+            if (targetBank) {
+                var matched = false;
+                var target = String(targetBank).toLowerCase();
+                for (var i = 0; i < bankSel.options.length; i++) {
+                    var optText = bankSel.options[i].text.toLowerCase();
+                    var optVal = bankSel.options[i].value.toLowerCase();
+                    if (optText === target || optVal === target) {
+                        bankSel.value = bankSel.options[i].value; matched = true; break;
+                    }
+                }
+                if (!matched) {
+                    for (var j = 0; j < bankSel.options.length; j++) {
+                        var ot = (bankSel.options[j].text + ' ' + bankSel.options[j].value).toLowerCase();
+                        // Match partials: "commercial" → "Commercial Bank"
+                        var firstWord = target.split(/[ &()]/)[0];
+                        if (firstWord && ot.indexOf(firstWord) > -1) {
+                            bankSel.value = bankSel.options[j].value; matched = true; break;
+                        }
+                    }
+                }
+                if (matched) filled = true;
+            }
+        }
+
+        // Type — auto-classify based on vendor / category / raw text
+        if ($('ot_type')) {
+            var hay = (String(result.vendor || '') + ' ' + String(result.category || '') + ' ' + String(result.rawText || '') + ' ' + String(result.description || '')).toLowerCase();
+            var type = 'purchase';
+            if (/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/.test(hay)) type = 'cash_advance';
+            else if (/\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel|petrol|diesel)\b/.test(hay)) type = 'fuel';
+            $('ot_type').value = type;
+            filled = true;
+        }
+
+        // Date — Purchase Date
+        if ($('ot_date') && result.date && /^\d{4}-\d{2}-\d{2}/.test(result.date)) {
+            $('ot_date').value = result.date.substring(0, 10);
+            filled = true;
+        }
+
+        // Notes — include the smart provenance string just like expense
+        if ($('ot_notes')) {
+            var existing = $('ot_notes').value || '';
+            var note = (typeof buildSmartNote === 'function')
+                ? buildSmartNote(result, opts.isPdf, opts.pageCount)
+                : ('🤖 AI-scanned · ' + (opts.isPdf ? 'PDF' : 'image'));
+            $('ot_notes').value = existing ? (existing + ' | ' + note) : note;
+        }
+
+        // Fire the live preview so the user immediately sees the
+        // auto-computed cash-advance / fuel service fee.
+        if (typeof window._recalcCashAdvancePreview === 'function') {
+            try { window._recalcCashAdvancePreview(); } catch (_) {}
+        }
+
+        return filled;
+    }
+
+    /* =========================================================================
      * 10b. SUBSCRIPTION FORM: map vision-scan results into the Sub modal fields.
      *      Expense categories → Subscription categories mapping:
      *        Streaming services (Netflix/Spotify/etc) → Streaming
@@ -618,11 +711,27 @@
         var sizeMB = (file.size / 1024 / 1024).toFixed(2);
         var isExpense = (type === 'expense');
         var isSubscription = (type === 'subscription');
+        var isCCOT = (type === 'ccot');
         var isAiChat = (type === 'ai_chat');
         var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-        var showsOverlay = isExpense || isSubscription;
+        var showsOverlay = isExpense || isSubscription || isCCOT;
 
         if (typeof window.triggerHaptic === 'function') window.triggerHaptic('medium');
+
+        // CCOT-specific: ask which bank issued the statement BEFORE we kick
+        // off the heavy engine cascade. This gives us the right Sri-Lankan
+        // service-fee schedule and helps the AI prompt focus the parse.
+        var ccotBank = null;
+        if (isCCOT) {
+            try {
+                if (typeof window._ccotPickBankAsync === 'function') {
+                    ccotBank = await window._ccotPickBankAsync();
+                    if (!ccotBank) { inputEl.value = ''; return; }
+                }
+            } catch (e0) {
+                console.warn('[' + V + '] bank picker failed:', e0);
+            }
+        }
 
         try {
             // ---- STEP A: file extraction ----
@@ -668,7 +777,8 @@
                 currency: settings.currency || 'LKR',
                 today: new Date().toISOString().split('T')[0],
                 locale: navigator.language || 'en-LK',
-                docType: isSubscription ? 'subscription_bill' : 'receipt'
+                docType: isSubscription ? 'subscription_bill' : (isCCOT ? 'cc_statement' : 'receipt'),
+                bank: isCCOT ? ccotBank : null
             };
             var mode = settings.mode || 'deep';
 
@@ -803,9 +913,14 @@
                 window._showScanOverlay('✅ Filling form…', isSubscription ? 'Smart-populating subscription' : 'Smart-populating fields', 95);
 
             // Route to correct form populator
-            var ok = isSubscription
-                ? populateSubscriptionForm(scanData.result, { isPdf: isPdf, pageCount: pageCount })
-                : populateExpenseForm(scanData.result, { isPdf: isPdf, pageCount: pageCount });
+            var ok;
+            if (isSubscription) {
+                ok = populateSubscriptionForm(scanData.result, { isPdf: isPdf, pageCount: pageCount });
+            } else if (isCCOT) {
+                ok = populateCCOTForm(scanData.result, { isPdf: isPdf, pageCount: pageCount, bank: ccotBank });
+            } else {
+                ok = populateExpenseForm(scanData.result, { isPdf: isPdf, pageCount: pageCount });
+            }
             if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
 
             if (ok) {
@@ -813,8 +928,11 @@
                 var elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                 var conf = Math.round((scanData.confidence && scanData.confidence.overall || 0) * 100);
                 var engineCount = (scanData.engines || []).filter(function (en) { return en.success; }).length;
-                var label = isSubscription ? '📋 ' : '✅ ';
-                var msg = label + (scanData.result.vendor || 'Bill') +
+                var label = isSubscription ? '📋 ' : (isCCOT ? '💳 ' : '✅ ');
+                var vendorOrBank = isCCOT
+                    ? (ccotBank || scanData.result.vendor || 'CC')
+                    : (scanData.result.vendor || 'Bill');
+                var msg = label + vendorOrBank +
                     ' · LKR ' + ((typeof window.fmtN === 'function') ? window.fmtN(scanData.result.amount) : scanData.result.amount);
                 if (isSubscription && scanData.result._matchedSub)
                     msg += '\n🔁 Found existing subscription — updates ' + scanData.result._matchedSub.name;
@@ -1262,7 +1380,7 @@
      * 17. PATCH FILE INPUTS to accept PDFs
      * ========================================================================= */
     function patchFileInputs() {
-        var inputs = document.querySelectorAll('input[type="file"][id="e_ai_scan"], input[type="file"][id="ai_chat_scan"], input[type="file"][id="sub_ai_scan"]');
+        var inputs = document.querySelectorAll('input[type="file"][id="e_ai_scan"], input[type="file"][id="ai_chat_scan"], input[type="file"][id="sub_ai_scan"], input[type="file"][id="ccot_ai_scan"]');
         inputs.forEach(function (inp) {
             inp.accept = 'image/*,application/pdf,.pdf';
         });
@@ -1533,7 +1651,8 @@
         var inputs = document.querySelectorAll(
             'input[type="file"][id="e_ai_scan"], ' +
             'input[type="file"][id="ai_chat_scan"], ' +
-            'input[type="file"][id="sub_ai_scan"]'
+            'input[type="file"][id="sub_ai_scan"], ' +
+            'input[type="file"][id="ccot_ai_scan"]'
         );
         inputs.forEach(function (inp) {
             // ALL platforms: include explicit MIME types Chrome/Firefox/Safari prefer
