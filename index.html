@@ -14774,6 +14774,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const result = await _uploadStatementForSharing(statementHTML, l.name);
                 if (cancelled) return;
 
+                // v7.5.7 — bulletproof URL sanitiser at the result level.
+                // Same protection as the Elite Report flow: rewrite any
+                // github.io URL to Vercel BEFORE display/share/save.
+                if (result && result.url && /github\.io/i.test(result.url)) {
+                    const _before = result.url;
+                    result.url = result.url.replace(
+                        /https?:\/\/[^\/\s]*github\.io(?:\/wealthflow)?/gi,
+                        'https://wealthflow-personal.vercel.app'
+                    );
+                    console.log('[v7.5.7] Sanitised Loan URL:', _before, '→', result.url);
+                }
+
                 const shareUrl = result.url;
                 const validityStr = result.expires || (result.days ? result.days + ' days' : '30 days');
 
@@ -18923,6 +18935,20 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
 
                     if (!result || !result.url) {
                         throw new Error("Failed to generate URL");
+                    }
+
+                    // v7.5.7 — bulletproof sanitiser. If any code path
+                    // (backend, legacy cache, redirect chain) returned a
+                    // github.io URL, rewrite it to the canonical Vercel
+                    // domain BEFORE we display, save to history, or
+                    // generate a QR code. Users must NEVER see github.io.
+                    if (result.url && /github\.io/i.test(result.url)) {
+                        const _before = result.url;
+                        result.url = result.url.replace(
+                            /https?:\/\/[^\/\s]*github\.io(?:\/wealthflow)?/gi,
+                            'https://wealthflow-personal.vercel.app'
+                        );
+                        console.log('[v7.5.7] Sanitised Elite URL:', _before, '→', result.url);
                     }
 
                     setProgress(90, 'Finalising…');
