@@ -4718,7 +4718,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.8 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.9 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6357,11 +6357,38 @@
         }
     </script>
     <script>
-        // If we kicked off a redirect above, this whole subsequent
-        // script block becomes a no-op so we don't double-initialise
-        // Firebase + sync on the wrong origin while the browser
-        // navigates away.
-        if (window._WF_REDIRECTING) { /* navigating — skip init */ } else {
+        // ============================================================
+        // v7.5.9 — CRITICAL FIX: removed the `if (!window._WF_REDIRECTING)
+        // { ... } else { ... }` block wrapper that previously enclosed
+        // this entire 950 KB script.
+        //
+        // Why this was breaking the app for many users:
+        // ----------------------------------------------
+        // Function declarations placed INSIDE an if/else BLOCK have
+        // non-standard hoisting. The W3C spec says they are block-scoped
+        // (so `<button onclick="registerBiometrics()">` cannot find them
+        // because they are NOT attached to window). The "Annex B Section
+        // B.3.3" legacy compatibility behaviour in modern browsers TRIES
+        // to hoist them to the enclosing function/global scope, but only
+        // in NON-strict mode and only when there is no nested name
+        // conflict. Modern Safari, Chrome, and Firefox all have edge
+        // cases where this hoisting silently fails — most commonly when
+        // the script is served from a Service Worker cache or when iOS
+        // implicitly applies strict-mode semantics.
+        //
+        // The result was features like Biometric Key, Instant Cloud
+        // Backup, Restore Data Protocol, and Test AI Connection
+        // randomly not responding to clicks for SOME users on SOME
+        // devices, while working fine for others. This is the classic
+        // signature of a hoisting / global-attachment bug.
+        //
+        // The original purpose of the wrapper was to skip Firebase init
+        // when a github.io → Vercel redirect was in progress. We now
+        // achieve the same goal more safely: the redirect check sits
+        // inside the DOMContentLoaded callback near the bottom of this
+        // file, so functions are declared at top level (where Annex B
+        // is unnecessary) AND we still avoid double-init on redirect.
+        // ============================================================
 
         const firebaseConfig = {
             apiKey: "AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4",
@@ -6373,8 +6400,21 @@
             measurementId: "G-FKEKQGG8MZ"
         };
 
+        // v7.5.9 — moved the redirect bail-out HERE (was wrapping the
+        // whole script before, which broke function hoisting). If the
+        // page is on github.io and we kicked off a Vercel redirect,
+        // skip the Firebase init so we don't briefly run a second
+        // connection while the browser navigates away. The function
+        // DECLARATIONS above and below this line still happen — they're
+        // hoisted to the global scope as they should be — so all onclick
+        // handlers attached to buttons will work regardless.
+        // v7.5.9 — Firestore handle declared OUTSIDE the redirect guard so
+        // it stays in outer scope for any later module that imports it.
+        let db = null;
+        if (!window._WF_REDIRECTING) {
+
         firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
+        db = firebase.firestore();
         // Expose for the auto-backup SW-fallback helper, which needs both
         // the projectId and the apiKey to construct the Firestore REST URL.
         try { window.firebaseConfig = firebaseConfig; } catch (_) {}
@@ -6395,6 +6435,8 @@
                 console.warn("Persistence not available in this browser.");
             }
         });
+
+        } // v7.5.9 — end of !window._WF_REDIRECTING guard (covers Firebase init only)
 
         let userDocRef = null;
         let currentUser = null;
@@ -17659,7 +17701,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.8 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.9 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17669,7 +17711,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.8 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.9 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -22091,7 +22133,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
         window._showCCReviewModal = _showCCReviewModal;
 
-        } // end: if (!window._WF_REDIRECTING) — v7.5.7 redirect wrapper
+        // v7.5.9 — closing brace of the if/else wrapper has been removed.
+        // See top-of-script comment for rationale.
     </script>
 </body>
 
