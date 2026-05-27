@@ -3617,11 +3617,6 @@
             margin-left: auto;          /* push to far right of the row */
         }
 
-        @media (max-width: 480px) {
-            /* On narrow phones, action buttons drop to their own line so
-               the wide "📊 Set <Month> amount" pill never crashes into the
-               amount column. The amount keeps its right alignment.
-               v7.5.5 — also add right-padding so action buttons + the
         /* v7.5.6 — BULLETPROOF action chip system for subscription cards.
            Solves the "icons all touching with no gap" problem permanently:
            every chip has its own background fill, 1px border, ≥40px width,
@@ -3674,10 +3669,9 @@
         @media (max-width: 480px) {
             /* On narrow phones, action buttons drop to their own line so
                the wide "📊 Set <Month>" chip never crashes into the amount
-               column. The amount keeps its right alignment.
-               v7.5.5 — right-padding so action buttons + Overdue badge
-               don't slide under the 54px floating AI bot at right:16px.
-               v7.5.6 — kept .sub-act chip styling above for visual clarity. */
+               column. v7.5.5 — right-padding so action buttons + Overdue
+               badge don't slide under the 54px floating AI bot.
+               v7.5.6 — .sub-act chip styling defined above stays in force. */
             .sub-card {
                 padding-right: 84px;       /* 54 fab + 16 right + 14 gap */
             }
@@ -3689,7 +3683,7 @@
                 padding-top: 10px;
                 border-top: 1px solid var(--border);
                 flex-wrap: wrap;
-                gap: 10px;                 /* clear gap between chips */
+                gap: 10px;
             }
         }
 
@@ -4724,7 +4718,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.7 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.8 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -17665,7 +17659,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.7 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.8 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17675,7 +17669,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.7 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.8 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
