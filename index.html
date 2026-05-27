@@ -68,6 +68,11 @@
          queue. Adds window.wfClassifySms, wfApplyBrainResult, wfFifoReconcile,
          wfRefreshPredictions, wfFxConvert, wfCardRegistry, wfDeviceToken. -->
     <script src="wealthflow-autonomous.js" defer></script>
+    <!-- v7.6.2 — AutoPilot: zero-setup automation. Auto-discovers cards from
+         transaction history, detects hidden subscriptions, surfaces insights
+         as toasts, and powers the one-tap Setup Wizard. Loads AFTER the
+         autonomous module since it depends on wfCardRegistry, wfRefreshPredictions. -->
+    <script src="wealthflow-autopilot.js" defer></script>
 
     
 
@@ -4723,7 +4728,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.6.1 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.6.2 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -4762,6 +4767,11 @@
 
                 <div class="page active" id="page-dashboard">
                     <div class="g5" id="dashStats" style="margin-bottom:16px;"></div>
+
+                    <!-- v7.6.2 — AutoPilot Tile: live insights, forecast summary,
+                         and one-tap actions, rendered by renderAutoPilotTile()
+                         on every dashboard refresh. -->
+                    <div id="autopilotTile" style="margin-bottom:16px;"></div>
 
                     <div class="golden-frame">
                         <div class="gf-header">
@@ -12571,6 +12581,245 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             });
         }
         window.forceDrainQueue = forceDrainQueue;
+
+        // ════════════════════════════════════════════════════════════════════
+        // v7.6.2 — AutoPilot Dashboard Tile
+        // Renders a live insights card on the Dashboard. No setup needed —
+        // if predictions or recurring data exist, the tile shows them.
+        // If they don't, the tile shows a "Run AutoPilot" call-to-action.
+        // ════════════════════════════════════════════════════════════════════
+        function renderAutoPilotTile() {
+            const host = document.getElementById('autopilotTile');
+            if (!host) return;
+            const s = (window.DB && DB.getObj && DB.getObj('settings')) || {};
+            const p = s.lastPredictions || null;
+            const reg = (window.wfCardRegistry && wfCardRegistry.get()) || {};
+            const cardCount = Object.keys(reg).length;
+
+            // Empty-state: user hasn't run AutoPilot yet
+            if (!p && cardCount === 0) {
+                host.innerHTML = `
+                    <div style="background:linear-gradient(135deg, rgba(16,185,129,0.10), rgba(212,175,55,0.05), var(--card)); border:1px solid rgba(16,185,129,0.4); border-radius:14px; padding:18px; position:relative; overflow:hidden;">
+                        <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle, rgba(16,185,129,0.20), transparent 70%);pointer-events:none;"></div>
+                        <div style="display:flex;align-items:center;gap:14px;position:relative;">
+                            <div style="font-size:38px;">🤖</div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-weight:800;font-size:15px;color:var(--green);">AutoPilot is ready</div>
+                                <div style="font-size:12px;color:var(--text3);margin-top:3px;">One tap and WealthFlow will auto-discover your cards, find hidden subscriptions, and set up SMS auto-logging.</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" style="width:100%;margin-top:14px;font-weight:700;background:linear-gradient(135deg,var(--green),var(--accent));box-shadow:0 4px 16px rgba(16,185,129,0.25);" onclick="openAutoPilotWizard()">
+                            🚀 Launch AutoPilot
+                        </button>
+                    </div>`;
+                return;
+            }
+
+            // Live state: show forecast + insights
+            const f = p && p.forecast;
+            const insights = (p && p.insights) || [];
+            const recurring = (p && p.recurring) || [];
+
+            let forecastHtml = '';
+            if (f && f.ok && f.future && f.future.length) {
+                const last = f.future[f.future.length - 1];
+                const trend = last.p50 >= 0 ? 'green' : 'red';
+                const arrow = last.p50 >= 0 ? '📈' : '📉';
+                forecastHtml = `
+                    <div style="background:var(--bg2);border-radius:10px;padding:12px;margin-bottom:10px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <div style="font-size:22px;">${arrow}</div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">${f.horizon_months}-month wealth outlook</div>
+                                <div style="font-family:var(--mono);font-weight:800;color:var(--${trend});font-size:18px;line-height:1.1;margin-top:2px;">
+                                    LKR ${last.p50.toLocaleString()}
+                                </div>
+                                <div style="font-size:10.5px;color:var(--text3);margin-top:2px;">P5 ${last.p5.toLocaleString()} … P95 ${last.p95.toLocaleString()}</div>
+                            </div>
+                            <button class="btn btn-ghost btn-sm" onclick="openPredictionsModal()" style="font-size:11px;flex-shrink:0;">Details →</button>
+                        </div>
+                    </div>`;
+            }
+
+            // High/medium severity insights only — limit to 2 so tile stays compact
+            const topInsights = insights.filter(i => i.severity === 'high' || i.severity === 'medium').slice(0, 2);
+            let insightsHtml = '';
+            if (topInsights.length) {
+                insightsHtml = topInsights.map(i => `
+                    <div style="background:var(--bg2);border-left:3px solid ${i.severity === 'high' ? 'var(--red)' : 'var(--accent)'};border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px;">
+                        <div style="font-weight:700;">${i.icon} ${i.title}</div>
+                        <div style="color:var(--text3);margin-top:2px;font-size:11.5px;line-height:1.4;">${i.body}</div>
+                    </div>`).join('');
+            }
+
+            // Recurring-detection CTA
+            let recurringCta = '';
+            if (recurring.length > 0) {
+                recurringCta = `
+                    <div style="background:rgba(212,175,55,0.06);border:1px dashed rgba(212,175,55,0.4);border-radius:8px;padding:10px;margin-top:6px;display:flex;align-items:center;gap:10px;">
+                        <div style="font-size:18px;">🔁</div>
+                        <div style="flex:1;min-width:0;font-size:12px;">
+                            <b>${recurring.length} hidden subscription${recurring.length > 1 ? 's' : ''}</b> detected
+                            <div style="color:var(--text3);font-size:11px;margin-top:1px;">Charges that repeat monthly but aren't tracked.</div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" style="flex-shrink:0;" onclick="wfAutoAddRecurring().then(()=>renderAutoPilotTile())">Auto-Add</button>
+                    </div>`;
+            }
+
+            host.innerHTML = `
+                <div style="background:linear-gradient(135deg, rgba(16,185,129,0.06), var(--card)); border:1px solid var(--border2); border-radius:14px; padding:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                        <div style="font-size:20px;">🤖</div>
+                        <div style="flex:1;">
+                            <div style="font-weight:800;font-size:13px;">AutoPilot Live</div>
+                            <div style="font-size:10.5px;color:var(--text3);">${cardCount} card${cardCount === 1 ? '' : 's'} · ${recurring.length} recurring · last refresh ${p && p.refreshed_at ? _timeAgo(p.refreshed_at) : 'pending'}</div>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" onclick="wfRefreshPredictions(12).then(()=>renderAutoPilotTile())" title="Refresh forecast" style="font-size:14px;">🔄</button>
+                    </div>
+                    ${forecastHtml}
+                    ${insightsHtml}
+                    ${recurringCta}
+                </div>`;
+        }
+        window.renderAutoPilotTile = renderAutoPilotTile;
+
+        function _timeAgo(ts) {
+            if (!ts) return 'never';
+            const d = Date.now() - ts;
+            if (d < 60000) return 'just now';
+            if (d < 3600000) return Math.round(d / 60000) + 'm ago';
+            if (d < 86400000) return Math.round(d / 3600000) + 'h ago';
+            return Math.round(d / 86400000) + 'd ago';
+        }
+        window._timeAgo = _timeAgo;
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // v7.6.2 — AutoPilot Wizard
+        // Single-screen guided setup. Runs auto-discovery FIRST, then shows
+        // results + a QR code for the SMS Forwarder. The user never types,
+        // only confirms.
+        // ════════════════════════════════════════════════════════════════════
+        async function openAutoPilotWizard() {
+            const { ov, close } = _buildOverlay(`
+                <div class="md-title" style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:24px;">🚀</span>
+                    <span>AutoPilot Setup</span>
+                </div>
+                <div id="_apBody">
+                    <div style="text-align:center;padding:30px 0;">
+                        <div style="font-size:40px;margin-bottom:10px;">⚙️</div>
+                        <div style="font-weight:700;font-size:14px;">Running autonomous setup…</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:6px;">Scanning your transaction history</div>
+                    </div>
+                </div>`, { maxWidth: 580 });
+            window._apClose = close;
+
+            // ── Phase 1: Auto-discover cards from history ──
+            await new Promise(r => setTimeout(r, 400));
+            const disco = (window.wfAutoDiscoverCards && wfAutoDiscoverCards()) || { discovered: 0, total: 0 };
+
+            // ── Phase 2: Run predictions for hidden subs detection ──
+            $('_apBody').innerHTML = `
+                <div style="text-align:center;padding:30px 0;">
+                    <div style="font-size:40px;margin-bottom:10px;">🔮</div>
+                    <div style="font-weight:700;font-size:14px;">Analysing spending patterns…</div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:6px;">Detecting hidden subscriptions &amp; anomalies</div>
+                </div>`;
+            await new Promise(r => setTimeout(r, 400));
+            let predictions = { recurring: [], insights: [] };
+            try {
+                predictions = (window.wfRefreshPredictions && await wfRefreshPredictions(12)) || predictions;
+            } catch (_) {}
+            const recurringCount = (predictions.recurring || []).length;
+
+            // ── Phase 3: Detect currency ──
+            const primaryCur = (window.wfPrimaryCurrency && wfPrimaryCurrency()) || 'LKR';
+
+            // ── Phase 4: Build the SMS Forwarder QR ──
+            try { await _loadQRLib(); } catch (_) {}
+            const tok = (window.wfDeviceToken && wfDeviceToken.get()) || '';
+            const webhook = location.origin + '/api/sms-ingest';
+            // SMS Forwarder app deep-link payload (HTTP rule + body template + header)
+            const smsForwarderConfig = JSON.stringify({
+                v: 1,
+                type: 'wealthflow_sms_setup',
+                url: webhook,
+                method: 'POST',
+                headers: { 'x-wf-device-token': tok, 'Content-Type': 'application/json' },
+                body: '{"sms":"%message%","sender":"%sender%","received_at_ms":%sentstamp%,"device_id":"phone1"}'
+            });
+            const qrSvg = _generateQRCodeSVG(smsForwarderConfig, 200);
+
+            // ── Phase 5: Render results ──
+            const cards = (window.wfCardRegistry && wfCardRegistry.get()) || {};
+            const cardList = Object.values(cards);
+            const totalCards = cardList.length;
+
+            $('_apBody').innerHTML = `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+                    <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:10px;padding:14px;text-align:center;">
+                        <div style="font-size:24px;">💳</div>
+                        <div style="font-size:22px;font-weight:800;color:var(--green);margin:4px 0;">${totalCards}</div>
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">cards mapped</div>
+                        ${disco.discovered > 0 ? `<div style="font-size:10px;color:var(--green);margin-top:4px;">+${disco.discovered} auto-discovered</div>` : ''}
+                    </div>
+                    <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.3);border-radius:10px;padding:14px;text-align:center;">
+                        <div style="font-size:24px;">🔁</div>
+                        <div style="font-size:22px;font-weight:800;color:var(--accent);margin:4px 0;">${recurringCount}</div>
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">recurring found</div>
+                    </div>
+                </div>
+
+                ${recurringCount > 0 ? `
+                    <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                        <div style="font-weight:700;font-size:13px;margin-bottom:8px;">🔁 Hidden subscriptions detected</div>
+                        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">These charges repeat monthly but aren't in your Subscriptions tab yet.</div>
+                        ${(predictions.recurring || []).slice(0, 4).map(r => `
+                            <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12.5px;">
+                                <span>•</span>
+                                <span style="flex:1;">${r.name}</span>
+                                <span style="font-family:var(--mono);font-weight:700;">${primaryCur} ${Math.round(r.amount).toLocaleString()}</span>
+                            </div>`).join('')}
+                        <button class="btn btn-primary btn-sm" style="width:100%;margin-top:10px;" onclick="wfAutoAddRecurring().then(()=>_apRefresh())">
+                            ✨ Auto-Add All as Subscriptions
+                        </button>
+                    </div>
+                ` : ''}
+
+                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="font-weight:700;font-size:13px;margin-bottom:8px;">📲 Connect your phone (one-time)</div>
+                    <div style="font-size:12px;color:var(--text3);margin-bottom:12px;">
+                        Install <b>"SMS Forwarder"</b> from the Play Store, then scan this QR with the app's import-config feature. Every bank SMS will then auto-log into WealthFlow.
+                    </div>
+                    <div style="display:flex;gap:14px;align-items:center;">
+                        <div style="background:white;padding:8px;border-radius:8px;flex-shrink:0;">
+                            ${qrSvg || '<div style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#999;">QR loading…</div>'}
+                        </div>
+                        <div style="flex:1;min-width:0;font-size:11px;color:var(--text3);line-height:1.6;">
+                            <div style="font-weight:700;color:var(--text2);margin-bottom:6px;">No SMS Forwarder?</div>
+                            Just use the <b>📋 Paste-SMS Tester</b> in Advanced tools — you can manually paste any bank SMS and it auto-logs.
+                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:10px;" onclick="navigator.clipboard.writeText('${webhook}').then(()=>notify('Webhook URL copied','success'))">
+                                📋 Copy webhook URL
+                            </button>
+                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:6px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">
+                                🔑 Copy device token
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="background:rgba(16,185,129,0.05);border-left:3px solid var(--green);border-radius:6px;padding:10px 12px;font-size:12px;line-height:1.6;margin-bottom:14px;">
+                    <b style="color:var(--green);">✅ AutoPilot is now active.</b> The autonomous brain will classify every transaction it sees, FIFO-reconcile your CC payments, and refresh your 12-month forecast in the background. You can close this window — everything runs by itself.
+                </div>
+
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" style="flex:1;" onclick="_apClose()">✓ Done</button>
+                    <button class="btn btn-ghost btn-sm" onclick="openCardRegistryModal();_apClose();">Review Cards</button>
+                </div>`;
+            window._apRefresh = () => openAutoPilotWizard();
+        }
+        window.openAutoPilotWizard = openAutoPilotWizard;
         // ════════════════════════════════════════════════════════════════════
 
         // Balance Tracker clear helpers (FIXES Issue 1)
@@ -17064,6 +17313,10 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== DASHBOARD AUTOMATION ====================
         let dashChartInst = null, dashPieInst = null;
         function renderDash() {
+            // v7.6.2 — render AutoPilot tile at the top of the dashboard.
+            // Defensive: if the tile renderer isn't loaded yet (script defer
+            // race), skip silently and let the next dashboard render pick it up.
+            try { if (typeof renderAutoPilotTile === 'function') renderAutoPilotTile(); } catch (_) {}
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
             const incData = [], expData = [], netData = [];
@@ -17696,71 +17949,72 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════════════
-             v7.6.1 — Autonomous Robotic Financial OS
+             v7.6.2 — AutoPilot: One-Tap Robotic Automation
              ═══════════════════════════════════════════════════════════════════ -->
-        <div class="settings-section" style="background: linear-gradient(145deg, rgba(16,185,129,0.06), var(--card)); border: 1px solid rgba(16,185,129,0.4);">
-            <div class="settings-title" style="color:var(--green);">🤖 Robotic Financial Automation</div>
-            <div style="font-size:12.5px;color:var(--text3);line-height:1.6;margin-bottom:14px;">
-                When configured, WealthFlow auto-classifies every bank SMS into the
-                correct module — no manual entry needed. Credit-card payments
-                trigger an oldest-first (FIFO) clearance of outstanding charges.
-                Works fully offline (queues + retries) and includes a predictive
-                wealth engine that forecasts 12 months ahead.
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(16,185,129,0.08), rgba(212,175,55,0.04), var(--card)); border: 1px solid rgba(16,185,129,0.5); position:relative; overflow:hidden;">
+            <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;background:radial-gradient(circle, rgba(16,185,129,0.25), transparent 70%);pointer-events:none;"></div>
+            <div class="settings-title" style="color:var(--green);">🤖 AutoPilot — Robotic Financial OS</div>
+            <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:14px;">
+                One tap and WealthFlow runs itself. AutoPilot scans your existing
+                transactions, auto-maps your cards, surfaces hidden subscriptions,
+                and sets up real-time SMS auto-logging — all without you typing
+                a single thing.
             </div>
 
-            <!-- Card Registry -->
-            <div class="setting-row" style="border-top:1px solid var(--border);padding-top:14px;">
-                <div class="setting-info" style="flex:1;min-width:0;">
-                    <div class="setting-label">💳 Card &amp; Account Registry</div>
-                    <div class="setting-desc">Map your card &amp; account last-4 digits to bank + type. Required so the autonomous brain knows which module to route each SMS to.</div>
+            <!-- ONE TAP SETUP -->
+            <div style="background:var(--bg2);border:2px solid rgba(16,185,129,0.4);border-radius:12px;padding:16px;margin-bottom:14px;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="font-size:32px;">🚀</div>
+                    <div style="flex:1;">
+                        <div style="font-weight:800;font-size:15px;">Launch AutoPilot</div>
+                        <div style="font-size:12px;color:var(--text3);margin-top:2px;">Auto-discovers cards · scans for subscriptions · sets up SMS sync</div>
+                    </div>
                 </div>
-                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="openCardRegistryModal()">⚙️ Manage Cards</button>
+                <button class="btn btn-primary" style="width:100%;margin-top:12px;font-weight:700;background:linear-gradient(135deg,var(--green),var(--accent));box-shadow:0 4px 20px rgba(16,185,129,0.3);" onclick="openAutoPilotWizard()">
+                    ✨ Start AutoPilot Setup
+                </button>
             </div>
 
-            <!-- Device Token / SMS Webhook -->
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info" style="flex:1;min-width:0;">
-                    <div class="setting-label">📲 SMS Forwarder Token</div>
-                    <div class="setting-desc">Paste this token into the SMS Forwarder app on your phone. It authenticates incoming bank SMS messages to your account.</div>
+            <details style="margin-top:8px;">
+                <summary style="cursor:pointer;font-size:12px;color:var(--text3);user-select:none;padding:8px 4px;">⚙️ Advanced / Manual tools</summary>
+                <div style="padding:12px 0 0 0;">
+                    <div class="setting-row" style="border-top:1px solid var(--border);padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">💳 Card Registry</div>
+                            <div class="setting-desc">Manually edit auto-discovered cards or add new ones.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="openCardRegistryModal()">Manage</button>
+                    </div>
+                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">📋 Paste-SMS Tester</div>
+                            <div class="setting-desc">Paste a bank SMS to see how AutoPilot would route it.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="openPasteSmsModal()">Test</button>
+                    </div>
+                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">🔮 Predictions &amp; Insights</div>
+                            <div class="setting-desc">12-month forecast, anomaly detection, hidden charges.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="openPredictionsModal()">View</button>
+                    </div>
+                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">💱 Live FX Converter</div>
+                            <div class="setting-desc">LKR / USD / EUR / GBP / INR with live rates.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="openFxModal()">Open</button>
+                    </div>
+                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">🔄 Force Sync Queue</div>
+                            <div class="setting-desc">Drain any pending SMS that failed to sync.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="forceDrainQueue()">Drain</button>
+                    </div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="openDeviceTokenModal()">🔑 Show Token</button>
-            </div>
-
-            <!-- Manual SMS classify -->
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info" style="flex:1;min-width:0;">
-                    <div class="setting-label">📋 Paste-SMS Classify</div>
-                    <div class="setting-desc">Paste any bank SMS to see exactly how the autonomous brain would route it. Great for testing.</div>
-                </div>
-                <button class="btn btn-secondary btn-sm" onclick="openPasteSmsModal()">🧪 Classify SMS</button>
-            </div>
-
-            <!-- Predictive Wealth -->
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info" style="flex:1;min-width:0;">
-                    <div class="setting-label">🔮 Predictive Wealth Engine</div>
-                    <div class="setting-desc">Detects anomalies, finds hidden recurring charges, and forecasts your cashflow 6-12 months ahead via Monte Carlo simulation.</div>
-                </div>
-                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="openPredictionsModal()">📊 View Forecast</button>
-            </div>
-
-            <!-- FX Engine -->
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info" style="flex:1;min-width:0;">
-                    <div class="setting-label">💱 Live FX Converter</div>
-                    <div class="setting-desc">Convert between LKR / USD / EUR / GBP / INR using live rates with 30-minute caching.</div>
-                </div>
-                <button class="btn btn-secondary btn-sm" onclick="openFxModal()">🌐 Open FX</button>
-            </div>
-
-            <!-- Pending queue status -->
-            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info" style="flex:1;min-width:0;">
-                    <div class="setting-label">🔄 Self-Healing Queue</div>
-                    <div class="setting-desc">If your phone is offline when a bank SMS arrives, it's encrypted and queued locally. WealthFlow drains the queue automatically when your connection returns.</div>
-                </div>
-                <button class="btn btn-secondary btn-sm" onclick="forceDrainQueue()">⚡ Force Sync</button>
-            </div>
+            </details>
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
@@ -18110,7 +18364,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.1 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.2 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -18120,7 +18374,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.6.1 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.6.2 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
