@@ -4718,7 +4718,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.9 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.6.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -11218,9 +11218,39 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             const _newUid = user ? user.uid : null;
                             if (!isInitialised) {
                                 // Initial boot path — original one-shot semantics
-                                if (_authCallbackFired) return;
-                                _authCallbackFired = true;
-                                clearTimeout(authTimeout);
+                                if (_authCallbackFired) {
+                                    // v7.6.0 — fix Google-sign-in-stuck-on-Welcome bug.
+                                    //
+                                    // The signed-out branch of this listener
+                                    // (line further down) renders the Welcome /
+                                    // Google sign-in screen but deliberately
+                                    // does NOT set isInitialised = true (no
+                                    // data has been loaded yet). That left the
+                                    // listener stuck in initial-boot mode with
+                                    // _authCallbackFired = true. When the user
+                                    // then clicked "Sign in with Google" and
+                                    // the popup resolved, this listener fired
+                                    // AGAIN with the real user — but the old
+                                    // code did `if (_authCallbackFired) return;`
+                                    // so the sign-in was silently dropped. The
+                                    // user had to refresh the page for the new
+                                    // auth state to take effect.
+                                    //
+                                    // Fix: if a REAL user has appeared and it's
+                                    // a different uid than we last processed,
+                                    // promote this event to processing. The
+                                    // authTimeout was already cleared by the
+                                    // first listener call so there's no race.
+                                    if (user && _newUid !== window._lastProcessedUid) {
+                                        console.log('[AUTH] 🔓 Promoting deferred sign-in to processing (initial-boot path)');
+                                        // fall through to processing block below
+                                    } else {
+                                        return;
+                                    }
+                                } else {
+                                    _authCallbackFired = true;
+                                    clearTimeout(authTimeout);
+                                }
                             } else {
                                 // Post-boot path — idempotent re-entry
                                 if (window._lastProcessedUid === _newUid) {
@@ -11542,6 +11572,15 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                 clearInterval(pInt);
                                 if (fillEl) fillEl.style.width = '100%';
                                 if (splashText) splashText.textContent = "Authentication Required";
+
+                                // v7.6.0 — flip isInitialised here so the NEXT
+                                // listener call (post-sign-in) goes through the
+                                // clean post-boot path with proper _lastProcessedUid
+                                // change detection instead of relying on the
+                                // safety-net promotion above. The post-boot path
+                                // is the correct semantic home for sign-in
+                                // events once the Welcome screen is on display.
+                                isInitialised = true;
 
                                 // Signal failsafe: boot completed
                                 if (window.__wfClearFailsafe) window.__wfClearFailsafe();
@@ -17701,7 +17740,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.9 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.0 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17711,7 +17750,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.9 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.6.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
