@@ -6413,6 +6413,20 @@
             // needs a second Google login. The token is captured below.
             provider.addScope('https://www.googleapis.com/auth/drive.file');
 
+            // v7.5.7 — show splash with feedback while Firebase auth state
+            // settles. Previously the popup closed and the app sat on the
+            // Welcome screen until onAuthStateChanged fired — which was a
+            // confusing "did anything happen?" moment for the user.
+            try {
+                const splashText = document.getElementById('spStatus');
+                const splash = document.getElementById('splash');
+                if (splash) {
+                    splash.classList.remove('hide');
+                    splash.style.display = '';
+                }
+                if (splashText) splashText.textContent = 'Signing you in…';
+            } catch (_) {}
+
             // Try popup first (works on desktop), fall back to redirect (works on mobile/PWA)
             firebase.auth().signInWithPopup(provider).then(result => {
                 try {
@@ -6427,11 +6441,24 @@
                         console.log('[Auth] Drive token captured at sign-in — no second login needed');
                     }
                 } catch (e) { console.warn('[Auth] could not capture Drive token:', e && e.message); }
+                // v7.5.7 — onAuthStateChanged will now process this sign-in
+                // event automatically (the listener is no longer blocked by
+                // the _authCallbackFired one-shot guard after initial boot).
+                // No further action needed here — the listener will run the
+                // cloud sync + finishBoot pipeline and route the user to the
+                // PIN screen.
+                console.log('[Auth] ✅ Popup sign-in complete — listener will route to PIN screen');
             }).catch(err => {
                 console.warn("Popup blocked or failed, trying redirect...", err.code);
                 if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
                     firebase.auth().signInWithRedirect(provider);
                 } else {
+                    // v7.5.7 — restore the auth screen if sign-in failed so
+                    // the user isn't stuck on the splash spinner.
+                    try {
+                        const splash = document.getElementById('splash');
+                        if (splash) splash.classList.add('hide');
+                    } catch (_) {}
                     console.error("Sign-in failed:", err);
                     notify('Sign-in failed: ' + err.message, 'error');
                 }
@@ -11133,9 +11160,42 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         }).catch(() => {});
 
                         firebase.auth().onAuthStateChanged(async (user) => {
-                            if (_authCallbackFired) return; // Timeout already handled it
-                            _authCallbackFired = true;
-                            clearTimeout(authTimeout);
+                            // v7.5.7 — fixed Google-sign-in-not-logging-in bug.
+                            //
+                            // Previous behaviour: _authCallbackFired was a one-shot
+                            // guard. The initial boot's listener call (with user=null)
+                            // set it to true. When the user then clicked Sign in with
+                            // Google and the popup closed successfully, the listener
+                            // fired AGAIN with the real user — but the guard early-
+                            // returned, so the cloud sync + finishBoot pipeline never
+                            // ran. The user was stuck on the Google sign-in screen
+                            // until they manually refreshed the page.
+                            //
+                            // New behaviour: keep the guard ONLY for the initial-boot
+                            // timeout race (so we don't double-finishBoot when both
+                            // the listener AND the 6-second timeout fire near-
+                            // simultaneously). After initial boot has completed, the
+                            // listener accepts subsequent events and processes them
+                            // properly. _lastProcessedUid prevents re-processing the
+                            // SAME user (which would otherwise happen on every
+                            // refresh / cache settle event).
+                            const _newUid = user ? user.uid : null;
+                            if (!isInitialised) {
+                                // Initial boot path — original one-shot semantics
+                                if (_authCallbackFired) return;
+                                _authCallbackFired = true;
+                                clearTimeout(authTimeout);
+                            } else {
+                                // Post-boot path — idempotent re-entry
+                                if (window._lastProcessedUid === _newUid) {
+                                    // Same user as last time → nothing to do
+                                    return;
+                                }
+                                // Different user (or sign-out → sign-in cycle)
+                                console.log('[AUTH] 🔁 Post-boot auth event — uid changed:',
+                                            window._lastProcessedUid, '→', _newUid);
+                            }
+                            window._lastProcessedUid = _newUid;
 
                             if (user) {
                                 currentUser = user;
@@ -11519,6 +11579,51 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         };
 
         function finishBoot() {
+            // v7.5.7 — idempotency guard. After the FIRST successful boot,
+            // subsequent calls (which happen when the user signs in with
+            // Google after the offline boot screen showed) must NOT re-bind
+            // theme listeners, re-init the backup reminder, or re-render
+            // the splash. They just route to the right auth view based on
+            // whether the freshly-signed-in user has a PIN yet.
+            if (window._finishBootCompletedOnce) {
+                try {
+                    const auth = DB.getObj('auth');
+                    // Show the authScreen if it's hidden (the Welcome/Google
+                    // screen was its previous content — now we want PIN entry)
+                    try { $('splash').classList.add('hide'); } catch (_) {}
+                    try { $('splash').style.display = 'none'; } catch (_) {}
+                    try { $('authScreen').classList.add('show'); } catch (_) {}
+
+                    // Update sidebar with the newly-signed-in user's info
+                    if (currentUser) {
+                        try {
+                            const displayName = currentUser.displayName || 'WealthFlow User';
+                            const photoURL = currentUser.photoURL || '';
+                            if ($('sbUser')) {
+                                const initial = (displayName.charAt(0) || '👤').toUpperCase();
+                                const avatarHtml = photoURL
+                                    ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
+                                    : `<span class="sb-user-initial">${initial}</span>`;
+                                $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
+                            }
+                            if ($('authLoginSub')) $('authLoginSub').textContent = displayName + ' · Enter your 6-digit PIN';
+                        } catch (_) {}
+                    }
+
+                    if (!auth.pin) {
+                        pinMode = 'setup';
+                        showAuthView('authSetup');
+                    } else {
+                        pinMode = 'login';
+                        showAuthView('authLogin');
+                    }
+                    notify('✅ Signed in with Google — please enter your PIN', 'success');
+                } catch (e) {
+                    console.error('[BOOT] Re-entry finishBoot error:', e);
+                }
+                return;
+            }
+            window._finishBootCompletedOnce = true;
             try {
                 // v7.5.7 — one-time migration of share-history URLs.
                 // Any github.io URL stored in `wf_shared_statements` from
