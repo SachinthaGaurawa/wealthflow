@@ -63,6 +63,11 @@
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
     <script src="wealthflow-ml.js" defer></script>
+    <!-- v7.6.1 — Autonomous Brain client: card registry, FIFO reconciliation,
+         SMS classification, predictive wealth refresh, self-healing offline
+         queue. Adds window.wfClassifySms, wfApplyBrainResult, wfFifoReconcile,
+         wfRefreshPredictions, wfFxConvert, wfCardRegistry, wfDeviceToken. -->
+    <script src="wealthflow-autonomous.js" defer></script>
 
     
 
@@ -4718,7 +4723,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.6.0 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.6.1 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -12271,6 +12276,303 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             triggerHaptic('light');
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // v7.6.1 — Robotic Automation modals
+        // Six handlers that pair with the new "🤖 Robotic Financial Automation"
+        // settings section. Each one builds its overlay dynamically so we
+        // don't bloat the static HTML.
+        // ════════════════════════════════════════════════════════════════════
+
+        function _buildOverlay(innerHtml, opts) {
+            opts = opts || {};
+            const ov = document.createElement('div');
+            ov.className = 'mo';
+            ov.style.zIndex = String(opts.zIndex || 9999);
+            ov.innerHTML = `<div class="mc" style="max-width:${opts.maxWidth || 540}px;">${innerHtml}</div>`;
+            document.body.appendChild(ov);
+            requestAnimationFrame(() => ov.classList.add('open'));
+            const close = () => {
+                ov.classList.remove('open');
+                setTimeout(() => ov.remove(), 200);
+            };
+            ov.addEventListener('click', e => { if (e.target === ov) close(); });
+            return { ov, close };
+        }
+
+        function openCardRegistryModal() {
+            const reg = (window.wfCardRegistry && wfCardRegistry.get()) || {};
+            const entries = Object.values(reg).sort((a, b) => (a.last4 || '').localeCompare(b.last4 || ''));
+            const rowsHtml = entries.length ? entries.map(e => `
+                <div style="display:flex;gap:8px;align-items:center;padding:10px;background:var(--bg2);border-radius:8px;margin-bottom:6px;">
+                    <span style="font-family:var(--mono);font-weight:800;color:var(--accent);font-size:14px;">•••${e.last4}</span>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:600;font-size:13px;">${e.name || '(unnamed)'}</div>
+                        <div style="font-size:11px;color:var(--text3);">${e.bank || '?'} · ${e.type || '?'}</div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" onclick="_cardEdit('${e.last4}')">✏️</button>
+                    <button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="_cardDelete('${e.last4}')">🗑️</button>
+                </div>`).join('') : '<div style="padding:14px;color:var(--text3);text-align:center;">No cards mapped yet — add one below.</div>';
+
+            const { close } = _buildOverlay(`
+                <div class="md-title">💳 Card &amp; Account Registry</div>
+                <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px;">
+                    The autonomous brain uses these mappings to know which module each SMS should route to.
+                    A debit on a credit card → CC One-Time. A debit on a regular account → Expenses.
+                    A credit on a credit card → triggers FIFO reconciliation.
+                </div>
+                <div id="_cardRegList" style="max-height:260px;overflow-y:auto;margin-bottom:14px;">${rowsHtml}</div>
+                <div style="border-top:1px solid var(--border);padding-top:14px;">
+                    <div style="font-weight:700;margin-bottom:10px;">➕ Add / Update Card</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <input id="_cr_last4" class="fi" maxlength="4" placeholder="Last 4 digits" inputmode="numeric">
+                        <input id="_cr_name"  class="fi" placeholder='Card nickname (e.g. "Sampath Plat")'>
+                        <select id="_cr_bank" class="fi">
+                            <option value="">-- Bank --</option>
+                            <option value="ComBank">ComBank</option>
+                            <option value="HNB">HNB</option>
+                            <option value="Sampath">Sampath</option>
+                            <option value="NTB">NTB</option>
+                            <option value="Seylan">Seylan</option>
+                            <option value="DFCC">DFCC</option>
+                            <option value="NDB">NDB</option>
+                            <option value="BOC">BOC</option>
+                            <option value="Peoples">People's Bank</option>
+                            <option value="PanAsia">Pan Asia</option>
+                            <option value="Union">Union</option>
+                            <option value="StanChart">StanChart</option>
+                            <option value="AMEX">American Express</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <select id="_cr_type" class="fi">
+                            <option value="">-- Type --</option>
+                            <option value="credit_card">Credit Card</option>
+                            <option value="debit_card">Debit Card</option>
+                            <option value="bank_account">Bank Account</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px;">
+                        <button class="btn btn-primary" style="flex:1;" onclick="_cardSave()">💾 Save Card</button>
+                        <button class="btn btn-ghost" style="flex:1;" onclick="_cardCancel()">Cancel</button>
+                    </div>
+                </div>`, { maxWidth: 560 });
+            window._cardCancel = close;
+            window._cardEdit = (l4) => {
+                const e = wfCardRegistry.get()[l4];
+                if (!e) return;
+                $('_cr_last4').value = e.last4;
+                $('_cr_name').value  = e.name || '';
+                $('_cr_bank').value  = e.bank || '';
+                $('_cr_type').value  = e.type || '';
+            };
+            window._cardDelete = (l4) => {
+                showConfirm('🗑️', 'Remove card?', `•••${l4} will be unmapped.`, 'btn-danger', 'Remove', () => {
+                    wfCardRegistry.delete(l4);
+                    close();
+                    openCardRegistryModal();
+                });
+            };
+            window._cardSave = () => {
+                const last4 = $('_cr_last4').value.trim();
+                const name  = $('_cr_name').value.trim();
+                const bank  = $('_cr_bank').value;
+                const type  = $('_cr_type').value;
+                if (!/^\d{4}$/.test(last4)) { notify('Last 4 must be exactly 4 digits', 'error'); return; }
+                if (!bank || !type) { notify('Bank and type are required', 'error'); return; }
+                wfCardRegistry.upsert(last4, { name, bank, type });
+                close();
+                openCardRegistryModal();
+            };
+        }
+        window.openCardRegistryModal = openCardRegistryModal;
+
+        function openDeviceTokenModal() {
+            const tok = wfDeviceToken.get();
+            const webhook = location.origin + '/api/sms-ingest';
+            const { close } = _buildOverlay(`
+                <div class="md-title">🔑 SMS Forwarder Token</div>
+                <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px;">
+                    Install <b>"SMS Forwarder"</b> from the Play Store on your phone, then add a new rule:
+                </div>
+                <ol style="font-size:13px;line-height:1.7;padding-left:20px;margin-bottom:14px;">
+                    <li>Sender filter: leave blank (forward all SMS) or list your bank sender IDs</li>
+                    <li>Forward via: <b>HTTP POST (JSON)</b></li>
+                    <li>URL: <code style="background:var(--bg2);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:11px;word-break:break-all;">${webhook}</code></li>
+                    <li>Headers: <code style="background:var(--bg2);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:11px;">x-wf-device-token: ${tok}</code></li>
+                    <li>JSON body template: <pre style="background:var(--bg2);padding:8px;border-radius:6px;font-family:var(--mono);font-size:11px;margin-top:4px;overflow-x:auto;">{ "sms": "%message%",
+  "sender": "%sender%",
+  "received_at_ms": %sentstamp%,
+  "device_id": "phone1" }</pre></li>
+                </ol>
+                <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.4);border-radius:8px;padding:12px;margin-bottom:14px;">
+                    <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:4px;">YOUR DEVICE TOKEN</div>
+                    <div style="font-family:var(--mono);font-size:12px;word-break:break-all;user-select:all;">${tok}</div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" style="flex:1;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">📋 Copy Token</button>
+                    <button class="btn btn-ghost" style="flex:1;" onclick="_rotateTok()">🔄 Rotate</button>
+                    <button class="btn btn-ghost" onclick="_dtClose()">Close</button>
+                </div>`, { maxWidth: 580 });
+            window._dtClose = close;
+            window._rotateTok = () => {
+                showConfirm('🔄', 'Rotate token?', 'Old token stops working immediately. You\'ll need to update the SMS Forwarder rule on your phone.', 'btn-danger', 'Rotate', () => {
+                    wfDeviceToken.rotate();
+                    close();
+                    openDeviceTokenModal();
+                });
+            };
+        }
+        window.openDeviceTokenModal = openDeviceTokenModal;
+
+        function openPasteSmsModal() {
+            const { close } = _buildOverlay(`
+                <div class="md-title">🧪 Paste-SMS Classifier</div>
+                <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px;">
+                    Paste any bank SMS below. The autonomous brain will parse, resolve the merchant, and route it to the right module.
+                </div>
+                <textarea id="_ps_body" class="fi" rows="5" style="width:100%;font-family:var(--mono);font-size:12px;" placeholder="e.g. Your A/c ...1234 has been debited LKR 2,450.00 at KEELLS SUPER on 17/05/2026 12:34. Ref TXN789456."></textarea>
+                <input id="_ps_sender" class="fi" style="margin-top:8px;" placeholder='Sender ID (e.g. "ComBank")' value="ComBank">
+                <div id="_ps_result" style="margin-top:12px;font-size:12.5px;"></div>
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="btn btn-primary" style="flex:1;" onclick="_psRun()">🤖 Classify &amp; Apply</button>
+                    <button class="btn btn-ghost" onclick="_psClose()">Close</button>
+                </div>`, { maxWidth: 600 });
+            window._psClose = close;
+            window._psRun = async () => {
+                const body = $('_ps_body').value.trim();
+                if (!body) { notify('Paste an SMS first', 'warn'); return; }
+                const sender = $('_ps_sender').value.trim() || 'manual';
+                $('_ps_result').innerHTML = '<div style="padding:10px;color:var(--text3);">🤖 Brain thinking…</div>';
+                const res = await wfClassifySms(body, { sender });
+                if (res.ok && res.module) {
+                    $('_ps_result').innerHTML = `<div style="padding:12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.4);border-radius:8px;">
+                        <div style="font-weight:700;color:var(--green);margin-bottom:6px;">✅ Logged to ${res.module}</div>
+                        <div style="font-size:11px;color:var(--text3);">Re-paste to test more SMS.</div>
+                    </div>`;
+                } else {
+                    $('_ps_result').innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.4);border-radius:8px;color:var(--red);">
+                        ${res.reason || res.error || 'Could not classify this SMS'}
+                    </div>`;
+                }
+            };
+        }
+        window.openPasteSmsModal = openPasteSmsModal;
+
+        function openPredictionsModal() {
+            const { close } = _buildOverlay(`
+                <div class="md-title">🔮 Predictive Wealth Engine</div>
+                <div id="_pwBody" style="font-size:13px;line-height:1.6;">Loading…</div>
+                <div style="display:flex;gap:8px;margin-top:14px;">
+                    <button class="btn btn-secondary" onclick="_pwRefresh()">🔄 Refresh Now</button>
+                    <button class="btn btn-ghost" onclick="_pwClose()">Close</button>
+                </div>`, { maxWidth: 620 });
+            window._pwClose = close;
+            const render = (data) => {
+                if (!data || !data.ok) {
+                    $('_pwBody').innerHTML = `<div style="color:var(--text3);">${data && data.error || 'No data available yet. Add some expenses & income, then refresh.'}</div>`;
+                    return;
+                }
+                const f = data.forecast;
+                let html = '';
+                if (f && f.ok) {
+                    const last = f.future[f.future.length - 1];
+                    html += `<div style="background:var(--bg2);padding:12px;border-radius:8px;margin-bottom:12px;">
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">${f.horizon_months}-MONTH OUTLOOK</div>
+                        <div style="font-family:var(--mono);font-weight:800;color:${last.p50 >= 0 ? 'var(--green)' : 'var(--red)'};font-size:18px;">
+                            LKR ${last.p50.toLocaleString()}
+                        </div>
+                        <div style="font-size:11px;color:var(--text3);">Median cumulative net • P5 ${last.p5.toLocaleString()} … P95 ${last.p95.toLocaleString()}</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Probability of going negative within 12 months: <b>${Math.round(f.prob_negative_in_12mo*100)}%</b></div>
+                    </div>`;
+                }
+                if (data.insights && data.insights.length) {
+                    html += '<div style="font-weight:700;margin-bottom:8px;">🧠 Insights</div>';
+                    for (const i of data.insights) {
+                        const color = i.severity === 'high' ? 'rgba(239,68,68,0.4)'
+                                    : i.severity === 'medium' ? 'rgba(245,158,11,0.4)'
+                                    : 'rgba(16,185,129,0.4)';
+                        html += `<div style="padding:10px;background:var(--bg2);border-left:3px solid ${color};border-radius:6px;margin-bottom:8px;">
+                            <div style="font-weight:600;font-size:13px;">${i.icon} ${i.title}</div>
+                            <div style="font-size:12px;color:var(--text2);margin-top:3px;">${i.body}</div>
+                        </div>`;
+                    }
+                }
+                if (data.recurring && data.recurring.length) {
+                    html += `<div style="font-weight:700;margin-top:14px;margin-bottom:8px;">🔁 Detected Recurring Charges</div>`;
+                    for (const r of data.recurring.slice(0, 5)) {
+                        html += `<div style="padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:6px;display:flex;align-items:center;gap:10px;">
+                            <div style="flex:1;"><b>${r.name}</b><br><span style="font-size:11px;color:var(--text3);">${r.category} · every ${r.avg_days_between} days · ${r.occurrences}× seen</span></div>
+                            <div style="font-family:var(--mono);font-weight:700;">LKR ${r.amount.toLocaleString()}</div>
+                        </div>`;
+                    }
+                }
+                if (!html) html = '<div style="color:var(--text3);">No insights yet — add more transaction history.</div>';
+                $('_pwBody').innerHTML = html;
+            };
+            window._pwRefresh = async () => {
+                $('_pwBody').innerHTML = '<div style="color:var(--text3);">🤖 Crunching numbers…</div>';
+                const data = await wfRefreshPredictions(12);
+                render(data);
+            };
+            // Use cached if available
+            const s = DB.getObj('settings') || {};
+            if (s.lastPredictions) render(s.lastPredictions);
+            else _pwRefresh();
+        }
+        window.openPredictionsModal = openPredictionsModal;
+
+        function openFxModal() {
+            const { close } = _buildOverlay(`
+                <div class="md-title">💱 Live FX Converter</div>
+                <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;margin-bottom:12px;">
+                    <div>
+                        <label style="font-size:11px;color:var(--text3);">From</label>
+                        <select id="_fx_from" class="fi"><option>LKR</option><option>USD</option><option>EUR</option><option>GBP</option><option>INR</option><option>JPY</option><option>AUD</option><option>SGD</option></select>
+                    </div>
+                    <div style="font-size:22px;text-align:center;padding-top:18px;">→</div>
+                    <div>
+                        <label style="font-size:11px;color:var(--text3);">To</label>
+                        <select id="_fx_to" class="fi"><option>USD</option><option>LKR</option><option>EUR</option><option>GBP</option><option>INR</option><option>JPY</option><option>AUD</option><option>SGD</option></select>
+                    </div>
+                </div>
+                <input id="_fx_amount" class="fi money-input" placeholder="Amount" inputmode="decimal" style="font-size:18px;font-family:var(--mono);">
+                <div id="_fx_result" style="margin-top:12px;padding:14px;background:var(--bg2);border-radius:8px;text-align:center;">
+                    <div style="color:var(--text3);font-size:12px;">Enter an amount and tap Convert</div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="btn btn-primary" style="flex:1;" onclick="_fxGo()">💱 Convert</button>
+                    <button class="btn btn-ghost" onclick="_fxClose()">Close</button>
+                </div>`, { maxWidth: 460 });
+            window._fxClose = close;
+            window._fxGo = async () => {
+                const amt = parseFloat(($('_fx_amount').value || '0').replace(/,/g, ''));
+                const from = $('_fx_from').value;
+                const to   = $('_fx_to').value;
+                if (!amt) { notify('Enter an amount first', 'warn'); return; }
+                $('_fx_result').innerHTML = '<div style="color:var(--text3);">🌐 Fetching live rate…</div>';
+                const r = await wfFxConvert(amt, from, to);
+                if (r.ok) {
+                    $('_fx_result').innerHTML = `
+                        <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${from} → ${to}</div>
+                        <div style="font-family:var(--mono);font-weight:800;font-size:22px;color:var(--accent);">${r.amount_out.toLocaleString()} ${to}</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Rate: 1 ${from} = ${r.rate} ${to} · ${r.cached ? 'cached' : 'live'} · ${r.date || ''}</div>`;
+                } else {
+                    $('_fx_result').innerHTML = `<div style="color:var(--red);">${r.error || 'Conversion failed'}</div>`;
+                }
+            };
+            try { initMoneyInputs(); } catch (_) {}
+        }
+        window.openFxModal = openFxModal;
+
+        function forceDrainQueue() {
+            if (!window.wfQueue) { notify('Autonomous module not ready', 'warn'); return; }
+            wfQueue.drain().then(r => {
+                if (r.drained > 0) notify(`✅ Drained ${r.drained} pending SMS`, 'success');
+                else notify('Queue is empty', 'info');
+            });
+        }
+        window.forceDrainQueue = forceDrainQueue;
+        // ════════════════════════════════════════════════════════════════════
+
         // Balance Tracker clear helpers (FIXES Issue 1)
         function clearBalFlowForm() {
             editMode = null;
@@ -17393,6 +17695,74 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
         </div>
 
+        <!-- ═══════════════════════════════════════════════════════════════════
+             v7.6.1 — Autonomous Robotic Financial OS
+             ═══════════════════════════════════════════════════════════════════ -->
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(16,185,129,0.06), var(--card)); border: 1px solid rgba(16,185,129,0.4);">
+            <div class="settings-title" style="color:var(--green);">🤖 Robotic Financial Automation</div>
+            <div style="font-size:12.5px;color:var(--text3);line-height:1.6;margin-bottom:14px;">
+                When configured, WealthFlow auto-classifies every bank SMS into the
+                correct module — no manual entry needed. Credit-card payments
+                trigger an oldest-first (FIFO) clearance of outstanding charges.
+                Works fully offline (queues + retries) and includes a predictive
+                wealth engine that forecasts 12 months ahead.
+            </div>
+
+            <!-- Card Registry -->
+            <div class="setting-row" style="border-top:1px solid var(--border);padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label">💳 Card &amp; Account Registry</div>
+                    <div class="setting-desc">Map your card &amp; account last-4 digits to bank + type. Required so the autonomous brain knows which module to route each SMS to.</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="openCardRegistryModal()">⚙️ Manage Cards</button>
+            </div>
+
+            <!-- Device Token / SMS Webhook -->
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label">📲 SMS Forwarder Token</div>
+                    <div class="setting-desc">Paste this token into the SMS Forwarder app on your phone. It authenticates incoming bank SMS messages to your account.</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="openDeviceTokenModal()">🔑 Show Token</button>
+            </div>
+
+            <!-- Manual SMS classify -->
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label">📋 Paste-SMS Classify</div>
+                    <div class="setting-desc">Paste any bank SMS to see exactly how the autonomous brain would route it. Great for testing.</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="openPasteSmsModal()">🧪 Classify SMS</button>
+            </div>
+
+            <!-- Predictive Wealth -->
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label">🔮 Predictive Wealth Engine</div>
+                    <div class="setting-desc">Detects anomalies, finds hidden recurring charges, and forecasts your cashflow 6-12 months ahead via Monte Carlo simulation.</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="openPredictionsModal()">📊 View Forecast</button>
+            </div>
+
+            <!-- FX Engine -->
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label">💱 Live FX Converter</div>
+                    <div class="setting-desc">Convert between LKR / USD / EUR / GBP / INR using live rates with 30-minute caching.</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="openFxModal()">🌐 Open FX</button>
+            </div>
+
+            <!-- Pending queue status -->
+            <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label">🔄 Self-Healing Queue</div>
+                    <div class="setting-desc">If your phone is offline when a bank SMS arrives, it's encrypted and queued locally. WealthFlow drains the queue automatically when your connection returns.</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="forceDrainQueue()">⚡ Force Sync</button>
+            </div>
+        </div>
+
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:var(--green);">🛡️ Security & Access Control</div>
             <div class="setting-row">
@@ -17740,7 +18110,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.0 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.1 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17750,7 +18120,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.6.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.6.1 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
