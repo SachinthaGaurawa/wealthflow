@@ -4724,7 +4724,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.6 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.7 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6335,6 +6335,39 @@
         // =====================================================
         // WEALTHFLOW v5.1 - Infinity Cloud Financial System
         // =====================================================
+
+        // v7.5.7 — HARD redirect from github.io → Vercel.
+        // The user must NEVER see "sachinthagaurawa.github.io" anywhere.
+        // If the app loads on github.io (legacy bookmarks, old shared
+        // links, search-engine hits), we immediately redirect to the
+        // canonical Vercel domain, preserving query params + hash so
+        // the share-URL parameter (?s=, ?dp=, ?tstmt=, etc.) and the
+        // deep-link state survive the redirect. `location.replace` is
+        // used (not assign) so the github.io entry never enters the
+        // browser back-stack — the user can't accidentally go back to
+        // the github.io URL.
+        var _WF_REDIRECTING = false;
+        try {
+            var _h = (window.location.hostname || '').toLowerCase();
+            if (_h.includes('github.io')) {
+                _WF_REDIRECTING = true;
+                var _target = 'https://wealthflow-personal.vercel.app'
+                            + window.location.pathname.replace(/^\/wealthflow\/?/, '/')
+                            + (window.location.search || '')
+                            + (window.location.hash || '');
+                console.log('[WF] Redirecting github.io → Vercel:', _target);
+                window.location.replace(_target);
+            }
+        } catch (e) {
+            console.warn('[WF] Redirect check failed:', e && e.message);
+        }
+    </script>
+    <script>
+        // If we kicked off a redirect above, this whole subsequent
+        // script block becomes a no-op so we don't double-initialise
+        // Firebase + sync on the wrong origin while the browser
+        // navigates away.
+        if (window._WF_REDIRECTING) { /* navigating — skip init */ } else {
 
         const firebaseConfig = {
             apiKey: "AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4",
@@ -11487,6 +11520,36 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         function finishBoot() {
             try {
+                // v7.5.7 — one-time migration of share-history URLs.
+                // Any github.io URL stored in `wf_shared_statements` from
+                // earlier sessions gets rewritten to the Vercel domain so
+                // every history entry (Open / Copy / QR) shows the
+                // canonical URL. Runs once per boot — idempotent.
+                try {
+                    const _raw = localStorage.getItem('wf_shared_statements');
+                    if (_raw) {
+                        const _hist = JSON.parse(_raw);
+                        if (Array.isArray(_hist)) {
+                            let _changed = 0;
+                            const _vercel = 'https://wealthflow-personal.vercel.app';
+                            for (let i = 0; i < _hist.length; i++) {
+                                if (_hist[i] && typeof _hist[i].url === 'string'
+                                    && /github\.io/i.test(_hist[i].url)) {
+                                    _hist[i].url = _hist[i].url.replace(
+                                        /https?:\/\/[^\/\s]*github\.io(?:\/wealthflow)?/gi,
+                                        _vercel
+                                    );
+                                    _changed++;
+                                }
+                            }
+                            if (_changed > 0) {
+                                localStorage.setItem('wf_shared_statements', JSON.stringify(_hist));
+                                console.log('[WF v7.5.7] Migrated', _changed, 'history URLs github.io → vercel');
+                            }
+                        }
+                    }
+                } catch (_) {}
+
                 const auth = DB.getObj('auth');
                 if ($('spStatus')) $('spStatus').textContent = "Ready.";
                 setTimeout(() => {
@@ -17485,7 +17548,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.6 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.7 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17495,7 +17558,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.6 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.7 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -21903,6 +21966,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
         window._showCCReviewModal = _showCCReviewModal;
 
+        } // end: if (!window._WF_REDIRECTING) — v7.5.7 redirect wrapper
     </script>
 </body>
 
