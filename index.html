@@ -3611,7 +3611,7 @@
         .sub-card .act-btns {
             flex-shrink: 0;
             display: flex;
-            gap: 6px;
+            gap: 10px;                  /* v7.5.6 — bumped 6→10 so chips never touch */
             align-items: center;
             justify-content: flex-end;
             margin-left: auto;          /* push to far right of the row */
@@ -3622,8 +3622,62 @@
                the wide "📊 Set <Month> amount" pill never crashes into the
                amount column. The amount keeps its right alignment.
                v7.5.5 — also add right-padding so action buttons + the
-               Overdue badge don't slide under the 54px floating AI bot
-               which lives at right:16px on mobile. */
+        /* v7.5.6 — BULLETPROOF action chip system for subscription cards.
+           Solves the "icons all touching with no gap" problem permanently:
+           every chip has its own background fill, 1px border, ≥40px width,
+           and clear separation via large flex gap. Works at ALL screen
+           sizes so the same fix applies on phone, tablet, and desktop. */
+        .sub-act {
+            min-width: 40px;
+            min-height: 38px;
+            padding: 0 10px;
+            background: var(--bg2);
+            border: 1px solid var(--border2);
+            border-radius: 10px;
+            color: var(--text2);
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            white-space: nowrap;
+            transition: transform .12s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+            flex-shrink: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .sub-act:hover { background: var(--card); border-color: var(--accent); transform: translateY(-1px); }
+        .sub-act:active { transform: translateY(0) scale(.96); }
+        .sub-act.cta-edit:hover { border-color: rgba(59,130,246,.55); color: var(--blue); }
+        .sub-act.cta-del:hover  { border-color: rgba(239,68,68,.55); color: var(--red); }
+
+        /* Gold accent variant for the "Set <Month>" pill. Uses its OWN
+           background so the inline-style specificity war is gone. */
+        .sub-act.cta-gold {
+            background: linear-gradient(135deg, rgba(212,175,55,.20), rgba(212,175,55,.10));
+            border: 1px solid rgba(212,175,55,.65);
+            color: var(--accent);
+            font-weight: 800;
+            font-size: 12.5px;
+            letter-spacing: .2px;
+            padding: 0 12px;
+            box-shadow: 0 1px 6px rgba(212,175,55,.15) inset;
+        }
+        .sub-act.cta-gold:hover {
+            background: linear-gradient(135deg, rgba(212,175,55,.30), rgba(212,175,55,.18));
+            border-color: rgba(212,175,55,.85);
+            box-shadow: 0 2px 12px rgba(212,175,55,.30);
+        }
+
+        @media (max-width: 480px) {
+            /* On narrow phones, action buttons drop to their own line so
+               the wide "📊 Set <Month>" chip never crashes into the amount
+               column. The amount keeps its right alignment.
+               v7.5.5 — right-padding so action buttons + Overdue badge
+               don't slide under the 54px floating AI bot at right:16px.
+               v7.5.6 — kept .sub-act chip styling above for visual clarity. */
             .sub-card {
                 padding-right: 84px;       /* 54 fab + 16 right + 14 gap */
             }
@@ -3631,11 +3685,11 @@
                 flex-basis: 100%;
                 margin-left: 0;
                 justify-content: flex-end;
-                margin-top: 8px;
-                padding-top: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
                 border-top: 1px solid var(--border);
                 flex-wrap: wrap;
-                gap: 8px;                  /* a bit more breathing room */
+                gap: 10px;                 /* clear gap between chips */
             }
         }
 
@@ -4670,7 +4724,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.5.5 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.5.6 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -6938,8 +6992,13 @@
 
         setInterval(() => {
             if (!$('app').classList.contains('show')) return;
-            const limit = DB.getObj('settings').autoLock || 15;
-            if (limit === 0) return;
+            // v7.5.6 — was `s.autoLock || 15` which treated 0 (Disabled) as
+            // falsy and silently coerced it to 15. Now we read the raw value
+            // and only fall back to 15 when it's actually undefined/null.
+            const sAuto = DB.getObj('settings', {});
+            const raw = sAuto.autoLock;
+            const limit = (raw === 0 || raw > 0) ? raw : 15;
+            if (limit === 0) return;       // disabled — never auto-lock
             inactivityTimer++;
             if (inactivityTimer >= limit) {
                 lockApp();
@@ -11768,14 +11827,24 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const inp = _ensureIOSTapticEl();
             if (!inp) return false;
             try {
-                // Click count emulates intensity (one click = light tap;
-                // a couple of fast clicks = medium/heavy feel).
-                const count = intensity === 'heavy' ? 3 : intensity === 'medium' ? 2 : 1;
+                // v7.5.6 — honour the user's Haptic Intensity setting on iOS.
+                // Previously this function picked count purely from the event
+                // type so Gentle/Standard/Intense had no effect on iPhone.
+                // Now Intense (1.5×) gets an extra click and Gentle (0.5×)
+                // gets one fewer (minimum 1).
+                const mult = _getHapticMultiplier();   // 0.5 / 1 / 1.5
+                let baseCount = intensity === 'heavy' ? 3 : intensity === 'medium' ? 2 : 1;
+                let count = Math.max(1, Math.round(baseCount * mult));
+                // Cap at 5 so very loud events don't fire a 7-click burst.
+                if (count > 5) count = 5;
+                // Tighter gap on Intense so multi-click bursts feel like
+                // ONE strong tap rather than several weak ones.
+                const gap = mult >= 1.4 ? 22 : mult <= 0.6 ? 55 : 35;
                 let i = 0;
                 const tick = () => {
                     try { inp.click(); } catch (_) {}
                     i++;
-                    if (i < count) setTimeout(tick, 35);
+                    if (i < count) setTimeout(tick, gap);
                 };
                 tick();
                 return true;
@@ -11840,7 +11909,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 osc.connect(gain);
                 gain.connect(ctx.destination);
                 const intensityMap = { light: 0.01, medium: 0.02, heavy: 0.04, success: 0.03, error: 0.05, keypress: 0.005, toggle: 0.015 };
-                const amp = intensityMap[type] || 0.01;
+                // v7.5.6 — scale amplitude by user's Haptic Intensity setting.
+                // Gentle = quieter click, Intense = louder click. Capped at 0.08
+                // (anything louder makes the speaker pop unpleasantly).
+                const mult = _getHapticMultiplier();
+                const amp = Math.min(0.08, (intensityMap[type] || 0.01) * mult);
                 gain.gain.setValueAtTime(amp, ctx.currentTime);
                 gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05);
                 osc.frequency.setValueAtTime(type === 'error' ? 80 : type === 'success' ? 440 : 200, ctx.currentTime);
@@ -11888,7 +11961,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         function triggerHaptic(type = 'light') {
             const settings = DB.getObj('settings', { haptics: true });
-            if (!settings.haptics) return;
+            if (settings.haptics === false) return;     // explicit OFF only
 
             // 1) Real navigator.vibrate (Android/Chrome with motor support).
             let vibrated = false;
@@ -11908,13 +11981,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 default: vibrated = _vibrate([8, 25, 8]); break;
             }
 
-            // 2) iOS — real Taptic Engine (or audio fallback on old iOS).
-            //    Always also run the visual pulse so something is felt/seen
-            //    even when the user is on a device with no haptics at all.
-            if (!vibrated) {
-                if (_detectHapticPlatform() === 'ios') _iosHaptic(type);
-                _visualHaptic(type);
+            // 2) v7.5.6 — On iOS ALWAYS try the Taptic switch trick
+            //    regardless of whether navigator.vibrate "succeeded"
+            //    (iOS Safari falsely reports vibrate success). And
+            //    on every platform ALSO run the visual ripple as a
+            //    universal feedback channel.
+            const plat = _detectHapticPlatform();
+            if (plat === 'ios') _iosHaptic(type);
+            else if (!vibrated && plat === 'android') {
+                // Android without motor — try a short audio tick anyway
+                _iosHaptic(type);
             }
+            _visualHaptic(type);
         }
 
         function notify(msg, type = 'success') {
@@ -14722,7 +14800,16 @@ table.amort tbody tr { page-break-inside: avoid; }
         // PREMIUM SHARE DIALOG — QR Code, Social Sharing, History, Expiry
         // =====================================================================
         function _showShareableUrlDialog(config) {
-            const url = config.url;
+            // v7.5.6 — defensive URL sanitiser. If any github.io / preview
+            // host leaked into a generated share URL (e.g. an old cached
+            // history entry), rewrite it to the Vercel domain so the user
+            // NEVER sees the internal github.io URL in any tab, QR, social
+            // share, or history list.
+            const _sanitiseShareUrl = (u) => {
+                if (!u || typeof u !== 'string') return u;
+                return u.replace(/https?:\/\/[^\/\s]*github\.io[^\/\s]*/gi, _WF_APP_URL);
+            };
+            const url = _sanitiseShareUrl(config.url);
             const result = config.result || {};
             const titleName = config.title || (config.l ? config.l.name : 'Report');
             const l = config.l; // optional
@@ -14814,7 +14901,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div id="_surl_tab_link">
                         <div class="fg" style="margin:0;">
                             <label class="fl">🔗 Shareable URL</label>
-                            <input class="fi" id="_surl_input" readonly value="${url.replace(/"/g, '&quot;')}"
+                            <input class="fi" id="_surl_input" readonly value="${(url || '').replace(/https?:\/\/[^\/\s]*github\.io[^"]*?\//gi, _WF_APP_URL + '/').replace(/"/g, '&quot;')}"
                                 style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--bg2);cursor:text;">
                         </div>
                         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
@@ -14957,7 +15044,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                         openBtn.style.cssText = 'padding:4px 8px;font-size:10px;color:var(--accent);';
                         openBtn.textContent = '🌍';
                         openBtn.title = 'Open Link';
-                        openBtn.onclick = () => window.open(h.url, '_blank', 'noopener,noreferrer');
+                        // v7.5.6 — sanitise any leftover github.io → vercel before opening
+                        openBtn.onclick = () => window.open(_sanitiseShareUrl(h.url), '_blank', 'noopener,noreferrer');
 
                         const copyBtn = document.createElement('button');
                         copyBtn.className = 'btn btn-ghost btn-sm';
@@ -14965,7 +15053,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         copyBtn.textContent = '📋';
                         copyBtn.title = 'Copy Link';
                         copyBtn.onclick = () => {
-                            navigator.clipboard.writeText(h.url);
+                            navigator.clipboard.writeText(_sanitiseShareUrl(h.url));
                             copyBtn.textContent = '✓';
                             setTimeout(() => copyBtn.textContent = '📋', 1500);
                         };
@@ -17397,7 +17485,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.5 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.5.6 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -17407,7 +17495,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.5.5 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.5.6 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -19378,25 +19466,35 @@ Be direct and use real numbers. Avoid generic advice.`;
                 // If not, surface a one-tap CTA right on the card so they
                 // never miss adjusting a variable telecom / utility bill.
                 const needsThisMonth = (typeof override !== 'number');
-                // v7.5.5 — keep the CTA narrow so the action row doesn't
-                // get crushed against the AI floating bot. white-space:nowrap
-                // prevents the label from wrapping inside the pill (which
-                // was producing the "Set\nMay\namount" stacked text the
-                // user saw in the screenshot). Single-letter month code
-                // ("May" → "May") plus tight padding gives us a compact pill.
+                // v7.5.6 — REAL fix for the "icons overlapping" complaint.
+                // Each action becomes a properly-padded standalone chip
+                // with its OWN background + border via the .sub-act class.
+                // Emojis can no longer bleed into neighbouring buttons
+                // because every chip is now ≥40px wide with a 1px border.
+                // The "📊 Set May" pill uses .sub-act.cta-gold for the
+                // accent variant so it visually pops without overriding
+                // the chip geometry (no more inline-style specificity wars).
                 const thisMonthCta = needsThisMonth
-                    ? `<button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')"
-                                title="Set this month's actual amount (great for telecom, water, electricity)"
-                                style="background:rgba(212,175,55,.18); color:var(--accent); border:1px solid rgba(212,175,55,.55); padding:5px 9px; font-size:11px; font-weight:800; border-radius:8px; white-space:nowrap; line-height:1.1;">
+                    ? `<button type="button" class="sub-act cta-gold" onclick="setSubscriptionMonthAmount('${s.id}')"
+                                title="Set this month's actual amount (great for telecom, water, electricity)">
                                 📊 Set ${MONTHS[now.getMonth()].slice(0,3)}
                             </button>`
-                    : `<button class="ib c" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts">📊</button>`;
+                    : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts">📊</button>`;
+
+                // v7.5.6 — show notes if present (was hidden entirely).
+                // Matches how expense rows and loan rows render notes:
+                // small subtle text under the meta line.
+                const _esc = (str) => String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                const notesHtml = s.notes
+                    ? `<div class="sub-notes" style="font-size:11.5px;color:var(--text3);margin-top:4px;line-height:1.4;word-wrap:break-word;overflow-wrap:anywhere;font-style:italic;opacity:.85;">📝 ${_esc(s.notes)}</div>`
+                    : '';
 
                 return `<div class="sub-card">
                     <div class="sub-icon">${catIcons[s.category] || '📋'}</div>
                     <div style="flex:1 1 0;min-width:0;">
                         <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${s.name}</div>
                         <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${s.category} · Day ${s.dueDay} · ${s.cycle}</div>
+                        ${notesHtml}
                         ${variableBadge}
                     </div>
                     <div class="sub-amount">
@@ -19405,9 +19503,9 @@ Be direct and use real numbers. Avoid generic advice.`;
                         ${overrideBadge}
                     </div>
                     <div class="act-btns">
-                        <button class="ib e" onclick="editSubscription('${s.id}')" title="Edit subscription">✏️</button>
+                        <button type="button" class="sub-act cta-edit" onclick="editSubscription('${s.id}')" title="Edit subscription">✏️</button>
                         ${thisMonthCta}
-                        <button class="ib d" onclick="deleteSubscription('${s.id}')" title="Delete">🗑️</button>
+                        <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${s.id}')" title="Delete">🗑️</button>
                     </div>
                 </div>`;
             }).join('');
