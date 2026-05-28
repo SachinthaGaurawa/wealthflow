@@ -425,11 +425,60 @@
         }, 60000);
         window.addEventListener('online', () => { drainQueue(); });
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 10. v7.6.3 — Share-target inbox poller
+    // The share-target.html page (which iOS Share Sheet / Android Share Sheet
+    // posts to) writes classified-but-not-yet-applied results to
+    // localStorage.wf_share_inbox. This poller picks them up, applies them
+    // to the user's modules via applyBrainResult, and clears the inbox.
+    // ────────────────────────────────────────────────────────────────────────
+    async function drainShareInbox() {
+        try {
+            const raw = localStorage.getItem('wf_share_inbox');
+            if (!raw) return { drained: 0 };
+            const inbox = JSON.parse(raw);
+            if (!Array.isArray(inbox) || !inbox.length) return { drained: 0 };
+            let drained = 0;
+            const keep = [];
+            for (const item of inbox) {
+                if (!item || !item.brain) { continue; }
+                try {
+                    const r = await applyBrainResult(item.brain);
+                    if (r && r.ok) drained++;
+                    else if (r && r.reason && r.reason.includes('duplicate')) drained++;
+                    else keep.push(item);
+                } catch (_) { keep.push(item); }
+            }
+            localStorage.setItem('wf_share_inbox', JSON.stringify(keep));
+            if (drained > 0) {
+                try {
+                    if (typeof renderSubscriptions === 'function') renderSubscriptions();
+                    if (typeof renderExpenses === 'function') renderExpenses();
+                    if (typeof renderDash === 'function') renderDash();
+                } catch (_) {}
+                if (typeof window.notify === 'function') {
+                    notify(`📤 Applied ${drained} transaction${drained > 1 ? 's' : ''} from Share Sheet`, 'success');
+                }
+            }
+            return { drained };
+        } catch (_) { return { drained: 0 }; }
+    }
+    window.wfDrainShareInbox = drainShareInbox;
+
     if (typeof document !== 'undefined') {
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(startSelfHealing, 3000);
             // Auto-refresh predictions once on boot (silent)
             setTimeout(() => { refreshPredictions(12).catch(()=>{}); }, 8000);
+            // v7.6.3 — share-target poller: 15s, plus on visibilitychange
+            setTimeout(() => {
+                drainShareInbox();
+                setInterval(drainShareInbox, 15000);
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden) drainShareInbox();
+                });
+            }, 5000);
         });
     }
 

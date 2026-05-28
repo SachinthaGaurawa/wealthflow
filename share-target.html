@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>WealthFlow — Quick Capture</title>
+<link rel="manifest" href="manifest.json">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0a0e1a; color: #e6e7eb;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: linear-gradient(135deg, rgba(16,185,129,0.08), #14182a);
+    border: 1px solid rgba(16,185,129,0.4);
+    border-radius: 16px; padding: 24px;
+    max-width: 480px; width: 100%;
+    box-shadow: 0 8px 40px rgba(0,0,0,.5);
+  }
+  h1 { margin: 0 0 16px; font-size: 22px; }
+  .input {
+    width: 100%; padding: 12px; border-radius: 10px;
+    background: #1a1f2e; border: 1px solid rgba(255,255,255,.1);
+    color: #e6e7eb; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    resize: vertical; min-height: 100px;
+  }
+  .btn {
+    width: 100%; padding: 14px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, #10b981, #d4af37); color: #0a0e1a;
+    font-size: 15px; font-weight: 800; cursor: pointer; margin-top: 12px;
+  }
+  .btn-secondary {
+    background: transparent; border: 1px solid rgba(255,255,255,.2); color: #e6e7eb;
+  }
+  .result {
+    margin-top: 16px; padding: 14px; border-radius: 10px;
+    background: rgba(255,255,255,.04); font-size: 13px; line-height: 1.6;
+    display: none;
+  }
+  .result.ok { display: block; border-left: 3px solid #10b981; }
+  .result.err { display: block; border-left: 3px solid #ef4444; color: #fca5a5; }
+  .hint { font-size: 12px; color: rgba(230,231,235,.55); margin-top: 8px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📲 Quick Capture</h1>
+  <div class="hint" style="margin-bottom:14px;">
+    Text shared from your SMS app or pasted below will be auto-classified by AutoPilot
+    and routed to the right WealthFlow module.
+  </div>
+  <textarea id="txt" class="input" placeholder="SMS text appears here automatically when shared from iMessage / Messages app…"></textarea>
+  <button class="btn" id="goBtn">🤖 Classify &amp; Save</button>
+  <button class="btn btn-secondary" id="openBtn">↗ Open WealthFlow</button>
+  <div class="result" id="result"></div>
+</div>
+
+<script>
+  // Read URL params + share-target POST body
+  (async function() {
+    const params = new URLSearchParams(location.search);
+    let initial = params.get('text') || params.get('sms') || params.get('message') || '';
+    // iOS Shortcuts often pass via #
+    if (!initial && location.hash) {
+      const hashParams = new URLSearchParams(location.hash.slice(1));
+      initial = hashParams.get('text') || hashParams.get('sms') || '';
+    }
+    // Web Share Target API delivers via FormData if registered as POST handler
+    if (!initial && 'launchQueue' in window) {
+      window.launchQueue.setConsumer(async (launchParams) => {
+        if (!launchParams.files || !launchParams.files.length) return;
+      });
+    }
+    if (initial) document.getElementById('txt').value = decodeURIComponent(initial);
+
+    // Auto-classify on load if we received text
+    if (initial && initial.trim().length > 10) {
+      setTimeout(() => doClassify(), 300);
+    }
+  })();
+
+  function getDeviceToken() {
+    let tok = localStorage.getItem('wf_device_token');
+    if (!tok) {
+      // Generate one if missing (will sync with main app later via shared origin localStorage)
+      const arr = new Uint8Array(24); crypto.getRandomValues(arr);
+      tok = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('');
+      localStorage.setItem('wf_device_token', tok);
+    }
+    return tok;
+  }
+
+  async function doClassify() {
+    const txt = document.getElementById('txt').value.trim();
+    const res = document.getElementById('result');
+    if (!txt) {
+      res.className = 'result err';
+      res.textContent = 'Paste an SMS or share one from your Messages app first.';
+      return;
+    }
+    res.className = 'result';
+    res.textContent = '🤖 Brain processing…';
+    res.style.display = 'block';
+
+    try {
+      // Read card registry from localStorage so the brain can route correctly
+      let cardRegistry = {};
+      try {
+        const settings = JSON.parse(localStorage.getItem('wf2_settings') || '{}');
+        cardRegistry = settings.cardRegistry || {};
+      } catch (_) {}
+
+      const r = await fetch('/api/sms-ingest', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-wf-device-token': getDeviceToken()
+        },
+        body: JSON.stringify({
+          sms: txt,
+          sender: 'share-target',
+          received_at_ms: Date.now(),
+          device_id: 'ios-share',
+          card_registry: cardRegistry
+        })
+      });
+      const data = await r.json();
+
+      if (data.ok && data.classified) {
+        const m = data.routed && data.routed.module;
+        const f = data.routed && data.routed.suggested_fields || {};
+        const labels = {
+          income: '💰 Income',
+          expenses: '💸 Expense',
+          subscriptions: '🔁 Subscription',
+          cconetime: '💳 CC One-Time',
+          cc_payment: '✅ CC Payment (FIFO)'
+        };
+        res.className = 'result ok';
+        res.innerHTML = `
+          <div style="font-weight:800;color:#10b981;margin-bottom:6px;">✅ Logged as ${labels[m] || m}</div>
+          <div style="font-family:ui-monospace,monospace;">
+            ${f.desc || f.source || f.name || ''}<br>
+            <b>${(data.parsed && data.parsed.currency) || 'LKR'} ${(f.amount || 0).toLocaleString()}</b>
+          </div>
+          <div style="margin-top:8px;font-size:11px;opacity:.7;">Auto-saved to WealthFlow. Open the app to view.</div>`;
+        // Queue the result for the main app to pick up via localStorage
+        try {
+          const inbox = JSON.parse(localStorage.getItem('wf_share_inbox') || '[]');
+          inbox.push({ brain: data, captured_at: Date.now(), source: 'ios-share' });
+          localStorage.setItem('wf_share_inbox', JSON.stringify(inbox.slice(-50)));
+        } catch (_) {}
+      } else if (data.ok && data.classified === false) {
+        res.className = 'result err';
+        res.textContent = '⚠ ' + (data.reason || "Doesn't look like a bank SMS. Try again with a bank/credit-card message.");
+      } else {
+        res.className = 'result err';
+        res.textContent = '⚠ ' + (data.error || data.reason || 'Could not classify.');
+      }
+    } catch (e) {
+      res.className = 'result err';
+      res.textContent = '⚠ Network error: ' + e.message;
+    }
+  }
+
+  document.getElementById('goBtn').addEventListener('click', doClassify);
+  document.getElementById('openBtn').addEventListener('click', () => location.href = '/');
+</script>
+</body>
+</html>

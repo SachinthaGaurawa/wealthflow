@@ -4728,7 +4728,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.6.2 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.6.3 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -12756,8 +12756,125 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const cardList = Object.values(cards);
             const totalCards = cardList.length;
 
+            // v7.6.3 — Platform detection for OS-specific setup paths.
+            // iOS cannot read SMS at all → uses Shortcuts app + Share Sheet.
+            // Android can read SMS via the SMS Forwarder Play Store app.
+            // Both platforms support email forwarding + paste-SMS fallback.
+            const ua = (navigator.userAgent || '').toLowerCase();
+            const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            const isAndroid = /android/.test(ua);
+
+            // Direct app store links
+            const PLAY_STORE_SMS_FORWARDER = 'https://play.google.com/store/apps/details?id=tech.bogomolov.incomingsmsgateway';
+            const APP_STORE_SHORTCUTS = 'https://apps.apple.com/us/app/shortcuts/id1462947752';
+            const SHARE_TARGET_URL = location.origin + '/share-target.html';
+
+            const setupBlockIos = `
+                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                        <span style="font-size:22px;">🍎</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">iPhone / iPad detected</div>
+                            <div style="font-size:11px;color:var(--text3);">Apple blocks all SMS reading. Here's the official Apple-supported workflow:</div>
+                        </div>
+                    </div>
+
+                    <div style="background:rgba(212,175,55,0.06);border-radius:8px;padding:12px;margin-bottom:10px;">
+                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">⚡ Method 1: iOS Shortcut Auto-Forward (most automated)</div>
+                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
+                            <b>1.</b> Open the <b>Shortcuts app</b> on your iPhone (pre-installed by Apple).<br>
+                            <b>2.</b> Tap the <b>Automation</b> tab → <b>"+"</b> → <b>"New Personal Automation"</b> → <b>"Message"</b>.<br>
+                            <b>3.</b> Set Sender to "Contains" → type your bank's name (e.g. "ComBank"). Tap Next.<br>
+                            <b>4.</b> Tap <b>"Add Action"</b> → search <b>"URL"</b> → choose <b>"Get Contents of URL"</b>.<br>
+                            <b>5.</b> Configure:<br>
+                            &nbsp;&nbsp;• URL: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">${webhook}</code><br>
+                            &nbsp;&nbsp;• Method: <b>POST</b><br>
+                            &nbsp;&nbsp;• Headers: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">x-wf-device-token: ${tok.slice(0,12)}…</code><br>
+                            &nbsp;&nbsp;• Body: <b>JSON</b> with sms, sender, received_at_ms.<br>
+                            <b>6.</b> Turn off <b>"Ask Before Running"</b>. Done.
+                        </div>
+                        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+                            <a href="${APP_STORE_SHORTCUTS}" target="_blank" class="btn btn-secondary btn-sm" style="flex:1;text-decoration:none;text-align:center;">📲 Open App Store</a>
+                            <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="_apShowFullIosRecipe()">📖 Full Recipe</button>
+                        </div>
+                    </div>
+
+                    <div style="background:rgba(16,185,129,0.06);border-radius:8px;padding:12px;margin-bottom:10px;">
+                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">📤 Method 2: Share Sheet (no setup, but manual)</div>
+                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
+                            When a bank SMS arrives: tap and hold the message → <b>Share</b> → scroll to <b>WealthFlow</b> in the share sheet → text is auto-classified. Add WealthFlow to your iPhone Home Screen first so it appears in the share sheet.
+                        </div>
+                        <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${SHARE_TARGET_URL}').then(()=>notify('Share-target URL copied','success'))">📋 Copy Share-Target URL</button>
+                    </div>
+
+                    <div style="background:rgba(59,130,246,0.06);border-radius:8px;padding:12px;">
+                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">📧 Method 3: Email auto-forward (works on every device)</div>
+                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
+                            Most Sri Lankan banks email statements alongside SMS. Set a Gmail/iCloud filter to forward bank emails to our webhook.
+                            See the Email Setup link below.
+                        </div>
+                    </div>
+                </div>`;
+
+            const setupBlockAndroid = `
+                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                        <span style="font-size:22px;">🤖</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">Android detected</div>
+                            <div style="font-size:11px;color:var(--text3);">Best path: one-tap install of "SMS Forwarder" → scan the QR.</div>
+                        </div>
+                    </div>
+
+                    <div style="background:rgba(16,185,129,0.06);border-radius:8px;padding:12px;margin-bottom:10px;">
+                        <div style="font-weight:700;font-size:12.5px;margin-bottom:8px;">⚡ Method 1: SMS Forwarder (fully automated)</div>
+                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);margin-bottom:8px;">
+                            <b>1.</b> Tap the green button below → installs "SMS Forwarder" from Play Store.<br>
+                            <b>2.</b> Open SMS Forwarder → grant SMS permission → tap "+" to add new rule.<br>
+                            <b>3.</b> Scan the QR code below to auto-import the WealthFlow URL + headers + body template.<br>
+                            <b>4.</b> Enable the rule. Done.
+                        </div>
+                        <a href="${PLAY_STORE_SMS_FORWARDER}" target="_blank" class="btn btn-primary" style="width:100%;text-decoration:none;text-align:center;display:block;font-weight:700;background:linear-gradient(135deg,#34a853,#10b981);">
+                            ▶ Install SMS Forwarder from Play Store
+                        </a>
+                    </div>
+
+                    <div style="display:flex;gap:14px;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">
+                        <div style="background:white;padding:8px;border-radius:8px;flex-shrink:0;">
+                            ${qrSvg || '<div style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#999;">QR loading…</div>'}
+                        </div>
+                        <div style="flex:1;min-width:0;font-size:11px;line-height:1.5;">
+                            <div style="font-weight:700;font-size:12px;color:var(--text);margin-bottom:4px;">QR Config for SMS Forwarder</div>
+                            <div style="color:var(--text3);">Includes webhook URL, your device token, header config, and JSON body template — all pre-filled.</div>
+                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${webhook}').then(()=>notify('URL copied','success'))">📋 URL</button>
+                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:4px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">🔑 Token</button>
+                        </div>
+                    </div>
+
+                    <div style="background:rgba(59,130,246,0.06);border-radius:8px;padding:12px;">
+                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">📧 Method 2: Email auto-forward (also works)</div>
+                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
+                            Set up Gmail filter for bank emails. See Email Setup below.
+                        </div>
+                    </div>
+                </div>`;
+
+            const setupBlockDesktop = `
+                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                        <span style="font-size:22px;">💻</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">Desktop browser detected</div>
+                            <div style="font-size:11px;color:var(--text3);">Use Paste-SMS or email forwarding. For SMS auto-sync, open WealthFlow on your phone too.</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" style="width:100%;" onclick="_apClose();openPasteSmsModal()">📋 Open Paste-SMS Tester</button>
+                </div>`;
+
+            const setupBlock = isIOS ? setupBlockIos : (isAndroid ? setupBlockAndroid : setupBlockDesktop);
+
             $('_apBody').innerHTML = `
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
                     <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:10px;padding:14px;text-align:center;">
                         <div style="font-size:24px;">💳</div>
                         <div style="font-size:22px;font-weight:800;color:var(--green);margin:4px 0;">${totalCards}</div>
@@ -12787,30 +12904,22 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     </div>
                 ` : ''}
 
-                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
-                    <div style="font-weight:700;font-size:13px;margin-bottom:8px;">📲 Connect your phone (one-time)</div>
-                    <div style="font-size:12px;color:var(--text3);margin-bottom:12px;">
-                        Install <b>"SMS Forwarder"</b> from the Play Store, then scan this QR with the app's import-config feature. Every bank SMS will then auto-log into WealthFlow.
+                ${setupBlock}
+
+                <details style="background:var(--bg2);border-radius:8px;padding:10px;margin-bottom:12px;">
+                    <summary style="cursor:pointer;font-weight:700;font-size:12.5px;user-select:none;">📧 Email Auto-Forward Setup (universal)</summary>
+                    <div style="padding:10px 0 4px;font-size:11.5px;line-height:1.6;color:var(--text2);">
+                        Banks often email statements/alerts alongside SMS. Set up a Gmail filter:<br>
+                        <b>1.</b> Gmail → Settings → Filters → Create new filter<br>
+                        <b>2.</b> From: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">combank.lk OR sampath.lk OR hnb.net</code> (your banks)<br>
+                        <b>3.</b> Use Zapier/IFTTT/Make to forward matching emails to: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;word-break:break-all;">${origin}/api/email-ingest</code><br>
+                        <b>4.</b> Include header <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">x-wf-device-token: ${tok.slice(0,12)}…</code> in the forward.
+                        <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${origin}/api/email-ingest').then(()=>notify('Email webhook copied','success'))">📋 Copy Email Webhook</button>
                     </div>
-                    <div style="display:flex;gap:14px;align-items:center;">
-                        <div style="background:white;padding:8px;border-radius:8px;flex-shrink:0;">
-                            ${qrSvg || '<div style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#999;">QR loading…</div>'}
-                        </div>
-                        <div style="flex:1;min-width:0;font-size:11px;color:var(--text3);line-height:1.6;">
-                            <div style="font-weight:700;color:var(--text2);margin-bottom:6px;">No SMS Forwarder?</div>
-                            Just use the <b>📋 Paste-SMS Tester</b> in Advanced tools — you can manually paste any bank SMS and it auto-logs.
-                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:10px;" onclick="navigator.clipboard.writeText('${webhook}').then(()=>notify('Webhook URL copied','success'))">
-                                📋 Copy webhook URL
-                            </button>
-                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:6px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">
-                                🔑 Copy device token
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                </details>
 
                 <div style="background:rgba(16,185,129,0.05);border-left:3px solid var(--green);border-radius:6px;padding:10px 12px;font-size:12px;line-height:1.6;margin-bottom:14px;">
-                    <b style="color:var(--green);">✅ AutoPilot is now active.</b> The autonomous brain will classify every transaction it sees, FIFO-reconcile your CC payments, and refresh your 12-month forecast in the background. You can close this window — everything runs by itself.
+                    <b style="color:var(--green);">✅ AutoPilot is now active.</b> Pick any of the methods above to start. Even without setup, the Paste-SMS tester and Predictive Engine run automatically in the background.
                 </div>
 
                 <div style="display:flex;gap:8px;">
@@ -12818,6 +12927,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <button class="btn btn-ghost btn-sm" onclick="openCardRegistryModal();_apClose();">Review Cards</button>
                 </div>`;
             window._apRefresh = () => openAutoPilotWizard();
+            window._apShowFullIosRecipe = () => {
+                window.open(`${origin}/api/ios-shortcut?token=${tok}`, '_blank');
+            };
         }
         window.openAutoPilotWizard = openAutoPilotWizard;
         // ════════════════════════════════════════════════════════════════════
@@ -18364,7 +18476,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.2 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.3 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -18374,7 +18486,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.6.2 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.6.3 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
