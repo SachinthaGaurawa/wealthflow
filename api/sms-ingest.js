@@ -1,20 +1,12 @@
 // =============================================================================
-// WealthFlow SMS Ingest Webhook v1.0
+// WealthFlow SMS Ingest Webhook v1.1
 //
-// Receives SMS payloads from an Android SMS-forwarding service (e.g.
-// "SMS Forwarder" by Bogdan Tudose, "MacroDroid", "Tasker", or a custom
-// Kotlin foreground service — see /android/wealthflow-sms-forwarder).
-//
-// Pipeline:
-//   1. Authenticate the caller via a per-device API token (set in
-//      Settings → Robotic Automation → Device Token).
-//   2. Validate payload, run /api/autonomous-brain to classify.
-//   3. Idempotent-write to Firestore via the user's auth token (caller
-//      passes uid + idToken so we can write under their security rules).
-//   4. If brain.routed.module === 'cc_payment', fan out to /api/fifo-reconcile.
-//   5. Return result so caller can show a toast.
-//
-// This is the OUTBOUND-FROM-PHONE endpoint. It runs Edge for speed.
+// v1.1 changes:
+//  • GET request → returns health-check JSON (so users can verify the URL
+//    works in their browser before configuring it in Shortcuts/forwarder)
+//  • More forgiving validation — accepts missing/empty fields, returns
+//    clear errors so users can debug from the Shortcuts app
+//  • Detects when token was placed in URL or Key-only fields
 // =============================================================================
 
 export const config = { runtime: 'edge' };
@@ -35,6 +27,22 @@ function isLikelyBankSms(sender, body) {
 }
 
 export default async function handler(req) {
+    // v7.6.4 — GET health-check: users can visit this URL in browser
+    // to confirm the endpoint is reachable from their iPhone.
+    if (req.method === 'GET') {
+        return new Response(JSON.stringify({
+            ok: true,
+            service: 'WealthFlow SMS Ingest',
+            version: '1.1',
+            status: 'healthy',
+            ts: new Date().toISOString(),
+            message: 'Endpoint is reachable. To submit an SMS, send a POST with JSON body { sms, sender, received_at_ms, device_id } and header x-wf-device-token.'
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }
+        });
+    }
+
     if (req.method !== 'POST') {
         return new Response(JSON.stringify({ ok: false, error: 'POST required' }), {
             status: 405, headers: { 'Content-Type': 'application/json' }
@@ -42,27 +50,49 @@ export default async function handler(req) {
     }
     let body;
     try { body = await req.json(); } catch (e) {
-        return new Response(JSON.stringify({ ok: false, error: 'Invalid JSON' }), {
+        return new Response(JSON.stringify({
+            ok: false,
+            error: 'Invalid JSON body',
+            hint: 'In iOS Shortcuts, set Request Body to "JSON" then add fields: sms (Shortcut Input), sender (Sender variable), device_id ("iphone").'
+        }), {
             status: 400, headers: { 'Content-Type': 'application/json' }
         });
     }
 
-    const sms        = (body.sms || body.message || '').toString();
+    const sms        = (body.sms || body.message || body.text || '').toString();
     const sender     = (body.sender || body.from || '').toString();
     const receivedAt = Number(body.received_at_ms || body.timestamp || Date.now());
     const deviceId   = (body.device_id || '').toString();
-    const deviceTok  = (body.device_token || req.headers.get('x-wf-device-token') || '').toString();
+    // v7.6.4 — accept device token from multiple places (header, body, or
+    // even mis-placed in "key" by users who entered both key+value in the
+    // Key field of iOS Shortcuts).
+    let deviceTok = (
+        body.device_token
+        || req.headers.get('x-wf-device-token')
+        || req.headers.get('X-Wf-Device-Token')
+        || ''
+    ).toString().trim();
+    // If user typed "x-wf-device-token: TOKEN" into a single field, strip prefix
+    if (/^x-wf-device-token\s*:/i.test(deviceTok)) {
+        deviceTok = deviceTok.replace(/^x-wf-device-token\s*:\s*/i, '').trim();
+    }
+
     const cardReg    = body.card_registry || {};
     const location   = body.location || null;
 
     if (!sms) {
-        return new Response(JSON.stringify({ ok: false, error: 'Empty SMS body' }), {
-            status: 400, headers: { 'Content-Type': 'application/json' }
-        });
+        return new Response(JSON.stringify({
+            ok: false,
+            error: 'Empty SMS body',
+            hint: 'Make sure your Shortcut Request Body includes field "sms" with value "Shortcut Input" (the magic variable, not literal text).'
+        }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
     if (!deviceTok || deviceTok.length < 16) {
         return new Response(JSON.stringify({
-            ok: false, error: 'Device token missing or too short (set in Settings → Robotic Automation)'
+            ok: false,
+            error: 'Device token missing or too short',
+            received_token_length: deviceTok.length,
+            hint: 'In iOS Shortcuts → Headers, you need TWO SEPARATE fields: Key=x-wf-device-token and Value=YOUR_TOKEN. Do not put the whole "key: value" string in one field.'
         }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -99,9 +129,6 @@ export default async function handler(req) {
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
-    // Return the classification; the client-side listener writes to Firestore
-    // (so we don't need to hold a service-account key here — security rules
-    // are enforced by the user's own Firebase ID token in the client).
     return new Response(JSON.stringify({
         ok: true,
         classified: true,

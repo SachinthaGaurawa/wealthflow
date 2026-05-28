@@ -65,9 +65,13 @@ function heuristicParse(sms, fallbackTs) {
     }
 
     // Type: credit (incoming) vs debit (outgoing)
+    // v7.6.5 — check debit signals FIRST because they're more specific.
+    // Also strip "credit card" before checking credit verbs so the noun
+    // "credit card" doesn't trigger a false credit-type match.
     let type = 'debit';
-    if (/\b(credited|received|deposit|refund|payment received|reversal|refunded)\b/i.test(text)) type = 'credit';
-    else if (/\b(debited|purchase|withdrawn|spent|paid|charged|cash advance)\b/i.test(text)) type = 'debit';
+    const textForType = text.replace(/credit\s*card/gi, 'XCARD');
+    if (/\b(debit\w*|purchas\w*|withdr\w*|spent|paid|charged|cash advance|outgoing|transfer to)\b/i.test(textForType)) type = 'debit';
+    else if (/\b(credit\w*|receiv\w*|deposit\w*|refund\w*|reversal|reimburs\w*|incoming)\b/i.test(textForType)) type = 'credit';
 
     // Card last 4 — "card ending 1234", "***1234", "xxxx1234", "A/c ...1234",
     // "•••1234", or any 4 digits at end of an "A/c"/"card"/"credit card" phrase.
