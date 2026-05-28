@@ -466,6 +466,76 @@
     }
     window.wfDrainShareInbox = drainShareInbox;
 
+    // ────────────────────────────────────────────────────────────────────────
+    // 11. v7.6.6 — SERVER INBOX POLLER (CRITICAL)
+    // This is what makes iOS Shortcut auto-forwarding actually WORK end-to-end.
+    //
+    // The iOS Shortcut POSTs to /api/sms-ingest → backend classifies →
+    // backend writes the result to a per-device server-side inbox (Vercel KV).
+    //
+    // This poller, running in the main app on the user's phone, fetches
+    // those inbox entries and applies them via applyBrainResult, exactly
+    // the same code path as the Paste-SMS tester. Without this, classified
+    // transactions from the Shortcut would be silently lost.
+    //
+    // Runs on:
+    //   - 4s after page load
+    //   - Every 30s while app is open
+    //   - Immediately when tab becomes visible (user opens app)
+    // ────────────────────────────────────────────────────────────────────────
+    async function drainServerInbox() {
+        try {
+            const tok = getDeviceToken();
+            if (!tok) return { drained: 0 };
+            const r = await fetch('/api/inbox-pull', {
+                method: 'GET',
+                headers: { 'x-wf-device-token': tok }
+            });
+            if (!r.ok) return { drained: 0, error: 'pull failed: ' + r.status };
+            const data = await r.json();
+            if (!data.ok || !Array.isArray(data.items) || !data.items.length) {
+                return { drained: 0 };
+            }
+            let drained = 0;
+            const successfulKeys = [];
+            for (const it of data.items) {
+                if (!it || !it.brain_result) continue;
+                try {
+                    const apply = await applyBrainResult(it.brain_result);
+                    if (apply && (apply.ok || (apply.reason && apply.reason.includes('duplicate')))) {
+                        successfulKeys.push(it.key);
+                        drained++;
+                    }
+                } catch (_) { /* leave on server for next attempt */ }
+            }
+            // ACK: tell server to delete the items we successfully applied
+            if (successfulKeys.length) {
+                try {
+                    await fetch('/api/inbox-ack', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'x-wf-device-token': tok },
+                        body: JSON.stringify({ keys: successfulKeys })
+                    });
+                } catch (_) {}
+            }
+            if (drained > 0) {
+                try {
+                    if (typeof renderSubscriptions === 'function') renderSubscriptions();
+                    if (typeof renderExpenses === 'function') renderExpenses();
+                    if (typeof renderDash === 'function') renderDash();
+                    if (typeof renderAutoPilotTile === 'function') renderAutoPilotTile();
+                } catch (_) {}
+                if (typeof window.notify === 'function') {
+                    notify(`🤖 Auto-logged ${drained} transaction${drained > 1 ? 's' : ''} from your phone`, 'success');
+                }
+            }
+            return { drained };
+        } catch (e) {
+            return { drained: 0, error: e.message };
+        }
+    }
+    window.wfDrainServerInbox = drainServerInbox;
+
     if (typeof document !== 'undefined') {
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(startSelfHealing, 3000);
@@ -479,6 +549,18 @@
                     if (!document.hidden) drainShareInbox();
                 });
             }, 5000);
+            // v7.6.6 — SERVER INBOX POLLER: this is what makes iOS Shortcut
+            // auto-forwarding end-to-end work. Runs 4s after load, every 30s,
+            // and immediately on tab-visible.
+            setTimeout(() => {
+                drainServerInbox();
+                setInterval(() => {
+                    if (navigator.onLine && !document.hidden) drainServerInbox();
+                }, 30000);
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden && navigator.onLine) drainServerInbox();
+                });
+            }, 4000);
         });
     }
 

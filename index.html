@@ -4728,7 +4728,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.6.5 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.6.6 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -12579,10 +12579,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         window.openFxModal = openFxModal;
 
         function forceDrainQueue() {
-            if (!window.wfQueue) { notify('Autonomous module not ready', 'warn'); return; }
-            wfQueue.drain().then(r => {
-                if (r.drained > 0) notify(`✅ Drained ${r.drained} pending SMS`, 'success');
-                else notify('Queue is empty', 'info');
+            const promises = [];
+            if (window.wfQueue && wfQueue.drain) promises.push(wfQueue.drain());
+            // v7.6.6 — also drain server inbox (iOS Shortcut deliveries)
+            if (window.wfDrainServerInbox) promises.push(wfDrainServerInbox());
+            if (window.wfDrainShareInbox) promises.push(wfDrainShareInbox());
+            Promise.all(promises).then(results => {
+                let total = 0;
+                for (const r of results) {
+                    if (r && typeof r.drained === 'number') total += r.drained;
+                }
+                if (total > 0) notify(`✅ Synced ${total} new transaction${total > 1 ? 's' : ''}`, 'success');
+                else notify('Already up to date', 'info');
             });
         }
         window.forceDrainQueue = forceDrainQueue;
@@ -12679,7 +12687,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             <div style="font-weight:800;font-size:13px;">AutoPilot Live</div>
                             <div style="font-size:10.5px;color:var(--text3);">${cardCount} card${cardCount === 1 ? '' : 's'} · ${recurring.length} recurring · last refresh ${p && p.refreshed_at ? _timeAgo(p.refreshed_at) : 'pending'}</div>
                         </div>
-                        <button class="btn btn-ghost btn-sm" onclick="wfRefreshPredictions(12).then(()=>renderAutoPilotTile())" title="Refresh forecast" style="font-size:14px;">🔄</button>
+                        <button class="btn btn-ghost btn-sm" onclick="wfDrainServerInbox().then(()=>wfRefreshPredictions(12)).then(()=>renderAutoPilotTile())" title="Sync new SMS + refresh forecast" style="font-size:14px;">🔄</button>
                     </div>
                     ${forecastHtml}
                     ${insightsHtml}
@@ -12801,7 +12809,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         <div style="font-size:12px;line-height:1.6;color:var(--text2);margin-bottom:10px;">
                             Tap the button below on your iPhone. Apple's Shortcuts app opens with a ready-to-use WealthFlow shortcut. Tap <b>"Add Shortcut"</b> — your URL and device token are already pre-filled. Then bind it to a Personal Automation in 30 seconds.
                         </div>
-                        <a href="https://www.icloud.com/shortcuts/f1ca942c3f0d4f59853e7e3e42cd70d6" target="_blank" rel="noopener" class="btn btn-primary" style="width:100%;text-decoration:none;text-align:center;display:block;font-weight:700;background:linear-gradient(135deg,#10b981,#d4af37);">
+                        <a href="https://www.icloud.com/shortcuts/d00d1738265a4b68b1efceb697c15e1d" target="_blank" rel="noopener" class="btn btn-primary" style="width:100%;text-decoration:none;text-align:center;display:block;font-weight:700;background:linear-gradient(135deg,#10b981,#d4af37);">
                             ⚡ Install WealthFlow Shortcut (iCloud)
                         </a>
                         <div style="font-size:10.5px;color:var(--text3);margin-top:6px;line-height:1.5;">
@@ -12828,7 +12836,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             <b>Step 3:</b> On the next screen tap <b>"New Blank Automation"</b> (not "Suggestions").<br><br>
                             <b>Step 4:</b> Tap <b>"+ Add Action"</b> → search <b>"URL"</b> → tap <b>"Get Contents of URL"</b>.<br><br>
                             <b>Step 5:</b> Fill in the action — EXACTLY these 4 things:<br>
-                            <div style="background:var(--bg);padding:8px;border-radius:6px;margin:6px 0;font-family:var(--mono);font-size:11px;">
+                            <div style="background:var(--bg)
+;padding:8px;border-radius:6px;margin:6px 0;font-family:var(--mono);font-size:11px;">
                             <div style="margin-bottom:6px;"><b style="color:var(--accent);">A. URL field</b> (tap the blue "https://" placeholder):</div>
                             <div style="background:var(--bg2);padding:6px;border-radius:4px;word-break:break-all;margin-bottom:8px;">${webhook}</div>
                             <div style="margin-bottom:6px;"><b style="color:var(--accent);">B. Method:</b> tap → choose <b>POST</b></div>
@@ -12836,9 +12845,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>x-wf-device-token</b></div>
                             <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:8px;word-break:break-all;">Value: <b>${tok}</b></div>
                             <div style="margin-bottom:6px;"><b style="color:var(--accent);">D. Request Body:</b> tap → choose <b>JSON</b> → tap "Add new field" 3 times:</div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sms</b> &nbsp;|&nbsp; Value: tap → "Shortcut Input"</div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sender</b> &nbsp;|&nbsp; Value: tap → choose "Sender" from variables</div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;">Key: <b>device_id</b> &nbsp;|&nbsp; Value: type <b>iphone</b></div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sms</b><br>Value: tap blue field → tap <b>"Variables"</b> in the suggestions bar → tap <b>"Shortcut Input"</b> (purple/green pill)</div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sender</b><br>Value: just type your bank name as text (e.g. <b>DFCC</b>). <span style="color:var(--text3);">iOS doesn't expose the actual sender as a variable — you hard-code it. Since this automation only fires for SMS from your chosen Sender filter, you already know who sent it.</span></div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;">Key: <b>device_id</b><br>Value: type <b>iphone</b></div>
+                            </div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">
+                                💡 <b>Multi-bank tip:</b> Make ONE separate Personal Automation per bank (DFCC, ComBank, HNB, etc), and in each one hard-code the matching sender string. The automation's Sender filter ensures it only fires for that bank.
                             </div>
                             <b>Step 6:</b> Tap <b>Done</b> top-right. Done!<br><br>
                             <b>Test it:</b> Use the "Paste-SMS Tester" in Settings to verify the brain works, then ask someone to text you a fake bank SMS containing the keyword you set.
@@ -18553,7 +18565,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.5 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.6 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -18563,7 +18575,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.6.5 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.6.6 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
