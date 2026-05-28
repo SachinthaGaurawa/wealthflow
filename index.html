@@ -4728,7 +4728,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.6.3 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.6.5 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -12298,7 +12298,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const ov = document.createElement('div');
             ov.className = 'mo';
             ov.style.zIndex = String(opts.zIndex || 9999);
-            ov.innerHTML = `<div class="mc" style="max-width:${opts.maxWidth || 540}px;">${innerHtml}</div>`;
+            // v7.6.4 — CRITICAL FIX: the modal container class is "md" not "mc".
+            // Old code used "mc" which didn't match any CSS rule, so the
+            // container had no max-height + overflow:auto and couldn't be
+            // scrolled. Also adds iOS safe-area bottom padding so the bottom
+            // buttons aren't cut off behind the iOS home indicator.
+            ov.innerHTML = `<div class="md" style="max-width:${opts.maxWidth || 540}px; max-height: calc(100dvh - 28px); overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: max(24px, env(safe-area-inset-bottom));">${innerHtml}</div>`;
             document.body.appendChild(ov);
             requestAnimationFrame(() => ov.classList.add('open'));
             const close = () => {
@@ -12775,45 +12780,93 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         <span style="font-size:22px;">🍎</span>
                         <div style="flex:1;">
                             <div style="font-weight:700;font-size:13.5px;">iPhone / iPad detected</div>
-                            <div style="font-size:11px;color:var(--text3);">Apple blocks all SMS reading. Here's the official Apple-supported workflow:</div>
+                            <div style="font-size:11px;color:var(--text3);">Apple blocks all SMS reading. Pick the method that fits you best:</div>
                         </div>
                     </div>
 
-                    <div style="background:rgba(212,175,55,0.06);border-radius:8px;padding:12px;margin-bottom:10px;">
-                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">⚡ Method 1: iOS Shortcut Auto-Forward (most automated)</div>
-                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
-                            <b>1.</b> Open the <b>Shortcuts app</b> on your iPhone (pre-installed by Apple).<br>
-                            <b>2.</b> Tap the <b>Automation</b> tab → <b>"+"</b> → <b>"New Personal Automation"</b> → <b>"Message"</b>.<br>
-                            <b>3.</b> Set Sender to "Contains" → type your bank's name (e.g. "ComBank"). Tap Next.<br>
-                            <b>4.</b> Tap <b>"Add Action"</b> → search <b>"URL"</b> → choose <b>"Get Contents of URL"</b>.<br>
-                            <b>5.</b> Configure:<br>
-                            &nbsp;&nbsp;• URL: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">${webhook}</code><br>
-                            &nbsp;&nbsp;• Method: <b>POST</b><br>
-                            &nbsp;&nbsp;• Headers: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">x-wf-device-token: ${tok.slice(0,12)}…</code><br>
-                            &nbsp;&nbsp;• Body: <b>JSON</b> with sms, sender, received_at_ms.<br>
-                            <b>6.</b> Turn off <b>"Ask Before Running"</b>. Done.
+                    <!-- v7.6.4 — Connection self-test so users can confirm the endpoint
+                         is reachable before building the Shortcut -->
+                    <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:10px;margin-bottom:12px;">
+                        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">First, verify your iPhone can reach our servers:</div>
+                        <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="_apTestConnection()">🔌 Test Connection</button>
+                        <div id="_apConnResult" style="font-size:11px;margin-top:6px;display:none;"></div>
+                    </div>
+
+                    <!-- METHOD 1: ONE-TAP iCloud SHORTCUT INSTALL -->
+                    <div style="background:linear-gradient(135deg, rgba(16,185,129,0.10), rgba(212,175,55,0.06));border:1px solid rgba(16,185,129,0.4);border-radius:10px;padding:14px;margin-bottom:12px;">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <span style="font-size:18px;">⚡</span>
+                            <div style="font-weight:800;font-size:13px;color:var(--green);">Method 1: Use the Pre-Built Shortcut (RECOMMENDED)</div>
                         </div>
-                        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-                            <a href="${APP_STORE_SHORTCUTS}" target="_blank" class="btn btn-secondary btn-sm" style="flex:1;text-decoration:none;text-align:center;">📲 Open App Store</a>
-                            <button class="btn btn-secondary btn-sm" style="flex:1;" onclick="_apShowFullIosRecipe()">📖 Full Recipe</button>
+                        <div style="font-size:12px;line-height:1.6;color:var(--text2);margin-bottom:10px;">
+                            Tap the button below on your iPhone. Apple's Shortcuts app opens with a ready-to-use WealthFlow shortcut. Tap <b>"Add Shortcut"</b> — your URL and device token are already pre-filled. Then bind it to a Personal Automation in 30 seconds.
+                        </div>
+                        <a href="https://www.icloud.com/shortcuts/f1ca942c3f0d4f59853e7e3e42cd70d6" target="_blank" rel="noopener" class="btn btn-primary" style="width:100%;text-decoration:none;text-align:center;display:block;font-weight:700;background:linear-gradient(135deg,#10b981,#d4af37);">
+                            ⚡ Install WealthFlow Shortcut (iCloud)
+                        </a>
+                        <div style="font-size:10.5px;color:var(--text3);margin-top:6px;line-height:1.5;">
+                            <b>After install:</b> Open the shortcut once → tap the URL → replace it with this:<br>
+                            <code style="background:var(--bg);padding:2px 5px;border-radius:3px;font-size:10px;word-break:break-all;display:block;margin-top:4px;">${webhook}</code>
+                            and replace the device token header with this:<br>
+                            <code style="background:var(--bg);padding:2px 5px;border-radius:3px;font-size:10px;word-break:break-all;display:block;margin-top:4px;">${tok}</code>
+                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;font-size:11px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied to clipboard','success'))">📋 Copy Token to Clipboard</button>
                         </div>
                     </div>
 
-                    <div style="background:rgba(16,185,129,0.06);border-radius:8px;padding:12px;margin-bottom:10px;">
-                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">📤 Method 2: Share Sheet (no setup, but manual)</div>
-                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
-                            When a bank SMS arrives: tap and hold the message → <b>Share</b> → scroll to <b>WealthFlow</b> in the share sheet → text is auto-classified. Add WealthFlow to your iPhone Home Screen first so it appears in the share sheet.
+                    <!-- METHOD 2: BUILD MANUALLY WITH PROPER FIELD-BY-FIELD INSTRUCTIONS -->
+                    <details style="background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+                        <summary style="cursor:pointer;font-weight:700;font-size:12.5px;color:var(--text);user-select:none;">📝 Method 2: Build the Shortcut yourself (step-by-step)</summary>
+                        <div style="padding:10px 0 0;font-size:12px;line-height:1.7;color:var(--text2);">
+                            <div style="background:rgba(245,158,11,0.08);border-left:3px solid var(--accent);border-radius:4px;padding:8px 10px;margin-bottom:10px;font-size:11.5px;">
+                                <b>⚠ COMMON MISTAKE:</b> When adding the header, you must enter <b>Key</b> and <b>Value</b> as TWO SEPARATE fields. Do NOT type <code>x-wf-device-token: ${tok.slice(0,8)}…</code> all into the Key field.
+                            </div>
+                            <b>Step 1:</b> Open <b>Shortcuts</b> app → <b>Automation</b> tab → <b>"+"</b> → <b>"New Personal Automation"</b> → scroll down → tap <b>"Message"</b>.<br><br>
+                            <b>Step 2:</b> Configure the trigger:<br>
+                            • <b>Sender</b>: tap → "Choose" → type your bank name (e.g. <code style="background:var(--bg);padding:1px 4px;border-radius:3px;">DFCC</code>) → Done<br>
+                            • <b>Message Contains</b>: leave as "Anything" (or skip it)<br>
+                            • Select <b>"Run Immediately"</b> at the bottom → tap <b>Done</b> top-right<br><br>
+                            <b>Step 3:</b> On the next screen tap <b>"New Blank Automation"</b> (not "Suggestions").<br><br>
+                            <b>Step 4:</b> Tap <b>"+ Add Action"</b> → search <b>"URL"</b> → tap <b>"Get Contents of URL"</b>.<br><br>
+                            <b>Step 5:</b> Fill in the action — EXACTLY these 4 things:<br>
+                            <div style="background:var(--bg);padding:8px;border-radius:6px;margin:6px 0;font-family:var(--mono);font-size:11px;">
+                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">A. URL field</b> (tap the blue "https://" placeholder):</div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;word-break:break-all;margin-bottom:8px;">${webhook}</div>
+                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">B. Method:</b> tap → choose <b>POST</b></div>
+                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">C. Headers:</b> tap "Add new header" → fill TWO separate fields:</div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>x-wf-device-token</b></div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:8px;word-break:break-all;">Value: <b>${tok}</b></div>
+                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">D. Request Body:</b> tap → choose <b>JSON</b> → tap "Add new field" 3 times:</div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sms</b> &nbsp;|&nbsp; Value: tap → "Shortcut Input"</div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sender</b> &nbsp;|&nbsp; Value: tap → choose "Sender" from variables</div>
+                            <div style="background:var(--bg2);padding:6px;border-radius:4px;">Key: <b>device_id</b> &nbsp;|&nbsp; Value: type <b>iphone</b></div>
+                            </div>
+                            <b>Step 6:</b> Tap <b>Done</b> top-right. Done!<br><br>
+                            <b>Test it:</b> Use the "Paste-SMS Tester" in Settings to verify the brain works, then ask someone to text you a fake bank SMS containing the keyword you set.
+                            <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+                                <button class="btn btn-ghost btn-sm" style="flex:1;min-width:140px;" onclick="navigator.clipboard.writeText('${webhook}').then(()=>notify('URL copied','success'))">📋 Copy URL</button>
+                                <button class="btn btn-ghost btn-sm" style="flex:1;min-width:140px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">🔑 Copy Token</button>
+                            </div>
+                            <a href="${APP_STORE_SHORTCUTS}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;text-decoration:none;text-align:center;display:block;">📲 Open Shortcuts in App Store</a>
                         </div>
-                        <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${SHARE_TARGET_URL}').then(()=>notify('Share-target URL copied','success'))">📋 Copy Share-Target URL</button>
-                    </div>
+                    </details>
 
-                    <div style="background:rgba(59,130,246,0.06);border-radius:8px;padding:12px;">
-                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">📧 Method 3: Email auto-forward (works on every device)</div>
-                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
-                            Most Sri Lankan banks email statements alongside SMS. Set a Gmail/iCloud filter to forward bank emails to our webhook.
-                            See the Email Setup link below.
+                    <!-- METHOD 3: SHARE SHEET -->
+                    <details style="background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+                        <summary style="cursor:pointer;font-weight:700;font-size:12.5px;color:var(--text);user-select:none;">📤 Method 3: Share Sheet (no setup, but manual per-SMS)</summary>
+                        <div style="padding:10px 0 0;font-size:12px;line-height:1.6;color:var(--text2);">
+                            When a bank SMS arrives, tap and hold it → <b>Share</b> → scroll to <b>WealthFlow</b> in the share sheet → text auto-classified.<br><br>
+                            Requires WealthFlow to be installed as a Home Screen app: open Safari → tap Share → "Add to Home Screen".
+                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${SHARE_TARGET_URL}').then(()=>notify('Share-target URL copied','success'))">📋 Copy Share-Target URL</button>
                         </div>
-                    </div>
+                    </details>
+
+                    <!-- METHOD 4: EMAIL -->
+                    <details style="background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;">
+                        <summary style="cursor:pointer;font-weight:700;font-size:12.5px;color:var(--text);user-select:none;">📧 Method 4: Email auto-forward (works on every device)</summary>
+                        <div style="padding:10px 0 0;font-size:12px;line-height:1.6;color:var(--text2);">
+                            Most Sri Lankan banks email statements alongside SMS. Set a Gmail/iCloud filter to forward bank emails to our webhook. See the Email Setup section below.
+                        </div>
+                    </details>
                 </div>`;
 
             const setupBlockAndroid = `
@@ -12929,6 +12982,30 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             window._apRefresh = () => openAutoPilotWizard();
             window._apShowFullIosRecipe = () => {
                 window.open(`${origin}/api/ios-shortcut?token=${tok}`, '_blank');
+            };
+            // v7.6.4 — health-check the endpoint from the user's actual phone
+            window._apTestConnection = async () => {
+                const r = document.getElementById('_apConnResult');
+                if (!r) return;
+                r.style.display = 'block';
+                r.style.color = 'var(--text3)';
+                r.innerHTML = '⏳ Testing…';
+                try {
+                    const t0 = Date.now();
+                    const resp = await fetch(webhook, { method: 'GET' });
+                    const data = await resp.json();
+                    const dt = Date.now() - t0;
+                    if (resp.ok && data.ok) {
+                        r.style.color = 'var(--green)';
+                        r.innerHTML = `✅ Connected (${dt}ms) — server responded "${data.status}"`;
+                    } else {
+                        r.style.color = 'var(--accent)';
+                        r.innerHTML = `⚠ HTTP ${resp.status} — server reachable but returned error`;
+                    }
+                } catch (e) {
+                    r.style.color = 'var(--red)';
+                    r.innerHTML = `❌ Failed: ${e.message}. Check your iPhone has internet, or the URL is correct.`;
+                }
             };
         }
         window.openAutoPilotWizard = openAutoPilotWizard;
@@ -18476,7 +18553,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.3 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.5 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -18486,7 +18563,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.6.3 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.6.5 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
