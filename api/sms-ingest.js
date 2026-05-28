@@ -21,9 +21,12 @@ const ALLOWED_SENDERS = [
 function isLikelyBankSms(sender, body) {
     const s = (sender || '').toUpperCase().replace(/\s+/g, '');
     if (ALLOWED_SENDERS.some(a => s.includes(a.replace(/\s+/g, '')))) return true;
-    // Fallback: body smells like a bank message
-    return /\b(LKR|Rs\.?|USD)\s*[\d,]+\.?\d*\b/i.test(body)
-        && /\b(debited|credited|withdrawn|deposited|purchase|payment|balance|available)\b/i.test(body);
+    // Fallback: body smells like a bank message (v7.6.6 — use \w* so past-tense
+    // verbs match, since iOS users can't easily pass real sender from Shortcuts
+    // and may set sender="iphone" or leave it blank — body content is the real
+    // signal here).
+    return /\b(LKR|Rs\.?|USD|EUR|GBP|INR)\s*[\d,]+\.?\d*\b/i.test(body)
+        && /\b(debit\w*|credit\w*|withdr\w*|deposit\w*|purchas\w*|payment|balance|available|received|charged|spent|paid|transfer\w*|refund\w*|reversal)\b/i.test(body);
 }
 
 export default async function handler(req) {
@@ -129,9 +132,35 @@ export default async function handler(req) {
         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
+    // v7.6.6 — CRITICAL: push the classified result to the server-side inbox
+    // so the main app picks it up next time it opens. Without this, the
+    // classification result is lost (iOS Shortcuts throws away the HTTP
+    // response after running the Shortcut).
+    try {
+        await fetch(`${origin}/api/inbox-push`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-wf-device-token': deviceTok
+            },
+            body: JSON.stringify({
+                brain_result: brain,
+                sms: sms,
+                received_at_ms: receivedAt,
+                device_id: deviceId
+            })
+        });
+    } catch (e) {
+        // Inbox push failed but classification succeeded. Log and continue —
+        // the response still contains the result, so a caller that DOES
+        // process the response (like our share-target.html) still works.
+        console.error('[sms-ingest] inbox-push failed:', e);
+    }
+
     return new Response(JSON.stringify({
         ok: true,
         classified: true,
+        inboxed: true,
         device_id: deviceId,
         received_at_ms: receivedAt,
         sender,
