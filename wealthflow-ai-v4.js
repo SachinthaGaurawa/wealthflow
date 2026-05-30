@@ -243,11 +243,36 @@
         // ---- PDF: render adaptively ----
         await ensurePdfJs();
         var buf = await file.arrayBuffer();
+        var u8 = new Uint8Array(buf);  // keep an undetached copy for password retries
         var pdf;
         try {
-            pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+            pdf = await window.pdfjsLib.getDocument({ data: u8.slice() }).promise;
         } catch (e) {
-            throw new Error('PDF could not be opened: ' + e.message + '. Is it password-protected?');
+            // v7.7.0 — locked PDF? Auto-try the user's Security Vault keys
+            // (Sri Lankan banks commonly lock statements with NIC or DOB).
+            var isLocked = e && (e.name === 'PasswordException' || /password/i.test(e.message || ''));
+            if (isLocked && typeof window.wfVaultPdfPasswords === 'function') {
+                var cands = [];
+                try { cands = await window.wfVaultPdfPasswords(); } catch (_) {}
+                var opened = null;
+                for (var ci = 0; ci < cands.length; ci++) {
+                    try {
+                        opened = await window.pdfjsLib.getDocument({ data: u8.slice(), password: cands[ci] }).promise;
+                        if (opened) {
+                            if (typeof window.notify === 'function') window.notify('🔓 Locked PDF opened automatically with your Vault keys', 'success');
+                            break;
+                        }
+                    } catch (pe) { /* wrong password — try the next candidate */ }
+                }
+                if (opened) { pdf = opened; }
+                else if (cands.length) {
+                    throw new Error('This PDF is password-protected and none of your saved Vault keys worked. Check your NIC / DOB in Settings → Security Vault, or remove the password and re-upload.');
+                } else {
+                    throw new Error('This PDF is password-protected. Add your NIC / DOB to Settings → Security Vault and I will unlock bank statements automatically — or remove the password and re-upload.');
+                }
+            } else {
+                throw new Error('PDF could not be opened: ' + e.message + '. Is it password-protected?');
+            }
         }
         var pages = Math.min(pdf.numPages, maxPages);
         if (pages === 0) throw new Error('PDF has no pages');

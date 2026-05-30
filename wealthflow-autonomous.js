@@ -180,17 +180,67 @@
     // 4. Apply Brain Result — writes the classified transaction to the
     //    correct WealthFlow module via DB.set.
     // ────────────────────────────────────────────────────────────────────────
-    async function applyBrainResult(brain) {
+    async function applyBrainResult(brain, opts) {
+        opts = opts || {};
         if (!brain || !brain.ok || !brain.classified) return { ok: false, reason: 'not classified' };
-        if (await alreadyProcessed(brain.hash)) {
+        if (!opts.skipDedup && await alreadyProcessed(brain.hash)) {
             return { ok: false, reason: 'duplicate (already applied)' };
         }
         const routed = brain.routed || {};
         const fields = routed.suggested_fields || {};
-        const module = routed.module;
+        let module = opts.forceModule || routed.module;
+
+        // ── v7.7.0 Intelligence layer ──────────────────────────────────────
+        // Runs BEFORE generic routing, but is skipped when re-applying from the
+        // Quarantine Zone (the user has already made the decision there).
+        if (!opts.skipIntel) {
+            // (B) Semantic Goal / Loan allocation — highest priority. If the
+            //     transaction description matches a savings goal or a loan by
+            //     name, route the money straight there and stop.
+            if (typeof window.wfTrySemanticAllocate === 'function') {
+                try {
+                    const alloc = await window.wfTrySemanticAllocate(brain);
+                    if (alloc && alloc.ok) {
+                        await markProcessed(brain.hash);
+                        if (typeof window.syncToCloud === 'function') { try { syncToCloud(); } catch (_) {} }
+                        return alloc;
+                    }
+                } catch (e) { console.warn('[Autonomous] semantic hook error:', e && e.message); }
+            }
+
+            // (C) Confidence gate → Quarantine Zone. If the brain isn't at
+            //     least 95% sure, DO NOT guess — ask the user.
+            const rConf = (routed.confidence != null) ? routed.confidence : 1;
+            const mConf = (brain.resolved_merchant && brain.resolved_merchant.confidence != null)
+                ? brain.resolved_merchant.confidence : 1;
+            const conf = Math.min(rConf, mConf);
+            if (conf < 0.95 && typeof window.wfQuarantineAdd === 'function') {
+                window.wfQuarantineAdd(brain, 'AI only ' + Math.round(conf * 100) + '% sure');
+                await markProcessed(brain.hash); // hold it; the quarantine entry owns it now
+                if (typeof window.notify === 'function') {
+                    notify('🛟 1 transaction needs your review (low confidence)', 'info');
+                }
+                return { ok: true, module: 'quarantine' };
+            }
+        }
 
         try {
-            if (module === 'income') {
+            if (module === 'goal') {
+                // forced from Quarantine "Goal" chip — needs a target id in fields
+                const arr = (DB.get('targets') || []);
+                const gi = arr.findIndex(x => x.id === fields.goalId);
+                if (gi < 0) return { ok: false, reason: 'goal not found' };
+                if (!Array.isArray(arr[gi].savings)) arr[gi].savings = [];
+                arr[gi].savings.push({ id: 'auto_' + Date.now().toString(36), amount: fields.amount, date: new Date(fields.date || Date.now()).toISOString().slice(0,10), note: 'Filed from review', auto: true });
+                DB.set('targets', arr);
+            } else if (module === 'loan') {
+                const arr = (DB.get('loans') || []);
+                const li = arr.findIndex(x => x.id === fields.loanId);
+                if (li < 0) return { ok: false, reason: 'loan not found' };
+                if (!Array.isArray(arr[li].payments)) arr[li].payments = [];
+                arr[li].payments.push({ id: 'auto_' + Date.now().toString(36), amount: fields.amount, date: new Date(fields.date || Date.now()).toISOString().slice(0,10), paid: true, note: 'Filed from review', auto: true });
+                DB.set('loans', arr);
+            } else if (module === 'income') {
                 const arr = (DB.get('income') || []);
                 arr.push({
                     id: 'auto_' + Date.now().toString(36),

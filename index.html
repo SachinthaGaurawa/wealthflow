@@ -73,6 +73,7 @@
          as toasts, and powers the one-tap Setup Wizard. Loads AFTER the
          autonomous module since it depends on wfCardRegistry, wfRefreshPredictions. -->
     <script src="wealthflow-autopilot.js" defer></script>
+    <script src="wealthflow-intelligence.js" defer></script>
 
     
 
@@ -4728,7 +4729,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.6.6 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.7.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -4771,6 +4772,7 @@
                     <!-- v7.6.2 — AutoPilot Tile: live insights, forecast summary,
                          and one-tap actions, rendered by renderAutoPilotTile()
                          on every dashboard refresh. -->
+                    <div id="quarantineTile" style="margin-bottom:16px;display:none;"></div>
                     <div id="autopilotTile" style="margin-bottom:16px;"></div>
 
                     <div class="golden-frame">
@@ -17518,6 +17520,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             // Defensive: if the tile renderer isn't loaded yet (script defer
             // race), skip silently and let the next dashboard render pick it up.
             try { if (typeof renderAutoPilotTile === 'function') renderAutoPilotTile(); } catch (_) {}
+            try { if (typeof renderQuarantineTile === 'function') renderQuarantineTile(); } catch (_) {}
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
             const incData = [], expData = [], netData = [];
@@ -18218,8 +18221,50 @@ table.amort tbody tr { page-break-inside: avoid; }
             </details>
         </div>
 
-        <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--green);">🛡️ Security & Access Control</div>
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.08), rgba(212,175,55,0.04), var(--card)); border: 1px solid rgba(99,102,241,0.45); position:relative; overflow:hidden;">
+            <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;background:radial-gradient(circle, rgba(99,102,241,0.22), transparent 70%);pointer-events:none;"></div>
+            <div class="settings-title" style="color:#818cf8;">🔐 Security Vault &amp; Smart Intelligence</div>
+            <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:14px;">
+                Save your card last-4, NIC and date of birth — encrypted on this
+                device — and WealthFlow will <b>automatically unlock locked bank
+                PDF statements</b>. Combined with Semantic Allocation (money you
+                send to "Land" auto-funds your Land goal) and the Needs-Review
+                zone (the AI never guesses below 95% confidence).
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label" style="font-size:13px;">🔐 Security Vault</div>
+                    <div class="setting-desc">Encrypted NIC / DOB / card last-4 for automatic PDF unlocking.</div>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="wfVault.openModal()">Manage</button>
+            </div>
+
+            <div class="setting-row" style="margin-top:10px;border-top:1px solid var(--border);padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label" style="font-size:13px;">🛟 Needs-Review Inbox</div>
+                    <div class="setting-desc">Low-confidence transactions waiting for your one-tap decision (shown on the dashboard).</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="showPage('dashboard'); setTimeout(function(){ if(window.renderQuarantineTile) renderQuarantineTile(); window.scrollTo({top:0,behavior:'smooth'}); }, 100);">View</button>
+            </div>
+
+            <details style="margin-top:12px;background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;">
+                <summary style="cursor:pointer;font-size:12px;color:var(--text3);user-select:none;">How does each piece work?</summary>
+                <div style="font-size:12px;color:var(--text2);line-height:1.7;padding-top:8px;">
+                    <b>Security Vault</b> — AES-256-GCM encrypted, stored only on this
+                    device, never uploaded in plaintext. When you upload a locked bank
+                    PDF, the system silently tries your NIC / DOB in every common format
+                    until it opens.<br><br>
+                    <b>Semantic Allocation</b> — if an auto-logged transaction's
+                    description matches one of your Savings Goals or Loans by name, the
+                    money is filed straight to that goal/loan instead of the generic
+                    Expenses tab.<br><br>
+                    <b>Needs-Review (Quarantine)</b> — when the AI is less than 95%
+                    confident, it refuses to guess. The transaction appears at the top
+                    of your dashboard with one-tap buttons so you decide where it goes.
+                </div>
+            </details>
+        </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Lock Timer</div><div class="setting-desc">Secure the vault after inactivity to prevent unauthorized access.</div></div>
                 <select class="fi" style="width:140px; border-color:var(--border2);" onchange="updateAutoLock(this.value)">
@@ -18565,7 +18610,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.6.6 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.7.0 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -18575,7 +18620,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.6.6 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.7.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
