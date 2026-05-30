@@ -63,10 +63,10 @@
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
     <script src="wealthflow-ml.js" defer></script>
-    <!-- v7.6.1 — Autonomous Brain client: card registry, FIFO reconciliation,
-         SMS classification, predictive wealth refresh, self-healing offline
-         queue. Adds window.wfClassifySms, wfApplyBrainResult, wfFifoReconcile,
-         wfRefreshPredictions, wfFxConvert, wfCardRegistry, wfDeviceToken. -->
+    <!-- v7.6.1 / v7.8.0 — Autonomous Brain client: card registry, FIFO
+         reconciliation, predictive wealth refresh. (SMS removed in v7.8.0.)
+         Adds window.wfApplyBrainResult, wfFifoReconcile, wfRefreshPredictions,
+         wfFxConvert, wfCardRegistry. -->
     <script src="wealthflow-autonomous.js" defer></script>
     <!-- v7.6.2 — AutoPilot: zero-setup automation. Auto-discovers cards from
          transaction history, detects hidden subscriptions, surfaces insights
@@ -4729,7 +4729,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.7.0 · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.8.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -9707,6 +9707,36 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
         window._wfTotalRecordCount = _wfTotalRecordCount;
 
+        // ── v7.8.0 — SINGLE SOURCE OF TRUTH for "last backup time" ───────────
+        // Previously the status display, the scheduler, and the reminder each
+        // computed "last backup" from a DIFFERENT subset of timestamps, so they
+        // could disagree (the bug the user reported: "Backup details and
+        // autobackup section have different details"). There are FOUR places a
+        // backup time can land:
+        //   1. s.lastBackupMeta.at   — metadata from the last backupNow()
+        //   2. s.lastBackup          — settings field (syncs via Firestore)
+        //   3. s.lastDriveBackup.at  — Drive-direct verified backup
+        //   4. s.lastAutoBackupAt    — written by the auto-scheduler (syncs)
+        //   + localStorage.wf_last_auto_backup (per-device, local only)
+        // This helper returns the freshest of ALL of them as a millisecond
+        // timestamp (0 if none). EVERY reader now goes through this so they can
+        // never disagree again.
+        function _getLastBackupMs() {
+            try {
+                const s = DB.getObj('settings', {}) || {};
+                const cand = [];
+                const push = (v) => { const t = v ? new Date(v).getTime() : 0; if (t && !isNaN(t)) cand.push(t); };
+                if (s.lastBackupMeta && s.lastBackupMeta.at) push(s.lastBackupMeta.at);
+                push(s.lastBackup);
+                if (s.lastDriveBackup && s.lastDriveBackup.at) push(s.lastDriveBackup.at);
+                push(s.lastAutoBackupAt);
+                const ls = parseInt(localStorage.getItem('wf_last_auto_backup') || '0', 10);
+                if (ls && !isNaN(ls)) cand.push(ls);
+                return cand.length ? Math.max.apply(null, cand) : 0;
+            } catch (_) { return 0; }
+        }
+        window._getLastBackupMs = _getLastBackupMs;
+
         // Manual / auto "Backup Now" — pushes to Firestore (always) + Drive
         // (if authed), and records REAL metadata so the status card is accurate.
         async function backupNow(silent, trigger) {
@@ -9795,6 +9825,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     };
                     // Also remember the most recent attempt for diagnostics
                     s.lastBackupAttempt = { success: true, at: nowIso, cloud: cloudOk, drive: driveOk };
+                    // v7.8.0 — stamp lastAutoBackupAt on EVERY successful backup
+                    // (manual included), so the scheduler, the display, and the
+                    // reminder all read the same freshest timestamp. Previously
+                    // a manual backup left lastAutoBackupAt stale, which the
+                    // scheduler could then read as "overdue" and double-fire.
+                    s.lastAutoBackupAt = nowIso;
                     DB.set('settings', s);
                     if (cloudOk) { try { if (typeof syncToCloud === 'function') await Promise.resolve(syncToCloud()); } catch (_) {} }
                     localStorage.setItem('wf_last_auto_backup', String(Date.now()));
@@ -10065,6 +10101,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             fileId: j.id
                         };
                         s.lastBackupAttempt = { success: true, at: nowIso, cloud: false, drive: true };
+                        // v7.8.0 — keep all timestamps in lockstep
+                        s.lastAutoBackupAt = nowIso;
+                        try { localStorage.setItem('wf_last_auto_backup', String(Date.now())); } catch (_) {}
                     }
                     DB.set('settings', s);
                 } catch (_) {}
@@ -12002,11 +12041,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         function setupBackupReminder() {
-            const settings = DB.getObj('settings', { backupFreq: 'weekly', lastBackup: null });
-            if (!settings.lastBackup) return;
-            const last = new Date(settings.lastBackup);
-            const now = new Date();
-            const days = Math.floor((now - last) / (1000 * 86400));
+            // v7.8.0 — use the canonical timestamp so the "days since backup"
+            // nag matches what the status card shows.
+            const lastMs = (typeof _getLastBackupMs === 'function') ? _getLastBackupMs() : 0;
+            if (!lastMs) return;
+            const now = Date.now();
+            const days = Math.floor((now - lastMs) / (1000 * 86400));
             if (days >= 14) {
                 setTimeout(() => notify(`⚠️ It has been ${days} days since your last manual export. Consider downloading a PDF or JSON.`, 'warn'), 3000);
             }
@@ -12333,7 +12373,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const { close } = _buildOverlay(`
                 <div class="md-title">💳 Card &amp; Account Registry</div>
                 <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px;">
-                    The autonomous brain uses these mappings to know which module each SMS should route to.
+                    The autonomous brain uses these mappings to know which module each statement transaction should route to.
                     A debit on a credit card → CC One-Time. A debit on a regular account → Expenses.
                     A credit on a credit card → triggers FIFO reconciliation.
                 </div>
@@ -12401,78 +12441,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             };
         }
         window.openCardRegistryModal = openCardRegistryModal;
-
-        function openDeviceTokenModal() {
-            const tok = wfDeviceToken.get();
-            const webhook = location.origin + '/api/sms-ingest';
-            const { close } = _buildOverlay(`
-                <div class="md-title">🔑 SMS Forwarder Token</div>
-                <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px;">
-                    Install <b>"SMS Forwarder"</b> from the Play Store on your phone, then add a new rule:
-                </div>
-                <ol style="font-size:13px;line-height:1.7;padding-left:20px;margin-bottom:14px;">
-                    <li>Sender filter: leave blank (forward all SMS) or list your bank sender IDs</li>
-                    <li>Forward via: <b>HTTP POST (JSON)</b></li>
-                    <li>URL: <code style="background:var(--bg2);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:11px;word-break:break-all;">${webhook}</code></li>
-                    <li>Headers: <code style="background:var(--bg2);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:11px;">x-wf-device-token: ${tok}</code></li>
-                    <li>JSON body template: <pre style="background:var(--bg2);padding:8px;border-radius:6px;font-family:var(--mono);font-size:11px;margin-top:4px;overflow-x:auto;">{ "sms": "%message%",
-  "sender": "%sender%",
-  "received_at_ms": %sentstamp%,
-  "device_id": "phone1" }</pre></li>
-                </ol>
-                <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.4);border-radius:8px;padding:12px;margin-bottom:14px;">
-                    <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:4px;">YOUR DEVICE TOKEN</div>
-                    <div style="font-family:var(--mono);font-size:12px;word-break:break-all;user-select:all;">${tok}</div>
-                </div>
-                <div style="display:flex;gap:8px;">
-                    <button class="btn btn-primary" style="flex:1;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">📋 Copy Token</button>
-                    <button class="btn btn-ghost" style="flex:1;" onclick="_rotateTok()">🔄 Rotate</button>
-                    <button class="btn btn-ghost" onclick="_dtClose()">Close</button>
-                </div>`, { maxWidth: 580 });
-            window._dtClose = close;
-            window._rotateTok = () => {
-                showConfirm('🔄', 'Rotate token?', 'Old token stops working immediately. You\'ll need to update the SMS Forwarder rule on your phone.', 'btn-danger', 'Rotate', () => {
-                    wfDeviceToken.rotate();
-                    close();
-                    openDeviceTokenModal();
-                });
-            };
-        }
-        window.openDeviceTokenModal = openDeviceTokenModal;
-
-        function openPasteSmsModal() {
-            const { close } = _buildOverlay(`
-                <div class="md-title">🧪 Paste-SMS Classifier</div>
-                <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px;">
-                    Paste any bank SMS below. The autonomous brain will parse, resolve the merchant, and route it to the right module.
-                </div>
-                <textarea id="_ps_body" class="fi" rows="5" style="width:100%;font-family:var(--mono);font-size:12px;" placeholder="e.g. Your A/c ...1234 has been debited LKR 2,450.00 at KEELLS SUPER on 17/05/2026 12:34. Ref TXN789456."></textarea>
-                <input id="_ps_sender" class="fi" style="margin-top:8px;" placeholder='Sender ID (e.g. "ComBank")' value="ComBank">
-                <div id="_ps_result" style="margin-top:12px;font-size:12.5px;"></div>
-                <div style="display:flex;gap:8px;margin-top:12px;">
-                    <button class="btn btn-primary" style="flex:1;" onclick="_psRun()">🤖 Classify &amp; Apply</button>
-                    <button class="btn btn-ghost" onclick="_psClose()">Close</button>
-                </div>`, { maxWidth: 600 });
-            window._psClose = close;
-            window._psRun = async () => {
-                const body = $('_ps_body').value.trim();
-                if (!body) { notify('Paste an SMS first', 'warn'); return; }
-                const sender = $('_ps_sender').value.trim() || 'manual';
-                $('_ps_result').innerHTML = '<div style="padding:10px;color:var(--text3);">🤖 Brain thinking…</div>';
-                const res = await wfClassifySms(body, { sender });
-                if (res.ok && res.module) {
-                    $('_ps_result').innerHTML = `<div style="padding:12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.4);border-radius:8px;">
-                        <div style="font-weight:700;color:var(--green);margin-bottom:6px;">✅ Logged to ${res.module}</div>
-                        <div style="font-size:11px;color:var(--text3);">Re-paste to test more SMS.</div>
-                    </div>`;
-                } else {
-                    $('_ps_result').innerHTML = `<div style="padding:12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.4);border-radius:8px;color:var(--red);">
-                        ${res.reason || res.error || 'Could not classify this SMS'}
-                    </div>`;
-                }
-            };
-        }
-        window.openPasteSmsModal = openPasteSmsModal;
 
         function openPredictionsModal() {
             const { close } = _buildOverlay(`
@@ -12583,9 +12551,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function forceDrainQueue() {
             const promises = [];
             if (window.wfQueue && wfQueue.drain) promises.push(wfQueue.drain());
-            // v7.6.6 — also drain server inbox (iOS Shortcut deliveries)
-            if (window.wfDrainServerInbox) promises.push(wfDrainServerInbox());
-            if (window.wfDrainShareInbox) promises.push(wfDrainShareInbox());
             Promise.all(promises).then(results => {
                 let total = 0;
                 for (const r of results) {
@@ -12620,7 +12585,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             <div style="font-size:38px;">🤖</div>
                             <div style="flex:1;min-width:0;">
                                 <div style="font-weight:800;font-size:15px;color:var(--green);">AutoPilot is ready</div>
-                                <div style="font-size:12px;color:var(--text3);margin-top:3px;">One tap and WealthFlow will auto-discover your cards, find hidden subscriptions, and set up SMS auto-logging.</div>
+                                <div style="font-size:12px;color:var(--text3);margin-top:3px;">One tap and WealthFlow will auto-discover your cards, find hidden subscriptions, and set up your Security Vault for automatic PDF unlocking.</div>
                             </div>
                         </div>
                         <button class="btn btn-primary" style="width:100%;margin-top:14px;font-weight:700;background:linear-gradient(135deg,var(--green),var(--accent));box-shadow:0 4px 16px rgba(16,185,129,0.25);" onclick="openAutoPilotWizard()">
@@ -12689,7 +12654,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             <div style="font-weight:800;font-size:13px;">AutoPilot Live</div>
                             <div style="font-size:10.5px;color:var(--text3);">${cardCount} card${cardCount === 1 ? '' : 's'} · ${recurring.length} recurring · last refresh ${p && p.refreshed_at ? _timeAgo(p.refreshed_at) : 'pending'}</div>
                         </div>
-                        <button class="btn btn-ghost btn-sm" onclick="wfDrainServerInbox().then(()=>wfRefreshPredictions(12)).then(()=>renderAutoPilotTile())" title="Sync new SMS + refresh forecast" style="font-size:14px;">🔄</button>
+                        <button class="btn btn-ghost btn-sm" onclick="wfRefreshPredictions(12).then(()=>renderAutoPilotTile())" title="Refresh forecast & insights" style="font-size:14px;">🔄</button>
                     </div>
                     ${forecastHtml}
                     ${insightsHtml}
@@ -12710,10 +12675,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         // ════════════════════════════════════════════════════════════════════
 
         // ════════════════════════════════════════════════════════════════════
-        // v7.6.2 — AutoPilot Wizard
+        // v7.6.2 — AutoPilot Wizard  (v7.8.0: SMS removed)
         // Single-screen guided setup. Runs auto-discovery FIRST, then shows
-        // results + a QR code for the SMS Forwarder. The user never types,
-        // only confirms.
+        // results + Vault setup + statement-import shortcut. The user never
+        // types, only confirms.
         // ════════════════════════════════════════════════════════════════════
         async function openAutoPilotWizard() {
             const { ov, close } = _buildOverlay(`
@@ -12751,194 +12716,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // ── Phase 3: Detect currency ──
             const primaryCur = (window.wfPrimaryCurrency && wfPrimaryCurrency()) || 'LKR';
 
-            // ── Phase 4: Build the SMS Forwarder QR ──
-            try { await _loadQRLib(); } catch (_) {}
-            const tok = (window.wfDeviceToken && wfDeviceToken.get()) || '';
-            const webhook = location.origin + '/api/sms-ingest';
-            // SMS Forwarder app deep-link payload (HTTP rule + body template + header)
-            const smsForwarderConfig = JSON.stringify({
-                v: 1,
-                type: 'wealthflow_sms_setup',
-                url: webhook,
-                method: 'POST',
-                headers: { 'x-wf-device-token': tok, 'Content-Type': 'application/json' },
-                body: '{"sms":"%message%","sender":"%sender%","received_at_ms":%sentstamp%,"device_id":"phone1"}'
-            });
-            const qrSvg = _generateQRCodeSVG(smsForwarderConfig, 200);
-
-            // ── Phase 5: Render results ──
+            // ── Phase 4: Render results ──
             const cards = (window.wfCardRegistry && wfCardRegistry.get()) || {};
             const cardList = Object.values(cards);
             const totalCards = cardList.length;
 
-            // v7.6.3 — Platform detection for OS-specific setup paths.
-            // iOS cannot read SMS at all → uses Shortcuts app + Share Sheet.
-            // Android can read SMS via the SMS Forwarder Play Store app.
-            // Both platforms support email forwarding + paste-SMS fallback.
-            const ua = (navigator.userAgent || '').toLowerCase();
-            const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-            const isAndroid = /android/.test(ua);
-
-            // Direct app store links
-            const PLAY_STORE_SMS_FORWARDER = 'https://play.google.com/store/apps/details?id=tech.bogomolov.incomingsmsgateway';
-            const APP_STORE_SHORTCUTS = 'https://apps.apple.com/us/app/shortcuts/id1462947752';
-            const SHARE_TARGET_URL = location.origin + '/share-target.html';
-
-            const setupBlockIos = `
-                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                        <span style="font-size:22px;">🍎</span>
-                        <div style="flex:1;">
-                            <div style="font-weight:700;font-size:13.5px;">iPhone / iPad detected</div>
-                            <div style="font-size:11px;color:var(--text3);">Apple blocks all SMS reading. Pick the method that fits you best:</div>
-                        </div>
-                    </div>
-
-                    <!-- v7.6.4 — Connection self-test so users can confirm the endpoint
-                         is reachable before building the Shortcut -->
-                    <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:10px;margin-bottom:12px;">
-                        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">First, verify your iPhone can reach our servers:</div>
-                        <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="_apTestConnection()">🔌 Test Connection</button>
-                        <div id="_apConnResult" style="font-size:11px;margin-top:6px;display:none;"></div>
-                    </div>
-
-                    <!-- METHOD 1: ONE-TAP iCloud SHORTCUT INSTALL -->
-                    <div style="background:linear-gradient(135deg, rgba(16,185,129,0.10), rgba(212,175,55,0.06));border:1px solid rgba(16,185,129,0.4);border-radius:10px;padding:14px;margin-bottom:12px;">
-                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                            <span style="font-size:18px;">⚡</span>
-                            <div style="font-weight:800;font-size:13px;color:var(--green);">Method 1: Use the Pre-Built Shortcut (RECOMMENDED)</div>
-                        </div>
-                        <div style="font-size:12px;line-height:1.6;color:var(--text2);margin-bottom:10px;">
-                            Tap the button below on your iPhone. Apple's Shortcuts app opens with a ready-to-use WealthFlow shortcut. Tap <b>"Add Shortcut"</b> — your URL and device token are already pre-filled. Then bind it to a Personal Automation in 30 seconds.
-                        </div>
-                        <a href="https://www.icloud.com/shortcuts/d00d1738265a4b68b1efceb697c15e1d" target="_blank" rel="noopener" class="btn btn-primary" style="width:100%;text-decoration:none;text-align:center;display:block;font-weight:700;background:linear-gradient(135deg,#10b981,#d4af37);">
-                            ⚡ Install WealthFlow Shortcut (iCloud)
-                        </a>
-                        <div style="font-size:10.5px;color:var(--text3);margin-top:6px;line-height:1.5;">
-                            <b>After install:</b> Open the shortcut once → tap the URL → replace it with this:<br>
-                            <code style="background:var(--bg);padding:2px 5px;border-radius:3px;font-size:10px;word-break:break-all;display:block;margin-top:4px;">${webhook}</code>
-                            and replace the device token header with this:<br>
-                            <code style="background:var(--bg);padding:2px 5px;border-radius:3px;font-size:10px;word-break:break-all;display:block;margin-top:4px;">${tok}</code>
-                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;font-size:11px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied to clipboard','success'))">📋 Copy Token to Clipboard</button>
-                        </div>
-                    </div>
-
-                    <!-- METHOD 2: BUILD MANUALLY WITH PROPER FIELD-BY-FIELD INSTRUCTIONS -->
-                    <details style="background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
-                        <summary style="cursor:pointer;font-weight:700;font-size:12.5px;color:var(--text);user-select:none;">📝 Method 2: Build the Shortcut yourself (step-by-step)</summary>
-                        <div style="padding:10px 0 0;font-size:12px;line-height:1.7;color:var(--text2);">
-                            <div style="background:rgba(245,158,11,0.08);border-left:3px solid var(--accent);border-radius:4px;padding:8px 10px;margin-bottom:10px;font-size:11.5px;">
-                                <b>⚠ COMMON MISTAKE:</b> When adding the header, you must enter <b>Key</b> and <b>Value</b> as TWO SEPARATE fields. Do NOT type <code>x-wf-device-token: ${tok.slice(0,8)}…</code> all into the Key field.
-                            </div>
-                            <b>Step 1:</b> Open <b>Shortcuts</b> app → <b>Automation</b> tab → <b>"+"</b> → <b>"New Personal Automation"</b> → scroll down → tap <b>"Message"</b>.<br><br>
-                            <b>Step 2:</b> Configure the trigger:<br>
-                            • <b>Sender</b>: tap → "Choose" → type your bank name (e.g. <code style="background:var(--bg);padding:1px 4px;border-radius:3px;">DFCC</code>) → Done<br>
-                            • <b>Message Contains</b>: leave as "Anything" (or skip it)<br>
-                            • Select <b>"Run Immediately"</b> at the bottom → tap <b>Done</b> top-right<br><br>
-                            <b>Step 3:</b> On the next screen tap <b>"New Blank Automation"</b> (not "Suggestions").<br><br>
-                            <b>Step 4:</b> Tap <b>"+ Add Action"</b> → search <b>"URL"</b> → tap <b>"Get Contents of URL"</b>.<br><br>
-                            <b>Step 5:</b> Fill in the action — EXACTLY these 4 things:<br>
-                            <div style="background:var(--bg)
-;padding:8px;border-radius:6px;margin:6px 0;font-family:var(--mono);font-size:11px;">
-                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">A. URL field</b> (tap the blue "https://" placeholder):</div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;word-break:break-all;margin-bottom:8px;">${webhook}</div>
-                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">B. Method:</b> tap → choose <b>POST</b></div>
-                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">C. Headers:</b> tap "Add new header" → fill TWO separate fields:</div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>x-wf-device-token</b></div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:8px;word-break:break-all;">Value: <b>${tok}</b></div>
-                            <div style="margin-bottom:6px;"><b style="color:var(--accent);">D. Request Body:</b> tap → choose <b>JSON</b> → tap "Add new field" 3 times:</div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sms</b><br>Value: tap blue field → tap <b>"Variables"</b> in the suggestions bar → tap <b>"Shortcut Input"</b> (purple/green pill)</div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;margin-bottom:4px;">Key: <b>sender</b><br>Value: just type your bank name as text (e.g. <b>DFCC</b>). <span style="color:var(--text3);">iOS doesn't expose the actual sender as a variable — you hard-code it. Since this automation only fires for SMS from your chosen Sender filter, you already know who sent it.</span></div>
-                            <div style="background:var(--bg2);padding:6px;border-radius:4px;">Key: <b>device_id</b><br>Value: type <b>iphone</b></div>
-                            </div>
-                            <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5;">
-                                💡 <b>Multi-bank tip:</b> Make ONE separate Personal Automation per bank (DFCC, ComBank, HNB, etc), and in each one hard-code the matching sender string. The automation's Sender filter ensures it only fires for that bank.
-                            </div>
-                            <b>Step 6:</b> Tap <b>Done</b> top-right. Done!<br><br>
-                            <b>Test it:</b> Use the "Paste-SMS Tester" in Settings to verify the brain works, then ask someone to text you a fake bank SMS containing the keyword you set.
-                            <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
-                                <button class="btn btn-ghost btn-sm" style="flex:1;min-width:140px;" onclick="navigator.clipboard.writeText('${webhook}').then(()=>notify('URL copied','success'))">📋 Copy URL</button>
-                                <button class="btn btn-ghost btn-sm" style="flex:1;min-width:140px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">🔑 Copy Token</button>
-                            </div>
-                            <a href="${APP_STORE_SHORTCUTS}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;text-decoration:none;text-align:center;display:block;">📲 Open Shortcuts in App Store</a>
-                        </div>
-                    </details>
-
-                    <!-- METHOD 3: SHARE SHEET -->
-                    <details style="background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
-                        <summary style="cursor:pointer;font-weight:700;font-size:12.5px;color:var(--text);user-select:none;">📤 Method 3: Share Sheet (no setup, but manual per-SMS)</summary>
-                        <div style="padding:10px 0 0;font-size:12px;line-height:1.6;color:var(--text2);">
-                            When a bank SMS arrives, tap and hold it → <b>Share</b> → scroll to <b>WealthFlow</b> in the share sheet → text auto-classified.<br><br>
-                            Requires WealthFlow to be installed as a Home Screen app: open Safari → tap Share → "Add to Home Screen".
-                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${SHARE_TARGET_URL}').then(()=>notify('Share-target URL copied','success'))">📋 Copy Share-Target URL</button>
-                        </div>
-                    </details>
-
-                    <!-- METHOD 4: EMAIL -->
-                    <details style="background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;">
-                        <summary style="cursor:pointer;font-weight:700;font-size:12.5px;color:var(--text);user-select:none;">📧 Method 4: Email auto-forward (works on every device)</summary>
-                        <div style="padding:10px 0 0;font-size:12px;line-height:1.6;color:var(--text2);">
-                            Most Sri Lankan banks email statements alongside SMS. Set a Gmail/iCloud filter to forward bank emails to our webhook. See the Email Setup section below.
-                        </div>
-                    </details>
-                </div>`;
-
-            const setupBlockAndroid = `
-                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                        <span style="font-size:22px;">🤖</span>
-                        <div style="flex:1;">
-                            <div style="font-weight:700;font-size:13.5px;">Android detected</div>
-                            <div style="font-size:11px;color:var(--text3);">Best path: one-tap install of "SMS Forwarder" → scan the QR.</div>
-                        </div>
-                    </div>
-
-                    <div style="background:rgba(16,185,129,0.06);border-radius:8px;padding:12px;margin-bottom:10px;">
-                        <div style="font-weight:700;font-size:12.5px;margin-bottom:8px;">⚡ Method 1: SMS Forwarder (fully automated)</div>
-                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);margin-bottom:8px;">
-                            <b>1.</b> Tap the green button below → installs "SMS Forwarder" from Play Store.<br>
-                            <b>2.</b> Open SMS Forwarder → grant SMS permission → tap "+" to add new rule.<br>
-                            <b>3.</b> Scan the QR code below to auto-import the WealthFlow URL + headers + body template.<br>
-                            <b>4.</b> Enable the rule. Done.
-                        </div>
-                        <a href="${PLAY_STORE_SMS_FORWARDER}" target="_blank" class="btn btn-primary" style="width:100%;text-decoration:none;text-align:center;display:block;font-weight:700;background:linear-gradient(135deg,#34a853,#10b981);">
-                            ▶ Install SMS Forwarder from Play Store
-                        </a>
-                    </div>
-
-                    <div style="display:flex;gap:14px;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;">
-                        <div style="background:white;padding:8px;border-radius:8px;flex-shrink:0;">
-                            ${qrSvg || '<div style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;color:#999;">QR loading…</div>'}
-                        </div>
-                        <div style="flex:1;min-width:0;font-size:11px;line-height:1.5;">
-                            <div style="font-weight:700;font-size:12px;color:var(--text);margin-bottom:4px;">QR Config for SMS Forwarder</div>
-                            <div style="color:var(--text3);">Includes webhook URL, your device token, header config, and JSON body template — all pre-filled.</div>
-                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${webhook}').then(()=>notify('URL copied','success'))">📋 URL</button>
-                            <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:4px;" onclick="navigator.clipboard.writeText('${tok}').then(()=>notify('Token copied','success'))">🔑 Token</button>
-                        </div>
-                    </div>
-
-                    <div style="background:rgba(59,130,246,0.06);border-radius:8px;padding:12px;">
-                        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">📧 Method 2: Email auto-forward (also works)</div>
-                        <div style="font-size:11.5px;line-height:1.6;color:var(--text2);">
-                            Set up Gmail filter for bank emails. See Email Setup below.
-                        </div>
-                    </div>
-                </div>`;
-
-            const setupBlockDesktop = `
-                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                        <span style="font-size:22px;">💻</span>
-                        <div style="flex:1;">
-                            <div style="font-weight:700;font-size:13.5px;">Desktop browser detected</div>
-                            <div style="font-size:11px;color:var(--text3);">Use Paste-SMS or email forwarding. For SMS auto-sync, open WealthFlow on your phone too.</div>
-                        </div>
-                    </div>
-                    <button class="btn btn-primary" style="width:100%;" onclick="_apClose();openPasteSmsModal()">📋 Open Paste-SMS Tester</button>
-                </div>`;
-
-            const setupBlock = isIOS ? setupBlockIos : (isAndroid ? setupBlockAndroid : setupBlockDesktop);
+            const vaultReady = (window.wfVault && window.wfVault.exists && window.wfVault.exists());
 
             $('_apBody').innerHTML = `
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
@@ -12971,22 +12754,34 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     </div>
                 ` : ''}
 
-                ${setupBlock}
-
-                <details style="background:var(--bg2);border-radius:8px;padding:10px;margin-bottom:12px;">
-                    <summary style="cursor:pointer;font-weight:700;font-size:12.5px;user-select:none;">📧 Email Auto-Forward Setup (universal)</summary>
-                    <div style="padding:10px 0 4px;font-size:11.5px;line-height:1.6;color:var(--text2);">
-                        Banks often email statements/alerts alongside SMS. Set up a Gmail filter:<br>
-                        <b>1.</b> Gmail → Settings → Filters → Create new filter<br>
-                        <b>2.</b> From: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">combank.lk OR sampath.lk OR hnb.net</code> (your banks)<br>
-                        <b>3.</b> Use Zapier/IFTTT/Make to forward matching emails to: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;word-break:break-all;">${origin}/api/email-ingest</code><br>
-                        <b>4.</b> Include header <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:10px;">x-wf-device-token: ${tok.slice(0,12)}…</code> in the forward.
-                        <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px;" onclick="navigator.clipboard.writeText('${origin}/api/email-ingest').then(()=>notify('Email webhook copied','success'))">📋 Copy Email Webhook</button>
+                <div style="background:linear-gradient(145deg, rgba(99,102,241,0.08), var(--bg2));border:1px solid rgba(99,102,241,0.35);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span style="font-size:22px;">🔐</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">Auto-unlock bank PDFs</div>
+                            <div style="font-size:11px;color:var(--text3);">${vaultReady ? '✅ Vault is set — locked statements open automatically.' : 'Save your NIC / DOB once and locked statements open automatically.'}</div>
+                        </div>
                     </div>
-                </details>
+                    <button class="btn ${vaultReady ? 'btn-ghost' : 'btn-primary'} btn-sm" style="width:100%;" onclick="_apClose();wfVault.openModal()">
+                        ${vaultReady ? '⚙️ Manage Security Vault' : '🔐 Set Up Security Vault'}
+                    </button>
+                </div>
+
+                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span style="font-size:22px;">📄</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">Import a statement now</div>
+                            <div style="font-size:11px;color:var(--text3);">Upload a PDF or photo of a bank/card statement — the AI reads, categorises, and de-duplicates every line.</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm" style="width:100%;" onclick="_apClose();showPage('cconetime');">
+                        📄 Go to Statement Import
+                    </button>
+                </div>
 
                 <div style="background:rgba(16,185,129,0.05);border-left:3px solid var(--green);border-radius:6px;padding:10px 12px;font-size:12px;line-height:1.6;margin-bottom:14px;">
-                    <b style="color:var(--green);">✅ AutoPilot is now active.</b> Pick any of the methods above to start. Even without setup, the Paste-SMS tester and Predictive Engine run automatically in the background.
+                    <b style="color:var(--green);">✅ AutoPilot is active.</b> Your cards are mapped, recurring charges detected, and the Predictive Engine + Needs-Review zone run automatically in the background. Just import statements and WealthFlow does the rest.
                 </div>
 
                 <div style="display:flex;gap:8px;">
@@ -12994,36 +12789,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <button class="btn btn-ghost btn-sm" onclick="openCardRegistryModal();_apClose();">Review Cards</button>
                 </div>`;
             window._apRefresh = () => openAutoPilotWizard();
-            window._apShowFullIosRecipe = () => {
-                window.open(`${origin}/api/ios-shortcut?token=${tok}`, '_blank');
-            };
-            // v7.6.4 — health-check the endpoint from the user's actual phone
-            window._apTestConnection = async () => {
-                const r = document.getElementById('_apConnResult');
-                if (!r) return;
-                r.style.display = 'block';
-                r.style.color = 'var(--text3)';
-                r.innerHTML = '⏳ Testing…';
-                try {
-                    const t0 = Date.now();
-                    const resp = await fetch(webhook, { method: 'GET' });
-                    const data = await resp.json();
-                    const dt = Date.now() - t0;
-                    if (resp.ok && data.ok) {
-                        r.style.color = 'var(--green)';
-                        r.innerHTML = `✅ Connected (${dt}ms) — server responded "${data.status}"`;
-                    } else {
-                        r.style.color = 'var(--accent)';
-                        r.innerHTML = `⚠ HTTP ${resp.status} — server reachable but returned error`;
-                    }
-                } catch (e) {
-                    r.style.color = 'var(--red)';
-                    r.innerHTML = `❌ Failed: ${e.message}. Check your iPhone has internet, or the URL is correct.`;
-                }
-            };
         }
         window.openAutoPilotWizard = openAutoPilotWizard;
-        // ════════════════════════════════════════════════════════════════════
 
         // Balance Tracker clear helpers (FIXES Issue 1)
         function clearBalFlowForm() {
@@ -18161,8 +17928,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:14px;">
                 One tap and WealthFlow runs itself. AutoPilot scans your existing
                 transactions, auto-maps your cards, surfaces hidden subscriptions,
-                and sets up real-time SMS auto-logging — all without you typing
-                a single thing.
+                and sets up your Security Vault for automatic PDF unlocking — all
+                without you typing a single thing.
             </div>
 
             <!-- ONE TAP SETUP -->
@@ -18171,7 +17938,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div style="font-size:32px;">🚀</div>
                     <div style="flex:1;">
                         <div style="font-weight:800;font-size:15px;">Launch AutoPilot</div>
-                        <div style="font-size:12px;color:var(--text3);margin-top:2px;">Auto-discovers cards · scans for subscriptions · sets up SMS sync</div>
+                        <div style="font-size:12px;color:var(--text3);margin-top:2px;">Auto-discovers cards · scans for subscriptions · sets up Vault</div>
                     </div>
                 </div>
                 <button class="btn btn-primary" style="width:100%;margin-top:12px;font-weight:700;background:linear-gradient(135deg,var(--green),var(--accent));box-shadow:0 4px 20px rgba(16,185,129,0.3);" onclick="openAutoPilotWizard()">
@@ -18191,13 +17958,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>
                     <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
                         <div class="setting-info" style="flex:1;min-width:0;">
-                            <div class="setting-label" style="font-size:13px;">📋 Paste-SMS Tester</div>
-                            <div class="setting-desc">Paste a bank SMS to see how AutoPilot would route it.</div>
-                        </div>
-                        <button class="btn btn-secondary btn-sm" onclick="openPasteSmsModal()">Test</button>
-                    </div>
-                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
-                        <div class="setting-info" style="flex:1;min-width:0;">
                             <div class="setting-label" style="font-size:13px;">🔮 Predictions &amp; Insights</div>
                             <div class="setting-desc">12-month forecast, anomaly detection, hidden charges.</div>
                         </div>
@@ -18209,13 +17969,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <div class="setting-desc">LKR / USD / EUR / GBP / INR with live rates.</div>
                         </div>
                         <button class="btn btn-secondary btn-sm" onclick="openFxModal()">Open</button>
-                    </div>
-                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
-                        <div class="setting-info" style="flex:1;min-width:0;">
-                            <div class="setting-label" style="font-size:13px;">🔄 Force Sync Queue</div>
-                            <div class="setting-desc">Drain any pending SMS that failed to sync.</div>
-                        </div>
-                        <button class="btn btn-secondary btn-sm" onclick="forceDrainQueue()">Drain</button>
                     </div>
                 </div>
             </details>
@@ -18381,15 +18134,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                             // "5 minutes ago") so the user gets both the
                             // precise moment and a quick "is this fresh?"
                             // signal at a glance.
-                            const meta = s.lastBackupMeta || null;
-                            const drv  = s.lastDriveBackup || null;
-                            const candidates = [
-                                meta && meta.at && new Date(meta.at).getTime(),
-                                s.lastBackup && new Date(s.lastBackup).getTime(),
-                                drv && drv.at && new Date(drv.at).getTime()
-                            ].filter(t => t && !isNaN(t));
-                            if (!candidates.length) return 'No backup yet — tap "Backup Now" to create your first cloud backup.';
-                            const tMax = Math.max.apply(null, candidates);
+                            // v7.8.0 — use the single canonical timestamp so
+                            // this display can never disagree with the
+                            // scheduler or the reminder again.
+                            const tMaxCanon = _getLastBackupMs();
+                            if (!tMaxCanon) return 'No backup yet — tap "Backup Now" to create your first cloud backup.';
+                            const tMax = tMaxCanon;
                             const d = new Date(tMax);
                             const now = new Date();
                             const diffMs = now - d;
@@ -18610,7 +18360,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.7.0 Infinity Engine — All systems operational.</div></div>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow v7.8.0 Infinity Engine — All systems operational.</div></div>
                 <span class="badge bg-g" style="padding:6px 12px;">v7.4.0 ✓</span>
             </div>
             <div class="setting-row">
@@ -18620,7 +18370,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.7.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.8.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -22567,16 +22317,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // day instead of drifting forward by however long the
                 // previous backup took.
                 const lastTrigger = _lastScheduledBackupTime(s.autoBackupFreq);
-                // v7.5.3 — read BOTH timestamps and use the freshest of the
-                // two. wf_last_auto_backup is local-only (per-device), while
-                // s.lastBackup is in DB.settings which syncs across devices
-                // via Firestore. Previously we only read localStorage, so a
-                // backup that ran on Device A wouldn't suppress an immediate
-                // re-run on Device B → the user saw the two backup times
-                // disagree. Picking max(local, cloud) reflects reality.
-                const lsLast = parseInt(localStorage.getItem('wf_last_auto_backup') || '0', 10);
-                const dbLast = s.lastBackup ? new Date(s.lastBackup).getTime() : 0;
-                const last = Math.max(lsLast || 0, dbLast || 0);
+                // v7.8.0 — use the single canonical timestamp (covers local +
+                // all cloud-synced fields) so the scheduler and the status
+                // display always agree on when the last backup happened.
+                const last = (typeof _getLastBackupMs === 'function') ? _getLastBackupMs() : (function () {
+                    const lsLast = parseInt(localStorage.getItem('wf_last_auto_backup') || '0', 10);
+                    const dbLast = s.lastBackup ? new Date(s.lastBackup).getTime() : 0;
+                    return Math.max(lsLast || 0, dbLast || 0);
+                })();
                 const now = Date.now();
 
                 let due = false;
