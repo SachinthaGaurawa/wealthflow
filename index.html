@@ -75,10 +75,14 @@
     <script src="wealthflow-autopilot.js" defer></script>
     <script src="wealthflow-intelligence.js" defer></script>
     <!-- v7.9.0 — Time-bucketed allocator. MUST load AFTER autonomous.js.
-         Adds window.wfAllocate, window.wfFindDuplicate, window.wfTimeBucket. -->
+         Adds window.wfAllocate, window.wfFindDuplicate, window.wfTimeBucket
+         so every transaction lands in its OWN month/year (not today's).
+         Also migrates existing records to back-fill missing month/year stamps. -->
     <script src="wealthflow-allocator.js" defer></script>
-    <!-- v7.9.0 — Gmail Auto-Sync. One-click Gmail connect, 5-min polling,
-         routes each bank transaction through brain + allocator. -->
+    <!-- v7.9.0 — Gmail Auto-Sync. One-click "Connect Gmail" in Settings,
+         polls every 5 min while app open, parses 250+ merchant DB, routes
+         each bank transaction through the brain + allocator. Refresh tokens
+         are AES-256-GCM encrypted on-device. -->
     <script src="wealthflow-email-sync.js" defer></script>
 
     
@@ -17899,6 +17903,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(245, 166, 35, 0.06), var(--card)); border: 1px solid var(--accent);">
             <div class="settings-title" style="color:var(--accent);">🌐 AI Intelligence &amp; Language</div>
+            <!-- v7.9.0 — Email Auto-Sync mount point. The wealthflow-email-sync.js
+                 module auto-injects the "Connect Gmail" / status banner here. -->
+            <div id="wfEmailSyncMount" style="margin-bottom:14px;"></div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
                     <div class="setting-label">AI Response Language</div>
