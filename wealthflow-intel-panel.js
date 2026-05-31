@@ -75,15 +75,24 @@
 
     function _bind() {
         const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
-        on('wfIntelForget', async () => {
+        on('wfIntelForget', () => {
             if (!window.wfMemory) return;
-            if (!confirm('Reset everything the AI has learned about your merchants? Your transactions stay; only the learned categories are cleared.')) return;
-            try {
-                const map = await window.wfMemory.export();
-                for (const k of Object.keys(map || {})) { try { await window.wfMemory.forget(map[k].display || k); } catch (_) {} }
-                _notify('AI merchant memory reset.', 'success');
-            } catch (_) {}
-            _refresh();
+            const doReset = async () => {
+                try {
+                    const map = await window.wfMemory.export();
+                    for (const k of Object.keys(map || {})) { try { await window.wfMemory.forget(map[k].display || k); } catch (_) {} }
+                    _notify('AI merchant memory reset.', 'success');
+                } catch (_) {}
+                _refresh();
+            };
+            // Prefer the app's styled confirm box; fall back to native confirm.
+            if (typeof window.showConfirm === 'function') {
+                window.showConfirm('🧠', 'Reset learned merchants?',
+                    'Your transactions stay — only the categories the AI has learned are cleared.',
+                    'btn-danger', 'Reset', doReset);
+            } else {
+                if (confirm('Reset everything the AI has learned about your merchants? Your transactions stay; only the learned categories are cleared.')) doReset();
+            }
         });
         on('wfIntelReview', () => { if (window.wfReview && window.wfReview.openModal) window.wfReview.openModal(); });
         on('wfIntelQueueRun', () => { if (window.wfQueue && window.wfQueue.start) { window.wfQueue.start(); _notify('Processing any pending items…', 'info'); } });

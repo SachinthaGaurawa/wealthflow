@@ -233,7 +233,33 @@
         return { merchants: keys.length, totalObservations: obs };
     }
 
-    window.wfMemory = { ready, learn, recall, applyToBrain, forget, export: exportMap, stats, normalize, keyOf };
+    // Synchronous recall against the already-loaded in-memory map. Returns null
+    // if memory hasn't loaded yet (caller falls back to keyword inference).
+    // Used by wfCategoryAI so every code path can consult learned memory without
+    // awaiting. Safe: never throws, never blocks.
+    function recallSync(merchant) {
+        try {
+            const k = keyOf(merchant);
+            if (!k || !_map) return null;
+            let e = _map[k];
+            if (!e) {
+                const norm = normalize(merchant);
+                for (const mk in _map) {
+                    const cand = _map[mk];
+                    const cn = normalize(cand.display);
+                    if (!cn) continue;
+                    if (norm.indexOf(cn) === 0 || cn.indexOf(norm) === 0) {
+                        if (Math.abs(cn.length - norm.length) <= 4) { e = cand; break; }
+                    }
+                }
+            }
+            if (!e) return null;
+            const confidence = e.userConfirmed ? 0.99 : Math.min(0.98, 0.80 + 0.03 * Math.min(e.count, 6));
+            return { category: e.category, module: e.module, cardLast4: e.cardLast4, confidence, isSubscription: e.module === 'subscriptions', display: e.display };
+        } catch (_) { return null; }
+    }
+
+    window.wfMemory = { ready, learn, recall, recallSync, applyToBrain, forget, export: exportMap, stats, normalize, keyOf };
 
     if (typeof document !== 'undefined') {
         document.addEventListener('DOMContentLoaded', () => { setTimeout(_load, 300); });

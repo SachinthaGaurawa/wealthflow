@@ -42,6 +42,7 @@
     let _loaded = false;
     let _running = false;
     let _saveTimer = null;
+    let _autoHideT = null;   // auto-dismiss timer for the floating progress bar
     const _subs = [];
 
     function _notify(m, t) { try { if (typeof window.notify === 'function') window.notify(m, t || 'info'); } catch (_) {} }
@@ -127,7 +128,33 @@
         // 4. confidence gate
         const m = brain.resolved_merchant || {};
         const r = brain.routed || {};
-        const conf = Math.min(r.confidence != null ? r.confidence : 1, m.confidence != null ? m.confidence : 1);
+        let conf = Math.min(r.confidence != null ? r.confidence : 1, m.confidence != null ? m.confidence : 1);
+
+        // 4a. Agentic upgrade — if we're unsure and the category is unknown/Other,
+        //     do a real web lookup to identify the merchant before bothering the
+        //     user. If it resolves confidently, file it; otherwise fall through
+        //     to review. (Privacy: only the merchant name is sent.)
+        if (conf < CONF_THRESHOLD && !(brain._memory && brain._memory.userConfirmed) &&
+            (!m.category || m.category === 'Other') &&
+            window.wfCategoryAI && typeof window.wfCategoryAI.identifyUnknown === 'function') {
+            try {
+                const rawName = m.name || (brain.parsed && brain.parsed.raw_merchant) || '';
+                const found = await window.wfCategoryAI.identifyUnknown(rawName, 'Sri Lanka');
+                if (found && found.category && found.category !== 'Other') {
+                    brain.resolved_merchant = Object.assign({}, m, {
+                        name: found.name || rawName,
+                        category: found.category,
+                        confidence: Math.max(m.confidence || 0, found.confidence || 0.82),
+                        source: found.source
+                    });
+                    if (brain.routed) brain.routed.confidence = Math.max(brain.routed.confidence || 0, found.confidence || 0.82);
+                    conf = Math.min(
+                        (brain.routed && brain.routed.confidence != null) ? brain.routed.confidence : 1,
+                        brain.resolved_merchant.confidence != null ? brain.resolved_merchant.confidence : 1
+                    );
+                }
+            } catch (_) {}
+        }
 
         if (conf < CONF_THRESHOLD && !(brain._memory && brain._memory.userConfirmed)) {
             // unsure → ask the user later (never guess)
@@ -347,6 +374,22 @@
             if (title) title.textContent = '✓ All done';
             if (sub) sub.textContent = s.total + ' processed';
             if (spin) spin.style.display = 'none';
+            // Auto-hide the floating bar a few seconds after everything is done
+            // so it doesn't sit overlapping the settings page / robot button.
+            try {
+                clearTimeout(_autoHideT);
+                _autoHideT = setTimeout(() => {
+                    const b = document.getElementById('wfQueueBar');
+                    if (!b) return;
+                    // only hide if still in the "done" state (nothing new queued)
+                    const st = status();
+                    if ((st.pending || 0) === 0 && (st.processing || 0) === 0) {
+                        b.style.opacity = '0';
+                        b.style.transform = 'translateY(20px)';
+                        setTimeout(() => { try { b.remove(); } catch (_) {} }, 300);
+                    }
+                }, 4500);
+            } catch (_) {}
         }
         if (tall) {
             const chips = [];

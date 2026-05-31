@@ -82,6 +82,11 @@
          same merchant is classified instantly & correctly next time.
          Adds window.wfMemory. Persists encrypted via wfCrypto. -->
     <script src="wealthflow-ai-memory.js" defer></script>
+    <!-- v7.11.1 — Shared high-accuracy category intelligence. 600+ Sri-Lanka-aware
+         keywords + income/investment detection + agentic web-search hook. Every
+         entry point (SMS paste, OCR, statement scan, queue) classifies the same
+         way. Adds window.wfCategoryAI. -->
+    <script src="wealthflow-category-ai.js" defer></script>
     <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
          arriving twice (statement + SMS, or a re-paste) using amount + day +
          merchant + card, and never deletes on a weak signal.
@@ -6005,13 +6010,29 @@
                 <div class="fg"><label class="fl">Description *</label><input class="fi" id="e_desc"
                         placeholder="Electricity Bill" oninput="autoDetectCategory(this.value)"></div>
                 <div class="fg"><label class="fl">Category *</label><select class="fs" id="e_cat">
-                        <option>Food & Groceries</option>
+                        <option>Food &amp; Groceries</option>
+                        <option>Dining</option>
                         <option>Transport</option>
+                        <option>Fuel</option>
                         <option>Utilities</option>
-                        <option>Medical</option>
+                        <option>Telecom</option>
+                        <option>Healthcare</option>
                         <option>Education</option>
                         <option>Entertainment</option>
-                        <option>Clothing</option>
+                        <option>Subscriptions</option>
+                        <option>Shopping</option>
+                        <option>Shopping (Fashion)</option>
+                        <option>Electronics &amp; Tech</option>
+                        <option>Shopping (Home)</option>
+                        <option>Insurance</option>
+                        <option>Rent</option>
+                        <option>Personal Care</option>
+                        <option>Kids &amp; Family</option>
+                        <option>Pets</option>
+                        <option>Travel</option>
+                        <option>Charity</option>
+                        <option>Government</option>
+                        <option>Banking</option>
                         <option>Other</option>
                     </select></div>
             </div>
@@ -12139,6 +12160,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         let _audioCtx = null;
         let _audioCtxUnlocked = false;
         let _iosTapticEl = null;
+        let _iosTapticInput = null;
         let _hapticPlatform = null; // 'ios' | 'android' | 'desktop' | null
 
         function _detectHapticPlatform() {
@@ -12166,41 +12188,44 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function _ensureIOSTapticEl() {
             if (_iosTapticEl) return _iosTapticEl;
             try {
+                // WebKit fires the Taptic Engine only when a <label> associated
+                // with an <input type=checkbox switch> is clicked — clicking the
+                // input directly does NOT work. So we keep a reference to the
+                // LABEL and click that. (This was the bug: we used to click the
+                // input.) The input needs a real id the label points at.
+                const id = 'wfTapticSwitch_' + Math.random().toString(36).slice(2, 8);
                 const wrap = document.createElement('label');
+                wrap.setAttribute('for', id);
                 wrap.setAttribute('aria-hidden', 'true');
                 wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
                 const inp = document.createElement('input');
                 inp.type = 'checkbox';
-                inp.setAttribute('switch', '');                    // iOS-specific
+                inp.id = id;
+                inp.setAttribute('switch', '');                    // iOS 17.4+ specific
                 inp.setAttribute('aria-hidden', 'true');
                 inp.tabIndex = -1;
                 wrap.appendChild(inp);
                 document.body.appendChild(wrap);
-                _iosTapticEl = inp;
+                _iosTapticEl = wrap;        // store the LABEL, not the input
+                _iosTapticInput = inp;
             } catch (_) {}
             return _iosTapticEl;
         }
 
         function _iosTaptic(intensity /* 'light'|'medium'|'heavy' */) {
-            const inp = _ensureIOSTapticEl();
-            if (!inp) return false;
+            const label = _ensureIOSTapticEl();
+            if (!label) return false;
             try {
-                // v7.5.6 — honour the user's Haptic Intensity setting on iOS.
-                // Previously this function picked count purely from the event
-                // type so Gentle/Standard/Intense had no effect on iPhone.
-                // Now Intense (1.5×) gets an extra click and Gentle (0.5×)
-                // gets one fewer (minimum 1).
                 const mult = _getHapticMultiplier();   // 0.5 / 1 / 1.5
                 let baseCount = intensity === 'heavy' ? 3 : intensity === 'medium' ? 2 : 1;
                 let count = Math.max(1, Math.round(baseCount * mult));
-                // Cap at 5 so very loud events don't fire a 7-click burst.
                 if (count > 5) count = 5;
-                // Tighter gap on Intense so multi-click bursts feel like
-                // ONE strong tap rather than several weak ones.
                 const gap = mult >= 1.4 ? 22 : mult <= 0.6 ? 55 : 35;
                 let i = 0;
                 const tick = () => {
-                    try { inp.click(); } catch (_) {}
+                    // Click the LABEL — WebKit only fires the Taptic Engine this
+                    // way (clicking the input directly is a silent no-op).
+                    try { label.click(); } catch (_) {}
                     i++;
                     if (i < count) setTimeout(tick, gap);
                 };
@@ -12316,6 +12341,22 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             }
             return false;
         }
+
+        // Test-button helper — fires a strong haptic from inside the click
+        // gesture (required on iOS) and tells the user honestly what to expect.
+        function _testHaptic() {
+            try { _ensureIOSTapticEl(); } catch (_) {}
+            triggerHaptic('success');
+            const plat = _detectHapticPlatform();
+            if (plat === 'ios') {
+                notify('Tapped! On iPhone, haptics need iOS 17.4+ and feel strongest in the installed app (Add to Home Screen).', 'info');
+            } else if (plat === 'android') {
+                notify('Feel that buzz? ✨', 'info');
+            } else {
+                notify('Haptics are a phone feature — on desktop you\'ll see a subtle visual pulse instead.', 'info');
+            }
+        }
+        window._testHaptic = _testHaptic;
 
         function triggerHaptic(type = 'light') {
             const settings = DB.getObj('settings', { haptics: true });
@@ -17468,7 +17509,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <option value="standard" ${(s.hapticIntensity || 'standard') === 'standard' ? 'selected' : ''}>✨ Standard</option>
                         <option value="intense" ${(s.hapticIntensity || 'standard') === 'intense' ? 'selected' : ''}>💪 Intense</option>
                     </select>
-                    <button class="btn btn-ghost btn-sm" onclick="triggerHaptic('success'); notify('Feel the luxury! ✨', 'info');" style="white-space:nowrap;">🔔 Test</button>
+                    <button class="btn btn-ghost btn-sm" onclick="_testHaptic()" style="white-space:nowrap;">🔔 Test</button>
                 </div>
             </div>` : ''}
             <div class="setting-row">
@@ -17508,11 +17549,26 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
-        <div class="settings-section" style="background: linear-gradient(145deg, rgba(245, 166, 35, 0.06), var(--card)); border: 1px solid var(--accent);">
-            <div class="settings-title" style="color:var(--accent);">🌐 AI Intelligence &amp; Language</div>
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
+            <div class="settings-title" style="color:#818cf8;">🌐 AI Intelligence &amp; Language</div>
             <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
                  module auto-injects the "📲 Paste Bank SMS" banner here. -->
             <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
+            <!-- v7.11.1 — Prominent Statement Upload entry. Triggers the existing
+                 #ccot_ai_scan input (wired to handleAIScan) so a PDF/photo of a
+                 bank or card statement is read, categorised, de-duplicated and
+                 routed to the right tabs by the same AI. -->
+            <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:linear-gradient(145deg,rgba(16,185,129,0.06),var(--card));">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                    <span style="font-size:22px;">📄</span>
+                    <div style="font-weight:800;font-size:15px;color:var(--text);">Statement Upload</div>
+                </div>
+                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Upload a PDF or photo of a bank / card statement. The AI reads every line, finds the merchant, picks the right category &amp; tab, removes duplicates — then you can walk away while it files them.</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload Statement</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Photo</button>
+                </div>
+            </div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
                     <div class="setting-label">AI Response Language</div>

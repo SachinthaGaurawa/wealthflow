@@ -241,7 +241,7 @@
         .wfsms-overlay{position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:0;}
         .wfsms-modal{background:var(--card,#0f1320);border:1px solid var(--border2,#1f2638);border-radius:0;width:100%;height:100%;max-width:760px;max-height:100vh;display:flex;flex-direction:column;box-shadow:0 30px 90px rgba(0,0,0,0.65);}
         @media(min-width:760px){.wfsms-overlay{padding:20px;}.wfsms-modal{height:auto;max-height:92vh;border-radius:18px;}}
-        .wfsms-head{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--border,#1f2638);}
+        .wfsms-head{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;padding-top:max(18px, calc(env(safe-area-inset-top, 0px) + 14px));border-bottom:1px solid var(--border,#1f2638);}
         .wfsms-title{font-weight:800;font-size:17px;background:linear-gradient(135deg,#10b981,#d4af37);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
         .wfsms-close{background:transparent;border:none;color:var(--text3,#8b95a8);font-size:26px;line-height:1;cursor:pointer;padding:4px 10px;border-radius:8px;}
         .wfsms-close:hover{background:rgba(255,255,255,0.06);color:var(--text,#e6e7eb);}
@@ -304,6 +304,19 @@
         rows: [],   // [{id, raw, brain, status: 'staged'|'skip'|'dup'|'err', edited:{...}}]
         editing: null
     };
+
+    // Per-screenshot OCR text blocks: { blockId: "ocr text" }. Lets us remove
+    // exactly the text that came from a screenshot when its × is tapped.
+    let _imgBlocks = {};
+    // Invisible markers wrap each screenshot's text inside the textarea so it
+    // can be surgically removed. Use control chars users will never type.
+    const _BLOCK_OPEN = '\u0001wfimg\u0002';
+    const _BLOCK_MID = '\u0003';
+    const _BLOCK_CLOSE = '\u0004';
+    const _BLOCK_OPEN_RE = '\\u0001wfimg\\u0002';
+    const _BLOCK_MID_RE = '\\u0003';
+    const _BLOCK_CLOSE_RE = '\\u0004';
+    const _BLOCK_SEP_CLASS = '\\u0003';
 
     function _uid() { return 'sms_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -437,7 +450,7 @@
     async function _runAutoFile() {
         const ta = document.getElementById('wfsmsInput');
         if (!ta) return;
-        const text = ta.value.trim();
+        const text = _visibleInput().trim();
         if (!text) { _notify('Paste at least one bank SMS first.', 'warn'); return; }
         if (!window.wfQueue || typeof window.wfQueue.enqueueSms !== 'function') {
             // queue engine not present — fall back to the review-first flow
@@ -454,7 +467,7 @@
     async function _runAnalyse() {
         const ta = document.getElementById('wfsmsInput');
         if (!ta) return;
-        const text = ta.value.trim();
+        const text = _visibleInput().trim();
         if (!text) { _notify('Paste at least one bank SMS first.', 'warn'); return; }
 
         const analyseBtn = document.getElementById('wfsmsAnalyseBtn');
@@ -594,6 +607,13 @@
     }
 
     function _onClick(e) {
+        // image thumbnail remove (×) — handled before the [data-act] gate
+        const rmBtn = e.target.closest('[data-rmblock]');
+        if (rmBtn) {
+            e.preventDefault(); e.stopPropagation();
+            _removeImageBlock(rmBtn.getAttribute('data-rmblock'));
+            return;
+        }
         const t = e.target.closest('[data-act]');
         if (!t) return;
         const act = t.dataset.act;
@@ -602,10 +622,12 @@
         if (act === 'autoFile') return _runAutoFile();
         if (act === 'fileAll') return _runFileAll();
         if (act === 'clearAll') { _state.rows = []; _state.editing = null; _render(); return; }
-        if (act === 'clearInput') { const ta = document.getElementById('wfsmsInput'); if (ta) ta.value = ''; return; }
+        if (act === 'clearInput') { const ta = document.getElementById('wfsmsInput'); if (ta) ta.value = ''; _imgBlocks = {}; const th = document.getElementById('wfsmsThumbs'); if (th) th.innerHTML = ''; return; }
         if (act === 'pasteSample') {
             const ta = document.getElementById('wfsmsInput');
-            if (ta) ta.value = "Your A/C No: ********5187 is debited with LKR2,498.74 on 29 MAY 2026 ref: CARGILLS FOOD CITY-KULIYA KULIYAPIT. Your bal is LKR217,772.36. If unauthorized call 0112350035";
+            // Generic demo SMS — NOT real user data. Fake card tail, generic
+            // Colombo merchant and date so nobody's real details appear.
+            if (ta) ta.value = "Your A/C No: ********1234 is debited with LKR1,250.00 on 15 JUN 2026 ref: KEELLS SUPER-COLOMBO 03. Your bal is LKR85,400.00. If unauthorized call 0112000000";
             ta.focus();
             return;
         }
@@ -759,48 +781,102 @@
         const prog = document.getElementById('wfsmsProg');
         const bar = document.getElementById('wfsmsProgBar');
 
-        // show thumbnails
-        if (thumbs) {
-            for (const f of arr) {
-                try {
-                    const url = URL.createObjectURL(f);
-                    const t = document.createElement('div');
-                    t.style.cssText = 'position:relative;width:54px;height:54px;border-radius:9px;overflow:hidden;border:1px solid var(--border2,#1f2638);';
-                    t.innerHTML = '<img src="' + url + '" style="width:100%;height:100%;object-fit:cover;">' +
-                        '<div class="wfsms-thumb-spin" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;">⟳</div>';
-                    thumbs.appendChild(t);
-                } catch (_) {}
-            }
-        }
         if (drop) { drop.style.pointerEvents = 'none'; drop.style.opacity = '0.6'; }
         if (prog) prog.style.display = '';
 
-        try {
-            const text = await window.wfVisionSms.readImages(arr, (p) => {
-                if (bar && p) {
-                    const overall = ((p.index + (p.progress || 0)) / (p.total || 1)) * 100;
-                    bar.style.width = Math.min(99, overall) + '%';
-                }
-            });
-            // mark thumbnails done
-            document.querySelectorAll('.wfsms-thumb-spin').forEach(el => { el.textContent = '✓'; el.style.background = 'rgba(16,185,129,0.5)'; });
+        // Process each image individually so each thumbnail owns its own OCR
+        // text block — that way the × button can remove exactly that block.
+        for (let idx = 0; idx < arr.length; idx++) {
+            const f = arr[idx];
+            const blockId = 'img_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).slice(2, 6);
+            let url = '';
+            try { url = URL.createObjectURL(f); } catch (_) {}
 
-            if (!text || text.replace(/\s/g, '').length < 8) {
-                _notify('Couldn\'t read text from the image(s). Try a clearer screenshot or paste the text.', 'warn');
-            } else {
-                const ta = document.getElementById('wfsmsInput');
-                if (ta) { ta.value = (ta.value ? ta.value.trim() + '\n\n' : '') + text.trim(); }
-                // how many messages did we find?
-                const n = (typeof window.wfSplitSmsBatch === 'function') ? window.wfSplitSmsBatch(text).length : 1;
-                _notify('📖 Read ' + arr.length + ' screenshot' + (arr.length === 1 ? '' : 's') + ' → found ' + n + ' transaction' + (n === 1 ? '' : 's') + '. Tap ⚡ Auto-file or 🧠 Review first.', 'success');
+            // build the thumbnail with a remove (×) button
+            let tile = null;
+            if (thumbs) {
+                tile = document.createElement('div');
+                tile.dataset.block = blockId;
+                tile.style.cssText = 'position:relative;width:54px;height:54px;border-radius:9px;overflow:hidden;border:1px solid var(--border2,#1f2638);';
+                tile.innerHTML =
+                    '<img src="' + url + '" style="width:100%;height:100%;object-fit:cover;">' +
+                    '<div class="wfsms-thumb-spin" style="position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;">⟳</div>' +
+                    '<button type="button" class="wfsms-thumb-x" data-rmblock="' + blockId + '" ' +
+                    'style="position:absolute;top:1px;right:1px;width:18px;height:18px;border:none;border-radius:50%;background:rgba(0,0,0,0.7);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:2;">×</button>';
+                thumbs.appendChild(tile);
             }
-        } catch (e) {
-            _notify('Image reading failed: ' + (e && e.message), 'error');
-        } finally {
-            if (drop) { drop.style.pointerEvents = ''; drop.style.opacity = ''; }
-            if (prog) prog.style.display = 'none';
-            if (bar) bar.style.width = '0%';
+
+            try {
+                const text = await window.wfVisionSms.readImages([f], (p) => {
+                    if (bar && p) {
+                        const overall = (((idx) + (p.progress || 0)) / arr.length) * 100;
+                        bar.style.width = Math.min(99, overall) + '%';
+                    }
+                });
+                const clean = (text || '').trim();
+                // mark this tile done
+                if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '✓'; sp.style.background = 'rgba(16,185,129,0.5)'; } }
+
+                if (!clean || clean.replace(/\s/g, '').length < 8) {
+                    if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '⚠'; sp.style.background = 'rgba(239,68,68,0.5)'; } }
+                    _notify('Couldn\'t read text from one screenshot. Try a clearer image.', 'warn');
+                } else {
+                    // record the block + append a tagged segment to the textarea
+                    _imgBlocks[blockId] = clean;
+                    _appendImageBlock(blockId, clean);
+                    const n = (typeof window.wfSplitSmsBatch === 'function') ? window.wfSplitSmsBatch(clean).length : 1;
+                    _notify('📖 Read screenshot → found ' + n + ' transaction' + (n === 1 ? '' : 's') + '.', 'success');
+                }
+            } catch (e) {
+                if (tile) { const sp = tile.querySelector('.wfsms-thumb-spin'); if (sp) { sp.textContent = '⚠'; sp.style.background = 'rgba(239,68,68,0.5)'; } }
+                _notify('Image reading failed: ' + (e && e.message), 'error');
+            }
         }
+
+        if (drop) { drop.style.pointerEvents = ''; drop.style.opacity = ''; }
+        if (prog) prog.style.display = 'none';
+        if (bar) bar.style.width = '0%';
+    }
+
+    // Textarea is segmented by hidden block markers so we can surgically remove
+    // the text that came from a specific screenshot when its × is tapped.
+    function _appendImageBlock(blockId, text) {
+        const ta = document.getElementById('wfsmsInput');
+        if (!ta) return;
+        const marker = '\n' + _BLOCK_OPEN + blockId + _BLOCK_MID + text + _BLOCK_CLOSE;
+        ta.value = (ta.value || '') + marker;
+    }
+
+    // Build the user-visible textarea value (markers stripped) for analysis.
+    function _visibleInput() {
+        const ta = document.getElementById('wfsmsInput');
+        if (!ta) return '';
+        return _stripBlockMarkers(ta.value || '');
+    }
+    function _stripBlockMarkers(s) {
+        // remove the marker wrappers but keep the inner text
+        return String(s || '')
+            .replace(new RegExp(_BLOCK_OPEN_RE + '[^' + _BLOCK_SEP_CLASS + ']*' + _BLOCK_MID_RE, 'g'), '')
+            .replace(new RegExp(_BLOCK_CLOSE_RE, 'g'), '')
+            .replace(/\u0000/g, '');
+    }
+    function _removeImageBlock(blockId) {
+        const ta = document.getElementById('wfsmsInput');
+        if (ta && _imgBlocks[blockId] != null) {
+            // remove the whole marked segment for this block
+            const seg = _BLOCK_OPEN + blockId + _BLOCK_MID + _imgBlocks[blockId] + _BLOCK_CLOSE;
+            let v = ta.value || '';
+            const i = v.indexOf(seg);
+            if (i >= 0) v = v.slice(0, i) + v.slice(i + seg.length);
+            else {
+                // fallback: regex remove by id if exact text drifted
+                v = v.replace(new RegExp(_BLOCK_OPEN_RE + blockId + '[\\s\\S]*?' + _BLOCK_CLOSE_RE), '');
+            }
+            ta.value = v.replace(/\n{3,}/g, '\n\n').trim();
+        }
+        delete _imgBlocks[blockId];
+        const tile = document.querySelector('#wfsmsThumbs [data-block="' + blockId + '"]');
+        if (tile) tile.remove();
     }
 
     function closeModal() {

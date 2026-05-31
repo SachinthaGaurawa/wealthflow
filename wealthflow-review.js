@@ -177,9 +177,9 @@
 
     // ── review modal ────────────────────────────────────────────────────────---
     const CATS_BY_MODULE = {
-        expenses: ['Food & Groceries', 'Transport', 'Utilities', 'Telecom', 'Healthcare', 'Education', 'Entertainment', 'Shopping', 'Dining', 'Fuel', 'Insurance', 'Rent', 'Other'],
-        income: ['Salary', 'Business', 'Investment', 'Interest', 'Refund', 'Gift', 'Other Income'],
-        subscriptions: ['Streaming', 'Software', 'Telecom', 'Utilities', 'Membership', 'Other'],
+        expenses: ['Food & Groceries', 'Dining', 'Transport', 'Fuel', 'Utilities', 'Telecom', 'Healthcare', 'Education', 'Entertainment', 'Subscriptions', 'Shopping', 'Shopping (Fashion)', 'Electronics & Tech', 'Shopping (Home)', 'Insurance', 'Rent', 'Personal Care', 'Kids & Family', 'Pets', 'Travel', 'Charity', 'Government', 'Banking', 'Other'],
+        income: ['Salary', 'Business', 'Transfer In', 'Interest', 'Refund', 'Rent Income', 'Gift', 'Stock Dividend', 'Unit Trust', 'Treasury/Bond', 'Crypto', 'Forex/Trading', 'Fixed Deposit', 'Other Income'],
+        subscriptions: ['Streaming', 'Software', 'Telecom', 'Utilities', 'Membership', 'Cloud', 'Other'],
         cconetime: ['Shopping', 'Dining', 'Travel', 'Electronics', 'Other'],
         ccinstall: ['Electronics', 'Appliances', 'Travel', 'Other'],
         loan: ['Loan Payment'],
@@ -208,7 +208,7 @@
 
         ov.innerHTML =
             '<div style="background:var(--card,#0f1320);border:1px solid var(--border2,#1f2638);width:100%;height:100%;max-width:680px;max-height:100vh;display:flex;flex-direction:column;border-radius:0;">' +
-              '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-bottom:1px solid var(--border,#1f2638);">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;padding:18px 20px;padding-top:max(18px, calc(env(safe-area-inset-top, 0px) + 14px));border-bottom:1px solid var(--border,#1f2638);">' +
                 '<div style="font-weight:800;font-size:16px;color:var(--text,#e6e7eb);">🛟 Needs Your Decision <span style="color:#f59e0b;">(' + pending.length + ')</span></div>' +
                 '<button id="wfReviewClose" style="background:transparent;border:none;color:#8b95a8;font-size:26px;cursor:pointer;padding:4px 10px;">×</button>' +
               '</div>' +

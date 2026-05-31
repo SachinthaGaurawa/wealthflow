@@ -255,13 +255,20 @@
                 const _ym = fields.month || (_d.getFullYear() + '-' + String(_d.getMonth()+1).padStart(2,'0'));
                 const _yr = fields.year || _d.getFullYear();
                 const arr = (DB.get('income') || []);
+                const _isInv = !!(fields.is_investment || (fields.cat === 'Investment'));
                 arr.push({
                     id: 'auto_' + Date.now().toString(36),
+                    // income-tab schema compatibility: it reads name/company/amount
+                    name: fields.source || (_isInv ? 'Investment Return' : 'Income'),
+                    company: fields.source || '',
                     source: fields.source || 'Auto',
                     amount: fields.amount, date: _d.toISOString().slice(0,10),
                     date_ms: _d.getTime(),
                     month: _ym, year: _yr,
-                    cat: fields.cat || 'Income',
+                    cat: fields.cat || (_isInv ? 'Investment' : 'Income'),
+                    type: _isInv ? 'investment' : 'income',
+                    is_investment: _isInv,
+                    freq: 'once', monthly: 0, rate: 0,
                     notes: fields.notes || '', auto: true,
                     hash: brain.hash, createdAt: new Date().toISOString()
                 });
@@ -281,7 +288,8 @@
                     date: _ymd,
                     date_ms: _d.getTime(),
                     month: _ym, year: _yr,
-                    completed: false,
+                    completed: true,   // imported from SMS/statement = already paid
+                    paid: true,
                     notes: fields.notes || '', auto: true,
                     hash: brain.hash, createdAt: new Date().toISOString()
                 });
@@ -300,7 +308,7 @@
                     month: _ym, year: _yr,
                     bank: fields.bank || '', card_last4: fields.card_last4,
                     type: fields.type || 'purchase',
-                    notes: fields.notes || '', completed: false, auto: true,
+                    notes: fields.notes || '', completed: true, paid: true, auto: true,
                     hash: brain.hash, createdAt: new Date().toISOString()
                 });
                 DB.set('cconetime', arr);
