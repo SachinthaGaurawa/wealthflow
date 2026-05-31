@@ -63,6 +63,11 @@
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
     <script src="wealthflow-ml.js" defer></script>
+    <!-- v7.11.0 — Client-side encryption layer (AES-256-GCM, PBKDF2). MUST
+         load FIRST among the intelligence modules: the learning memory, the
+         background queue and the review queue all persist through wfCrypto so
+         their data is ciphertext at rest and in the cloud sync snapshot. -->
+    <script src="wealthflow-crypto.js" defer></script>
     <!-- v7.6.1 / v7.8.0 — Autonomous Brain client: card registry, FIFO
          reconciliation, predictive wealth refresh. (SMS removed in v7.8.0.)
          Adds window.wfApplyBrainResult, wfFifoReconcile, wfRefreshPredictions,
@@ -74,16 +79,50 @@
          autonomous module since it depends on wfCardRegistry, wfRefreshPredictions. -->
     <script src="wealthflow-autopilot.js" defer></script>
     <script src="wealthflow-intelligence.js" defer></script>
-    <!-- v7.9.0 — Time-bucketed allocator. MUST load AFTER autonomous.js.
+    <!-- v7.10.0 — Time-bucketed allocator. MUST load AFTER autonomous.js.
          Adds window.wfAllocate, window.wfFindDuplicate, window.wfTimeBucket
          so every transaction lands in its OWN month/year (not today's).
          Also migrates existing records to back-fill missing month/year stamps. -->
     <script src="wealthflow-allocator.js" defer></script>
-    <!-- v7.9.0 — Gmail Auto-Sync. One-click "Connect Gmail" in Settings,
-         polls every 5 min while app open, parses 250+ merchant DB, routes
-         each bank transaction through the brain + allocator. Refresh tokens
-         are AES-256-GCM encrypted on-device. -->
-    <script src="wealthflow-email-sync.js" defer></script>
+    <!-- v7.11.0 — Self-learning merchant memory. Remembers which category a
+         shop/restaurant/service belongs to after you confirm it once, so the
+         same merchant is classified instantly & correctly next time.
+         Adds window.wfMemory. Persists encrypted via wfCrypto. -->
+    <script src="wealthflow-ai-memory.js" defer></script>
+    <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
+         arriving twice (statement + SMS, or a re-paste) using amount + day +
+         merchant + card, and never deletes on a weak signal.
+         Adds window.wfDedup. -->
+    <script src="wealthflow-dedup.js" defer></script>
+    <!-- v7.11.0 — Persistent "ask-me-later" review queue. When the AI genuinely
+         can't be sure, the item waits here (encrypted, across sessions) and the
+         user is prompted on their next visit. Resolving teaches wfMemory.
+         Adds window.wfReview. -->
+    <script src="wealthflow-review.js" defer></script>
+    <!-- v7.11.0 — Autonomous background processing engine + live progress bar.
+         Hand it a paste or statement; it files everything on its own while you
+         keep working or close the app, surfacing only genuine unknowns.
+         Adds window.wfQueue. -->
+    <script src="wealthflow-queue.js" defer></script>
+    <!-- v7.11.0 — Screenshot → SMS OCR. Attach one or many screenshots of your
+         bank-SMS thread; reads the text on-device (Tesseract.js, private) with
+         an optional server-vision fallback, then feeds the SAME splitter+brain.
+         Adds window.wfVisionSms. -->
+    <script src="wealthflow-vision-sms.js" defer></script>
+    <!-- v7.10.0 — Manual SMS Paste Classifier. The user copies any bank SMS
+         from their phone, pastes here (one or many at once), and the AI:
+           • parses amount, date, merchant, card last-4
+           • resolves merchant from 250+ entry DB (Cargills, Keells, Dialog,
+             Netflix, AWS, etc.) AND falls back to web-search lookup
+           • routes to the right tab (Expense / Income / Subscription / CC /
+             Loan / Goal) with confidence scoring
+           • allocates to the correct calendar month/year (not today)
+         Zero setup. Works for any bank worldwide. No API keys, no OAuth. -->
+    <script src="wealthflow-sms-paste.js" defer></script>
+    <!-- v7.11.0 — Intelligence settings panel. Self-injects a framed card into
+         Settings surfacing learned-merchant count, the review queue, a
+         duplicate scanner, background-engine status and encryption status. -->
+    <script src="wealthflow-intel-panel.js" defer></script>
 
     
 
@@ -10649,6 +10688,28 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             } catch (e) { }
         })();
 
+        // v7.10.0 — ?action=smsPaste deep link (from PWA shortcut + share-target).
+        // Opens the manual SMS-paste modal once the app finishes booting.
+        (function detectSmsPasteAction() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                if (params.get('action') === 'smsPaste') {
+                    const tryOpen = () => {
+                        if (typeof window.wfOpenSmsPaste === 'function') {
+                            window.wfOpenSmsPaste();
+                            return true;
+                        }
+                        return false;
+                    };
+                    // Try a few times since the module is defer-loaded
+                    let tries = 0;
+                    const t = setInterval(() => {
+                        if (tryOpen() || ++tries > 25) clearInterval(t);
+                    }, 400);
+                }
+            } catch (e) { }
+        })();
+
         // ── SHARED STATEMENT VIEWER v2.0 ──
         // Handles URL formats:
         //   ?s=ID                 → Ultra-short Firestore 's' collection (PRIMARY)
@@ -17903,9 +17964,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(245, 166, 35, 0.06), var(--card)); border: 1px solid var(--accent);">
             <div class="settings-title" style="color:var(--accent);">🌐 AI Intelligence &amp; Language</div>
-            <!-- v7.9.0 — Email Auto-Sync mount point. The wealthflow-email-sync.js
-                 module auto-injects the "Connect Gmail" / status banner here. -->
-            <div id="wfEmailSyncMount" style="margin-bottom:14px;"></div>
+            <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
+                 module auto-injects the "📲 Paste Bank SMS" banner here. -->
+            <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
                     <div class="setting-label">AI Response Language</div>
@@ -18031,6 +18092,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>
             </details>
         </div>
+
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
+            <div class="settings-title" style="color:#818cf8;">🔒 Device Access &amp; Encryption</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Lock Timer</div><div class="setting-desc">Secure the vault after inactivity to prevent unauthorized access.</div></div>
                 <select class="fi" style="width:140px; border-color:var(--border2);" onchange="updateAutoLock(this.value)">
@@ -22729,16 +22793,43 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             <tbody id="_ccr_body">${renderRows()}</tbody>
                         </table>
                     </div>
-                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);">
-                        <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;">Cancel</button>
-                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;">💾 Save selected to CC One-Time</button>
+                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;">
+                        <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;min-width:90px;">Cancel</button>
+                        <button class="btn btn-secondary" id="_ccr_ai" type="button" style="flex:2;min-width:150px;">🤖 Let AI auto-sort</button>
+                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;min-width:150px;">💾 Save to CC One-Time</button>
                     </div>
+                    <div style="padding:0 16px 12px;font-size:11px;color:var(--text3);line-height:1.5;">🤖 <b>Auto-sort</b> sends the ticked rows to the background AI, which routes each to its correct tab (groceries → Expenses, salary → Income, etc.), learns merchants, and removes duplicates — you can close this and keep working.</div>
                 </div>`;
 
             const $ovl = (sel) => overlay.querySelector(sel);
             const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 180); };
             $ovl('#_ccrx').onclick = closeOvl;
             $ovl('#_ccr_cancel').onclick = closeOvl;
+
+            // 🤖 Let AI auto-sort — hand the ticked rows to the background queue
+            const aiBtn = $ovl('#_ccr_ai');
+            if (aiBtn) aiBtn.onclick = () => {
+                if (!window.wfQueue || typeof window.wfStatementToQueue !== 'function') {
+                    notify('Background AI engine still loading — try the save button, or retry in a moment.', 'warn');
+                    return;
+                }
+                const rows = overlay.querySelectorAll('#_ccr_body tr');
+                const picked = [];
+                rows.forEach((tr) => {
+                    if (!tr.querySelector('._ccr_keep').checked) return;
+                    const date = tr.querySelector('._ccr_date').value || today();
+                    const desc = (tr.querySelector('._ccr_desc').value || '').trim();
+                    const type = tr.querySelector('._ccr_type').value;
+                    const amount = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
+                    if (!desc || !amount) return;
+                    picked.push({ date, description: desc, amount, type: (type === 'cash_advance' || type === 'service_fee') ? 'debit' : 'debit' });
+                });
+                if (!picked.length) { notify('Tick at least one row first.', 'warn'); return; }
+                const last4 = (parsed && (parsed.card_last4 || parsed.last4)) || (typeof bank === 'string' && (bank.match(/\d{4}/) || [])[0]) || '';
+                window.wfStatementToQueue(picked, { currency: (parsed && parsed.currency) || 'LKR', card_last4: last4, source: 'statement' });
+                notify('🤖 Handed ' + picked.length + ' transaction' + (picked.length === 1 ? '' : 's') + ' to the AI — it\'ll sort them into the right tabs. You can keep working.', 'success');
+                closeOvl();
+            };
 
             $ovl('#_ccr_save').onclick = () => {
                 // Read every visible row, build CCOT records, save them.

@@ -2,7 +2,7 @@
   "id": "/?source=pwa",
   "name": "WealthFlow Elite — Personal Finance Engine",
   "short_name": "WealthFlow",
-  "description": "Elite Sri Lankan personal finance system with Gmail auto-sync, 250+ merchant intelligence, AI advisor, smart notifications, and 3D cash flow visualization.",
+  "description": "Elite Sri Lankan personal finance system with manual bank-SMS classifier, 250+ merchant intelligence DB, AI advisor, smart notifications, and 3D cash flow visualization.",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
@@ -76,10 +76,10 @@
       ]
     },
     {
-      "name": "Sync Gmail",
-      "short_name": "Sync Email",
-      "description": "Pull new bank statements from Gmail",
-      "url": "/?action=syncGmail",
+      "name": "Paste Bank SMS",
+      "short_name": "Paste SMS",
+      "description": "Paste a bank SMS and AI auto-files it",
+      "url": "/?action=smsPaste",
       "icons": [
         {
           "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png",

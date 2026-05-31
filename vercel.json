@@ -37,14 +37,63 @@
       ]
     },
     {
-      "source": "/wealthflow-email-sync.js",
+      "source": "/wealthflow-allocator.js",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
         { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
       ]
     },
     {
-      "source": "/wealthflow-allocator.js",
+      "source": "/wealthflow-crypto.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/wealthflow-ai-memory.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/wealthflow-dedup.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/wealthflow-review.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/wealthflow-queue.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/wealthflow-vision-sms.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/wealthflow-sms-paste.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
+      "source": "/wealthflow-intel-panel.js",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
         { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
@@ -74,8 +123,15 @@
     { "source": "/wealthflow-ai-v4.js", "destination": "/wealthflow-ai-v4.js" },
     { "source": "/wealthflow-ai-v6.js", "destination": "/wealthflow-ai-v6.js" },
     { "source": "/wealthflow-ml.js", "destination": "/wealthflow-ml.js" },
-    { "source": "/wealthflow-email-sync.js", "destination": "/wealthflow-email-sync.js" },
     { "source": "/wealthflow-allocator.js", "destination": "/wealthflow-allocator.js" },
+    { "source": "/wealthflow-crypto.js", "destination": "/wealthflow-crypto.js" },
+    { "source": "/wealthflow-ai-memory.js", "destination": "/wealthflow-ai-memory.js" },
+    { "source": "/wealthflow-dedup.js", "destination": "/wealthflow-dedup.js" },
+    { "source": "/wealthflow-review.js", "destination": "/wealthflow-review.js" },
+    { "source": "/wealthflow-queue.js", "destination": "/wealthflow-queue.js" },
+    { "source": "/wealthflow-vision-sms.js", "destination": "/wealthflow-vision-sms.js" },
+    { "source": "/wealthflow-sms-paste.js", "destination": "/wealthflow-sms-paste.js" },
+    { "source": "/wealthflow-intel-panel.js", "destination": "/wealthflow-intel-panel.js" },
     { "source": "/manifest.json", "destination": "/manifest.json" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

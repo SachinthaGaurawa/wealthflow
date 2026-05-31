@@ -1,7 +1,7 @@
 {
   "name": "wealthflow",
-  "version": "7.9.0",
-  "description": "WealthFlow Elite Financial System v7.9 — Gmail-auto-sync personal finance with one-click bank-email ingestion, 250+ merchant intelligence DB, time-bucketed allocation (each tx in its correct month/year), multi-bank parser (15 SL + 20 international banks), AES-256-GCM credential vault, 18-engine AI vision consensus, multi-lingual advisor, FIFO credit-card reconciliation, and predictive wealth forecasting. Built for the Sri Lankan market with international reach.",
+  "version": "7.11.0",
+  "description": "WealthFlow Elite Financial System v7.10 \u2014 Sri Lankan personal finance with manual bank-SMS paste classifier (zero setup, works for any bank worldwide), 250+ merchant intelligence DB, time-bucketed allocation (each tx lands in its correct month/year tab), AES-256-GCM credential vault, 18-engine AI vision consensus for receipts/statements, multi-lingual advisor, FIFO credit-card reconciliation, and predictive wealth forecasting.",
   "type": "module",
   "private": true,
   "engines": {
@@ -15,11 +15,11 @@
     "finance",
     "personal-finance",
     "wealth-management",
-    "gmail-sync",
-    "email-auto-sync",
-    "bank-statement-parser",
+    "sms-classifier",
+    "bank-sms-parser",
     "merchant-intelligence",
     "time-bucketed-allocation",
+    "statement-upload",
     "ai-advisor",
     "ai-vision",
     "ocr",
@@ -34,10 +34,14 @@
     "multi-engine-consensus",
     "tensorflow-js",
     "pwa",
-    "oauth2",
     "encrypted-vault",
     "sri-lanka",
-    "international"
+    "international",
+    "screenshot-ocr",
+    "self-learning",
+    "aes-256-gcm",
+    "background-queue",
+    "tesseract-ocr"
   ],
   "license": "UNLICENSED",
   "dependencies": {

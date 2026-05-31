@@ -1,18 +1,22 @@
-// ==================== WealthFlow Infinity Service Worker v7.9.0 ====================
-// Handles PWA push notifications, offline caching, background sync, and the
-// new Gmail-sync periodic background poll (v7.9.0).
+// ==================== WealthFlow Infinity Service Worker v7.11.0 ====================
+// Handles PWA push notifications, offline caching, and background sync.
+//
+// v7.11.0 (May 2026): Reverted the v7.9.0 Gmail-sync hooks. The app no longer
+// has email-based ingestion. Instead, users paste bank SMSes manually via the
+// new in-app modal (wealthflow-sms-paste.js). Service Worker stays simple:
+// notifications, caching, and the original auto-backup logic.
 
-const CACHE_NAME = 'wealthflow-v7.9.0';
+const CACHE_NAME = 'wealthflow-v7.11.0';
 
 // Install event — cache core assets
 self.addEventListener('install', (event) => {
-    console.log('[SW] Installing WealthFlow Service Worker v7.9.0...');
+    console.log('[SW] Installing WealthFlow Service Worker v7.11.0...');
     self.skipWaiting();
 });
 
 // Activate event — clean old caches and take control
 self.addEventListener('activate', (event) => {
-    console.log('[SW] Service Worker activated (v7.9.0)');
+    console.log('[SW] Service Worker activated (v7.11.0)');
     event.waitUntil(
         caches.keys().then(keys =>
             Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
@@ -98,86 +102,27 @@ self.addEventListener('notificationclick', (event) => {
     );
 });
 
-// Notification close handler
 self.addEventListener('notificationclose', (event) => {
     console.log('[SW] Notification dismissed');
 });
 
-// Background Sync — handles wf-auto-backup AND wf-gmail-sync (v7.9.0).
+// Background Sync — auto-backup only (Gmail sync removed in v7.11.0)
 self.addEventListener('sync', (event) => {
     if (event.tag === 'wf-auto-backup') {
         console.log('[SW] wf-auto-backup sync triggered');
         event.waitUntil(_runAutoBackupFromSW('background-sync'));
-    } else if (event.tag === 'wf-gmail-sync') {
-        console.log('[SW] wf-gmail-sync triggered');
-        event.waitUntil(_wakeClientsForGmailSync('background-sync'));
     } else if (event.tag === 'wealthflow-sync') {
         console.log('[SW] Background sync triggered (legacy tag)');
     }
 });
 
-// Periodic Background Sync — fires ~once a day in installed PWAs.
-// v7.9.0: now also asks the page to do a Gmail sync once per day in the
-// background, even if the user hasn't opened the app.
+// Periodic Background Sync — daily auto-backup (Gmail sync removed in v7.11.0)
 self.addEventListener('periodicsync', (event) => {
     if (event.tag === 'wf-periodic-backup') {
         console.log('[SW] wf-periodic-backup periodicsync triggered');
         event.waitUntil(_runAutoBackupFromSW('periodic-sync'));
-    } else if (event.tag === 'wf-periodic-gmail-sync') {
-        console.log('[SW] wf-periodic-gmail-sync triggered');
-        event.waitUntil(_wakeClientsForGmailSync('periodic-sync'));
     }
 });
-
-// v7.9.0 — wake any open client and ask it to run a Gmail sync.
-// The page does the actual sync (it holds the encrypted refresh-token);
-// the SW just nudges. If no client is open, we surface a notification
-// inviting the user to open the app — Gmail tokens can't be used from
-// inside the SW without exposing them in plaintext, which we won't do.
-async function _wakeClientsForGmailSync(triggerKind) {
-    try {
-        const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        if (allClients && allClients.length) {
-            for (const c of allClients) {
-                c.postMessage({ type: 'WF_RUN_GMAIL_SYNC', triggerKind });
-            }
-            console.log('[SW] asked', allClients.length, 'client(s) to run Gmail sync');
-            return;
-        }
-        // No clients open — notify the user (only once per 12 hours)
-        const lastNotify = await _readSwState('wf_gmail_last_notify');
-        if (lastNotify && (Date.now() - lastNotify) < 12 * 3600 * 1000) return;
-        await _writeSwState('wf_gmail_last_notify', Date.now());
-        try {
-            await self.registration.showNotification('📧 Bank emails waiting', {
-                body: 'Open WealthFlow to auto-file new transactions from your Gmail.',
-                icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
-                badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
-                tag: 'wf-gmail-sync-needed',
-                silent: false,
-                data: { url: '/?source=gmail-sync-notify' }
-            });
-        } catch (_) {}
-    } catch (e) {
-        console.warn('[SW] _wakeClientsForGmailSync error:', e && e.message);
-    }
-}
-
-async function _readSwState(key) {
-    try {
-        const cache = await caches.open('wf-sw-state');
-        const r = await cache.match('/state/' + key);
-        if (!r) return null;
-        return Number(await r.text());
-    } catch { return null; }
-}
-
-async function _writeSwState(key, value) {
-    try {
-        const cache = await caches.open('wf-sw-state');
-        await cache.put('/state/' + key, new Response(String(value)));
-    } catch (_) {}
-}
 
 async function _runAutoBackupFromSW(triggerKind) {
     try {
