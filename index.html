@@ -74,6 +74,12 @@
          autonomous module since it depends on wfCardRegistry, wfRefreshPredictions. -->
     <script src="wealthflow-autopilot.js" defer></script>
     <script src="wealthflow-intelligence.js" defer></script>
+    <!-- v7.9.0 — Time-bucketed allocator. MUST load AFTER autonomous.js.
+         Adds window.wfAllocate, window.wfFindDuplicate, window.wfTimeBucket. -->
+    <script src="wealthflow-allocator.js" defer></script>
+    <!-- v7.9.0 — Gmail Auto-Sync. One-click Gmail connect, 5-min polling,
+         routes each bank transaction through brain + allocator. -->
+    <script src="wealthflow-email-sync.js" defer></script>
 
     
 

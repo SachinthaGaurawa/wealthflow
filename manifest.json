@@ -1,8 +1,8 @@
 {
   "id": "/?source=pwa",
-  "name": "WealthFlow Elite \u2014 Personal Finance Engine",
+  "name": "WealthFlow Elite — Personal Finance Engine",
   "short_name": "WealthFlow",
-  "description": "Elite Sri Lankan personal finance system with AI advisor, smart notifications, and 3D cash flow visualization.",
+  "description": "Elite Sri Lankan personal finance system with Gmail auto-sync, 250+ merchant intelligence, AI advisor, smart notifications, and 3D cash flow visualization.",
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
@@ -67,6 +67,19 @@
       "short_name": "AI",
       "description": "Chat with your AI financial advisor",
       "url": "/?page=ai",
+      "icons": [
+        {
+          "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Sync Gmail",
+      "short_name": "Sync Email",
+      "description": "Pull new bank statements from Gmail",
+      "url": "/?action=syncGmail",
       "icons": [
         {
           "src": "https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png",

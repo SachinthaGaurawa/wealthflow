@@ -241,34 +241,54 @@
                 arr[li].payments.push({ id: 'auto_' + Date.now().toString(36), amount: fields.amount, date: new Date(fields.date || Date.now()).toISOString().slice(0,10), paid: true, note: 'Filed from review', auto: true });
                 DB.set('loans', arr);
             } else if (module === 'income') {
+                const _txTs = fields.date_ms || fields.date || Date.now();
+                const _d = new Date(_txTs);
+                const _ym = fields.month || (_d.getFullYear() + '-' + String(_d.getMonth()+1).padStart(2,'0'));
+                const _yr = fields.year || _d.getFullYear();
                 const arr = (DB.get('income') || []);
                 arr.push({
                     id: 'auto_' + Date.now().toString(36),
                     source: fields.source || 'Auto',
-                    amount: fields.amount, date: fields.date,
+                    amount: fields.amount, date: _d.toISOString().slice(0,10),
+                    date_ms: _d.getTime(),
+                    month: _ym, year: _yr,
+                    cat: fields.cat || 'Income',
                     notes: fields.notes || '', auto: true,
                     hash: brain.hash, createdAt: new Date().toISOString()
                 });
                 DB.set('income', arr);
             } else if (module === 'expenses') {
+                // v7.9.0 — time-bucket stamping. The allocator may have pre-
+                // stamped fields.month/year; honour them if present, else derive.
+                const _txTs = fields.date_ms || fields.date || Date.now();
+                const _d = new Date(_txTs); const _ymd = _d.toISOString().slice(0,10);
+                const _ym = fields.month || (_d.getFullYear() + '-' + String(_d.getMonth()+1).padStart(2,'0'));
+                const _yr = fields.year || _d.getFullYear();
                 const arr = (DB.get('expenses') || []);
                 arr.push({
                     id: 'auto_' + Date.now().toString(36),
                     desc: fields.desc, amount: fields.amount,
                     cat: fields.cat || 'Other',
-                    date: new Date(fields.date).toISOString().slice(0,10),
-                    date_ms: fields.date, completed: false,
+                    date: _ymd,
+                    date_ms: _d.getTime(),
+                    month: _ym, year: _yr,
+                    completed: false,
                     notes: fields.notes || '', auto: true,
                     hash: brain.hash, createdAt: new Date().toISOString()
                 });
                 DB.set('expenses', arr);
             } else if (module === 'cconetime') {
+                const _txTs = fields.date_ms || fields.date || Date.now();
+                const _d = new Date(_txTs); const _ymd = _d.toISOString().slice(0,10);
+                const _ym = fields.month || (_d.getFullYear() + '-' + String(_d.getMonth()+1).padStart(2,'0'));
+                const _yr = fields.year || _d.getFullYear();
                 const arr = (DB.get('cconetime') || []);
                 arr.push({
                     id: 'auto_' + Date.now().toString(36),
                     desc: fields.desc, amount: fields.amount,
-                    date: new Date(fields.date).toISOString().slice(0,10),
-                    date_ms: fields.date,
+                    date: _ymd,
+                    date_ms: _d.getTime(),
+                    month: _ym, year: _yr,
                     bank: fields.bank || '', card_last4: fields.card_last4,
                     type: fields.type || 'purchase',
                     notes: fields.notes || '', completed: false, auto: true,
@@ -279,11 +299,16 @@
                 const arr = (DB.get('subscriptions') || []);
                 // Skip if a sub with same name already exists
                 if (!arr.some(s => (s.name||'').toLowerCase() === (fields.name||'').toLowerCase())) {
+                    const _txTs = fields.date_ms || fields.date || Date.now();
+                    const _d = new Date(_txTs);
                     arr.push({
                         id: 'auto_' + Date.now().toString(36),
                         name: fields.name, category: fields.category,
                         amount: fields.amount, dueDay: fields.due_day,
                         cycle: fields.cycle || 'monthly', auto: true,
+                        firstSeen_ms: _d.getTime(),
+                        month: fields.month || (_d.getFullYear() + '-' + String(_d.getMonth()+1).padStart(2,'0')),
+                        year:  fields.year  || _d.getFullYear(),
                         hash: brain.hash, createdAt: new Date().toISOString()
                     });
                     DB.set('subscriptions', arr);
@@ -614,5 +639,5 @@
         });
     }
 
-    console.log('[Autonomous] ✅ WealthFlow Autonomous Module v1.0 loaded');
+    console.log('[Autonomous] ✅ WealthFlow Autonomous Module v1.1 (v7.9.0 time-bucket stamping) loaded');
 })();
