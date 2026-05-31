@@ -64,6 +64,24 @@ const MERCHANT_DB = [
     [/cinnamon\s*grand|cinnamon\s*lakeside|cinnamon\s*red/i, 'Cinnamon Hotels',  'Dining Out',       false, 'LK'],
     [/galle\s*face\s*hotel/i,                             'Galle Face Hotel',    'Dining Out',       false, 'LK'],
     [/mount\s*lavinia\s*hotel/i,                          'Mount Lavinia Hotel', 'Dining Out',       false, 'LK'],
+    [/\bkoko\b/i,                                          'KOKO',                'Dining Out',       false, 'LK'],
+    [/burger'?s?\s*king|^bk\b/i,                          'Burger King',         'Dining Out',       false],
+    [/chinese\s*dragon|dragon\s*cafe/i,                   'Chinese Dragon Cafe', 'Dining Out',       false, 'LK'],
+    [/the\s*coffee\s*bean|coffee\s*bean\s*&?\s*tea/i,     'The Coffee Bean',     'Dining Out',       false],
+    [/barista\s*coffee|^barista\b/i,                      'Barista',             'Dining Out',       false, 'LK'],
+    [/java\s*lounge/i,                                    'Java Lounge',         'Dining Out',       false, 'LK'],
+    [/cafe\s*kumbuk|kumbuk/i,                             'Cafe Kumbuk',         'Dining Out',       false, 'LK'],
+    [/upali'?s|nana'?s|raja\s*bojun/i,                    'Sri Lankan Restaurant','Dining Out',      false, 'LK'],
+
+    // ─── Sri Lankan Electronics / Tech / Software houses ─────────────────────
+    [/serandib\s*tech|serendib\s*tech/i,                  'Serandib Technologies','Electronics & Tech', false, 'LK'],
+    [/abans|^abans\b/i,                                   'Abans',               'Electronics & Tech', false, 'LK'],
+    [/singer\s*sri\s*lanka|^singer\b/i,                   'Singer',              'Electronics & Tech', false, 'LK'],
+    [/softlogic\s*(?!life|food)/i,                        'Softlogic',           'Electronics & Tech', false, 'LK'],
+    [/damro/i,                                            'Damro',               'Home & Furniture',   false, 'LK'],
+    [/metropolitan|^metro\b/i,                            'Metropolitan',        'Electronics & Tech', false, 'LK'],
+    [/redline\s*tech|barclays\s*comp|nano\s*tek|tech\s*zone/i, 'Computer Store', 'Electronics & Tech', false, 'LK'],
+    [/dialcom|^e\s*marketing|life\s*mobile|gsm\s*arena/i, 'Mobile Phone Shop',   'Electronics & Tech', false, 'LK'],
 
     // ─── Sri Lankan Fuel & Transport ────────────────────────────────────────
     [/ceypetco|ceylon\s*petroleum/i,                      'Ceypetco',            'Transport (Fuel)', false, 'LK'],
@@ -375,15 +393,16 @@ function parseReference(text) {
 
 // Extract raw merchant string - tries multiple patterns
 function parseRawMerchant(text) {
+    const clean = (s) => String(s || '').trim().replace(/\s+/g, ' ').replace(/[,.]+$/, '');
     // Pattern A: "ref: MERCHANT NAME" or "ref MERCHANT NAME"
     let m = text.match(/\bref(?:erence)?\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\s\-&'.,/()]{3,60}?)(?:\s+(?:on|at|dated|your)\s|\s*\.\s*Your|\s*\.\s*Avl|\s*\.\s*Bal|\s*$)/i);
-    if (m) return m[1].trim().replace(/[,.]+$/, '');
+    if (m) return clean(m[1]);
     // Pattern B: "at MERCHANT NAME"
     m = text.match(/\b(?:at|to|from|via|@)\s+([A-Z][A-Z0-9\s\-&'.,/()]{2,60}?)(?:\s+on\s|\s+\d{1,2}[/-]\d|\s+ref|\s+txn|\.|\s+your\s|$)/i);
-    if (m) return m[1].trim().replace(/[,.]+$/, '');
+    if (m) return clean(m[1]);
     // Pattern C: "for MERCHANT"
     m = text.match(/\bfor\s+([A-Z][A-Z0-9\s\-&'.,/()]{3,60}?)(?:\s+on\s|\.|$)/i);
-    if (m) return m[1].trim().replace(/[,.]+$/, '');
+    if (m) return clean(m[1]);
     return '';
 }
 
@@ -595,11 +614,17 @@ function routeToModule(parsed, merchant, cardEntry, knownLoans) {
         };
     }
 
-    // Default debit → Expense
+    // Default debit → Expense. When the merchant is a confident DB match, the
+    // expense routing is itself highly certain (a known shop debit is
+    // unambiguously an expense), so propagate that confidence and let the
+    // client auto-file it. Unknown merchants stay lower so they go to review.
+    const expenseConf = (merchant && merchant.source === 'merchant_db')
+        ? Math.min(0.98, merchant.confidence || 0.9)
+        : (merchant && merchant.confidence >= 0.75 ? 0.9 : 0.7);
     return {
         module: 'expenses',
         tab_label: 'Monthly Expenses',
-        confidence: 0.90,
+        confidence: expenseConf,
         suggested_fields: {
             desc: merchant.name,
             amount: parsed.amount,
