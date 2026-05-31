@@ -25,26 +25,26 @@
 
     const CARD_HTML = `
       <div class="settings-section" id="wfIntelPanel" style="background:linear-gradient(145deg,rgba(16,185,129,0.05),var(--card));border:1px solid var(--border2);">
-        <div class="settings-title" style="color:#10b981;">🤖 Autonomous AI Engine</div>
+        <div class="settings-title" style="color:#10b981;">Autonomous AI Engine</div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">🧠 Learned Merchants</div><div class="setting-desc">Shops &amp; services the AI remembers the category for — it gets faster and smarter every time you confirm one.</div></div>
+          <div class="setting-info"><div class="setting-label">Learned Merchants</div><div class="setting-desc">Shops &amp; services the AI remembers the category for — it gets faster and smarter every time you confirm one.</div></div>
           <div style="text-align:right;"><div id="wfIntelMemCount" style="font-weight:900;font-size:18px;color:#10b981;">—</div><button class="btn btn-ghost btn-sm" id="wfIntelForget" style="margin-top:4px;">Reset</button></div>
         </div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">🛟 Needs-Review</div><div class="setting-desc">Transactions the AI wasn't sure about and parked for your one-tap decision (remembered across sessions).</div></div>
+          <div class="setting-info"><div class="setting-label">Needs-Review</div><div class="setting-desc">Transactions the AI wasn't sure about and parked for your one-tap decision (remembered across sessions).</div></div>
           <div style="text-align:right;"><div id="wfIntelReviewCount" style="font-weight:900;font-size:18px;color:#f59e0b;">—</div><button class="btn btn-secondary btn-sm" id="wfIntelReview" style="margin-top:4px;">Review</button></div>
         </div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">🛡 Duplicate Scanner</div><div class="setting-desc">Finds the same transaction filed twice (statement + SMS, or a re-paste) using amount + day + merchant + card. Never removes on a weak match.</div></div>
+          <div class="setting-info"><div class="setting-label">Duplicate Scanner</div><div class="setting-desc">Finds the same transaction filed twice (statement + SMS, or a re-paste) using amount + day + merchant + card. Never removes on a weak match.</div></div>
           <button class="btn btn-secondary btn-sm" id="wfIntelDedup">Scan now</button>
         </div>
         <div id="wfIntelDedupResult" style="display:none;margin:4px 0 8px;padding:11px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;font-size:12.5px;"></div>
         <div class="setting-row">
-          <div class="setting-info"><div class="setting-label">⚡ Background Processing</div><div class="setting-desc">Hand the AI a paste or screenshot and walk away — it files everything on its own with a live progress bar.</div></div>
+          <div class="setting-info"><div class="setting-label">Background Processing</div><div class="setting-desc">Hand the AI a paste or screenshot and walk away — it files everything on its own with a live progress bar.</div></div>
           <div style="text-align:right;"><div id="wfIntelQueueState" style="font-weight:800;font-size:13px;color:var(--text2);">Idle</div><button class="btn btn-ghost btn-sm" id="wfIntelQueueRun" style="margin-top:4px;">Run pending</button></div>
         </div>
         <div class="setting-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:12px;">
-          <div class="setting-info"><div class="setting-label">🔒 AI Data Encryption</div><div class="setting-desc">All AI memory, the review queue and the job queue are encrypted at rest (and in cloud sync).</div></div>
+          <div class="setting-info"><div class="setting-label">AI Data Encryption</div><div class="setting-desc">All AI memory, the review queue and the job queue are encrypted at rest (and in cloud sync).</div></div>
           <span id="wfIntelCryptoBadge" class="badge bg-g" style="padding:6px 12px;">AES-256-GCM</span>
         </div>
       </div>`;

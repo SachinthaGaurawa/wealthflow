@@ -307,6 +307,9 @@
 
     // Per-screenshot OCR text blocks: { blockId: "ocr text" }. Lets us remove
     // exactly the text that came from a screenshot when its × is tapped.
+    // Tracks the demo-sample text so we never file the untouched sample as the
+    // user's real data. Cleared the moment the user changes the textarea.
+    let _sampleText = null;
     let _imgBlocks = {};
     // Invisible markers wrap each screenshot's text inside the textarea so it
     // can be surgically removed. Use control chars users will never type.
@@ -447,7 +450,20 @@
     // ⚡ Fire-and-forget: hand the whole paste to the background queue engine
     // and close the modal immediately. The AI files everything it's sure about
     // and parks anything ambiguous in the review queue for later.
+    // Returns true (and warns) if the textarea still holds the untouched demo
+    // sample — so neither Auto-file nor Review-first can save the example.
+    function _isUntouchedSample() {
+        const ta = document.getElementById('wfsmsInput');
+        if (!ta || !_sampleText) return false;
+        if (_visibleInput().trim() === _sampleText.trim()) {
+            _notify('That\'s just the demo sample — type or paste your own bank SMS to file it for real.', 'warn');
+            return true;
+        }
+        return false;
+    }
+
     async function _runAutoFile() {
+        if (_isUntouchedSample()) return;
         const ta = document.getElementById('wfsmsInput');
         if (!ta) return;
         const text = _visibleInput().trim();
@@ -465,6 +481,7 @@
     }
 
     async function _runAnalyse() {
+        if (_isUntouchedSample()) return;
         const ta = document.getElementById('wfsmsInput');
         if (!ta) return;
         const text = _visibleInput().trim();
@@ -627,8 +644,10 @@
             const ta = document.getElementById('wfsmsInput');
             // Generic demo SMS — NOT real user data. Fake card tail, generic
             // Colombo merchant and date so nobody's real details appear.
-            if (ta) ta.value = "Your A/C No: ********1234 is debited with LKR1,250.00 on 15 JUN 2026 ref: KEELLS SUPER-COLOMBO 03. Your bal is LKR85,400.00. If unauthorized call 0112000000";
-            ta.focus();
+            const SAMPLE = "Your A/C No: ********1234 is debited with LKR1,250.00 on 15 JUN 2026 ref: KEELLS SUPER-COLOMBO 03. Your bal is LKR85,400.00. If unauthorized call 0112000000";
+            if (ta) { ta.value = SAMPLE; ta.focus(); }
+            _sampleText = SAMPLE;   // remember it so we can refuse to file the untouched sample
+            _notify('This is a demo SMS so you can see how it works. It won\'t be saved. Type or paste your own to file for real.', 'info');
             return;
         }
         if (!rid) return;
@@ -647,6 +666,10 @@
     }
 
     function _onInput(e) {
+        // If the user edits the main paste box, it's no longer the demo sample.
+        if (e.target && e.target.id === 'wfsmsInput') {
+            if (_sampleText && _visibleInput().trim() !== _sampleText.trim()) _sampleText = null;
+        }
         const t = e.target.closest('[data-edit]');
         if (!t) return;
         const rid = t.dataset.rid;
@@ -676,7 +699,7 @@
         ov.id = 'wfsmsOverlay';
         ov.innerHTML = '<div class="wfsms-modal">' +
             '<div class="wfsms-head">' +
-                '<div class="wfsms-title">📲 Paste Bank SMS</div>' +
+                '<div class="wfsms-title">Paste Bank SMS</div>' +
                 '<button class="wfsms-close" data-act="close" aria-label="Close">×</button>' +
             '</div>' +
             '<div class="wfsms-body">' +

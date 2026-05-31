@@ -244,8 +244,9 @@
                     '</select></div>' +
             '</div>' +
             '<div style="display:flex;gap:8px;margin-top:11px;">' +
-                '<button data-act="file" data-id="' + it.id + '" style="flex:1;background:linear-gradient(135deg,#10b981,#0ea371);color:#04130d;border:none;border-radius:9px;padding:9px;font-weight:800;font-size:13px;cursor:pointer;">✓ File here</button>' +
+                '<button data-act="file" data-id="' + it.id + '" style="flex:1;background:linear-gradient(135deg,#10b981,#0ea371);color:#04130d;border:none;border-radius:9px;padding:9px;font-weight:800;font-size:13px;cursor:pointer;">File here</button>' +
                 '<button data-act="skip" data-id="' + it.id + '" style="background:transparent;border:1px solid var(--border2,#1f2638);color:#8b95a8;border-radius:9px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer;">Skip</button>' +
+                '<button data-act="remove" data-id="' + it.id + '" title="Delete this transaction" style="background:transparent;border:1px solid rgba(239,68,68,0.4);color:#ef4444;border-radius:9px;padding:9px 13px;font-weight:700;font-size:13px;cursor:pointer;">Remove</button>' +
             '</div>' +
         '</div>';
     }
@@ -288,6 +289,14 @@
             await skip(id);
             const card = btn.closest('.wfrv-card');
             if (card) { card.style.opacity = '0.4'; }
+        } else if (act === 'remove') {
+            const ok = (typeof confirm === 'function') ? confirm('Delete this transaction? It will be removed from the review list and not saved anywhere.') : true;
+            if (!ok) return;
+            await remove(id);
+            const card = btn.closest('.wfrv-card');
+            if (card) { card.style.transition = 'opacity .3s'; card.style.opacity = '0'; setTimeout(() => card.remove(), 300); }
+            _notify('Removed.', 'info');
+            if ((await count()) === 0) setTimeout(() => { const ov = document.getElementById('wfReviewOverlay'); if (ov) ov.remove(); }, 400);
         }
     }
 

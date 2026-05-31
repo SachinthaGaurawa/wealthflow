@@ -87,6 +87,10 @@
          entry point (SMS paste, OCR, statement scan, queue) classifies the same
          way. Adds window.wfCategoryAI. -->
     <script src="wealthflow-category-ai.js" defer></script>
+    <!-- v7.11.1 — Card & Account Registry UI. The wfCardRegistry backend stayed;
+         this re-adds the modal to map a last-4 to credit-card vs bank-account so
+         the brain routes service-charge debits correctly. Adds window.wfOpenCardRegistry. -->
+    <script src="wealthflow-card-registry.js" defer></script>
     <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
          arriving twice (statement + SMS, or a re-paste) using amount + day +
          merchant + card, and never deletes on a weak signal.
@@ -8643,6 +8647,16 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
             if (!msg) return;
 
+            // Make sure the AI chat page is visible — pills can be tapped from
+            // the dashboard/welcome, and if we stayed on another page the reply
+            // would render off-screen and look like "nothing happened".
+            try {
+                const aiPage = document.getElementById('page-ai');
+                if (aiPage && !aiPage.classList.contains('active') && typeof showPage === 'function') {
+                    showPage('ai');
+                }
+            } catch (_) {}
+
             if (input) { input.value = ''; autoResizeAIInput(input); }
 
             // Show user message
@@ -9266,6 +9280,25 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
         window._sendSuggestion = _sendSuggestion;
         window.initAISuggestionPills = initAISuggestionPills;
+
+        // BULLETPROOF: a single document-level delegated handler catches every
+        // suggestion pill no matter which container rendered it or when. This
+        // guarantees the chips always fire even if a specific container missed
+        // its local binding (the bug the user kept hitting).
+        if (!window._wfPillGlobalBound) {
+            window._wfPillGlobalBound = true;
+            document.addEventListener('click', function (ev) {
+                const btn = ev.target.closest && ev.target.closest('.ai-suggestion-pill, [data-q]');
+                if (!btn) return;
+                const q = btn.getAttribute('data-q');
+                if (!q) return;
+                ev.preventDefault();
+                if (typeof sendAIMessage === 'function') {
+                    try { if (typeof triggerHaptic === 'function') triggerHaptic('light'); } catch (_) {}
+                    sendAIMessage(q);
+                }
+            }, true);  // capture phase — runs even if something stops propagation
+        }
 
         // ==================== TEXT-TO-SPEECH (Read Aloud) ====================
         function _readAIAloud(btn) {
@@ -17463,7 +17496,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('settingsContent').innerHTML = `
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--accent); position:relative; overflow:hidden;">
             <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">👤</div>
-            <div class="settings-title" style="color:var(--accent);">👤 Account & Identity</div>
+            <div class="settings-title" style="color:var(--accent);">Account & Identity</div>
             <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
                 ${userPhoto ? `<img src="${userPhoto}" style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);object-fit:cover;">` : '<div style="width:48px;height:48px;border-radius:50%;background:var(--card3);display:flex;align-items:center;justify-content:center;font-size:24px;">👤</div>'}
                 <div>
@@ -17492,7 +17525,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">🎨 Appearance & Experience</div>
+            <div class="settings-title" style="color:var(--accent);">Appearance & Experience</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dark Theme</div><div class="setting-desc">Switch between Light and Dark aesthetic modes.</div></div>
                 <div class="toggle ${s.theme === 'dark' ? 'on' : ''}" onclick="toggleTheme(); renderSettings();"></div>
@@ -17531,7 +17564,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- System Integration / Gemini API Key removed from UI per security best practice. Backend keys are managed via Vercel ENV. -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(66, 133, 244, 0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#4285F4;">🔌 AI Engine Status</div>
+            <div class="settings-title" style="color:#4285F4;">AI Engine Status</div>
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">Triple-Engine AI System</div>
@@ -17550,7 +17583,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">🌐 AI Intelligence &amp; Language</div>
+            <div class="settings-title" style="color:#818cf8;">AI Intelligence &amp; Language</div>
             <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
                  module auto-injects the "📲 Paste Bank SMS" banner here. -->
             <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
@@ -17568,6 +17601,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload Statement</button>
                     <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Photo</button>
                 </div>
+            </div>
+            <!-- v7.11.1 — Card & Account Registry entry. Maps a last-4 to credit-card
+                 vs bank-account so the brain routes service-charge debits correctly. -->
+            <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:var(--card);">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                    <span style="font-size:20px;">💳</span>
+                    <div style="font-weight:800;font-size:15px;color:var(--text);">Card &amp; Account Registry</div>
+                </div>
+                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Tell the AI which last-4 is a credit card vs a bank account. A debit on a credit card routes to CC One-Time (service charge included); on a bank account it routes to Expenses.</div>
+                <button type="button" class="btn btn-secondary btn-sm" style="width:100%;" onclick="wfOpenCardRegistry()">Manage cards &amp; accounts</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
@@ -17596,7 +17639,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">🔒 Device Access &amp; Encryption</div>
+            <div class="settings-title" style="color:#818cf8;">Device Access &amp; Encryption</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Lock Timer</div><div class="setting-desc">Secure the vault after inactivity to prevent unauthorized access.</div></div>
                 <select class="fi" style="width:140px; border-color:var(--border2);" onchange="updateAutoLock(this.value)">
@@ -17622,7 +17665,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">☁️ Infinity Cloud Sync</div>
+            <div class="settings-title" style="color:var(--blue);">Infinity Cloud Sync</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Real-time Connection</div><div class="setting-desc">Engine is monitoring connection to Google Firebase.</div></div>
                 <div><span id="settingsCloudStatus" class="badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '● Securely Connected' : '○ Offline Mode'}</span></div>
@@ -17638,7 +17681,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">📈 Data Management & Reports</div>
+            <div class="settings-title" style="color:var(--accent);">Data Management & Reports</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Generate Elite Report</div><div class="setting-desc">Export a luxury PDF statement, Raw JSON, or Analytics CSV.</div></div>
                 <button class="btn btn-primary btn-sm" style="box-shadow: 0 4px 15px var(--ag);" onclick="openModal('mdExport')">✨ Export Data</button>
@@ -17663,7 +17706,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--purple);">🤖 AI Advisor Preferences</div>
+            <div class="settings-title" style="color:var(--purple);">AI Advisor Preferences</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Categorize Expenses</div><div class="setting-desc">AI automatically assigns categories to new expenses based on the title entered.</div></div>
                 <div class="toggle ${s.autoCategory !== false ? 'on' : ''}" onclick="toggleSetting('autoCategory', ${s.autoCategory === false})"></div>
@@ -17675,7 +17718,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(6,182,212,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--cyan);">🔊 Sound & Feedback</div>
+            <div class="settings-title" style="color:var(--cyan);">Sound & Feedback</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dynamic Soundscapes</div><div class="setting-desc">Subtle luxury UI sounds for interactions (soft chimes, ticks, satisfying sounds).</div></div>
                 <div class="toggle ${s.sounds ? 'on' : ''}" onclick="toggleSetting('sounds', ${!s.sounds})"></div>
@@ -17691,7 +17734,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(239,68,68,0.03), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--red);">🔒 Advanced Security</div>
+            <div class="settings-title" style="color:var(--red);">Advanced Security</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Panic Mode / Decoy Vault</div><div class="setting-desc">Set a decoy PIN that opens a fake database with dummy numbers to protect you.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="setupDecoyPin()">🎭 ${DB.getObj('auth').decoyPin ? 'Configured ✓' : 'Setup Decoy'}</button>
@@ -17699,7 +17742,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">📦 Advanced Backup & Data</div>
+            <div class="settings-title" style="color:var(--blue);">Advanced Backup & Data</div>
             <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;">
                 <div style="width:42px;height:42px;border-radius:50%;background:rgba(59,130,246,0.12);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">${s.lastBackup ? '☁️' : '⚠️'}</div>
                 <div style="flex:1;min-width:0;">
@@ -17779,7 +17822,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" style="flex-shrink:0;color:var(--blue);border-color:var(--blue);" onclick="backupNow()">☁️ Backup Now</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Auto-Backup Schedule</div><div class="setting-desc">System automatically backs up at the scheduled time. Daily: 23:55, Weekly: Sunday 23:55, Monthly: Last day 23:55.</div></div>
+                <div class="setting-info"><div class="setting-label">Auto-Backup Schedule</div><div class="setting-desc">Backs up automatically at the scheduled time while the app is open, and catches up the moment you reopen it if one was missed. Daily 23:55 · Weekly Sun 23:55 · Monthly last day 23:55. (Phone browsers can't back up while the app is fully closed — it runs the instant you return.)</div></div>
                 <select class="fi" style="width:140px;" onchange="toggleSetting('autoBackupFreq', this.value); scheduleAutoBackup();">
                     <option value="off" ${(s.autoBackupFreq || 'off') === 'off' ? 'selected' : ''}>Off</option>
                     <option value="daily" ${(s.autoBackupFreq || 'off') === 'daily' ? 'selected' : ''}>Daily (23:55)</option>
@@ -17800,7 +17843,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== FINANCIAL PREFERENCES (per screenshot) ====== -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">📊 Financial Preferences</div>
+            <div class="settings-title" style="color:var(--blue);">Financial Preferences</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Default Dashboard Period</div><div class="setting-desc">The default time period shown in your dashboard overview.</div></div>
                 <select class="fi" style="width:160px;" onchange="toggleSetting('dashPeriod', this.value)">
@@ -17850,7 +17893,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== SMART NOTIFICATION SETTINGS (per screenshot) ====== -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(16,185,129,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--green);">🔔 Smart Notification Settings</div>
+            <div class="settings-title" style="color:var(--green);">Smart Notification Settings</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">All Notifications</div><div class="setting-desc">Master switch for all WealthFlow notifications and reminders.</div></div>
                 <div class="toggle ${s.notifications !== false ? 'on' : ''}" onclick="toggleSetting('notifications', ${s.notifications === false});"></div>
@@ -17917,7 +17960,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== PWA & APP SETTINGS (per screenshot) ====== -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--purple);">📱 PWA & App Settings</div>
+            <div class="settings-title" style="color:var(--purple);">PWA & App Settings</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Install as App</div><div class="setting-desc">Add WealthFlow to your home screen for a native app experience on any device.</div></div>
                 <button id="installAppBtn" class="btn btn-primary btn-sm" onclick="triggerInstallApp()">📲 Install App</button>

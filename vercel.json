@@ -65,6 +65,13 @@
       ]
     },
     {
+      "source": "/wealthflow-card-registry.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
+        { "key": "Content-Type", "value": "application/javascript; charset=utf-8" }
+      ]
+    },
+    {
       "source": "/wealthflow-dedup.js",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" },
@@ -134,6 +141,7 @@
     { "source": "/wealthflow-crypto.js", "destination": "/wealthflow-crypto.js" },
     { "source": "/wealthflow-ai-memory.js", "destination": "/wealthflow-ai-memory.js" },
     { "source": "/wealthflow-category-ai.js", "destination": "/wealthflow-category-ai.js" },
+    { "source": "/wealthflow-card-registry.js", "destination": "/wealthflow-card-registry.js" },
     { "source": "/wealthflow-dedup.js", "destination": "/wealthflow-dedup.js" },
     { "source": "/wealthflow-review.js", "destination": "/wealthflow-review.js" },
     { "source": "/wealthflow-queue.js", "destination": "/wealthflow-queue.js" },
