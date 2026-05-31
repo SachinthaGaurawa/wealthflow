@@ -542,13 +542,13 @@
                     ? await window.wfAllocate(brainPatched)
                     : await window.wfApplyBrainResult(brainPatched);
                 if (result && result.ok) {
-                    if (result.module === 'quarantine') quarantined++;
+                    if (result.module === 'quarantine' || result.module === 'review') quarantined++;
                     else ok++;
                     // Teach the self-learning memory. An edited row is an
                     // authoritative user signal; an untouched row is a softer
                     // confirmation. Either way the merchant→category is learned.
                     try {
-                        if (window.wfMemory && result.module && result.module !== 'quarantine') {
+                        if (window.wfMemory && result.module && result.module !== 'quarantine' && result.module !== 'review') {
                             const mname = (r.edited && r.edited.merchant) || (brainPatched.resolved_merchant && brainPatched.resolved_merchant.name);
                             const mcat = (r.edited && r.edited.cat) || (brainPatched.routed.suggested_fields && brainPatched.routed.suggested_fields.cat) || (brainPatched.resolved_merchant && brainPatched.resolved_merchant.category);
                             await window.wfMemory.learn(mname, {

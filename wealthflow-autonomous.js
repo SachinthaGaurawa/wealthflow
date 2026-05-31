@@ -208,19 +208,28 @@
                 } catch (e) { console.warn('[Autonomous] semantic hook error:', e && e.message); }
             }
 
-            // (C) Confidence gate → Quarantine Zone. If the brain isn't at
-            //     least 95% sure, DO NOT guess — ask the user.
+            // (C) Confidence gate → Needs-Review. If the brain isn't at least
+            //     95% sure, DO NOT guess — park it in the persistent review
+            //     queue (wfReview) so the user decides later. Never auto-file
+            //     a low-confidence guess.
             const rConf = (routed.confidence != null) ? routed.confidence : 1;
             const mConf = (brain.resolved_merchant && brain.resolved_merchant.confidence != null)
                 ? brain.resolved_merchant.confidence : 1;
             const conf = Math.min(rConf, mConf);
-            if (conf < 0.95 && typeof window.wfQuarantineAdd === 'function') {
-                window.wfQuarantineAdd(brain, 'AI only ' + Math.round(conf * 100) + '% sure');
-                await markProcessed(brain.hash); // hold it; the quarantine entry owns it now
-                if (typeof window.notify === 'function') {
-                    notify('🛟 1 transaction needs your review (low confidence)', 'info');
+            if (conf < 0.95) {
+                let parked = false;
+                if (window.wfReview && typeof window.wfReview.add === 'function') {
+                    try { window.wfReview.add(brain, 'AI only ' + Math.round(conf * 100) + '% sure'); parked = true; } catch (_) {}
                 }
-                return { ok: true, module: 'quarantine' };
+                if (parked) {
+                    await markProcessed(brain.hash); // the review entry owns it now
+                    if (typeof window.notify === 'function') {
+                        notify('🛟 1 transaction needs your review (low confidence)', 'info');
+                    }
+                    return { ok: true, module: 'review' };
+                }
+                // If the review system isn't available, fall through and file it
+                // normally rather than silently dropping the transaction.
             }
         }
 

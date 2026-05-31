@@ -165,7 +165,7 @@
         const res=await window.wfApplyBrainResult(cloned);
 
         // 5. Stamp the bucket on the newly created record so we can find it
-        if(res&&res.ok&&res.module&&res.module!=='quarantine'&&res.module!=='cc_payment'&&tb){
+        if(res&&res.ok&&res.module&&res.module!=='quarantine'&&res.module!=='review'&&res.module!=='cc_payment'&&tb){
             try{
                 const arr=_get(res.module);
                 const newest=arr[arr.length-1];

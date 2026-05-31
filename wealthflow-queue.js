@@ -144,7 +144,7 @@
         } catch (e) { res = { ok: false, reason: e && e.message }; }
 
         if (res && res.reason === 'duplicate') { job.status = 'duplicate'; job.result = res; return; }
-        if (res && res.module === 'quarantine') {
+        if (res && (res.module === 'quarantine' || res.module === 'review')) {
             try { if (window.wfReview) await window.wfReview.add(brain, 'Flagged for review'); } catch (_) {}
             job.status = 'review'; job.result = res; return;
         }
