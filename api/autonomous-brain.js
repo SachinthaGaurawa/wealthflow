@@ -231,21 +231,32 @@ const MERCHANT_DB = [
     [/\batm\b.*withdraw|cash\s*withdraw|atm\s*cash/i,     'ATM Cash Withdrawal', 'Banking',          false],
 ];
 
-// Category fallback regex set when no merchant matches
+// Category fallback regex set when no merchant matches. Expanded in v7.11.1 to
+// a large, Sri-Lanka-aware keyword map (mirrors wfCategoryAI on the client) so
+// even unknown shops route to a sensible category instead of "Other".
 const CATEGORY_FALLBACK = [
-    ['Food & Groceries', /food|grocer|supermarket|bakery|restaurant|cafe|hotel\s+rest|dine|kfc|pizza|burger|chicken|rice|milk|coffee|deli|cuisine|kitchen|catering/i],
-    ['Transport',        /uber|taxi|cab|bus|train|metro|parking|toll|highway|transport|fare|fuel|petrol|diesel|gas|garage/i],
-    ['Utilities',        /electric|water|gas|internet|wifi|broadband|phone|mobile|telecom|sim|prepaid|postpaid|recharge|bill|utility/i],
-    ['Medical',          /hospital|clinic|pharmacy|doctor|medic|health|dental|optic|nurs|surger|laborat/i],
-    ['Education',        /school|college|university|tuition|course|education|book|stationery|library|class|coaching|exam/i],
-    ['Entertainment',    /cinema|movie|theatre|game|gaming|concert|netflix|spotify|youtube|prime|disney|hbo|stream/i],
-    ['Shopping (Fashion)',/cloth|shirt|pant|shoe|dress|fashion|apparel|boutique|tailor/i],
-    ['Shopping',         /store|shop|mall|market|retail|outlet|emporium/i],
-    ['Banking',          /bank|atm|withdrawal|deposit|transfer|remittance|fd|fixed\s+deposit/i],
-    ['Insurance',        /insurance|policy|premium|underwrit/i],
-    ['Travel',           /airline|airport|hotel|booking|travel|tour|visa|passport|flight|cruise/i],
-    ['Charity',          /charity|donation|temple|church|mosque|kovil|dana/i],
-    ['Government',       /govt|government|inland\s+revenue|customs|police|registrar|license|permit|tax\s+pay/i],
+    ['Healthcare',         /hospital|clinic|pharmac|chemist|medic|doctor|dental|dentist|optic|laborator|\blab\b|surger|nursing|nawaloka|asiri|durdans|hemas\s*hosp|lanka\s*hospital|ninewells|oasis\s*hosp|healthguard|osusala|osu\s*sala|union\s*chemists|channel(l)?ing|physiotherap|ayurved/i],
+    ['Food & Groceries',   /super\s*market|supermarket|grocer|food\s*city|cargills|keells|arpico|laugfs|glomark|sathosa|\bspar\b|food\s*world|mini\s*mart|super\s*centre|provision|fresh\s*market|hyper\s*market/i],
+    ['Dining',             /restaurant|cafe|caf[eé]|coffee|bakery|baker|pizza|burger|kfc|mcdonald|subway|domino|starbuck|barista|dine|dining|food\s*court|kottu|perera\s*and\s*sons|\bp\s*&\s*s\b|\bfab\b|delifrance|crepe|chinese\s*dragon|java\s*lounge|kumbuk|nuga\s*gama|raja\s*bojun|grill|kitchen|cuisine|eatery|biryani|shawarma|noodle|ramen|sushi/i],
+    ['Fuel',               /fuel|petrol|diesel|ceypetco|\bioc\b|lanka\s*ioc|filling\s*station|gas\s*station|\bshell\b|service\s*station|petroleum/i],
+    ['Transport',          /uber|pickme|pick\s*me|taxi|\bcab\b|tuk|three\s*wheel|\bbus\b|train|railway|metro|parking|toll|expressway|highway|transport|fare|sltb|intercity/i],
+    ['Telecom',            /dialog|mobitel|hutch|airtel|\bslt\b|sri\s*lanka\s*telecom|broadband|recharge|reload|prepaid|postpaid|\bsim\b|top\s*up|topup|fibre|fiber|peotv|peo\s*tv/i],
+    ['Utilities',          /electric|\bceb\b|\bleco\b|water\s*board|nwsdb|\bgas\b|litro|laugfs\s*gas|utility|bill\s*payment|municipal\s*council|pradeshiya/i],
+    ['Entertainment',      /cinema|movie|theatre|theater|scope\s*cinema|savoy|liberty|netflix|spotify|youtube\s*premium|disney|hbo|prime\s*video|apple\s*tv|gaming|playstation|xbox|\bsteam\b|concert|event\s*ticket|arcade/i],
+    ['Education',          /school|college|university|campus|institute|tuition|academy|course|udemy|coursera|\bedx\b|skillshare|duolingo|education|stationer|book\s*shop|bookshop|library|exam|coaching|ielts|edexcel|cambridge/i],
+    ['Shopping (Fashion)', /cloth|garment|textile|\btex\b|fabric|saree|fashion|apparel|boutique|tailor|odel|nolimit|no\s*limit|fashion\s*bug|cotton\s*collection|hameedia|kelly\s*felder|carnage|emerald|avirate|shoe|footwear|bata|\bdsi\b|nike|adidas|h&m|zara|uniqlo|levi/i],
+    ['Electronics & Tech', /electronic|computer|laptop|mobile\s*phone|phone\s*shop|abans|singer|softlogic|damro|metropolitan|nanotek|barclay|redline|tech\b|technolog|hardware|appliance|gadget|camera|samsung|apple\s*store|huawei|xiaomi|\bdell\b|lenovo|nintendo/i],
+    ['Shopping (Home)',    /furniture|home\s*centre|interior|hardware|paint|tiles|sanitary|building\s*material|\bikea\b/i],
+    ['Insurance',          /insurance|assurance|\baia\b|ceylinco|allianz|janashakthi|union\s*assurance|sri\s*lanka\s*insurance|softlogic\s*life|life\s*insurance|policy\s*premium|premium\s*payment/i],
+    ['Rent',               /\brent\b|rental|lease|landlord|house\s*rent|apartment\s*rent/i],
+    ['Charity',            /charity|donation|\bdana\b|temple|church|mosque|kovil|vihara|foundation|relief\s*fund|orphanage|sarvodaya/i],
+    ['Government',         /inland\s*revenue|\bird\b|customs|excise|police|registrar|licen[cs]e|permit|government|\bgovt\b|municipal|immigration|passport|motor\s*traffic|\brmv\b/i],
+    ['Personal Care',      /salon|\bspa\b|barber|beauty|cosmetic|parlour|parlor|hair\s*cut|grooming|massage|fitness|\bgym\b|yoga|crossfit/i],
+    ['Travel',             /airline|airport|sri\s*lankan\s*airlines|emirates|qatar\s*airways|etihad|cathay|singapore\s*air|booking\.com|agoda|airbnb|expedia|resort|\bvilla\b|\btour\b|travel|visa\s*fee|flight|cruise/i],
+    ['Pets',               /pet\s*shop|veterinar|\bvet\b|pet\s*care|animal\s*clinic|pet\s*food/i],
+    ['Kids & Family',      /\btoys?\b|\bbaby\b|kids|children|pampers|diaper|daycare|montessori|playgroup/i],
+    ['Shopping',           /\bstore\b|\bshop\b|\bmall\b|\bmarket\b|retail|outlet|emporium|department\s*store/i],
+    ['Banking',            /\batm\b|cash\s*withdraw|withdrawal|deposit|remittance|\bfd\b|fixed\s*deposit|service\s*charge|bank\s*charge|annual\s*fee|stamp\s*duty|paypal|stripe|\bwise\b|western\s*union|moneygram/i],
 ];
 
 // Sri Lankan bank email domains & SMS senders (for sender-side bank detection)
@@ -522,16 +533,23 @@ function routeToModule(parsed, merchant, cardEntry, knownLoans) {
                 }
             };
         }
+        // Detect investment-platform credits so the UI can flag them as an
+        // investment return (dividend, unit trust, FD maturity, crypto, etc.)
+        const _invRx = /dividend|\bcds\b|colombo\s*stock|\bcse\b|securities|unit\s*trust|mutual\s*fund|treasury\s*bill|t-?bill|treasury\s*bond|\brepo\b|fixed\s*deposit|fd\s*maturity|term\s*deposit|binance|coinbase|crypto|bitcoin|forex|interactive\s*brokers|ndb\s*wealth|jb\s*vantage|ceybank\s*unit|first\s*capital|acuity|capital\s*alliance/i;
+        const _invHay = ((merchant.name || '') + ' ' + (parsed.raw_merchant || '') + ' ' + (parsed.reference || '')).toLowerCase();
+        const _isInvestment = _invRx.test(_invHay);
         return {
             module: 'income',
             tab_label: 'Income & Investments',
             confidence: 0.92,
+            is_investment: _isInvestment,
             suggested_fields: {
                 source: merchant.name,
                 amount: parsed.amount,
                 date: parsed.timestamp,
-                cat: merchant.category,
-                notes: parsed.reference ? `Ref: ${parsed.reference}` : ''
+                cat: _isInvestment ? 'Investment' : merchant.category,
+                is_investment: _isInvestment,
+                notes: (_isInvestment ? 'Investment return · ' : '') + (parsed.reference ? `Ref: ${parsed.reference}` : '')
             }
         };
     }
