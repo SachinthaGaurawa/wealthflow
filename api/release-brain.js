@@ -53,7 +53,7 @@ function getAdmin() {
 // ── scoring (mirrors the client engine, kept in sync) ─────────────────────────
 const SIGNALS = {
     security:    { w: 1.00, kw: ['hack','breach','leak','exploit','vulnerab','stolen','fraud','unauthor','phishing','password','2fa','otp','encrypt','privacy','security'] },
-    crash:       { w: 0.92, kw: ['crash','freeze','frozen','stuck','hang','white screen','black screen','wont open','cannot open','not loading','broken','data lost','lost my data','disappear'] },
+    crash:       { w: 0.92, kw: ['crash','freeze','frozen','froze','stuck','hang','white screen','black screen','wont open','won\'t open','cant open','cannot open','not loading','wont load','not starting','splash','broken','data lost','lost my data','disappear','unresponsive'] },
     bug:         { w: 0.70, kw: ['bug','error','wrong','incorrect','glitch','fail','not working','issue','problem','duplicate','miscategor'] },
     performance: { w: 0.55, kw: ['slow','lag','laggy','delay','takes long','loading','spinner','battery','heat'] },
     ui:          { w: 0.40, kw: ['ui','ux','design','layout','color','colour','font','button','hard to read','confusing','cluttered','dark mode','theme'] },
@@ -68,8 +68,33 @@ function classify(text) {
     }
     return { category: best, weight: SIGNALS[best].w };
 }
-function tokens(s) { return new Set((s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 3)); }
-function sim(a, b) { const A = tokens(a), B = tokens(b); if (!A.size || !B.size) return 0; let i = 0; A.forEach(x => { if (B.has(x)) i++; }); return i / (A.size + B.size - i); }
+function tokens(s) { return (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 2); }
+// Semantic concept expansion — mirrors the client engine so server-side
+// prioritisation matches what users see. Same-meaning reports cluster even
+// without shared words.
+const CONCEPTS = {
+    crash: ['crash','crashed','crashing','freeze','frozen','froze','hang','hung','stuck','unresponsive','dead','died'],
+    launch: ['open','opening','opens','launch','start','startup','boot','splash','load','loading','loads'],
+    data: ['data','records','transactions','history','entries','backup','sync','synced','lost','missing','gone','disappeared','deleted','vanished'],
+    login: ['login','signin','passcode','pin','password','auth','authenticate','locked','google','biometric','faceid','fingerprint'],
+    slow: ['slow','laggy','lag','delay','delayed','sluggish','wait','waiting','spinner','spinning','hangs'],
+    category: ['category','categorise','categorize','categorisation','classified','classify','wrong','incorrect','miscategorised','misfiled','tag','tagged'],
+    ui: ['ui','ux','design','layout','screen','button','color','colour','font','text','dark','light','theme','cluttered','confusing','readable'],
+    sms: ['sms','message','text','paste','bank','statement','pdf','scan','ocr','receipt'],
+    security: ['security','hack','hacked','breach','breached','leak','leaked','stolen','fraud','unauthorised','unauthorized','phishing','exposed','vulnerable','vulnerability'],
+    money: ['amount','balance','total','currency','lkr','rupee','money','sum','calculation','rounding'],
+    notif: ['notification','notify','alert','reminder','badge','push'],
+    add: ['add','feature','option','support','request','suggestion','wish','want','need','please','could','would']
+};
+const _ci = (() => { const m = {}; for (const c in CONCEPTS) for (const w of CONCEPTS[c]) m[w] = c; return m; })();
+function concepts(s) { const set = new Set(); for (const w of tokens(s)) { if (_ci[w]) set.add('@' + _ci[w]); else if (w.length > 3) set.add(w); } return set; }
+function sim(a, b) {
+    const A = concepts(a), B = concepts(b); if (!A.size || !B.size) return 0;
+    let inter = 0; A.forEach(x => { if (B.has(x)) inter++; });
+    let cw = 0; A.forEach(x => { if (x[0] === '@' && B.has(x)) cw++; });
+    const j = inter / (A.size + B.size - inter);
+    return Math.min(1, j + (cw > 0 ? Math.min(0.35, cw * 0.18) : 0));
+}
 function analyse(items) {
     const clusters = [];
     for (const it of items) {
