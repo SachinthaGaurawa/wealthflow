@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.12.2';
+    const CURRENT_VERSION = '7.12.3';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -550,7 +550,17 @@
         ok('Local database', dbOk, recCount + ' records readable');
 
         // Stage 3 — cloud + backup
-        ok('Cloud sync', !!(window.db && window.firebase), 'real-time Firestore');
+        // Cloud sync: Firestore is up if the firebase SDK loaded AND an app is
+        // initialised. Check several signals so a local variable name doesn't
+        // cause a false "CHECK".
+        let cloudOk = false;
+        try {
+            const fb = window.firebase || (typeof firebase !== 'undefined' ? firebase : null);
+            const hasApp = !!(fb && fb.apps && fb.apps.length > 0);
+            const hasStore = !!(window.db || (fb && fb.firestore));
+            cloudOk = !!(fb && (hasApp || hasStore));
+        } catch (_) {}
+        ok('Cloud sync', cloudOk, cloudOk ? 'real-time Firestore' : 'sign in to enable cloud sync');
         let lastBackup = null;
         try { lastBackup = (typeof window._getLastBackupMs === 'function') ? window._getLastBackupMs() : null; } catch (_) {}
         ok('Backup ready', !!(typeof window.backupNow === 'function'), lastBackup ? ('last: ' + new Date(lastBackup).toLocaleString()) : 'backup engine present');

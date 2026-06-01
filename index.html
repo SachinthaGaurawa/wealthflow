@@ -6499,6 +6499,10 @@
 
         firebase.initializeApp(firebaseConfig);
         db = firebase.firestore();
+        // Expose globally so the self-check, feedback form and other modules can
+        // detect that Firestore initialised (db is otherwise a local variable).
+        try { window.db = db; } catch (_) {}
+        try { window.firebase = firebase; } catch (_) {}
         // Expose for the auto-backup SW-fallback helper, which needs both
         // the projectId and the apiKey to construct the Firestore REST URL.
         try { window.firebaseConfig = firebaseConfig; } catch (_) {}
