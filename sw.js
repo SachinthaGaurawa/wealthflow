@@ -6,7 +6,7 @@
 // new in-app modal (wealthflow-sms-paste.js). Service Worker stays simple:
 // notifications, caching, and the original auto-backup logic.
 
-const CACHE_NAME = 'wealthflow-v7.11.2';
+const CACHE_NAME = 'wealthflow-v7.12.0';
 
 // Install event — cache core assets
 self.addEventListener('install', (event) => {
@@ -177,5 +177,11 @@ self.addEventListener('message', (event) => {
         event.waitUntil(
             self.registration.showNotification(title, options)
         );
+    }
+    // In-app update flow: the page asks the freshly-installed (waiting) worker
+    // to activate immediately. controllerchange on the page then reloads onto
+    // the new files. This is the real, atomic "swap core files" step.
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
     }
 });

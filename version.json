@@ -1,0 +1,43 @@
+{
+  "latest": "7.12.0",
+  "mandatory": [],
+  "notes": {
+    "7.12.0": {
+      "date": "2026-06-01",
+      "headline": "Smarter, safer, and now self-updating",
+      "sections": [
+        {
+          "title": "New",
+          "items": [
+            "In-app updates — see what's new, agree, confirm with your PIN, and the app updates itself with a live progress bar.",
+            "Send Feedback — report a bug or idea right from Settings; it reaches the team automatically.",
+            "Card & Account Registry is back — map a card's last-4 so the AI routes service charges correctly."
+          ]
+        },
+        {
+          "title": "Improved",
+          "items": [
+            "Much higher transaction-categorisation accuracy (600+ Sri-Lanka-aware merchant rules + agentic web lookup for unknown shops).",
+            "Income & investment auto-detection (salary, dividends, unit trusts).",
+            "Cleaner, more professional interface with fewer decorative emojis."
+          ]
+        },
+        {
+          "title": "Fixed",
+          "items": [
+            "The demo sample can no longer be saved as your real data.",
+            "Review queue: each item now has a Remove button.",
+            "AI advisor suggestion chips now always respond."
+          ]
+        },
+        {
+          "title": "Security",
+          "security": true,
+          "items": [
+            "All AI data (memory, review queue, job queue) encrypted at rest with AES-256-GCM."
+          ]
+        }
+      ]
+    }
+  }
+}

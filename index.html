@@ -91,6 +91,12 @@
          this re-adds the modal to map a last-4 to credit-card vs bank-account so
          the brain routes service-charge debits correctly. Adds window.wfOpenCardRegistry. -->
     <script src="wealthflow-card-registry.js" defer></script>
+    <!-- v7.12.0 — In-app Update System. iOS/Android-style: dashboard "update
+         available" glow → Settings → scrollable What's New → auto-generated EULA
+         → PIN → backup-first → real progress bar → reload onto new files, with a
+         post-update welcome popup. Per-user (not forced), mandatory-security mode,
+         and a Firestore+email Feedback form. Adds window.wfUpdate. -->
+    <script src="wealthflow-update-system.js" defer></script>
     <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
          arriving twice (statement + SMS, or a re-paste) using amount + day +
          merchant + card, and never deletes on a weak signal.
