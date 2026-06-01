@@ -91,11 +91,12 @@
          this re-adds the modal to map a last-4 to credit-card vs bank-account so
          the brain routes service-charge debits correctly. Adds window.wfOpenCardRegistry. -->
     <script src="wealthflow-card-registry.js" defer></script>
-    <!-- v7.12.0 — In-app Update System. iOS/Android-style: dashboard "update
-         available" glow → Settings → scrollable What's New → auto-generated EULA
-         → PIN → backup-first → real progress bar → reload onto new files, with a
-         post-update welcome popup. Per-user (not forced), mandatory-security mode,
-         and a Firestore+email Feedback form. Adds window.wfUpdate. -->
+    <!-- v7.13.0 — Feedback Intelligence: scores & ranks all user feedback by
+         urgency (security/crashes first), clusters duplicates so repeated
+         reports raise priority. The honest, transparent version of "AI considers
+         all feedback". Adds window.wfFeedbackAI. -->
+    <script src="wealthflow-feedback-ai.js" defer></script>
+    <!-- v7.12.0 — In-app Update System. -->
     <script src="wealthflow-update-system.js" defer></script>
     <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
          arriving twice (statement + SMS, or a re-paste) using amount + day +
@@ -4777,7 +4778,7 @@
                 <div class="nav-item ai-nav-pulse" onclick="showPage('ai',this)" id="aiNavItem"><span
                         class="nav-icon">🤖</span> AI Advisor <span class="nb" id="nb-ai"
                         style="display:none;background:linear-gradient(135deg,#d4af37,#f5a623);">✨</span></div>
-                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon">⚙️</span> Settings
+                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon">⚙️</span> Settings<span class="nb" id="nb-settings" style="display:none;background:#ef4444;color:#fff;">1</span>
                 </div>
                 <div class="nav-item" onclick="signOutGoogle()" style="color:var(--red);"><span
                         class="nav-icon">🚪</span> Sign Out</div>
@@ -10432,6 +10433,26 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     buildDots('setupDots', 6, 0);
                 } else if (pinMode === 'setup_confirm') {
                     if (pin === pinTemp) {
+                        // SAFETY: before creating a brand-new PIN, make one final
+                        // check that the cloud doesn't already have one. If it
+                        // does, this is an existing user who reached setup by
+                        // mistake (sync race) — send them to LOGIN instead of
+                        // overwriting their real PIN.
+                        try {
+                            if (typeof userDocRef !== 'undefined' && userDocRef && currentUser) {
+                                const fresh = await userDocRef.get({ source: 'server' }).catch(() => null);
+                                const cAuth = fresh && fresh.exists ? (fresh.data() || {}).auth : null;
+                                if (cAuth && cAuth.pin) {
+                                    appData.auth = Object.assign({}, appData.auth, cAuth);
+                                    try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch (_) {}
+                                    pinMode = 'login'; pinTemp = '';
+                                    buildDots('loginDots', 6, 0);
+                                    notify('Welcome back — please enter your existing PIN.', 'info');
+                                    showAuthView('authLogin');
+                                    return;
+                                }
+                            }
+                        } catch (_) {}
                         const hash = await sha256(pin + 'wf_salt_sg2026');
                         const auth = DB.getObj('auth');
                         auth.pin = hash;
@@ -11958,7 +11979,21 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             return;
                         }
 
-                        if (!auth.pin) {
+                        // Re-read auth FRESH at decision time (not the snapshot
+                        // captured before splash). The cloud onSnapshot may have
+                        // populated appData.auth a moment after boot; using the
+                        // stale const here was making existing Google users see
+                        // "Create Passcode" by mistake.
+                        let _authNow = DB.getObj('auth') || {};
+                        try {
+                            const localAuthRaw = localStorage.getItem('wf2_auth');
+                            if ((!_authNow || !_authNow.pin) && localAuthRaw) {
+                                const la = JSON.parse(localAuthRaw);
+                                if (la && la.pin) { _authNow = Object.assign({}, la, _authNow); appData.auth = _authNow; }
+                            }
+                        } catch (_) {}
+
+                        if (!_authNow.pin) {
                             // v7.5.3 — last-line-of-defence cloud recheck. If we
                             // got here with no PIN but the user IS signed in, do
                             // one direct server fetch to make absolutely sure the
@@ -11969,26 +12004,55 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             // every time they reload on a flaky connection.
                             if (userDocRef && currentUser) {
                                 (async () => {
-                                    try {
-                                        const fresh = await userDocRef.get({ source: 'server' });
-                                        const cAuth = fresh && fresh.exists ? (fresh.data() || {}).auth : null;
-                                        if (cAuth && cAuth.pin) {
-                                            appData.auth = Object.assign({}, appData.auth, cAuth);
-                                            try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch(_) {}
-                                            console.log('[BOOT] 🛡️ Cloud PIN recovered — sending to login');
-                                            pinMode = 'login';
-                                            showAuthView('authLogin');
-                                            return;
+                                    let recovered = false;
+                                    // Try SERVER first, then CACHE, then default — finding a
+                                    // PIN anywhere means this is an existing user, so never
+                                    // force setup if one can be found.
+                                    for (const src of ['server', 'cache', 'default']) {
+                                        if (recovered) break;
+                                        try {
+                                            const fresh = await userDocRef.get(src === 'default' ? undefined : { source: src });
+                                            const cAuth = fresh && fresh.exists ? (fresh.data() || {}).auth : null;
+                                            if (cAuth && cAuth.pin) {
+                                                appData.auth = Object.assign({}, appData.auth, cAuth);
+                                                try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch(_) {}
+                                                console.log('[BOOT] 🛡️ Cloud PIN recovered (' + src + ') — sending to login');
+                                                pinMode = 'login';
+                                                showAuthView('authLogin');
+                                                recovered = true;
+                                            }
+                                        } catch (e) {
+                                            console.warn('[BOOT] Cloud auth recheck (' + src + ') failed:', e && e.message);
                                         }
-                                    } catch (e) {
-                                        console.warn('[BOOT] Cloud auth recheck failed:', e && e.message);
                                     }
-                                    pinMode = 'setup';
-                                    showAuthView('authSetup');
+                                    if (!recovered) {
+                                        const late = DB.getObj('auth') || {};
+                                        if (late.pin) { pinMode = 'login'; showAuthView('authLogin'); return; }
+                                        pinMode = 'setup';
+                                        showAuthView('authSetup');
+                                    }
                                 })();
                             } else {
-                                pinMode = 'setup';
-                                showAuthView('authSetup');
+                                // No cloud ref yet (Google sign-in still settling).
+                                // Wait briefly for onSnapshot rather than forcing setup
+                                // immediately — the main cause of the false
+                                // "Create Passcode" right after a Google login.
+                                let waited = 0;
+                                const waitForAuth = setInterval(() => {
+                                    const a = DB.getObj('auth') || {};
+                                    let cached = null;
+                                    try { cached = JSON.parse(localStorage.getItem('wf2_auth') || 'null'); } catch (_) {}
+                                    if (a.pin || (cached && cached.pin)) {
+                                        clearInterval(waitForAuth);
+                                        if (cached && cached.pin && !a.pin) appData.auth = Object.assign({}, cached, a);
+                                        pinMode = 'login';
+                                        showAuthView('authLogin');
+                                    } else if (++waited >= 12) {  // ~3s max
+                                        clearInterval(waitForAuth);
+                                        pinMode = 'setup';
+                                        showAuthView('authSetup');
+                                    }
+                                }, 250);
                             }
                         } else {
                             pinMode = 'login';

@@ -45,10 +45,11 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.12.3';
+    const CURRENT_VERSION = '7.13.1';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
+    const LS_AUTOSEC = 'wf_auto_security';    // user opted in to auto-install security updates
 
     function _esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
     function _notify(m,t){try{if(typeof window.notify==='function')window.notify(m,t||'info');}catch(_){}}
@@ -92,7 +93,21 @@
     async function _loadManifest() {
         // (a) inline manifest if the page defined one
         if (window.wfVersionManifest) { _manifest = window.wfVersionManifest; return _manifest; }
-        // (b) fetch version.json (cache-busted) — optional, fails silently
+        // (b) Firestore manifest written by the auto-release brain — this lets
+        //     the server announce/schedule updates with NO redeploy. Takes
+        //     priority over the static file when present and newer.
+        try {
+            const fb = window.firebase || (typeof firebase !== 'undefined' ? firebase : null);
+            const db = window.db || (fb && fb.firestore ? fb.firestore() : null);
+            if (db) {
+                const doc = await db.collection('system').doc('manifest').get();
+                if (doc && doc.exists) {
+                    const m = doc.data();
+                    if (m && m.latest) { _manifest = m; return _manifest; }
+                }
+            }
+        } catch (_) { /* offline or no permission — fall through to static file */ }
+        // (c) static version.json (cache-busted) — fallback
         try {
             const r = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
             if (r.ok) { _manifest = await r.json(); return _manifest; }
@@ -184,6 +199,7 @@
     //  DASHBOARD PILL
     // ───────────────────────────────────────────────────────────────────────
     function _refreshDashboardPill() {
+        _updateNavBadge();
         const show = _updateAvailable() || !!_swWaiting;
         let pill = document.getElementById('wfUpdatePill');
         if (!show) { if (pill) pill.remove(); return; }
@@ -278,9 +294,49 @@
                 '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.diagnostics()">Run</button>' +
             '</div>' +
             '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;">' +
-                '<div class="setting-info"><div class="setting-label">Send Feedback</div><div class="setting-desc">Report a bug or suggest an idea — it reaches the team and helps prioritise fixes.</div></div>' +
+                '<div class="setting-info"><div class="setting-label">Auto-install security updates</div><div class="setting-desc">Like Android: when ON, urgent security updates install automatically (still backup-first + rollback). Other updates always ask first.</div></div>' +
+                '<div class="toggle' + (_autoSecurityOn() ? ' on' : '') + '" id="wfAutoSec" onclick="wfUpdate.setAutoSecurity(!this.classList.contains(\'on\'))"></div>' +
+            '</div>' +
+            '<div class="setting-row">' +
+                '<div class="setting-info"><div class="setting-label">Prioritised feedback</div><div class="setting-desc">See all user feedback scored and ranked by urgency (security & crashes first).</div></div>' +
+                '<button class="btn btn-secondary btn-sm" onclick="wfFeedbackAI && wfFeedbackAI.showBoard()">View</button>' +
+            '</div>' +
+            '<div class="setting-row">' +
+                '<div class="setting-info"><div class="setting-label">Send Feedback</div><div class="setting-desc">Report a bug or suggest an idea — it\'s scored and prioritised automatically.</div></div>' +
                 '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.feedback()">Send</button>' +
             '</div>';
+        _updateNavBadge();
+    }
+
+    // Red "1" badge on the Settings nav item when an update is available.
+    function _updateNavBadge() {
+        const badge = document.getElementById('nb-settings');
+        if (!badge) return;
+        const show = _updateAvailable() || !!_swWaiting;
+        badge.style.display = show ? '' : 'none';
+        if (show) badge.textContent = '1';
+    }
+
+    function _autoSecurityOn() { try { return localStorage.getItem(LS_AUTOSEC) === '1'; } catch (_) { return false; } }
+    function setAutoSecurity(on) {
+        try { localStorage.setItem(LS_AUTOSEC, on ? '1' : '0'); } catch (_) {}
+        const tg = document.getElementById('wfAutoSec'); if (tg) tg.classList.toggle('on', !!on);
+        _notify(on ? 'Auto-install for urgent security updates is ON.' : 'Auto-install for security updates is OFF.', on ? 'success' : 'info');
+        if (on && _updateAvailable() && _isMandatory(_latestVersion())) {
+            setTimeout(() => _autoApplyIfSecurity(), 600);
+        }
+    }
+
+    // If the user opted in, silently apply an URGENT (mandatory security) update
+    // — still backup-first and rollback-safe. Non-security updates never auto-apply.
+    async function _autoApplyIfSecurity() {
+        if (!_autoSecurityOn()) return false;
+        const v = _latestVersion();
+        if (!_updateAvailable()) return false;
+        if (!(_isMandatory(v) && _updateType(v) === 'security')) return false;
+        _notify('Installing urgent security update v' + v + '…', 'warn');
+        await _runProgress(v);   // backup → swap → reload, no prompts
+        return true;
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -677,7 +733,9 @@
             stored = true;
         } catch (_) {}
         _close('wfFeedback');
-        _notify(stored ? 'Thank you — your feedback was sent.' : 'Saved locally — we\'ll send it when you\'re back online.', stored ? 'success' : 'info');
+        // cache to session so the Prioritised Feedback board shows it instantly
+        try { const s = JSON.parse(sessionStorage.getItem('wf_feedback_session') || '[]'); s.push(payload); sessionStorage.setItem('wf_feedback_session', JSON.stringify(s)); } catch (_) {}
+        _notify(stored ? 'Thank you — your feedback was sent and prioritised.' : 'Saved locally — we\'ll send it when you\'re back online.', stored ? 'success' : 'info');
         // local fallback queue if neither worked
         if (!stored) {
             try { const q = JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]'); q.push(payload); localStorage.setItem('wf_feedback_queue', JSON.stringify(q)); } catch (_) {}
@@ -744,9 +802,14 @@
         // published update appears without a manual check.
         setInterval(async () => { await _loadManifest(); _refreshDashboardPill(); _renderSettingsCard(); }, 30 * 60 * 1000);
 
-        // Mandatory (security) update? force the screen.
+        // Mandatory (security) update?
         if (_updateAvailable() && _isMandatory(_latestVersion())) {
-            setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
+            if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') {
+                // user opted in to auto-install urgent security updates
+                setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
+            } else {
+                setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
+            }
         }
     }
 
@@ -786,7 +849,7 @@
     window.wfUpdate = {
         init, start: startUpdate, whatsNew: showWhatsNew, openSection: openUpdateSection,
         feedback: openFeedback, check: checkForUpdates, diagnostics: showDiagnostics,
-        simulate: simulateUpdate,
+        simulate: simulateUpdate, setAutoSecurity: setAutoSecurity,
         refresh: () => { _refreshDashboardPill(); _renderSettingsCard(); },
         _close, _closePost, version: CURRENT_VERSION
     };
