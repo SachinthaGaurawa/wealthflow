@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.14.0';
+    const CURRENT_VERSION = '7.15.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -86,6 +86,7 @@
 
     let _manifest = null;     // loaded version.json (optional)
     let _swWaiting = null;    // a waiting service worker, if any
+    let _fbImageData = null;  // attached screenshot (downscaled data-URL) for feedback
 
     // ───────────────────────────────────────────────────────────────────────
     //  DETECTION
@@ -310,6 +311,9 @@
 
     // Red "1" badge on the Settings nav item when an update is available.
     function _updateNavBadge() {
+        // keep the sidebar version label in sync with the real running version —
+        // single source of truth, so it can never show a stale number again.
+        try { const sv = document.getElementById('wfSbVer'); if (sv) sv.textContent = 'WealthFlow v' + (_installedVersion() || CURRENT_VERSION) + ' · Infinity Engine'; } catch (_) {}
         const badge = document.getElementById('nb-settings');
         if (!badge) return;
         const show = _updateAvailable() || !!_swWaiting;
@@ -704,6 +708,11 @@
                     '<option value="bug">🐞 Bug report</option><option value="idea">💡 Feature idea</option><option value="other">💬 Other</option>' +
                 '</select>' +
                 '<textarea id="wfFbText" rows="5" placeholder="Tell us what happened or what you\'d like…" style="padding:12px;background:var(--bg,#060a14);border:1px solid var(--border2,#1f2638);border-radius:9px;color:var(--text,#e6e7eb);font-size:14px;resize:vertical;"></textarea>' +
+                '<div>' +
+                    '<input type="file" id="wfFbImg" accept="image/*" style="display:none;" />' +
+                    '<button type="button" id="wfFbImgBtn" style="width:100%;padding:11px;background:var(--bg,#060a14);border:1px dashed var(--border2,#1f2638);border-radius:9px;color:var(--text3,#8b95a8);font-size:13px;cursor:pointer;">📎 Attach a screenshot (optional)</button>' +
+                    '<div id="wfFbImgPreview" style="display:none;margin-top:8px;position:relative;"></div>' +
+                '</div>' +
                 '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text3,#8b95a8);"><input type="checkbox" id="wfFbDiag" checked> Attach basic diagnostics (version, device) to help fix faster</label>' +
             '</div>',
             '<div style="display:flex;gap:8px;">' +
@@ -714,6 +723,31 @@
         document.body.appendChild(ov);
         requestAnimationFrame(() => ov.style.opacity = '1');
         ov.querySelector('#wfFbSend').onclick = _submitFeedback;
+        // image attach: read as a downscaled data-URL so it's small enough to store
+        const imgBtn = ov.querySelector('#wfFbImgBtn'), imgInput = ov.querySelector('#wfFbImg'), prev = ov.querySelector('#wfFbImgPreview');
+        if (imgBtn && imgInput) {
+            imgBtn.onclick = () => imgInput.click();
+            imgInput.onchange = () => {
+                const f = imgInput.files && imgInput.files[0];
+                if (!f) return;
+                const reader = new FileReader();
+                reader.onload = () => {
+                    // downscale to max 900px to keep the payload small
+                    const img = new Image();
+                    img.onload = () => {
+                        const max = 900, scale = Math.min(1, max / Math.max(img.width, img.height));
+                        const cv = document.createElement('canvas');
+                        cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+                        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+                        _fbImageData = cv.toDataURL('image/jpeg', 0.7);
+                        if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + _fbImageData + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
+                        if (imgBtn) imgBtn.textContent = '📎 Screenshot attached — tap to change';
+                    };
+                    img.src = reader.result;
+                };
+                reader.readAsDataURL(f);
+            };
+        }
     }
 
     async function _submitFeedback() {
@@ -725,18 +759,26 @@
             type, text,
             version: _installedVersion() || CURRENT_VERSION,
             createdAt: new Date().toISOString(),
+            uid: (window.currentUser && window.currentUser.uid) || null,
+            image: _fbImageData || null,
             ua: diag ? navigator.userAgent : null,
             screen: diag ? (screen.width + 'x' + screen.height) : null,
             lang: diag ? navigator.language : null
         };
+        // ALWAYS keep a local copy first, so "Your Feedback" shows it instantly
+        // and nothing is ever lost — even if it also goes to the cloud.
+        try { const s = JSON.parse(sessionStorage.getItem('wf_feedback_session') || '[]'); s.push(payload); sessionStorage.setItem('wf_feedback_session', JSON.stringify(s)); } catch (_) {}
+        try { const q = JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]'); q.push(Object.assign({ _pending: true }, payload)); localStorage.setItem('wf_feedback_queue', JSON.stringify(q.slice(-50))); } catch (_) {}
+
         let stored = false;
         // (1) Firestore — so it can be fetched/analysed/prioritised
         try {
             if (window.db && window.firebase && firebase.firestore) {
-                const uid = (window.currentUser && window.currentUser.uid) || (window.DB && DB.getObj && DB.getObj('auth', {}).uid) || 'anon';
-                await window.db.collection('feedback').add(Object.assign({ uid }, payload,
-                    { _ts: firebase.firestore.FieldValue.serverTimestamp() }));
+                const uid = payload.uid || 'anon';
+                await window.db.collection('feedback').add(Object.assign({}, payload, { uid,
+                    _ts: firebase.firestore.FieldValue.serverTimestamp() }));
                 stored = true;
+                _markQueuedSent(payload);   // clear the _pending flag for this item
             }
         } catch (_) {}
         // (2) Email backup for urgent alerts (optional endpoint, fails silently)
@@ -744,14 +786,39 @@
             await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             stored = true;
         } catch (_) {}
+        _fbImageData = null;
         _close('wfFeedback');
-        // cache to session so the Prioritised Feedback board shows it instantly
-        try { const s = JSON.parse(sessionStorage.getItem('wf_feedback_session') || '[]'); s.push(payload); sessionStorage.setItem('wf_feedback_session', JSON.stringify(s)); } catch (_) {}
-        _notify(stored ? 'Thank you — your feedback was sent and prioritised.' : 'Saved locally — we\'ll send it when you\'re back online.', stored ? 'success' : 'info');
-        // local fallback queue if neither worked
-        if (!stored) {
-            try { const q = JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]'); q.push(payload); localStorage.setItem('wf_feedback_queue', JSON.stringify(q)); } catch (_) {}
+        _notify(stored ? 'Thank you — your feedback was sent and prioritised.' : 'Saved — we\'ll send it automatically when you\'re back online. It already shows in “Your Feedback”.', stored ? 'success' : 'info');
+    }
+
+    // remove the _pending flag once an item is confirmed sent to the cloud
+    function _markQueuedSent(payload) {
+        try {
+            const q = JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]');
+            const key = (payload.text || '') + '|' + (payload.createdAt || '');
+            const upd = q.map(x => ((x.text || '') + '|' + (x.createdAt || '')) === key ? Object.assign({}, x, { _pending: false }) : x);
+            localStorage.setItem('wf_feedback_queue', JSON.stringify(upd));
+        } catch (_) {}
+    }
+
+    // Flush any feedback that was queued while offline/closed → Firestore, so it
+    // appears in the board and reaches the brain. Runs on launch + when online.
+    async function _flushQueuedFeedback() {
+        let q = [];
+        try { q = JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]'); } catch (_) { return; }
+        const pending = q.filter(x => x && x._pending);
+        if (!pending.length) return;
+        if (!(window.db && window.firebase && firebase.firestore)) return;
+        let changed = false;
+        for (const p of pending) {
+            try {
+                const uid = p.uid || (window.currentUser && window.currentUser.uid) || 'anon';
+                await window.db.collection('feedback').add(Object.assign({}, p, { uid, _pending: undefined,
+                    _ts: firebase.firestore.FieldValue.serverTimestamp() }));
+                p._pending = false; changed = true;
+            } catch (_) { /* still offline — keep for next time */ }
         }
+        if (changed) { try { localStorage.setItem('wf_feedback_queue', JSON.stringify(q)); } catch (_) {} }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -801,6 +868,10 @@
         // ahead so the update banner shows until the user actually installs.
 
         setTimeout(_maybeShowPostUpdate, 1400);
+
+        // Flush any feedback queued while offline/closed, and retry when back online.
+        setTimeout(() => { _flushQueuedFeedback(); }, 3000);
+        try { window.addEventListener('online', () => { _flushQueuedFeedback(); }); } catch (_) {}
 
         // Inject dashboard pill + settings card repeatedly until DOM is ready.
         let tries = 0;
@@ -862,7 +933,8 @@
         init, start: startUpdate, whatsNew: showWhatsNew, openSection: openUpdateSection,
         feedback: openFeedback, check: checkForUpdates, diagnostics: showDiagnostics,
         simulate: simulateUpdate, setAutoSecurity: setAutoSecurity,
-        refresh: () => { _refreshDashboardPill(); _renderSettingsCard(); },
+        _clearFbImg: () => { _fbImageData = null; },
+        refresh: () => { _refreshDashboardPill(); _injectSettingsCard(); _renderSettingsCard(); },
         _close, _closePost, version: CURRENT_VERSION
     };
 

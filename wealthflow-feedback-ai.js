@@ -95,23 +95,48 @@
         return Math.min(1, jaccard + conceptBoost);
     }
 
-    // ── gather feedback from every source we can reach ───────────────────────
-    async function _gather() {
+    // ── gather feedback ───────────────────────────────────────────────────────
+    // PRIVACY: by default this returns ONLY the current user's own feedback
+    // (local queue + this device's cloud reports). It NEVER shows other users'
+    // reports. The global, all-users view is admin-only (adminAll=true) and is
+    // gated behind an allow-list — a normal user can never read others' data.
+    async function _gather(adminAll) {
         const items = [];
-        // local queue (offline fallback)
+        const myUid = (window.currentUser && window.currentUser.uid) || null;
+        // local queue (this device only)
         try { JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]').forEach(x => items.push(Object.assign({ _src: 'local' }, x))); } catch (_) {}
-        // this-session submissions cached for instant view
+        // this-session submissions cached for instant view (this device only)
         try { JSON.parse(sessionStorage.getItem('wf_feedback_session') || '[]').forEach(x => items.push(Object.assign({ _src: 'session' }, x))); } catch (_) {}
-        // Firestore (all users' feedback) if available
+        // Firestore — scoped to the signed-in user unless admin explicitly asked
         try {
             const fb = window.firebase || (typeof firebase !== 'undefined' ? firebase : null);
             const db = window.db || (fb && fb.firestore ? fb.firestore() : null);
             if (db) {
-                const snap = await db.collection('feedback').orderBy('createdAt', 'desc').limit(200).get();
-                snap.forEach(doc => items.push(Object.assign({ _src: 'cloud', _id: doc.id }, doc.data())));
+                let q = db.collection('feedback');
+                if (adminAll && _isAdmin()) {
+                    q = q.orderBy('createdAt', 'desc').limit(500);   // admin: all users
+                } else if (myUid) {
+                    q = q.where('uid', '==', myUid).limit(100);      // user: ONLY their own
+                } else {
+                    q = null;                                        // signed out: no cloud reads
+                }
+                if (q) { const snap = await q.get(); snap.forEach(doc => items.push(Object.assign({ _src: 'cloud', _id: doc.id }, doc.data()))); }
             }
-        } catch (e) { /* permissions or offline — fine, use what we have */ }
-        return items;
+        } catch (e) { /* offline or no permission — use local only */ }
+        // de-dupe local vs cloud copies of the same submission (same text+time)
+        const seen = new Set(); const out = [];
+        for (const it of items) { const k = (it.text || '') + '|' + (it.createdAt || ''); if (seen.has(k)) continue; seen.add(k); out.push(it); }
+        return out;
+    }
+
+    // admin allow-list: only these UIDs (or ?admin=1 with the flag) see all users'
+    // feedback. Set window.WF_ADMIN_UIDS = ['uid1',...] in your private config.
+    function _isAdmin() {
+        try {
+            const uid = (window.currentUser && window.currentUser.uid) || '';
+            const list = window.WF_ADMIN_UIDS || [];
+            return list.indexOf(uid) >= 0;
+        } catch (_) { return false; }
     }
 
     // ── cluster + score ──────────────────────────────────────────────────────
@@ -146,33 +171,41 @@
     }
 
     // ── UI: ranked board ─────────────────────────────────────────────────────
+    // Normal users see ONLY their own submitted feedback (privacy). Admins (in
+    // the allow-list) get the global, server-computed cross-user ranking.
     async function showBoard() {
-        _overlay('wfFbBoard', 'Feedback Intelligence', 'Analysing all feedback…',
-            '<div id="wfFbBoardBody" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;">Gathering reports & scoring priority…</div>',
+        const admin = _isAdmin();
+        const title = admin ? 'Feedback Intelligence (all users)' : 'Your Feedback';
+        _overlay('wfFbBoard', title, admin ? 'Analysing all users\u2019 feedback…' : 'Your reports, scored by priority…',
+            '<div id="wfFbBoardBody" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;">Loading…</div>',
             '<button class="btn btn-primary" style="width:100%;" onclick="wfFeedbackAI._close(\'wfFbBoard\')">Close</button>');
 
-        // Prefer the server brain's pre-computed ranking (covers ALL users and
-        // runs automatically on a schedule); fall back to local analysis.
-        let clusters = null, serverComputed = false;
-        try {
-            const fb = window.firebase || (typeof firebase !== 'undefined' ? firebase : null);
-            const db = window.db || (fb && fb.firestore ? fb.firestore() : null);
-            if (db) {
-                const doc = await db.collection('system').doc('feedbackPriority').get();
-                if (doc && doc.exists) {
-                    const d = doc.data();
-                    if (d && Array.isArray(d.clusters) && d.clusters.length) { clusters = d.clusters; serverComputed = true; }
+        let clusters = null;
+        // Admins may use the server brain's pre-computed all-users ranking.
+        if (admin) {
+            try {
+                const fb = window.firebase || (typeof firebase !== 'undefined' ? firebase : null);
+                const db = window.db || (fb && fb.firestore ? fb.firestore() : null);
+                if (db) {
+                    const doc = await db.collection('system').doc('feedbackPriority').get();
+                    if (doc && doc.exists) {
+                        const d = doc.data();
+                        if (d && Array.isArray(d.clusters) && d.clusters.length) clusters = d.clusters;
+                    }
                 }
-            }
-        } catch (_) {}
-        if (!clusters) { const items = await _gather(); clusters = _analyse(items); }
+            } catch (_) {}
+        }
+        // Everyone else (and admin fallback): analyse only what _gather returns,
+        // which for a normal user is THEIR OWN feedback + this device's queue.
+        if (!clusters) { const items = await _gather(admin); clusters = _analyse(items); }
         const body = document.getElementById('wfFbBoardBody');
         if (!body) return;
 
         if (!clusters.length) {
             body.style.display = 'block';
-            body.innerHTML = '<div style="text-align:center;color:var(--text3,#8b95a8);font-size:13px;padding:20px;">No feedback yet. When users send reports, they\'ll be scored and ranked here by urgency.</div>';
-            _setSub('wfFbBoard', 'No feedback yet');
+            body.innerHTML = '<div style="text-align:center;color:var(--text3,#8b95a8);font-size:13px;padding:20px;">' +
+                (admin ? 'No feedback yet across users.' : 'You haven\u2019t sent any feedback yet. Use “Send Feedback” to report a bug or suggest an idea — you\u2019ll see it scored here, and the team is notified automatically.') + '</div>';
+            _setSub('wfFbBoard', 'Nothing yet');
             return;
         }
 

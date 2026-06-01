@@ -4794,7 +4794,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver">WealthFlow v7.8.0 · Infinity Engine</div>
+                <div class="sb-ver" id="wfSbVer">WealthFlow · Infinity Engine</div>
             </div>
         </aside>
 
@@ -12789,6 +12789,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 if (nb) nb.style.display = 'none';
             } else {
                 renderPage(name);
+            }
+
+            // Make sure the Software Update card is present every time Settings
+            // opens (guards against the card occasionally not being injected yet).
+            if (name === 'settings') {
+                try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {}
+                setTimeout(() => { try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {} }, 400);
             }
         }
 
