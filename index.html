@@ -63,6 +63,13 @@
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
     <script src="wealthflow-ml.js" defer></script>
+    <!-- v7.14.0 — Self-Healing boot guard. Loads FIRST so its global error
+         boundary catches startup crashes. If the app crash-loops right after an
+         update, it auto-clears caches, unregisters the bad service worker,
+         restores the pre-update backup and reloads to the last good version —
+         then reports the incident so the Release Brain prioritises a fix.
+         Adds window.wfHeal. -->
+    <script src="wealthflow-self-heal.js"></script>
     <!-- v7.11.0 — Client-side encryption layer (AES-256-GCM, PBKDF2). MUST
          load FIRST among the intelligence modules: the learning memory, the
          background queue and the review queue all persist through wfCrypto so

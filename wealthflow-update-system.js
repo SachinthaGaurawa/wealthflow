@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.13.1';
+    const CURRENT_VERSION = '7.14.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -479,6 +479,16 @@
         const steps = [
             { pct: 12, eta: 9, label: 'Encrypting and backing up your data…', run: async () => {
                 try { if (typeof window.backupNow === 'function') await window.backupNow(true, 'pre-update'); } catch (_) {}
+                // Local pre-update snapshot so self-heal can roll data back if the
+                // new version crash-loops. Stores the wf2_* keys only (the app's data).
+                try {
+                    const snap = {};
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = localStorage.key(i);
+                        if (k && k.indexOf('wf2_') === 0) snap[k] = localStorage.getItem(k);
+                    }
+                    localStorage.setItem('wf_preupdate_snapshot', JSON.stringify({ at: Date.now(), data: snap }));
+                } catch (_) {}
             }},
             { pct: 40, eta: 6, label: 'Downloading new version files…', run: async () => {
                 // ask the SW registration to fetch the newest files
@@ -596,6 +606,8 @@
         ok('Encryption', !!(window.wfCrypto && (window.wfCrypto.isAvailable ? window.wfCrypto.isAvailable() : true)), 'AES-256-GCM at rest');
         ok('Card registry', !!(window.wfCardRegistry && window.wfCardRegistry.get), 'card→type routing');
         ok('Update system', !!(window.wfUpdate && window.wfUpdate.start), 'this engine');
+        ok('Self-healing', !!(window.wfHeal && window.wfHeal.status), 'auto-recovers from bad updates');
+        ok('Feedback intelligence', !!(window.wfFeedbackAI && window.wfFeedbackAI.analyse), 'semantic prioritisation');
 
         // Stage 2 — storage + data integrity
         let dbOk = false, recCount = 0;
