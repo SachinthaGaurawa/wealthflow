@@ -1,0 +1,61 @@
+# =============================================================================
+# Autonomous scheduled release — runs with NO human.
+# Reads the brain's system/pendingRelease from Firestore; if it says a release
+# is due (urgent security OR monthly), it bumps the version, writes the
+# changelog/manifest, commits and pushes — which auto-deploys on Vercel.
+#
+# HONEST NOTE: this ships code that is ALREADY in the repo (e.g. a security
+# refresh / metadata bump). It cannot invent new feature code by itself — that
+# is written by a human and merged normally. What IS fully automatic: feedback
+# prioritisation, release-note generation, scheduling, version bump, deploy.
+#
+# SETUP (one time):
+#   Repo → Settings → Secrets and variables → Actions → New secret:
+#     FIREBASE_SERVICE_ACCOUNT = <your service-account JSON>
+#   Ensure the repo has write permission for Actions (Settings → Actions →
+#   General → Workflow permissions → Read and write).
+# =============================================================================
+name: Auto Release (WealthFlow)
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily 06:00 UTC — checks if a release is due
+  workflow_dispatch: {}    # allow manual trigger too
+
+permissions:
+  contents: write
+
+jobs:
+  auto-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install firebase-admin
+        run: npm i firebase-admin@12 --no-save
+      - name: Decide & release if due
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          node -e "
+          (async () => {
+            const admin = require('firebase-admin');
+            if (!process.env.FIREBASE_SERVICE_ACCOUNT) { console.log('No service account — skipping.'); process.exit(0); }
+            admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
+            const doc = await admin.firestore().collection('system').doc('pendingRelease').get();
+            if (!doc.exists) { console.log('No pendingRelease — nothing to do.'); process.exit(0); }
+            const d = doc.data();
+            if (!d.shouldRelease || d.consumed) { console.log('Release not due (' + (d.reason||'none') + ').'); process.exit(0); }
+            console.log('Release due:', d.suggestedVersion, d.reason);
+            process.exit(7); // signal: proceed
+          })().catch(e => { console.error(e); process.exit(0); });
+          " || EXIT=$?
+          if [ "${EXIT:-0}" = "7" ]; then
+            git config user.name  'WealthFlow Release Bot'
+            git config user.email 'bot@wealthflow.local'
+            node release.cjs --from-brain --push
+          else
+            echo 'Skipping release this run.'
+          fi
