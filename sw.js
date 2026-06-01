@@ -6,7 +6,7 @@
 // new in-app modal (wealthflow-sms-paste.js). Service Worker stays simple:
 // notifications, caching, and the original auto-backup logic.
 
-const CACHE_NAME = 'wealthflow-v7.15.0';
+const CACHE_NAME = 'wealthflow-v7.15.2';
 
 // Install event — cache core assets
 self.addEventListener('install', (event) => {

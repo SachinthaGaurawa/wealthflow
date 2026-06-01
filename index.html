@@ -216,6 +216,9 @@
                element, others on the actual scroller. */
             overscroll-behavior-y: contain;
             overscroll-behavior-x: contain;
+            /* v7.15.2 — also set 'none' (stronger than contain) so no
+               glow/refresh chaining can occur at the root scroller. */
+            overscroll-behavior: none;
         }
 
         body {
@@ -232,6 +235,7 @@
                metric changed. Single taps + scrolling still work. */
             overscroll-behavior-y: contain;
             overscroll-behavior-x: contain;
+            overscroll-behavior: none;
             touch-action: pan-x pan-y;
         }
 
@@ -7181,6 +7185,46 @@
         document.onmousemove = resetAutoLockTimer;
         document.onkeypress = resetAutoLockTimer;
         document.ontouchstart = resetAutoLockTimer;
+
+        // ── v7.15.2 — KILL pull-to-refresh (the swipe-down-at-top reload) ──────
+        // CSS overscroll-behavior alone doesn't stop it on installed PWAs / some
+        // Android WebViews, so we block the gesture in JS: if the page (or the
+        // nearest scrollable ancestor) is already at the very top and the finger
+        // moves DOWN, we preventDefault so the browser can't trigger a refresh.
+        // Normal scrolling, and scrolling inside any inner scroller, still work.
+        (function installPullToRefreshGuard() {
+            let startY = 0;
+            let startedAtTop = false;
+
+            function nearestScrollable(el) {
+                while (el && el !== document.body && el !== document.documentElement) {
+                    try {
+                        const oy = getComputedStyle(el).overflowY;
+                        if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+                    } catch (_) {}
+                    el = el.parentElement;
+                }
+                return null;
+            }
+
+            document.addEventListener('touchstart', (e) => {
+                if (!e.touches || e.touches.length !== 1) { startedAtTop = false; return; }
+                startY = e.touches[0].clientY;
+                const sc = nearestScrollable(e.target);
+                // "at top" = the relevant scroller (inner or the whole page) is at scrollTop 0
+                const pageTop = (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0) <= 0;
+                startedAtTop = sc ? (sc.scrollTop <= 0) : pageTop;
+            }, { passive: true });
+
+            document.addEventListener('touchmove', (e) => {
+                if (!startedAtTop || !e.touches || e.touches.length !== 1) return;
+                const dy = e.touches[0].clientY - startY;
+                // pulling DOWN while already at the top → block the refresh gesture
+                if (dy > 0 && e.cancelable) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+        })();
 
         setInterval(() => {
             if (!$('app').classList.contains('show')) return;

@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.15.0';
+    const CURRENT_VERSION = '7.15.2';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -845,27 +845,36 @@
     //  INIT
     // ───────────────────────────────────────────────────────────────────────
     async function init() {
-        // Resolve manifest FIRST so _latestVersion() is correct everywhere below.
-        await _loadManifest();
-        _watchServiceWorker();
+        // Wrap everything so a failure in any single step can never prevent the
+        // Software Update card from being injected (the "sometimes missing" bug).
+        try { _watchServiceWorker(); } catch (_) {}
 
         const installed = _installedVersion();
-
         if (!installed) {
-            // Brand-new device. New users start on whatever build is running.
-            // They are current with the running build, but the manifest may
-            // still advertise a newer 'latest' (then they'll see the banner).
             _markInstalled(CURRENT_VERSION);
             try { localStorage.setItem(LS_SEEN_POPUP, CURRENT_VERSION); } catch (_) {}
         } else if (_cmp(CURRENT_VERSION, installed) > 0) {
-            // The running build is NEWER than what this device last recorded →
-            // the files actually updated (SW swapped them). Record it and queue
-            // the "what's new" welcome popup.
             _markInstalled(CURRENT_VERSION);
             try { localStorage.removeItem(LS_SEEN_POPUP); } catch (_) {}
         }
-        // NOTE: we do NOT bump installed to the manifest 'latest'. That stays
-        // ahead so the update banner shows until the user actually installs.
+
+        // Inject the card RIGHT NOW with whatever version info we already have,
+        // BEFORE any awaited/network work. The manifest then loads in the
+        // background and refreshes the card when it arrives.
+        try { _injectSettingsCard(); _refreshDashboardPill(); } catch (_) {}
+
+        // Load the manifest in the background (non-blocking). A hung/failed
+        // Firestore/network call must never stall card injection.
+        _loadManifest().then(() => {
+            try { _refreshDashboardPill(); _renderSettingsCard(); } catch (_) {}
+            // mandatory-update handling, after we know the real latest version
+            try {
+                if (_updateAvailable() && _isMandatory(_latestVersion())) {
+                    if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
+                    else setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
+                }
+            } catch (_) {}
+        }).catch(() => {});
 
         setTimeout(_maybeShowPostUpdate, 1400);
 
@@ -873,27 +882,42 @@
         setTimeout(() => { _flushQueuedFeedback(); }, 3000);
         try { window.addEventListener('online', () => { _flushQueuedFeedback(); }); } catch (_) {}
 
-        // Inject dashboard pill + settings card repeatedly until DOM is ready.
+        // Inject dashboard pill + settings card. First a short burst for the
+        // initial paint, then a PERMANENT MutationObserver so the card is
+        // guaranteed to (re)appear whenever the Settings page is in the DOM —
+        // no finite retry count that could expire before Settings is opened.
         let tries = 0;
         const t = setInterval(() => {
             _refreshDashboardPill();
             _injectSettingsCard();
-            if (++tries > 25) clearInterval(t);
-        }, 700);
+            if (++tries > 8) clearInterval(t);
+        }, 600);
+
+        // durable guard: whenever the DOM changes (e.g. Settings becomes active),
+        // make sure the update card and dashboard pill are present.
+        try {
+            const mo = new MutationObserver(() => {
+                // only act when the settings page exists and the card is missing
+                if (document.getElementById('wfPwaSection') && !document.getElementById('wfUpdateCard')) {
+                    _injectSettingsCard();
+                }
+                if (!document.getElementById('wfUpdatePill')) _refreshDashboardPill();
+            });
+            mo.observe(document.body, { childList: true, subtree: true });
+            window._wfUpdateObserver = mo;
+        } catch (_) {}
+
+        // belt-and-suspenders: a light heartbeat every 4s ensures the card is
+        // there even if the observer is throttled by the browser.
+        setInterval(() => {
+            if (document.getElementById('wfPwaSection') && !document.getElementById('wfUpdateCard')) {
+                try { _injectSettingsCard(); } catch (_) {}
+            }
+        }, 4000);
 
         // Re-check the manifest periodically (every 30 min) so a freshly
         // published update appears without a manual check.
-        setInterval(async () => { await _loadManifest(); _refreshDashboardPill(); _renderSettingsCard(); }, 30 * 60 * 1000);
-
-        // Mandatory (security) update?
-        if (_updateAvailable() && _isMandatory(_latestVersion())) {
-            if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') {
-                // user opted in to auto-install urgent security updates
-                setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
-            } else {
-                setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
-            }
-        }
+        setInterval(async () => { try { await _loadManifest(); _refreshDashboardPill(); _renderSettingsCard(); } catch (_) {} }, 30 * 60 * 1000);
     }
 
     // ── DEV/TEST: simulate that an update is available so you can SEE the whole
