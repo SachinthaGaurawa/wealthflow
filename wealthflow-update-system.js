@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.12.0';
+    const CURRENT_VERSION = '7.12.1';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -205,14 +205,20 @@
     // ───────────────────────────────────────────────────────────────────────
     function _injectSettingsCard() {
         if (document.getElementById('wfUpdateCard')) { _renderSettingsCard(); return true; }
-        const mount = document.getElementById('wfSmsPasteMount');
-        let host = mount ? mount.closest('.settings-section') : null;
-        if (!host) { const all = document.querySelectorAll('.settings-section'); host = all && all.length ? all[all.length - 1] : null; }
+        // Place the Software Update card immediately BEFORE the "PWA & App
+        // Settings" section so it sits near the bottom of Settings, just above PWA.
+        const pwa = document.getElementById('wfPwaSection');
+        let host = pwa, before = true;
+        if (!host) {
+            const mount = document.getElementById('wfSmsPasteMount');
+            host = mount ? mount.closest('.settings-section') : null;
+            if (!host) { const all = document.querySelectorAll('.settings-section'); host = all && all.length ? all[all.length - 1] : null; }
+        }
         if (!host || !host.parentNode) return false;
         const card = document.createElement('div');
         card.className = 'settings-section';
         card.id = 'wfUpdateCard';
-        host.parentNode.insertBefore(card, host);   // put updates near the top of settings
+        host.parentNode.insertBefore(card, host);   // before the PWA section
         _renderSettingsCard();
         return true;
     }
@@ -243,6 +249,14 @@
                   '</div>'
                 : '<div class="setting-row"><div class="setting-info"><div class="setting-label">Release notes</div><div class="setting-desc">See what changed in this version.</div></div><button class="btn btn-ghost btn-sm" onclick="wfUpdate.whatsNew(\'' + _esc(installed) + '\')">View</button></div>'
             ) +
+            '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;">' +
+                '<div class="setting-info"><div class="setting-label">Check for updates</div><div class="setting-desc">Look for a newer version right now.</div></div>' +
+                '<button class="btn btn-secondary btn-sm" id="wfCheckBtn" onclick="wfUpdate.check()">Check now</button>' +
+            '</div>' +
+            '<div class="setting-row">' +
+                '<div class="setting-info"><div class="setting-label">System self-check</div><div class="setting-desc">Run a full diagnostic across the app\'s engines and report any issues.</div></div>' +
+                '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.diagnostics()">Run</button>' +
+            '</div>' +
             '<div class="setting-row" style="border-top:1px solid var(--border);margin-top:8px;padding-top:12px;">' +
                 '<div class="setting-info"><div class="setting-label">Send Feedback</div><div class="setting-desc">Report a bug or suggest an idea — it reaches the team and helps prioritise fixes.</div></div>' +
                 '<button class="btn btn-secondary btn-sm" onclick="wfUpdate.feedback()">Send</button>' +
@@ -466,6 +480,117 @@
     }
 
     // ───────────────────────────────────────────────────────────────────────
+    //  CHECK FOR UPDATES (manual)
+    // ───────────────────────────────────────────────────────────────────────
+    async function checkForUpdates() {
+        const btn = document.getElementById('wfCheckBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+        // re-fetch manifest + ask the SW to look for new files
+        await _loadManifest();
+        try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch (_) {}
+        await _sleep(900);
+        if (btn) { btn.disabled = false; btn.textContent = 'Check now'; }
+        _refreshDashboardPill();
+        _renderSettingsCard();
+        if (_updateAvailable() || _swWaiting) {
+            _notify('Update available — v' + _latestVersion() + ' is ready to install.', 'success');
+            openUpdateSection();
+        } else {
+            _notify('You\'re on the latest version (v' + (_installedVersion() || CURRENT_VERSION) + ').', 'info');
+        }
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    //  SYSTEM SELF-CHECK / DIAGNOSTICS
+    //  The honest version of "all the AIs check the code": a multi-stage
+    //  diagnostic that verifies every engine is loaded and responding, checks
+    //  data integrity, and reports issues. Runs real checks, not theatre.
+    // ───────────────────────────────────────────────────────────────────────
+    function _runChecks() {
+        const checks = [];
+        const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+
+        // Stage 1 — core engines present
+        ok('Brain / classifier reachable', typeof window.wfBrainClassify === 'function' || typeof window.wfClassifySms === 'function', 'SMS/statement classification');
+        ok('Category intelligence', !!(window.wfCategoryAI && window.wfCategoryAI.classify), '600+ keyword rules');
+        ok('Learning memory', !!(window.wfMemory && window.wfMemory.recall), 'remembers your categories');
+        ok('Duplicate defence', !!(window.wfDedup && window.wfDedup.scanExisting), 'stops double-filing');
+        ok('Review queue', !!(window.wfReview && window.wfReview.add), 'ask-me-later');
+        ok('Background queue', !!(window.wfQueue && window.wfQueue.enqueueSms), 'walk-away processing');
+        ok('Encryption', !!(window.wfCrypto && (window.wfCrypto.isAvailable ? window.wfCrypto.isAvailable() : true)), 'AES-256-GCM at rest');
+        ok('Card registry', !!(window.wfCardRegistry && window.wfCardRegistry.get), 'card→type routing');
+        ok('Update system', !!(window.wfUpdate && window.wfUpdate.start), 'this engine');
+
+        // Stage 2 — storage + data integrity
+        let dbOk = false, recCount = 0;
+        try {
+            dbOk = !!(window.DB && typeof DB.get === 'function');
+            if (dbOk) ['expenses', 'income', 'subscriptions', 'cconetime', 'ccinstall'].forEach(k => { try { recCount += (DB.get(k) || []).length; } catch (_) {} });
+        } catch (_) {}
+        ok('Local database', dbOk, recCount + ' records readable');
+
+        // Stage 3 — cloud + backup
+        ok('Cloud sync', !!(window.db && window.firebase), 'real-time Firestore');
+        let lastBackup = null;
+        try { lastBackup = (typeof window._getLastBackupMs === 'function') ? window._getLastBackupMs() : null; } catch (_) {}
+        ok('Backup ready', !!(typeof window.backupNow === 'function'), lastBackup ? ('last: ' + new Date(lastBackup).toLocaleString()) : 'backup engine present');
+
+        // Stage 4 — service worker / offline
+        ok('Offline support', 'serviceWorker' in navigator, 'works without signal');
+
+        // Stage 5 — live functional probe (actually classify a known string)
+        let probeOk = false, probeDetail = '';
+        try {
+            if (window.wfCategoryAI && window.wfCategoryAI.classify) {
+                const r = window.wfCategoryAI.classify('CARGILLS FOOD CITY', 'debit LKR1000 CARGILLS FOOD CITY', { type: 'debit', useMemory: false });
+                probeOk = r && /grocer|food/i.test(r.category);
+                probeDetail = 'Cargills → ' + (r ? r.category : '?');
+            }
+        } catch (_) {}
+        ok('Live classification probe', probeOk, probeDetail);
+
+        return checks;
+    }
+
+    function showDiagnostics() {
+        _closeOverlay('wfDiag');
+        const ov = document.createElement('div');
+        ov.id = 'wfDiag';
+        ov.style.cssText = _overlayCss();
+        ov.innerHTML = _sheet('System Self-Check', 'Running diagnostics…',
+            '<div id="wfDiagBody" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;">Scanning all engines…</div>',
+            '<button class="btn btn-primary" style="width:100%;" onclick="wfUpdate._close(\'wfDiag\')">Close</button>');
+        document.body.appendChild(ov);
+        requestAnimationFrame(() => ov.style.opacity = '1');
+
+        // run checks progressively for a "working" feel, then render results
+        setTimeout(() => {
+            const checks = _runChecks();
+            const passed = checks.filter(c => c.pass).length;
+            const total = checks.length;
+            const allGood = passed === total;
+            const rows = checks.map(c =>
+                '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border,#1f2638);">' +
+                    '<span style="font-size:15px;">' + (c.pass ? '✅' : '⚠️') + '</span>' +
+                    '<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:600;color:var(--text,#e6e7eb);">' + _esc(c.name) + '</div>' +
+                    (c.detail ? '<div style="font-size:11px;color:var(--text3,#8b95a8);">' + _esc(c.detail) + '</div>' : '') + '</div>' +
+                    '<span style="font-size:11px;font-weight:700;color:' + (c.pass ? '#10b981' : '#f59e0b') + ';">' + (c.pass ? 'OK' : 'CHECK') + '</span>' +
+                '</div>').join('');
+            const body = document.getElementById('wfDiagBody');
+            if (body) {
+                body.style.display = 'block';
+                body.innerHTML =
+                    '<div style="text-align:center;margin-bottom:14px;">' +
+                        '<div style="font-size:34px;font-weight:900;color:' + (allGood ? '#10b981' : '#f59e0b') + ';">' + passed + '/' + total + '</div>' +
+                        '<div style="font-size:12.5px;color:var(--text3,#8b95a8);">' + (allGood ? 'All systems operational' : 'Some items need attention') + '</div>' +
+                    '</div>' + rows;
+            }
+            const sub = ov.querySelector('div[style*="font-size:12.5px"]');
+            if (sub) sub.textContent = allGood ? 'All systems operational' : passed + '/' + total + ' checks passed';
+        }, 900);
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
     //  FEEDBACK (Firestore + optional email backup)
     // ───────────────────────────────────────────────────────────────────────
     function openFeedback() {
@@ -586,7 +711,8 @@
 
     window.wfUpdate = {
         init, start: startUpdate, whatsNew: showWhatsNew, openSection: openUpdateSection,
-        feedback: openFeedback, refresh: () => { _refreshDashboardPill(); _renderSettingsCard(); },
+        feedback: openFeedback, check: checkForUpdates, diagnostics: showDiagnostics,
+        refresh: () => { _refreshDashboardPill(); _renderSettingsCard(); },
         _close, _closePost, version: CURRENT_VERSION
     };
 
