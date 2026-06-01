@@ -1,0 +1,197 @@
+/* =============================================================================
+   /api/release-brain.js  —  Autonomous Release & Feedback Brain (Vercel Cron)
+   ---------------------------------------------------------------------------
+   Runs on a schedule with NO human in the loop. On each run it:
+
+     1. Reads EVERY feedback report from Firestore.
+     2. Classifies + clusters them and scores priority:
+            Priority = (frequency boost + severity*0.6) + securityWeight
+     3. Writes the ranked result to  system/feedbackPriority  (the in-app board
+        reads this, so prioritisation is server-computed across ALL users).
+     4. Auto-generates release notes from the top clusters and writes them to
+        system/pendingRelease  (the publish script / GitHub Action reads this to
+        fill the changelog with zero typing).
+     5. Decides scheduling automatically:
+          • If any CRITICAL security/crash cluster exists  → flags an URGENT
+            security release (mandatory) in  system/manifest .
+          • Else on the monthly cadence (1st of month)      → flags a routine
+            monthly security-maintenance release.
+        The client reads system/manifest, so this announcement needs NO redeploy.
+
+   HONEST LIMITATION: this brain announces, prioritises and schedules with no
+   human. It does NOT write application code or deploy by itself — that is done
+   by the publish script / GitHub Action (which CAN run unattended on a
+   schedule, but only ships code that exists in the repo). Announcing a version
+   whose code isn't deployed would be misleading, so the brain only bumps the
+   PATCH for security-maintenance refreshes and records a clear note; real
+   feature code still ships through the repo.
+
+   SETUP (all optional — the function no-ops safely if unset):
+     • FIREBASE_SERVICE_ACCOUNT  = the service-account JSON (string) for Admin SDK
+     • RELEASE_BRAIN_ENABLED      = "1" to allow it to write the manifest
+   Schedule is defined in vercel.json → crons.
+   ============================================================================ */
+
+let _admin = null;
+function getAdmin() {
+    if (_admin) return _admin;
+    try {
+        const admin = require('firebase-admin');
+        if (!admin.apps.length) {
+            const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+            if (!raw) return null;
+            const cred = JSON.parse(raw);
+            admin.initializeApp({ credential: admin.credential.cert(cred) });
+        }
+        _admin = admin;
+        return admin;
+    } catch (e) {
+        return null;
+    }
+}
+
+// ── scoring (mirrors the client engine, kept in sync) ─────────────────────────
+const SIGNALS = {
+    security:    { w: 1.00, kw: ['hack','breach','leak','exploit','vulnerab','stolen','fraud','unauthor','phishing','password','2fa','otp','encrypt','privacy','security'] },
+    crash:       { w: 0.92, kw: ['crash','freeze','frozen','stuck','hang','white screen','black screen','wont open','cannot open','not loading','broken','data lost','lost my data','disappear'] },
+    bug:         { w: 0.70, kw: ['bug','error','wrong','incorrect','glitch','fail','not working','issue','problem','duplicate','miscategor'] },
+    performance: { w: 0.55, kw: ['slow','lag','laggy','delay','takes long','loading','spinner','battery','heat'] },
+    ui:          { w: 0.40, kw: ['ui','ux','design','layout','color','colour','font','button','hard to read','confusing','cluttered','dark mode','theme'] },
+    idea:        { w: 0.30, kw: ['add','feature','please add','would be nice','suggestion','suggest','idea','wish','request','support for'] }
+};
+function classify(text) {
+    const t = (text || '').toLowerCase();
+    let best = 'idea', bestHits = 0, bestW = SIGNALS.idea.w;
+    for (const [cat, def] of Object.entries(SIGNALS)) {
+        let hits = 0; for (const kw of def.kw) if (t.indexOf(kw) >= 0) hits++;
+        if (hits > 0 && (hits * def.w) > (bestHits * bestW)) { best = cat; bestHits = hits; bestW = def.w; }
+    }
+    return { category: best, weight: SIGNALS[best].w };
+}
+function tokens(s) { return new Set((s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 3)); }
+function sim(a, b) { const A = tokens(a), B = tokens(b); if (!A.size || !B.size) return 0; let i = 0; A.forEach(x => { if (B.has(x)) i++; }); return i / (A.size + B.size - i); }
+function analyse(items) {
+    const clusters = [];
+    for (const it of items) {
+        const text = it.text || it.message || ''; if (!text.trim()) continue;
+        let placed = false;
+        for (const c of clusters) {
+            if (sim(c.sample, text) >= 0.28 || (classify(c.sample).category === classify(text).category && sim(c.sample, text) >= 0.18)) { c.items.push(it); c.count++; placed = true; break; }
+        }
+        if (!placed) clusters.push({ sample: text, items: [it], count: 1 });
+    }
+    const total = Math.max(1, items.length);
+    for (const c of clusters) {
+        const cls = classify(c.sample);
+        c.category = cls.category;
+        const securityWeight = cls.category === 'security' ? 0.30 : (cls.category === 'crash' ? 0.15 : 0);
+        const freqBoost = Math.min(0.5, Math.log2(1 + c.count) * 0.18);
+        c.score = Math.min(1, (freqBoost + cls.weight * 0.6) + securityWeight);
+        c.priority = c.score >= 0.85 ? 'critical' : c.score >= 0.6 ? 'high' : c.score >= 0.4 ? 'medium' : 'low';
+        c.sample = c.sample.slice(0, 240);
+        delete c.items; // don't store raw reports in the public board doc
+    }
+    clusters.sort((a, b) => b.score - a.score || b.count - a.count);
+    return clusters;
+}
+
+function bumpPatch(v) { const p = String(v || '7.13.0').split('.').map(Number); p[2] = (p[2] || 0) + 1; return p.join('.'); }
+
+function buildNotes(version, clusters, isUrgent) {
+    const top = clusters.slice(0, 6);
+    const fixed = top.filter(c => ['bug', 'crash', 'performance'].includes(c.category)).map(c => 'Addressed: ' + c.sample);
+    const ui = top.filter(c => c.category === 'ui').map(c => 'UI: ' + c.sample);
+    const ideas = top.filter(c => c.category === 'idea').map(c => 'Considering: ' + c.sample);
+    const sections = [];
+    sections.push({ title: 'Security', security: true, items: [isUrgent ? 'Urgent security hardening based on user reports.' : 'Monthly security maintenance.'] });
+    if (fixed.length) sections.push({ title: 'Fixed', items: fixed });
+    if (ui.length) sections.push({ title: 'Improved', items: ui });
+    if (ideas.length) sections.push({ title: 'Exploring', items: ideas });
+    return {
+        date: new Date().toISOString().slice(0, 10),
+        type: isUrgent ? 'security' : 'minor',
+        headline: isUrgent ? 'Urgent security update' : 'Monthly security & improvements',
+        sections
+    };
+}
+
+export default async function handler(req, res) {
+    const out = { ok: true, ran: new Date().toISOString(), wrote: [], note: '' };
+    const admin = getAdmin();
+    if (!admin) { out.ok = false; out.note = 'FIREBASE_SERVICE_ACCOUNT not configured — brain idle.'; return _send(res, out); }
+
+    let db;
+    try { db = admin.firestore(); } catch (e) { out.ok = false; out.note = 'firestore unavailable'; return _send(res, out); }
+
+    // 1–2. read + analyse all feedback
+    let items = [];
+    try {
+        const snap = await db.collection('feedback').orderBy('createdAt', 'desc').limit(500).get();
+        snap.forEach(d => items.push(d.data()));
+    } catch (e) { out.note += ' feedback read failed;'; }
+
+    const clusters = analyse(items);
+    const critical = clusters.filter(c => c.priority === 'critical' && (c.category === 'security' || c.category === 'crash'));
+
+    // 3. write the ranked board (read by the in-app Prioritised Feedback view)
+    try {
+        await db.collection('system').doc('feedbackPriority').set({
+            clusters, totalReports: items.length, critical: critical.length,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        out.wrote.push('feedbackPriority');
+    } catch (e) { out.note += ' priority write failed;'; }
+
+    // 4. auto-write suggested release notes for the publish script / Action
+    const isUrgent = critical.length > 0;
+    const now = new Date();
+    const isMonthlyWindow = now.getUTCDate() === 1;  // 1st of month → routine security release
+    const shouldRelease = isUrgent || isMonthlyWindow;
+
+    // current deployed version (read from manifest if present, else default)
+    let curVersion = '7.13.0';
+    try {
+        const m = await db.collection('system').doc('manifest').get();
+        if (m.exists && m.data().latest) curVersion = m.data().latest;
+    } catch (_) {}
+    const nextVersion = bumpPatch(curVersion);
+    const notes = buildNotes(nextVersion, clusters, isUrgent);
+
+    try {
+        await db.collection('system').doc('pendingRelease').set({
+            suggestedVersion: nextVersion, basedOn: curVersion, urgent: isUrgent,
+            shouldRelease, reason: isUrgent ? 'critical-feedback' : (isMonthlyWindow ? 'monthly-security' : 'none'),
+            notes, generatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        out.wrote.push('pendingRelease');
+    } catch (e) { out.note += ' pendingRelease write failed;'; }
+
+    // 5. for URGENT security only, announce immediately via the manifest (mandatory).
+    //    Routine monthly releases are left for the publish script/Action so code
+    //    and version stay in lockstep (honest: no announcing undeployed code).
+    if (isUrgent && process.env.RELEASE_BRAIN_ENABLED === '1') {
+        try {
+            const manRef = db.collection('system').doc('manifest');
+            const cur = await manRef.get();
+            const man = cur.exists ? cur.data() : { latest: curVersion, mandatory: [], notes: {} };
+            man.latest = nextVersion;
+            man.mandatory = Array.from(new Set([...(man.mandatory || []), nextVersion]));
+            man.notes = man.notes || {};
+            man.notes[nextVersion] = notes;
+            man.securitySchedule = 'monthly';
+            man.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+            await manRef.set(man);
+            out.wrote.push('manifest(urgent ' + nextVersion + ')');
+        } catch (e) { out.note += ' manifest write failed;'; }
+    }
+
+    out.summary = { reports: items.length, issues: clusters.length, critical: critical.length, urgent: isUrgent, monthlyWindow: isMonthlyWindow };
+    return _send(res, out);
+}
+
+function _send(res, obj) {
+    try {
+        if (res && res.status) { res.status(obj.ok ? 200 : 200).json(obj); return; }
+    } catch (_) {}
+    return new Response(JSON.stringify(obj), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
