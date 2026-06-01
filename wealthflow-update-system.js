@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.12.1';
+    const CURRENT_VERSION = '7.12.2';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -121,6 +121,26 @@
         if (_manifest && _manifest.mandatory && _manifest.mandatory.indexOf(v) >= 0) return true;
         const n = _notesFor(v);
         return !!(n && n.mandatory);
+    }
+    // Update "type": full | minor | security. Drives the badge + messaging.
+    function _updateType(v) {
+        const n = _notesFor(v);
+        if (n && n.type) return n.type;
+        if (_isMandatory(v)) return 'security';
+        // infer from version delta: major/minor bump = full, patch = minor
+        const inst = _installedVersion() || CURRENT_VERSION;
+        const a = String(v).split('.').map(Number), b = String(inst).split('.').map(Number);
+        if ((a[0] || 0) > (b[0] || 0) || (a[1] || 0) > (b[1] || 0)) return 'full';
+        return 'minor';
+    }
+    function _typeBadge(type) {
+        const map = {
+            full:     ['Full update', '#10b981', 'rgba(16,185,129,0.15)'],
+            minor:    ['Minor update', '#818cf8', 'rgba(129,140,248,0.15)'],
+            security: ['Security update', '#f59e0b', 'rgba(245,158,11,0.15)']
+        };
+        const m = map[type] || map.minor;
+        return '<span class="badge" style="background:' + m[2] + ';color:' + m[1] + ';padding:4px 10px;border-radius:999px;font-size:11px;font-weight:800;">' + m[0] + '</span>';
     }
 
     // True if this browser is on an older version than what's available.
@@ -236,7 +256,7 @@
             '<div class="setting-row">' +
                 '<div class="setting-info"><div class="setting-label">Current version</div><div class="setting-desc">WealthFlow Elite v' + _esc(installed) + (avail ? '' : ' · up to date') + '</div></div>' +
                 (avail
-                    ? '<span class="badge" style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:999px;font-weight:800;">v' + _esc(latest) + ' ready</span>'
+                    ? '<span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">' + _typeBadge(_updateType(latest)) + '<span class="badge" style="background:rgba(16,185,129,0.15);color:#10b981;padding:6px 12px;border-radius:999px;font-weight:800;">v' + _esc(latest) + '</span></span>'
                     : '<span class="badge" style="background:var(--bg2);color:var(--text3);padding:6px 12px;border-radius:999px;">Latest</span>') +
             '</div>' +
             (avail
@@ -678,24 +698,31 @@
     //  INIT
     // ───────────────────────────────────────────────────────────────────────
     async function init() {
-        // First run on this device → mark current, no popup (new users start latest)
-        if (!_installedVersion()) {
-            _markInstalled(CURRENT_VERSION);
-            try { localStorage.setItem(LS_SEEN_POPUP, CURRENT_VERSION); } catch (_) {}
-        }
+        // Resolve manifest FIRST so _latestVersion() is correct everywhere below.
         await _loadManifest();
         _watchServiceWorker();
 
-        // Post-update welcome (if we just bumped)
         const installed = _installedVersion();
-        if (_cmp(CURRENT_VERSION, installed) > 0) {
-            // the running build is newer than what was recorded → we updated
+
+        if (!installed) {
+            // Brand-new device. New users start on whatever build is running.
+            // They are current with the running build, but the manifest may
+            // still advertise a newer 'latest' (then they'll see the banner).
+            _markInstalled(CURRENT_VERSION);
+            try { localStorage.setItem(LS_SEEN_POPUP, CURRENT_VERSION); } catch (_) {}
+        } else if (_cmp(CURRENT_VERSION, installed) > 0) {
+            // The running build is NEWER than what this device last recorded →
+            // the files actually updated (SW swapped them). Record it and queue
+            // the "what's new" welcome popup.
             _markInstalled(CURRENT_VERSION);
             try { localStorage.removeItem(LS_SEEN_POPUP); } catch (_) {}
         }
+        // NOTE: we do NOT bump installed to the manifest 'latest'. That stays
+        // ahead so the update banner shows until the user actually installs.
+
         setTimeout(_maybeShowPostUpdate, 1400);
 
-        // Inject dashboard pill + settings card repeatedly until DOM ready
+        // Inject dashboard pill + settings card repeatedly until DOM is ready.
         let tries = 0;
         const t = setInterval(() => {
             _refreshDashboardPill();
@@ -703,15 +730,53 @@
             if (++tries > 25) clearInterval(t);
         }, 700);
 
-        // Mandatory update? force the screen.
+        // Re-check the manifest periodically (every 30 min) so a freshly
+        // published update appears without a manual check.
+        setInterval(async () => { await _loadManifest(); _refreshDashboardPill(); _renderSettingsCard(); }, 30 * 60 * 1000);
+
+        // Mandatory (security) update? force the screen.
         if (_updateAvailable() && _isMandatory(_latestVersion())) {
             setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
         }
     }
 
+    // ── DEV/TEST: simulate that an update is available so you can SEE the whole
+    //    flow without publishing a new build. Call wfUpdate.simulate('7.13.0').
+    //    Pass a version > current; clears with wfUpdate.simulate(false). ───────
+    function simulateUpdate(versionOrFalse) {
+        if (versionOrFalse === false || versionOrFalse == null) {
+            _manifest = null;
+            _markInstalled(CURRENT_VERSION);
+            _refreshDashboardPill(); _renderSettingsCard();
+            _notify('Test update cleared — back to current build.', 'info');
+            return;
+        }
+        const v = String(versionOrFalse);
+        _manifest = {
+            latest: v,
+            mandatory: [],
+            notes: { [v]: {
+                date: new Date().toISOString().slice(0, 10),
+                type: 'full',
+                headline: 'Test update ' + v,
+                sections: [
+                    { title: 'New', items: ['This is a simulated update so you can preview the full install journey.'] },
+                    { title: 'Improved', items: ['Faster everything, smarter categorisation.'] },
+                    { security: true, title: 'Security', items: ['Simulated monthly security hardening.'] }
+                ]
+            } }
+        };
+        // make sure the device is on an OLDER version than the simulated one
+        try { localStorage.setItem(LS_INSTALLED, CURRENT_VERSION); } catch (_) {}
+        _refreshDashboardPill(); _renderSettingsCard();
+        _notify('Test update ' + v + ' is now available — check the Dashboard or Settings.', 'success');
+        openUpdateSection();
+    }
+
     window.wfUpdate = {
         init, start: startUpdate, whatsNew: showWhatsNew, openSection: openUpdateSection,
         feedback: openFeedback, check: checkForUpdates, diagnostics: showDiagnostics,
+        simulate: simulateUpdate,
         refresh: () => { _refreshDashboardPill(); _renderSettingsCard(); },
         _close, _closePost, version: CURRENT_VERSION
     };
