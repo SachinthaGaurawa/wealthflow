@@ -11660,18 +11660,28 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                 }, 3000);
 
                                 try {
+                                    // v7.16.1 — CRITICAL: the Firestore get() had
+                                    // NO timeout, so a slow/unreachable server froze
+                                    // the app forever on "Syncing with cloud…" and the
+                                    // user could never get in. We now RACE every fetch
+                                    // against a timeout and always fall through to
+                                    // local data + launch, so boot can never hang.
+                                    const _withTimeout = (p, ms) => Promise.race([
+                                        p,
+                                        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout-' + ms)), ms))
+                                    ]);
                                     // Force server fetch to always get latest data
                                     let doc;
                                     try {
-                                        doc = await userDocRef.get({ source: 'server' });
+                                        doc = await _withTimeout(userDocRef.get({ source: 'server' }), 6000);
                                         console.log('[SYNC] ✅ Got data from SERVER');
                                     } catch (serverErr) {
-                                        console.warn('[SYNC] ⚠️ Server unreachable, using cache:', serverErr.message);
+                                        console.warn('[SYNC] ⚠️ Server slow/unreachable, trying cache:', serverErr.message);
                                         try {
-                                            doc = await userDocRef.get(); // Falls back to cache
+                                            doc = await _withTimeout(userDocRef.get(), 3000); // cache
                                         } catch (cacheErr) {
-                                            console.error('[SYNC] ❌ Cache also failed:', cacheErr.message);
-                                            doc = null;
+                                            console.error('[SYNC] ❌ Cache also failed/slow:', cacheErr.message);
+                                            doc = null; // proceed with local data; never block entry
                                         }
                                     }
 
@@ -11759,12 +11769,17 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                         // First time — create cloud document
                                         console.log('[SYNC] 📝 Creating new cloud profile');
                                         try {
-                                            await userDocRef.set(Object.assign({}, appData, {
-                                                _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                                                _lastModifiedBy: user.uid
-                                            }));
+                                            // v7.16.1 — timeout-guarded so a slow write
+                                            // can't freeze a new user on the splash.
+                                            await Promise.race([
+                                                userDocRef.set(Object.assign({}, appData, {
+                                                    _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
+                                                    _lastModifiedBy: user.uid
+                                                })),
+                                                new Promise((_, rej) => setTimeout(() => rej(new Error('set-timeout')), 6000))
+                                            ]);
                                         } catch (setErr) {
-                                            console.error('[SYNC] Failed to create cloud profile:', setErr);
+                                            console.error('[SYNC] Failed/slow to create cloud profile (continuing):', setErr.message || setErr);
                                         }
                                     } else {
                                         // doc is null — both server and cache failed, use localStorage

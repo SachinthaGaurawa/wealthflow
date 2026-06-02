@@ -1,8 +1,9 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.16.0",
+  "latest": "7.16.1",
   "mandatory": [
-    "7.16.0"
+    "7.16.0",
+    "7.16.1"
   ],
   "securitySchedule": "monthly",
   "notes": {
@@ -230,6 +231,26 @@
           "security": true,
           "items": [
             "This is a mandatory recovery update."
+          ]
+        }
+      ]
+    },
+    "7.16.1": {
+      "date": "2026-06-02",
+      "type": "security",
+      "headline": "Critical: fixed frozen Syncing with cloud",
+      "sections": [
+        {
+          "title": "Fixed (critical)",
+          "items": [
+            "Fixed the app freezing on Syncing with cloud and never letting you in. The cloud sync now has a strict time limit and always lets you into the app, even on a slow or offline connection."
+          ]
+        },
+        {
+          "title": "Security",
+          "security": true,
+          "items": [
+            "Mandatory stability update."
           ]
         }
       ]
