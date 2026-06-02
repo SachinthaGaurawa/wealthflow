@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.15.2';
+    const CURRENT_VERSION = '7.15.3';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -241,21 +241,18 @@
     //  SETTINGS "SOFTWARE UPDATE" CARD (self-injecting)
     // ───────────────────────────────────────────────────────────────────────
     function _injectSettingsCard() {
-        if (document.getElementById('wfUpdateCard')) { _renderSettingsCard(); return true; }
-        // Place the Software Update card immediately BEFORE the "PWA & App
-        // Settings" section so it sits near the bottom of Settings, just above PWA.
+        // The card #wfUpdateCard is now a permanent placeholder inside the
+        // settings template (it survives every renderSettings rebuild). We just
+        // fill it. If for any reason the placeholder isn't there yet (older
+        // cached HTML), fall back to creating it before the PWA section.
+        const ph = document.getElementById('wfUpdateCard');
+        if (ph) { ph.classList.add('settings-section'); _renderSettingsCard(); return true; }
         const pwa = document.getElementById('wfPwaSection');
-        let host = pwa, before = true;
-        if (!host) {
-            const mount = document.getElementById('wfSmsPasteMount');
-            host = mount ? mount.closest('.settings-section') : null;
-            if (!host) { const all = document.querySelectorAll('.settings-section'); host = all && all.length ? all[all.length - 1] : null; }
-        }
-        if (!host || !host.parentNode) return false;
+        if (!pwa || !pwa.parentNode) return false;
         const card = document.createElement('div');
         card.className = 'settings-section';
         card.id = 'wfUpdateCard';
-        host.parentNode.insertBefore(card, host);   // before the PWA section
+        pwa.parentNode.insertBefore(card, pwa);
         _renderSettingsCard();
         return true;
     }
@@ -263,6 +260,7 @@
     function _renderSettingsCard() {
         const card = document.getElementById('wfUpdateCard');
         if (!card) return;
+        card.classList.add('settings-section');
         const installed = _installedVersion() || CURRENT_VERSION;
         const latest = _latestVersion();
         const avail = _updateAvailable() || !!_swWaiting;
@@ -893,26 +891,31 @@
             if (++tries > 8) clearInterval(t);
         }, 600);
 
-        // durable guard: whenever the DOM changes (e.g. Settings becomes active),
-        // make sure the update card and dashboard pill are present.
+        // durable guard: whenever the DOM changes (e.g. Settings re-renders),
+        // re-fill the update card placeholder. Because the placeholder lives in
+        // the settings template, this only ever FILLS it — it never creates
+        // floating duplicates, so clicking buttons can't make it vanish.
         try {
+            let _filling = false;
             const mo = new MutationObserver(() => {
-                // only act when the settings page exists and the card is missing
-                if (document.getElementById('wfPwaSection') && !document.getElementById('wfUpdateCard')) {
-                    _injectSettingsCard();
+                if (_filling) return;
+                const ph = document.getElementById('wfUpdateCard');
+                // re-fill if the placeholder exists but is empty (post re-render)
+                if (ph && !ph.querySelector('.settings-title')) {
+                    _filling = true;
+                    try { _renderSettingsCard(); } catch (_) {}
+                    _filling = false;
                 }
-                if (!document.getElementById('wfUpdatePill')) _refreshDashboardPill();
+                if (!document.getElementById('wfUpdatePill')) { try { _refreshDashboardPill(); } catch (_) {} }
             });
             mo.observe(document.body, { childList: true, subtree: true });
             window._wfUpdateObserver = mo;
         } catch (_) {}
 
-        // belt-and-suspenders: a light heartbeat every 4s ensures the card is
-        // there even if the observer is throttled by the browser.
+        // heartbeat: ensure the card is filled even if the observer is throttled
         setInterval(() => {
-            if (document.getElementById('wfPwaSection') && !document.getElementById('wfUpdateCard')) {
-                try { _injectSettingsCard(); } catch (_) {}
-            }
+            const ph = document.getElementById('wfUpdateCard');
+            if (ph && !ph.querySelector('.settings-title')) { try { _renderSettingsCard(); } catch (_) {} }
         }, 4000);
 
         // Re-check the manifest periodically (every 30 min) so a freshly

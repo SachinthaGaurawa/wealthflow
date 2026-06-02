@@ -18090,6 +18090,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
         </div>
 
+        <!-- ====== SOFTWARE UPDATE (filled by wealthflow-update-system.js) ======
+             This placeholder is PART of the settings template, so it survives
+             every renderSettings() rebuild. The update system fills #wfUpdateCard
+             on render + on each settings open, so clicking its buttons can never
+             make the section disappear. -->
+        <div class="settings-section" id="wfUpdateCard" style="border: 1px solid var(--border2);"></div>
+
         <!-- ====== PWA & APP SETTINGS (per screenshot) ====== -->
         <div class="settings-section" id="wfPwaSection" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:var(--purple);">PWA & App Settings</div>
@@ -18124,7 +18131,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;">WealthFlow v7.8.0 · Infinity Engine</div>
+            <div style="margin-bottom:4px;" id="wfFooterVer">WealthFlow · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -18133,6 +18140,15 @@ table.amort tbody tr { page-break-inside: avoid; }
             updatePWAStatusBadge();
             // ISSUE 3 FIX — Populate AI language pickers
             populateAILanguagePickers();
+            // Fill the Software Update card (it's a placeholder in this template,
+            // so it's rebuilt with the rest of settings and never disappears).
+            try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {}
+            // keep footer + sidebar version labels in sync with the real version
+            try {
+                const v = (window.wfUpdate && window.wfUpdate.version) || '';
+                const fv = document.getElementById('wfFooterVer');
+                if (fv && v) fv.textContent = 'WealthFlow v' + v + ' · Infinity Engine';
+            } catch (_) {}
         }
 
         // ISSUE 3 FIX — AI Language picker helpers
