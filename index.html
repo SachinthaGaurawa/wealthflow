@@ -2,6 +2,126 @@
 <html lang="en" data-theme="dark">
 
 <head>
+    <!-- ════════════════════════════════════════════════════════════════════
+         v7.16.0 — INLINE BOOT GUARD (must be the FIRST script; no dependencies)
+         True crash recovery for a black-screen / bad-bundle. Unlike the old
+         self-heal (which rolled back DATA and waited for 3 JS error events),
+         this uses an INDEPENDENT timer + an explicit success heartbeat, and on
+         repeated failure it PURGES THE BROKEN CODE CACHE + unregisters the
+         service worker so a reload fetches fresh, working files. It NEVER
+         touches the user's financial data (wf2_*, IndexedDB).
+         Escalation: 1=reload · 2=skipWaiting+reload · 3=purge caches+SW+reload
+         · 4=inline Safe-Mode screen. Fires wf_boot_success when the app or the
+         login screen actually renders (wired to __wfBootCompleted()).
+         ════════════════════════════════════════════════════════════════════ -->
+    <script>
+    (function () {
+        'use strict';
+        var TIMEOUT_MS = 11000;  // longer than the 8s splash failsafe, so a slow
+                                 // (healthy) boot is rescued gently first; the
+                                 // guard only escalates if even that didn't render
+        var KEY = 'wf_boot_fails';
+        var booted = false, timer = null;
+
+        function getFails() { try { return parseInt(localStorage.getItem(KEY) || '0', 10) || 0; } catch (_) { return 0; } }
+        function setFails(n) { try { localStorage.setItem(KEY, String(n)); } catch (_) {} }
+
+        // increment the failure counter at the very start of every boot
+        var fails = getFails() + 1;
+        setFails(fails);
+
+        function markSuccess() {
+            if (booted) return;
+            booted = true;
+            setFails(0);
+            if (timer) { clearTimeout(timer); timer = null; }
+            try { if (window.__wfBootCompleted) window.__wfBootCompleted(); } catch (_) {}
+        }
+        // the app dispatches this when the dashboard/login actually renders
+        window.addEventListener('wf_boot_success', markSuccess);
+        // also expose a direct hook (so existing code can call it too)
+        window.__wfBootGuardSuccess = markSuccess;
+
+        function purgeCodeAndSW(cb) {
+            var done = 0, need = 2;
+            function step() { done++; if (done >= need && cb) cb(); }
+            // delete only wealthflow-* caches (CODE), never IndexedDB / wf2_*
+            try {
+                if (window.caches && caches.keys) {
+                    caches.keys().then(function (keys) {
+                        var dels = keys.filter(function (k) { return k.indexOf('wealthflow-') === 0; }).map(function (k) { return caches.delete(k); });
+                        Promise.all(dels).then(step, step);
+                    }, step);
+                } else step();
+            } catch (_) { step(); }
+            // unregister all service workers
+            try {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations().then(function (regs) {
+                        Promise.all(regs.map(function (r) { return r.unregister(); })).then(step, step);
+                    }, step);
+                } else step();
+            } catch (_) { step(); }
+        }
+
+        function hardReload() { try { location.reload(); } catch (_) { try { location.href = location.href; } catch (__) {} } }
+
+        function safeMode() {
+            try {
+                var ov = document.createElement('div');
+                ov.id = 'wfSafeMode';
+                ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#0a0e1a;color:#e6e7eb;display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;';
+                ov.innerHTML =
+                    '<div style="max-width:420px;text-align:center;">' +
+                        '<div style="font-size:20px;font-weight:800;margin-bottom:10px;">WealthFlow needs to recover</div>' +
+                        '<div style="font-size:14px;line-height:1.6;color:#8b95a8;margin-bottom:22px;">The app didn\'t start correctly after an update. Your financial data is safe in the cloud. Choose an option below to restore it.</div>' +
+                        '<button id="wfSmRestore" style="width:100%;padding:14px;border:none;border-radius:12px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-size:15px;font-weight:800;margin-bottom:12px;cursor:pointer;">Restore working version</button>' +
+                        '<button id="wfSmReset" style="width:100%;padding:14px;border:1px solid #1f2638;border-radius:12px;background:transparent;color:#c7cdd9;font-size:14px;font-weight:700;cursor:pointer;">Reset app (data stays safe in the cloud)</button>' +
+                        '<div style="font-size:11px;color:#5b6478;margin-top:18px;">Your transactions are never deleted by this screen.</div>' +
+                    '</div>';
+                (document.body || document.documentElement).appendChild(ov);
+                document.getElementById('wfSmRestore').onclick = function () { setFails(0); purgeCodeAndSW(function () { setTimeout(hardReload, 200); }); };
+                document.getElementById('wfSmReset').onclick = function () { setFails(0); purgeCodeAndSW(function () { setTimeout(hardReload, 200); }); };
+            } catch (_) { setFails(0); purgeCodeAndSW(hardReload); }
+        }
+
+        function recover() {
+            if (booted) return;
+            try {
+                if (fails <= 1) {
+                    // 1st: transient hiccup — just reload
+                    hardReload();
+                } else if (fails === 2) {
+                    // 2nd: ask a waiting SW to take over, then reload
+                    try {
+                        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                            navigator.serviceWorker.getRegistrations().then(function (regs) {
+                                regs.forEach(function (r) { if (r.waiting) { try { r.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {} } });
+                                setTimeout(hardReload, 600);
+                            }, function () { hardReload(); });
+                        } else hardReload();
+                    } catch (_) { hardReload(); }
+                } else if (fails === 3) {
+                    // 3rd: the bundle is bad — purge code caches + SW, fetch fresh
+                    purgeCodeAndSW(function () { setTimeout(function () { try { location.reload(true); } catch (_) { hardReload(); } }, 300); });
+                } else {
+                    // 4th+: stop reloading; show Safe Mode so the user is never trapped
+                    safeMode();
+                }
+            } catch (_) { try { safeMode(); } catch (__) {} }
+        }
+
+        // independent watchdog — does NOT depend on the app's error events
+        timer = setTimeout(recover, TIMEOUT_MS);
+
+        // if the very first scripts throw synchronously during initial execution,
+        // a black screen can occur without 'wf_boot_success'; the timer covers it.
+        // We also listen for a hard early error as a fast path on repeat failures.
+        window.addEventListener('error', function () {
+            if (!booted && fails >= 3) { if (timer) clearTimeout(timer); recover(); }
+        });
+    })();
+    </script>
     <meta charset="UTF-8">
     <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
          "address-bar collapses when user pinches" behaviour that was
@@ -63,13 +183,11 @@
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
     <script src="wealthflow-ml.js" defer></script>
-    <!-- v7.14.0 — Self-Healing boot guard. Loads FIRST so its global error
-         boundary catches startup crashes. If the app crash-loops right after an
-         update, it auto-clears caches, unregisters the bad service worker,
-         restores the pre-update backup and reloads to the last good version —
-         then reports the incident so the Release Brain prioritises a fix.
-         Adds window.wfHeal. -->
-    <script src="wealthflow-self-heal.js"></script>
+    <!-- v7.16.0 — The old wealthflow-self-heal.js was REMOVED. It rolled back
+         DATA and waited for 3 JS error events, so it never fired during a real
+         black screen and could loop on the same broken cached bundle. It is
+         replaced by the INLINE BOOT GUARD at the very top of <head>, which
+         purges the broken CODE cache + service worker and never touches data. -->
     <!-- v7.11.0 — Client-side encryption layer (AES-256-GCM, PBKDF2). MUST
          load FIRST among the intelligence modules: the learning memory, the
          background queue and the review queue all persist through wfCrypto so
@@ -4467,7 +4585,13 @@
             var _bootCompleted = false;
 
             // Expose a global flag so the main boot code can cancel the failsafe
-            window.__wfBootCompleted = function () { _bootCompleted = true; };
+            window.__wfBootCompleted = function () {
+                _bootCompleted = true;
+                // also tell the Boot Guard the app actually rendered (single
+                // source of truth for "boot succeeded")
+                try { if (window.__wfBootGuardSuccess) window.__wfBootGuardSuccess(); } catch (_) {}
+                try { window.dispatchEvent(new Event('wf_boot_success')); } catch (_) {}
+            };
 
             function emergencyBoot() {
                 if (_bootCompleted) return; // Normal boot already worked
@@ -4501,6 +4625,15 @@
                     var gv3 = document.getElementById('authGoogle');
                     if (gv3) gv3.style.display = '';
                 }
+
+                // If we got here and the auth screen exists, the HTML/CSS DID
+                // load — this is a slow boot, not a broken bundle. Tell the Boot
+                // Guard so it does NOT purge caches / loop on a slow connection.
+                try {
+                    if (document.getElementById('authScreen') && window.__wfBootGuardSuccess) {
+                        window.__wfBootGuardSuccess();
+                    }
+                } catch (_) {}
             }
 
             // Set the failsafe timer
@@ -12139,6 +12272,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 $('authScreen').classList.remove('show');
                 $('app').classList.add('show');
                 try { renderPage('dashboard'); } catch (e) { console.error('[LAUNCH] renderPage error:', e); }
+                // Boot Guard: the dashboard has actually rendered — this is the
+                // strongest "boot succeeded" signal. Cancel the watchdog so it
+                // never purges/reloads a working app.
+                try { if (window.__wfBootCompleted) window.__wfBootCompleted(); } catch (_) {}
                 // Show floating AI button
                 try { const fab = $('fabAIBtn'); if (fab) fab.classList.add('show'); } catch (e) { }
                 // Schedule auto backup

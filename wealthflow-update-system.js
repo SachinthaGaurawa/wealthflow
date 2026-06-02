@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.15.3';
+    const CURRENT_VERSION = '7.16.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -608,7 +608,7 @@
         ok('Encryption', !!(window.wfCrypto && (window.wfCrypto.isAvailable ? window.wfCrypto.isAvailable() : true)), 'AES-256-GCM at rest');
         ok('Card registry', !!(window.wfCardRegistry && window.wfCardRegistry.get), 'card→type routing');
         ok('Update system', !!(window.wfUpdate && window.wfUpdate.start), 'this engine');
-        ok('Self-healing', !!(window.wfHeal && window.wfHeal.status), 'auto-recovers from bad updates');
+        ok('Boot Guard', typeof window.__wfBootGuardSuccess === 'function', 'purges bad cache & recovers from black screen');
         ok('Feedback intelligence', !!(window.wfFeedbackAI && window.wfFeedbackAI.analyse), 'semantic prioritisation');
 
         // Stage 2 — storage + data integrity
