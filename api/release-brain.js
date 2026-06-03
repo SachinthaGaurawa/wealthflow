@@ -167,6 +167,17 @@ export default async function handler(req, res) {
         out.wrote.push('feedbackPriority');
     } catch (e) { out.note += ' priority write failed;'; }
 
+    // 3.5 RETENTION: archive feedback older than 14 days. The in-app board only
+    //     DISPLAYS the last 2 weeks; this makes that real at the database level —
+    //     old reports are copied to `feedbackArchive` (retained, never lost) and
+    //     removed from the active `feedback` collection. Implements the PDF's
+    //     "shown for exactly 2 weeks from the send date, then archived properly."
+    try {
+        const archived = await archiveOldFeedback(db, admin);
+        if (archived) out.wrote.push('archived ' + archived + ' old feedback');
+        out.archived = archived;
+    } catch (e) { out.note += ' archive pass failed;'; out.archived = 0; }
+
     // 4. auto-write suggested release notes for the publish script / Action
     const isUrgent = critical.length > 0;
     const now = new Date();
@@ -212,6 +223,46 @@ export default async function handler(req, res) {
 
     out.summary = { reports: items.length, issues: clusters.length, critical: critical.length, urgent: isUrgent, monthlyWindow: isMonthlyWindow };
     return _send(res, out);
+}
+
+// ── 14-day feedback retention / archival ────────────────────────────────────
+// Copies feedback older than 2 weeks into `feedbackArchive` (retained) and
+// removes it from the active `feedback` collection. Runs on the Admin SDK, which
+// bypasses Firestore rules. Batched (≤200/commit) and capped so it can never run
+// away. `createdAt < cutoff` + `orderBy(createdAt)` needs no composite index.
+async function archiveOldFeedback(db, admin) {
+    const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+    const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - TWO_WEEKS_MS);
+    let archived = 0;
+    for (let iter = 0; iter < 25; iter++) {                 // hard cap: ≤5,000 docs/run
+        let snap;
+        try {
+            snap = await db.collection('feedback')
+                .where('createdAt', '<', cutoff)
+                .orderBy('createdAt', 'asc')
+                .limit(200)
+                .get();
+        } catch (e) {
+            break;   // index/type issue — leave docs in place rather than risk wrong deletes
+        }
+        if (!snap || snap.empty) break;
+        const batch = db.batch();
+        snap.forEach(function (doc) {
+            const data = doc.data() || {};
+            batch.set(
+                db.collection('feedbackArchive').doc(doc.id),
+                Object.assign({}, data, {
+                    archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    _archivedFrom: 'feedback'
+                })
+            );
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+        archived += snap.size;
+        if (snap.size < 200) break;
+    }
+    return archived;
 }
 
 function _send(res, obj) {
