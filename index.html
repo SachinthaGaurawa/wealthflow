@@ -257,6 +257,12 @@
          Settings surfacing learned-merchant count, the review queue, a
          duplicate scanner, background-engine status and encryption status. -->
     <script src="wealthflow-intel-panel.js" defer></script>
+    <!-- Autonomous release pipeline — owner-only "Review & Approve" panel. The
+         brain proposes (release-brain.js → system/pendingRelease); this turns it
+         into a live release with one owner-authenticated tap via /api/approve-release.
+         Adds window.wfReleaseApprove. Wire to an owner button:
+         onclick="wfReleaseApprove.showPanel()". -->
+    <script src="wealthflow-release-approve.js" defer></script>
 
     
 
@@ -7387,7 +7393,8 @@
 
         async function _tryGemini(prompt, image) {
             const s = DB.getObj('settings', {});
-            const apiKey = s.geminiKey || 'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ';
+            const apiKey = s.geminiKey || null;
+            if (!apiKey) return null; // SECURITY: no embedded key — server /api/ai is primary; user may set their own key in Settings
             const parts = [{ text: prompt }];
             if (image) parts.push({ inline_data: { mime_type: "image/jpeg", data: image } });
 
@@ -7418,9 +7425,10 @@
         }
 
         async function _tryGroq(prompt) {
+            return null; // SECURITY: embedded key removed — server /api/ai handles Groq
             try {
                 const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer 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' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ((DB.getObj('settings',{}) || {}).groqKey || '') },
                     body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: prompt }], max_tokens: 1200, temperature: 0.7 })
                 });
                 if (!r.ok) throw new Error('Groq ' + r.status);
@@ -7434,9 +7442,10 @@
         }
 
         async function _tryDeepSeek(prompt) {
+            return null; // SECURITY: embedded key removed — server /api/ai handles DeepSeek
             try {
                 const r = await fetch('https://api.deepseek.com/chat/completions', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer sk-5b66522f940d4d3fb3dbd77bf72d2177' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ((DB.getObj('settings',{}) || {}).deepseekKey || '') },
                     body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: prompt }], max_tokens: 1200, temperature: 0.7 })
                 });
                 if (!r.ok) throw new Error('DeepSeek ' + r.status);
@@ -7451,8 +7460,9 @@
 
         // --- Ollama Vision Fallback (Cloud API with vision support) ---
         async function _tryOllama(prompt, image) {
+            return null; // SECURITY: embedded key removed — server /api/vision-scan handles Ollama
             try {
-                const ollamaKey = 'f2e8db440e7e4028a40a0aefbf8dbec5.7efl7SycTPjEwR645yJmxTs1';
+                const ollamaKey = ((DB.getObj('settings',{}) || {}).ollamaKey || '');
                 const message = { role: 'user', content: prompt };
                 if (image) message.images = [image];
 
