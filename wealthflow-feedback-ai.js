@@ -167,12 +167,36 @@
         return Array.from(byKey.values());
     }
 
-    // ── gather feedback (own only, unless admin) ──────────────────────────────
-    async function _gather(adminAll) {
+    // ── network guard ─────────────────────────────────────────────────────────
+    // Firestore .get() has NO built-in timeout. On a flaky connection, or before
+    // an App Check / auth token is ready, it can hang indefinitely — which is
+    // exactly what left the board stuck on "Loading…". This races any promise
+    // against a timer so a stalled network call ALWAYS resolves to `fallback`
+    // instead of freezing the UI.
+    function _withTimeout(promise, ms, fallback) {
+        return new Promise(function (resolve) {
+            var settled = false;
+            var t = setTimeout(function () { if (!settled) { settled = true; resolve(fallback); } }, ms || 3500);
+            Promise.resolve(promise).then(
+                function (v) { if (!settled) { settled = true; clearTimeout(t); resolve(v); } },
+                function () { if (!settled) { settled = true; clearTimeout(t); resolve(fallback); } }
+            );
+        });
+    }
+
+    // local + session copies of the user's own submissions (no network, never hangs)
+    function _localItems() {
         var items = [];
-        var myUid = await _awaitAuth(2500);
         try { JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]').forEach(function (x) { items.push(Object.assign({ _src: 'local' }, x)); }); } catch (_) {}
         try { JSON.parse(sessionStorage.getItem('wf_feedback_session') || '[]').forEach(function (x) { items.push(Object.assign({ _src: 'session' }, x)); }); } catch (_) {}
+        return items;
+    }
+    function _localFresh() { return _dedupe(_localItems()).filter(_fresh); }
+
+    // ── gather feedback (own only, unless admin) ──────────────────────────────
+    async function _gather(adminAll) {
+        var items = _localItems();
+        var myUid = await _awaitAuth(2500);
         try {
             var db = _dbRef();
             if (db) {
@@ -180,7 +204,12 @@
                 if (adminAll && _isAdmin()) { q = q.orderBy('createdAt', 'desc').limit(500); }
                 else if (myUid) { q = q.where('uid', '==', myUid).limit(200); }
                 else { q = null; }
-                if (q) { var snap = await q.get(); snap.forEach(function (doc) { items.push(Object.assign({ _src: 'cloud', _id: doc.id }, doc.data())); }); }
+                if (q) {
+                    var snap = await _withTimeout(q.get(), 3500, null);   // bounded — never hangs
+                    if (snap && typeof snap.forEach === 'function') {
+                        snap.forEach(function (doc) { items.push(Object.assign({ _src: 'cloud', _id: doc.id }, doc.data())); });
+                    }
+                }
             }
         } catch (_) { /* offline / rules — local only */ }
         // de-dupe the 3 copies, then keep only the last 14 days
@@ -226,7 +255,7 @@
         try {
             var db = _dbRef();
             if (!db) return [];
-            var doc = await db.collection('system').doc('feedbackPriority').get();
+            var doc = await _withTimeout(db.collection('system').doc('feedbackPriority').get(), 3000, null);
             if (doc && doc.exists) { var d = doc.data(); if (d && Array.isArray(d.clusters)) return d.clusters; }
         } catch (_) {}
         return [];
@@ -255,12 +284,24 @@
     async function showBoard() {
         var admin = _isAdmin();
         var title = admin ? 'Feedback Intelligence (all users)' : 'Your Feedback';
-        _boardOpen = true;
         _overlay('wfFbBoard', title, admin ? 'Analysing all users\u2019 feedback…' : 'Your reports, scored by priority…',
             '<div id="wfFbBoardBody" style="min-height:120px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;">Loading…</div>',
             '<button class="btn btn-primary" style="width:100%;" onclick="wfFeedbackAI._close(\'wfFbBoard\')">Close</button>');
+        // IMPORTANT: set the open flag AFTER _overlay — _overlay calls _close()
+        // internally, which sets _boardOpen=false. Setting it before meant _render
+        // saw _boardOpen=false and bailed, leaving the board stuck on "Loading…".
+        _boardOpen = true;
 
-        await _refresh(admin);
+        // HARD SAFETY NET: if _refresh stalls for any reason, never leave the
+        // user staring at "Loading…". After 7s, force a local-only render.
+        var watchdog = setTimeout(function () {
+            var b = document.getElementById('wfFbBoardBody');
+            if (_boardOpen && b && /Loading/.test(b.textContent || '')) {
+                _render(_analyse(_localFresh()), [], admin);
+            }
+        }, 7000);
+
+        try { await _refresh(admin); } finally { clearTimeout(watchdog); }
 
         // real-time: one snapshot listener on the user's own feedback (safe — it
         // only fires on real data changes, never on DOM mutations).
@@ -279,16 +320,21 @@
 
     async function _refresh(admin) {
         var clusters = null, serverClusters = [];
-        if (admin) {
-            serverClusters = await _fetchServerClusters();
-            if (serverClusters.length) clusters = serverClusters;
+        try {
+            if (admin) {
+                serverClusters = await _fetchServerClusters();
+                if (serverClusters.length) clusters = serverClusters;
+            }
+            if (!clusters) {
+                var items = await _gather(admin);
+                clusters = _analyse(items);
+                serverClusters = serverClusters.length ? serverClusters : await _fetchServerClusters();
+            }
+        } catch (_) {
+            /* never let an error leave the board stuck on "Loading…" */
+        } finally {
+            _render(clusters || [], serverClusters || [], admin);
         }
-        if (!clusters) {
-            var items = await _gather(admin);
-            clusters = _analyse(items);
-            serverClusters = serverClusters.length ? serverClusters : await _fetchServerClusters();
-        }
-        _render(clusters, serverClusters, admin);
     }
 
     function _render(clusters, serverClusters, admin) {
