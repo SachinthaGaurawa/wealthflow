@@ -145,6 +145,27 @@ function enrichClusters(clusters) {
 
 function bumpPatch(v) { const p = String(v || '7.13.0').split('.').map(Number); p[2] = (p[2] || 0) + 1; return p.join('.'); }
 
+// Turn the top critical/high clusters into a concrete, ordered fix list — the
+// autonomous system's PROPOSAL for what the next release should change. This is
+// always available (deterministic). An optional AI step can elaborate each into
+// a code diff for review (see draftFixWithAI / approve-release.js), but the
+// human still approves before anything ships to the live money app.
+function proposedChangesFrom(clusters) {
+    const verbs = { security: 'Harden', crash: 'Fix crash in', bug: 'Fix', performance: 'Optimise', ui: 'Improve UI for', idea: 'Add' };
+    return (clusters || [])
+        .filter(c => c.priority === 'critical' || c.priority === 'high')
+        .slice(0, 8)
+        .map((c, i) => ({
+            order: i + 1,
+            priority: c.priority,
+            category: c.category,
+            issue: (c.sample || '').slice(0, 200),
+            action: (verbs[c.category] || 'Address') + ': ' + (c.sample || '').slice(0, 120),
+            reports: c.count || 1
+        }));
+}
+
+
 function buildNotes(version, clusters, isUrgent) {
     const top = clusters.slice(0, 6);
     const fixed = top.filter(c => ['bug', 'crash', 'performance'].includes(c.category)).map(c => 'Addressed: ' + c.sample);
@@ -247,12 +268,18 @@ export default async function handler(req, res) {
     } catch (_) {}
     const nextVersion = bumpPatch(curVersion);
     const notes = buildNotes(nextVersion, clusters, isUrgent);
+    const proposedChanges = proposedChangesFrom(clusters);
 
     try {
         await db.collection('system').doc('pendingRelease').set({
             suggestedVersion: nextVersion, basedOn: curVersion, urgent: isUrgent,
             shouldRelease, reason: isUrgent ? 'critical-feedback' : (isMonthlyWindow ? 'monthly-security' : 'none'),
-            notes, generatedAt: admin.firestore.FieldValue.serverTimestamp()
+            notes, proposedChanges,
+            // explicit human-approval gate. /api/approve-release flips approved:true
+            // (owner-authenticated) which promotes this to system/manifest and, if a
+            // deploy hook is configured, triggers the build. Until then it ships nothing.
+            approval: { required: true, approved: false },
+            generatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         out.wrote.push('pendingRelease');
     } catch (e) { out.note += ' pendingRelease write failed;'; }
