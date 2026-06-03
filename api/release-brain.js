@@ -120,6 +120,29 @@ function analyse(items) {
     return clusters;
 }
 
+// Stable fingerprint of an issue's text — MUST stay byte-identical to the same
+// function in wealthflow-feedback-ai.js so the client can match the server's
+// decision to the issue the user is looking at.
+function _fingerprint(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+        .split(' ').filter(function (w) { return w.length > 2; }).slice(0, 8).join(' ');
+}
+// Attach the SERVER's explicit decision to every cluster. The client never
+// guesses "considering" — it reads these fields. `considering` is true only when
+// the autonomous brain has actually ranked the issue critical or high.
+function enrichClusters(clusters) {
+    return (clusters || []).map(function (c) {
+        var considering = (c.priority === 'critical' || c.priority === 'high');
+        return Object.assign({}, c, {
+            key: _fingerprint(c.sample),
+            considering: considering,
+            status: c.priority === 'critical' ? 'considering'
+                  : c.priority === 'high' ? 'queued'
+                  : 'monitoring'
+        });
+    });
+}
+
 function bumpPatch(v) { const p = String(v || '7.13.0').split('.').map(Number); p[2] = (p[2] || 0) + 1; return p.join('.'); }
 
 function buildNotes(version, clusters, isUrgent) {
@@ -148,6 +171,37 @@ export default async function handler(req, res) {
     let db;
     try { db = admin.firestore(); } catch (e) { out.ok = false; out.note = 'firestore unavailable'; return _send(res, out); }
 
+    // Parse ?mode= robustly across Vercel Node + edge invocation styles.
+    let mode = '';
+    try {
+        if (req && req.query && req.query.mode) mode = String(req.query.mode);
+        else if (req && req.url) mode = (new URL(req.url, 'http://x')).searchParams.get('mode') || '';
+    } catch (_) {}
+
+    // FAST RE-RANK: called by the in-app feedback board the moment it opens, so a
+    // critical report submitted seconds ago is ingested + flagged immediately
+    // (instead of waiting for the daily cron). Read → analyse → write the enriched
+    // priority doc → return. No release proposal, no manifest, no archive here.
+    if (mode === 'rerank') {
+        let ritems = [];
+        try {
+            const rsnap = await db.collection('feedback').orderBy('createdAt', 'desc').limit(500).get();
+            rsnap.forEach(d => ritems.push(d.data()));
+        } catch (e) { out.note += ' feedback read failed;'; }
+        const rclusters = enrichClusters(analyse(ritems));
+        const rcritical = rclusters.filter(c => c.priority === 'critical' && (c.category === 'security' || c.category === 'crash'));
+        try {
+            await db.collection('system').doc('feedbackPriority').set({
+                clusters: rclusters, totalReports: ritems.length, critical: rcritical.length,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+            out.wrote.push('feedbackPriority(rerank)');
+        } catch (e) { out.note += ' priority write failed;'; }
+        out.mode = 'rerank';
+        out.summary = { reports: ritems.length, issues: rclusters.length, critical: rcritical.length };
+        return _send(res, out);
+    }
+
     // 1–2. read + analyse all feedback
     let items = [];
     try {
@@ -157,11 +211,12 @@ export default async function handler(req, res) {
 
     const clusters = analyse(items);
     const critical = clusters.filter(c => c.priority === 'critical' && (c.category === 'security' || c.category === 'crash'));
+    const enriched = enrichClusters(clusters);
 
     // 3. write the ranked board (read by the in-app Prioritised Feedback view)
     try {
         await db.collection('system').doc('feedbackPriority').set({
-            clusters, totalReports: items.length, critical: critical.length,
+            clusters: enriched, totalReports: items.length, critical: critical.length,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         out.wrote.push('feedbackPriority');
