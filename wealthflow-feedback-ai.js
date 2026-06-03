@@ -21,15 +21,18 @@
      3. 2-WEEK WINDOW. Feedback older than 14 days from its send date is no
         longer shown. (For permanent deletion, run a TTL cleanup server-side in
         release-brain.js / a Firestore TTL policy — see notes.)
-     4. HONEST "Currently considering by System AI…" STATUS. Shown ONLY when it
-        is genuinely true: i.e. when the issue is scored critical/high by the
-        same deterministic engine the autonomous brain runs (and confirmed by the
-        server's system/feedbackPriority doc when it is readable). Items that are
-        not being prioritised show NO badge. Nothing is faked.
-     5. REAL-TIME. While the board is open it subscribes to your own feedback via
-        a single Firestore onSnapshot listener and re-renders on real data
-        changes (not DOM mutations — so it cannot loop). The listener is removed
-        when the board closes.
+     4. HONEST "System AI" STATUS BADGE. Driven ONLY by the autonomous server
+        brain's real decision (the `considering`/`status` fields it writes to
+        system/feedbackPriority). Shown when the brain has truly flagged the
+        issue: "Under review by System AI — top priority" (critical) or
+        "Queued by System AI for the next release" (high). If the server has not
+        flagged it, NO badge appears. There is NO local guess — nothing is faked.
+     5. REAL-TIME, SERVER-TRUTH. While the board is open it subscribes to BOTH
+        your own feedback AND the brain's decision doc (system/feedbackPriority)
+        via Firestore onSnapshot, so the badge updates the instant the brain's
+        decision changes. Opening the board also pings /api/release-brain?mode=
+        rerank so a critical report sent seconds ago is flagged immediately
+        instead of waiting for the daily cron. Listeners are removed on close.
 
    Privacy is unchanged: a normal user sees ONLY their own reports. The global,
    all-users view stays admin-only (allow-list). The server priority doc is used
@@ -109,6 +112,12 @@
     // ── auth helpers ──────────────────────────────────────────────────────────
     function _fbRef() { return window.firebase || (typeof firebase !== 'undefined' ? firebase : null); }
     function _dbRef() { var fb = _fbRef(); return window.db || (fb && fb.firestore ? fb.firestore() : null); }
+    // Stable fingerprint of an issue's text — byte-identical to _fingerprint() in
+    // release-brain.js, so we can match the SERVER's decision to the issue shown.
+    function _fingerprint(s) {
+        return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+            .split(' ').filter(function (w) { return w.length > 2; }).slice(0, 8).join(' ');
+    }
     function _uid() {
         try { if (window.currentUser && window.currentUser.uid) return window.currentUser.uid; } catch (_) {}
         try { var fb = _fbRef(); var u = fb && fb.auth ? fb.auth().currentUser : null; if (u && u.uid) return u.uid; } catch (_) {}
@@ -260,26 +269,30 @@
         } catch (_) {}
         return [];
     }
-    // True only when the issue is genuinely being prioritised: confirmed by the
-    // server doc as critical/high for a matching issue, OR (if the server doc is
-    // unreadable) scored critical/high by the SAME engine the brain runs.
-    function _isConsidering(cluster, serverClusters) {
-        if (serverClusters && serverClusters.length) {
-            for (var i = 0; i < serverClusters.length; i++) {
-                var sc = serverClusters[i];
-                var s = _sim(cluster.sample, sc.sample || sc.text || '');
-                if ((s >= 0.5 || (s >= 0.3 && (sc.priority === 'critical' || sc.priority === 'high'))) &&
-                    (sc.priority === 'critical' || sc.priority === 'high')) return true;
-            }
-            return false;
+    // The badge reflects the AUTONOMOUS SERVER BRAIN's real decision — nothing
+    // else. _consideringStatus returns the server's status for this issue
+    // ('considering' | 'queued') or null. Null means the system has NOT flagged
+    // it, so NO badge is shown. There is no local guess: if the server has not
+    // decided, we say nothing. This is the whole point — no fake "considering".
+    function _consideringStatus(cluster, serverClusters) {
+        if (!serverClusters || !serverClusters.length) return null;
+        var fp = _fingerprint(cluster.sample), match = null;
+        for (var i = 0; i < serverClusters.length; i++) {
+            var sc = serverClusters[i];
+            if ((sc.key && sc.key === fp) || _sim(cluster.sample, sc.sample || sc.text || '') >= 0.5) { match = sc; break; }
         }
-        // fallback (no server data): the shared deterministic engine would queue
-        // critical/high issues, so this is an honest proxy — not a fabricated one.
-        return cluster.priority === 'critical' || cluster.priority === 'high';
+        if (!match) return null;
+        if (match.considering === true) return match.status || 'considering';  // server's explicit decision
+        if (match.considering === false) return null;
+        // older server docs (written before these fields existed): use priority
+        if (match.priority === 'critical') return 'considering';
+        if (match.priority === 'high') return 'queued';
+        return null;
     }
+    function _isConsidering(cluster, serverClusters) { return _consideringStatus(cluster, serverClusters) !== null; }
 
     // ── UI: ranked board ──────────────────────────────────────────────────────
-    var _unsub = null, _boardOpen = false, _renderTimer = 0;
+    var _unsub = null, _unsubPriority = null, _boardOpen = false, _renderTimer = 0, _serverClusters = [];
 
     async function showBoard() {
         var admin = _isAdmin();
@@ -291,6 +304,12 @@
         // internally, which sets _boardOpen=false. Setting it before meant _render
         // saw _boardOpen=false and bailed, leaving the board stuck on "Loading…".
         _boardOpen = true;
+
+        // INSTANT ESCALATION: ask the autonomous brain to ingest + rank anything
+        // submitted since its last run, so a critical report sent seconds ago is
+        // flagged right now instead of at the next daily cron. Fire-and-forget —
+        // the live listener below delivers the fresh decision when it lands.
+        try { fetch('/api/release-brain?mode=rerank', { cache: 'no-store', keepalive: true }); } catch (_) {}
 
         // HARD SAFETY NET: if _refresh stalls for any reason, never leave the
         // user staring at "Loading…". After 7s, force a local-only render.
@@ -316,24 +335,37 @@
                     }, function () { /* listener error — ignore, manual refresh still works */ });
             }
         } catch (_) {}
+
+        // LIVE SERVER TRUTH: subscribe to the brain's decision doc. The badge
+        // reflects the autonomous system's CURRENT decision and updates the
+        // instant the brain changes it (e.g. right after the rerank above).
+        try {
+            var pdb = _dbRef();
+            if (pdb && !_unsubPriority) {
+                _unsubPriority = pdb.collection('system').doc('feedbackPriority')
+                    .onSnapshot(function (doc) {
+                        _serverClusters = (doc && doc.exists && doc.data() && Array.isArray(doc.data().clusters)) ? doc.data().clusters : [];
+                        if (!_boardOpen) return;
+                        clearTimeout(_renderTimer);
+                        _renderTimer = setTimeout(function () { _refresh(_isAdmin()); }, 200);
+                    }, function () { /* listener error — badge simply won't show; honest */ });
+            }
+        } catch (_) {}
     }
 
     async function _refresh(admin) {
-        var clusters = null, serverClusters = [];
+        var clusters = null;
         try {
-            if (admin) {
-                serverClusters = await _fetchServerClusters();
-                if (serverClusters.length) clusters = serverClusters;
-            }
+            if (!_serverClusters.length) _serverClusters = await _fetchServerClusters();  // seed before listener fires
+            if (admin && _serverClusters.length) clusters = _serverClusters;
             if (!clusters) {
                 var items = await _gather(admin);
                 clusters = _analyse(items);
-                serverClusters = serverClusters.length ? serverClusters : await _fetchServerClusters();
             }
         } catch (_) {
             /* never let an error leave the board stuck on "Loading…" */
         } finally {
-            _render(clusters || [], serverClusters || [], admin);
+            _render(clusters || [], _serverClusters || [], admin);
         }
     }
 
@@ -357,11 +389,18 @@
         var rows = clusters.map(function (c) {
             var pc = pColor[c.priority] || '#6b7280';
             var pct = Math.round(c.score * 100);
-            var considering = _isConsidering(c, serverClusters);
-            var badge = considering
-                ? '<div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);padding:3px 9px;border-radius:999px;">' +
-                  '<span style="width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 0 rgba(52,211,153,0.7);animation:wfPulseDot 1.6s infinite;"></span>Currently considering by System AI…</div>'
-                : '';
+            var cStatus = _consideringStatus(c, serverClusters);
+            // Wording appears ONLY when the server brain has truly flagged the
+            // issue. Neither line promises an automatic instant fix — they state
+            // the real status. Edit these two strings if you prefer other phrasing.
+            var badge = '';
+            if (cStatus === 'considering') {
+                badge = '<div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);padding:3px 9px;border-radius:999px;">' +
+                    '<span style="width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 0 rgba(52,211,153,0.7);animation:wfPulseDot 1.6s infinite;"></span>Under review by System AI — top priority</div>';
+            } else if (cStatus === 'queued') {
+                badge = '<div style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;color:#fbbf24;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);padding:3px 9px;border-radius:999px;">' +
+                    '<span style="width:6px;height:6px;border-radius:50%;background:#fbbf24;"></span>Queued by System AI for the next release</div>';
+            }
             return '<div style="padding:12px;border:1px solid var(--border,#1f2638);border-left:3px solid ' + pc + ';border-radius:11px;margin-bottom:9px;background:var(--bg2,#0a0e1a);">' +
                 '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
                     '<span style="font-size:11px;font-weight:800;color:' + pc + ';text-transform:uppercase;">' + _esc(c.priority) + '</span>' +
@@ -413,6 +452,8 @@
         if (id === 'wfFbBoard') {
             _boardOpen = false;
             try { if (_unsub) { _unsub(); _unsub = null; } } catch (_) {}
+            try { if (_unsubPriority) { _unsubPriority(); _unsubPriority = null; } } catch (_) {}
+            _serverClusters = [];
             clearTimeout(_renderTimer);
         }
         var ov = document.getElementById(id);
@@ -422,7 +463,8 @@
     window.wfFeedbackAI = {
         showBoard: showBoard, topPriority: topPriority, analyse: _analyse, classify: _classify, _close: _close,
         // exposed for testing / advanced use
-        _dedupe: _dedupe, _fresh: _fresh, _ts: _ts, _isConsidering: _isConsidering, _sim: _sim
+        _dedupe: _dedupe, _fresh: _fresh, _ts: _ts, _isConsidering: _isConsidering, _sim: _sim,
+        _consideringStatus: _consideringStatus, _fingerprint: _fingerprint
     };
-    console.log('[wfFeedbackAI] ✓ Feedback prioritisation engine v2.0 loaded (real counts · 2-week window · honest "considering" · live)');
+    console.log('[wfFeedbackAI] ✓ Feedback prioritisation engine v2.1 loaded (real counts · 2-week window · live server-truth badge · instant re-rank)');
 })();
