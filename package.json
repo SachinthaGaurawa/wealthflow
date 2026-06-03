@@ -9,7 +9,10 @@
   },
   "scripts": {
     "dev": "vercel dev",
-    "deploy": "vercel --prod"
+    "deploy": "vercel --prod",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ci": "vitest run --reporter=default"
   },
   "keywords": [
     "finance",
@@ -47,6 +50,10 @@
   "dependencies": {
     "nodemailer": "^6.9.13",
     "firebase-admin": "^12.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0",
+    "fast-check": "^3.19.0"
   },
   "overrides": {
     "uuid": "^11.0.0"

@@ -23,7 +23,7 @@
 
 // ── detection vocab (Sri Lanka–aware) ──────────────────────────────────────
 const RE = {
-  installment: /\b(instal?ment|easy\s*payment|flexi[\s-]*pay|e[\s-]?z\s*cash|emi|monthly\s*plan|0%\s*plan|\d{1,2}\s*(?:\/|of)\s*\d{1,2})\b/i,
+  installment: /\b(instal+ment|easy\s*payment|flexi[\s-]*pay|e[\s-]?z\s*cash|emi|monthly\s*plan|0%\s*plan|\d{1,2}\s*(?:\/|of)\s*\d{1,2})\b/i,
   subscription:/\b(netflix|spotify|youtube|prime|disney|hbo|icloud|google\s*(one|storage)|microsoft|office\s*365|adobe|dialog|mobitel|hutch|airtel|slt|peo\s*tv|chatgpt|openai|notion|canva|dropbox)\b/i,
   ccPayment:  /\b(payment\s*[-–]?\s*thank\s*you|payment\s*received|thank\s*you\s*for\s*your\s*payment|online\s*payment|card\s*payment|settlement)\b/i,
   fee:        /\b(annual\s*fee|late\s*(payment\s*)?fee|over\s*limit|finance\s*charge|interest|service\s*charge|joining\s*fee|stamp\s*duty|vat)\b/i,
