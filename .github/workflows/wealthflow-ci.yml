@@ -1,0 +1,69 @@
+name: WealthFlow CI (free)
+
+# Runs on every pull request to main. 100% free on GitHub Actions
+# (2,000 free minutes/month on private repos; unlimited on public).
+# This is the SAFETY HARNESS: no change — human OR AI-authored — reaches
+# production without (1) the test suite passing and (2) the risk gate passing.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  test:
+    name: Tests + fuzz (shadow harness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install
+        run: npm ci || npm install
+      - name: Run test suite (Vitest + fast-check property/fuzz)
+        run: npm test
+      # Make this a REQUIRED status check in branch protection so nothing
+      # merges on red. This is the gate that contains AI mistakes.
+
+  risk-gate:
+    name: Risk gate (sensitive paths need human approval)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        env:
+          BASE: ${{ github.base_ref }}
+          # PRs carrying this label have a human approver and may touch sensitive paths.
+          HAS_HUMAN_APPROVAL: ${{ contains(github.event.pull_request.labels.*.name, 'human-approved') }}
+        run: |
+          set -e
+          git fetch origin "$BASE" --depth=1 || true
+          CHANGED=$(git diff --name-only "origin/$BASE...HEAD" || git diff --name-only HEAD~1...HEAD)
+          echo "Changed files:"; echo "$CHANGED"
+
+          # SENSITIVE PATHS — money, auth, security, data rules, the service worker,
+          # and dependency manifests. A change here may NOT auto-merge; it requires a
+          # human-approved label (and, via CODEOWNERS, a human review).
+          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|.*auth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
+
+          HITS=$(echo "$CHANGED" | grep -iE "$SENSITIVE_REGEX" || true)
+          if [ -n "$HITS" ]; then
+            echo "::group::Sensitive paths touched"
+            echo "$HITS"
+            echo "::endgroup::"
+            if [ "$HAS_HUMAN_APPROVAL" = "true" ]; then
+              echo "✓ Sensitive change is carrying the 'human-approved' label — allowed."
+            else
+              echo "::error::This PR changes money/auth/security/data-rule files. It must be reviewed and labelled 'human-approved' before merge. Auto-merge is blocked for these paths by design."
+              exit 1
+            fi
+          else
+            echo "✓ No sensitive paths touched — eligible for auto-merge once tests are green."
+          fi
