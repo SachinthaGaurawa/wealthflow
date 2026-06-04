@@ -70,6 +70,25 @@ export function fixPrompt(issue, filename, content) {
     ].join('\n');
 }
 
+// ── stuck-detection (idea adapted from ralphai) ──────────────────────────────
+// AI agents waste tokens (and open junk PRs) when they keep "fixing" an issue they
+// can't actually solve. We stop after MAX_ATTEMPTS, and we stop early if the agent
+// keeps producing the SAME output (no progress) — a fresh attempt that doesn't move
+// is a signal to hand the issue to a human instead of churning.
+export const MAX_ATTEMPTS = 3;
+export function isStuck(proposalForIssue) {
+    const p = proposalForIssue || {};
+    const attempts = Number(p.attempts || 0);
+    if (attempts >= MAX_ATTEMPTS) return { stuck: true, reason: 'max attempts (' + attempts + ') reached' };
+    const sigs = Array.isArray(p.outputSignatures) ? p.outputSignatures : [];
+    // two identical consecutive outputs = no progress
+    if (sigs.length >= 2 && sigs[sigs.length - 1] === sigs[sigs.length - 2]) {
+        return { stuck: true, reason: 'no progress (identical output twice)' };
+    }
+    return { stuck: false };
+}
+
+
 // strip accidental ```fences / language tags the model may add
 export function cleanCode(text) {
     let t = String(text || '').trim();
