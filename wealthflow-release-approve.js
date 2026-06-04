@@ -138,6 +138,41 @@
         if (ov) { ov.style.opacity = '0'; setTimeout(function () { ov.remove(); }, 200); }
     }
 
-    window.wfReleaseApprove = { showPanel: showPanel, _close: _close, _act: _act, _getPending: _getPending };
+    // ── self-inject a matching card into Settings (mirrors wealthflow-intel-panel) ──
+    function _inject() {
+        if (document.getElementById('wfReleasePanel')) return true;
+        var host = null;
+        var intel = document.getElementById('wfIntelPanel');           // sit right after the AI engine card
+        if (intel && intel.closest) host = intel.closest('.settings-section') || intel;
+        if (!host) { var all = document.querySelectorAll('.settings-section'); if (all.length) host = all[all.length - 1]; }
+        if (!host || !host.parentNode) return false;
+        var card = document.createElement('div');
+        card.className = 'settings-section';
+        card.id = 'wfReleasePanel';
+        card.style.cssText = 'background:linear-gradient(145deg,rgba(245,166,35,0.05),var(--card));border:1px solid var(--border2);';
+        card.innerHTML =
+            '<div class="settings-title" style="color:#f5a623;">Autonomous Release</div>' +
+            '<div class="setting-row">' +
+                '<div class="setting-info">' +
+                    '<div class="setting-label">Review &amp; approve release</div>' +
+                    '<div class="setting-desc">The system proposes the next release from user feedback and drafts the fix list. Tap to review the proposal and ship it with one approval. Only the owner can approve.</div>' +
+                '</div>' +
+                '<button id="wfReleaseOpenBtn" style="padding:9px 16px;border-radius:10px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;cursor:pointer;white-space:nowrap;">Review</button>' +
+            '</div>';
+        host.parentNode.insertBefore(card, host.nextSibling);
+        var btn = document.getElementById('wfReleaseOpenBtn');
+        if (btn) btn.onclick = function () { showPanel(); };
+        return true;
+    }
+    function _tryInjectRepeatedly() {
+        var tries = 0;
+        var t = setInterval(function () { if (_inject() || ++tries > 30) clearInterval(t); }, 600);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(_tryInjectRepeatedly, 2600); });
+    else setTimeout(_tryInjectRepeatedly, 1200);
+    window.addEventListener('hashchange', function () { setTimeout(_inject, 250); });
+    document.addEventListener('click', function () { setTimeout(function () { if (!document.getElementById('wfReleasePanel')) _inject(); }, 400); }, true);
+
+    window.wfReleaseApprove = { showPanel: showPanel, _close: _close, _act: _act, _getPending: _getPending, _inject: _inject };
     console.log('[wfReleaseApprove] ✓ Release approval panel loaded — autonomous proposal, one-tap owner approval');
 })();
