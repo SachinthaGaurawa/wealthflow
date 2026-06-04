@@ -220,6 +220,27 @@ export default async function handler(req, res) {
         } catch (e) { out.note += ' priority write failed;'; }
         out.mode = 'rerank';
         out.summary = { reports: ritems.length, issues: rclusters.length, critical: rcritical.length };
+
+        // If critical feedback is present, generate the release PROPOSAL right now
+        // so the owner's "Review & Approve" panel populates immediately — the system
+        // proposes the moment it detects a critical issue, not only on the daily run.
+        // (A human still approves; this only drafts the proposal.)
+        if (rcritical.length > 0) {
+            try {
+                let curV = '7.13.0';
+                try { const m = await db.collection('system').doc('manifest').get(); if (m.exists && m.data().latest) curV = m.data().latest; } catch (_) {}
+                const nextV = bumpPatch(curV);
+                await db.collection('system').doc('pendingRelease').set({
+                    suggestedVersion: nextV, basedOn: curV, urgent: true,
+                    shouldRelease: true, reason: 'critical-feedback',
+                    notes: buildNotes(nextV, rclusters, true),
+                    proposedChanges: proposedChangesFrom(rclusters),
+                    approval: { required: true, approved: false },
+                    generatedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+                out.wrote.push('pendingRelease(rerank)');
+            } catch (e) { out.note += ' rerank proposal write failed;'; }
+        }
         return _send(res, out);
     }
 
