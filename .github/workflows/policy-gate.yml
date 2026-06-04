@@ -1,0 +1,51 @@
+name: Policy gate — Conftest/OPA (Phase 4)
+
+# Deterministic guardrail that runs on every PR as a REQUIRED status check.
+# It builds a JSON description of the PR (changed files + labels) and evaluates it
+# against policy/wealthflow.rego with Conftest. Any `deny` blocks the merge.
+# This sits under the multi-model consensus as a mathematically-checkable firewall.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  conftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build PR input for policy evaluation
+        env:
+          BASE: ${{ github.base_ref }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        shell: bash
+        run: |
+          set -e
+          git fetch origin "$BASE" --depth=1 || true
+          FILES=$(git diff --name-only "origin/$BASE...HEAD" 2>/dev/null || git diff --name-only HEAD~1...HEAD)
+          export FILES_RAW="$FILES"
+          node -e '
+            const files=(process.env.FILES_RAW||"").split("\n").filter(Boolean);
+            const labels=JSON.parse(process.env.LABELS||"[]");
+            require("fs").writeFileSync("pr-input.json", JSON.stringify({files,labels},null,2));
+            console.log(JSON.stringify({files,labels},null,2));
+          '
+
+      - name: Install Conftest
+        run: |
+          CT=0.56.0
+          curl -sSL "https://github.com/open-policy-agent/conftest/releases/download/v${CT}/conftest_${CT}_Linux_x86_64.tar.gz" | tar xz conftest
+          sudo mv conftest /usr/local/bin/
+
+      - name: Evaluate policy
+        run: conftest test pr-input.json --policy policy/ --all-namespaces

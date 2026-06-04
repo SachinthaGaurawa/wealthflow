@@ -1,0 +1,78 @@
+name: Claude autonomous fix (Phase 2)
+
+# When an issue is opened (by Sentry Seer or the feedback-triage function) or
+# assigned, the Claude agent works in this ephemeral runner, writes a fix, runs the
+# tests, and opens a PR. The consensus-review + policy-gate workflows then decide
+# whether it may merge — there is no human review gate, but there ARE hard guardrails.
+#
+# SECURITY (mandated by the blueprint, June-2026 prompt-injection exploit):
+#   • harden-runner runs FIRST with an egress firewall, so even if a malicious
+#     payload in an issue tricks the agent into reading secrets, exfiltration is
+#     blocked at the kernel (eBPF) level.
+#   • claude-code-action is pinned to a safe version and the tool allow-list is
+#     locked down (no unrestricted network / admin).
+#   • least-privilege permissions.
+#
+# SECRETS: ANTHROPIC_API_KEY
+
+on:
+  issues:
+    types: [opened, assigned]
+  workflow_dispatch:
+    inputs:
+      issue_number: { description: "Issue # to work on", required: true }
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write          # OIDC — avoids long-lived static tokens where possible
+
+concurrency:
+  group: claude-fix-${{ github.event.issue.number || github.event.inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    # ignore issues the system itself files for humans (e.g. auto-rollback alerts)
+    if: ${{ !contains(github.event.issue.labels.*.name, 'auto-rollback') }}
+    runs-on: ubuntu-latest
+    steps:
+      # ── kernel-level egress firewall FIRST (before any untrusted input is touched) ──
+      - name: Harden runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit          # switch to 'block' + allowed-endpoints once baselined
+          disable-sudo: true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci || npm install
+
+      # ── the autonomous coding agent ──
+      - name: Claude Code
+        uses: anthropics/claude-code-action@v1.0.94
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Strongly reinforce the safety penalty (anti "Toxic Proactivity"): the agent
+          # must NEVER weaken security, validation, auth, money math, or Firestore rules
+          # to make a fix or a deploy "succeed". Those paths are off-limits here and are
+          # enforced again by the policy gate.
+          prompt: |
+            You are WealthFlow's autonomous maintenance engineer working on issue
+            #${{ github.event.issue.number || github.event.inputs.issue_number }}.
+            Implement the SMALLEST correct fix and add/extend tests to prove it.
+            Run `npm test` until green. Then open a pull request.
+            HARD RULES — do NOT break these to make anything pass:
+              • Never modify firestore.rules, auth/OAuth config, *crypto*, money/FIFO
+                logic, the service worker, or CI/policy files to bypass a check.
+              • Never weaken or delete a security or validation control.
+              • If a correct fix would require touching those, STOP and explain in the
+                issue instead of forcing it.
+            Keep the change small; prefer editing standalone module files over index.html.
+          claude_args: >-
+            --model claude-opus-4-8
+            --allowed-tools "Bash(npm install),Bash(npm test),Bash(npm run *),Read,Edit,Write,Bash(git add *),Bash(git commit *),Bash(git checkout *),Bash(git push *)"

@@ -1,0 +1,38 @@
+name: Consensus review board (Phase 3)
+
+# Runs the multi-model consensus on every PR. Make this a REQUIRED status check in
+# branch protection — then a PR can only merge if the independent reviewers
+# unanimously PASS. This is the algorithmic replacement for human review.
+#
+# SECRETS (each optional, all configured ones must pass; fails closed if none):
+#   WealthFlow_API_Key (Gemini), DEEPSEEK_API_KEY or XAI_API_KEY
+#   NOTE: ANTHROPIC_API_KEY is deliberately NOT exposed here.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Multi-model consensus
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          WealthFlow_API_Key: ${{ secrets.WealthFlow_API_Key }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: node consensus-review.mjs
