@@ -1,6 +1,45 @@
 {
   "headers": [
     {
+      "source": "/wealthflow-release-approve.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        }
+      ]
+    },
+    {
+      "source": "/wealthflow-recovery.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        }
+      ]
+    },
+    {
+      "source": "/wealthflow-live-update.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        }
+      ]
+    },
+    {
       "source": "/index.html",
       "headers": [
         {
@@ -53,7 +92,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -66,7 +105,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -79,7 +118,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -92,7 +131,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -105,7 +144,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -118,7 +157,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -131,7 +170,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -144,7 +183,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -157,7 +196,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -170,7 +209,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -183,7 +222,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -209,7 +248,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -222,7 +261,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -235,7 +274,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -248,7 +287,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -261,7 +300,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -274,7 +313,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=3600, must-revalidate"
+          "value": "no-cache, must-revalidate"
         },
         {
           "key": "Content-Type",

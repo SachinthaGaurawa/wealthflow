@@ -263,6 +263,12 @@
          Adds window.wfReleaseApprove. Wire to an owner button:
          onclick="wfReleaseApprove.showPanel()". -->
     <script src="wealthflow-release-approve.js" defer></script>
+    <!-- PWA instant-update delivery (PDF Phase 5): watches /api/version for the live
+         Vercel deploy SHA and seamlessly pulls new deployments onto the device
+         (skipWaiting + reload). This is the fix for "users never receive updates". -->
+    <script src="wealthflow-live-update.js" defer></script>
+    <!-- Self-heal escape hatch: recovers from a corrupted/stuck state. -->
+    <script src="wealthflow-recovery.js" defer></script>
 
     
 
