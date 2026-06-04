@@ -42,7 +42,7 @@
 (function () {
     'use strict';
     if (window.WF_FEEDBACK_AI) return;
-    window.WF_FEEDBACK_AI = '2.0';
+    window.WF_FEEDBACK_AI = '2.1';
 
     var TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
 
