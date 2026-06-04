@@ -1,0 +1,64 @@
+name: Autonomous fix agent (free)
+
+# Phase 2: on a schedule, the agent reads the brain's proposal, drafts a code fix
+# with the FREE Gemini tier, and opens a Pull Request for review. Your CI
+# (wealthflow-ci.yml) tests it; you approve before it ships. 100% free.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'     # every 30 min (GitHub may delay on free tier — fine)
+  workflow_dispatch: {}          # or run it manually anytime
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: autonomous-fix
+  cancel-in-progress: false
+
+jobs:
+  draft-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install deps
+        run: npm ci || npm install
+      - name: Install firebase-admin (agent dependency)
+        run: npm install firebase-admin --no-save
+
+      - name: Run the fix agent
+        id: agent
+        continue-on-error: true
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          node autonomous-fix-agent.js
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Open Pull Request (only if a fix was written)
+        if: steps.agent.outputs.exit == '0' && hashFiles('ai-fix-pr.json') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE=$(node -e "console.log(require('./ai-fix-pr.json').title)")
+          FILE=$(node -e "console.log(require('./ai-fix-pr.json').file)")
+          node -e "console.log(require('./ai-fix-pr.json').body)" > pr-body.txt
+          BRANCH="ai-fix/$(date +%s)"
+          git config user.name "wealthflow-agent"
+          git config user.email "agent@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add "$FILE"                      # only the fixed file is committed
+          git commit -m "$TITLE" -- "$FILE"
+          git push origin "$BRANCH"
+          # 'ai-fix' label marks it for human review; it is NOT 'auto-safe', so the
+          # auto-merge workflow will not touch it. Create the label if missing.
+          gh label create ai-fix --color FFA500 --description "AI-drafted, needs human review" 2>/dev/null || true
+          gh pr create --title "$TITLE" --body-file pr-body.txt --base main --head "$BRANCH" --label ai-fix
