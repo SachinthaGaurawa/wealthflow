@@ -1,0 +1,82 @@
+name: Health watchdog + auto-rollback (free)
+
+# Phase 0 — closes the self-healing loop. On a schedule it probes /api/health.
+# A rollback only fires on a CONFIRMED sustained outage (two failed checks 60s
+# apart — a blip won't trigger it), and a circuit breaker prevents repeated
+# rollbacks. Uses Vercel Instant Rollback (routing-layer; no git push, so it does
+# not conflict with branch protection or any other workflow). 100% free.
+#
+# Setup (free):
+#   secrets: VERCEL_TOKEN  (Vercel → Account Settings → Tokens)
+#   vars:    HEALTH_URL    (e.g. https://your-app.vercel.app/api/health)
+#            VERCEL_ORG_ID, VERCEL_PROJECT_ID  (from `vercel link` / project settings)
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'      # every 5 min (GitHub may delay on free tier — fine)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: health-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe health (twice, 60s apart) and decide
+        id: probe
+        env:
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+        run: |
+          set +e
+          if [ -z "$HEALTH_URL" ]; then echo "HEALTH_URL not set — skipping."; echo "decision=healthy" >> "$GITHUB_OUTPUT"; exit 0; fi
+          probe() { curl -s -o /dev/null -w "%{http_code}" --max-time 12 "$HEALTH_URL"; }
+          C1=$(probe); echo "check 1: HTTP $C1"
+          if [ "$C1" = "200" ]; then echo "healthy"; echo "decision=healthy" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "first check failed — waiting 60s to confirm (avoid blips)…"; sleep 60
+          C2=$(probe); echo "check 2: HTTP $C2"
+          if [ "$C2" = "200" ]; then echo "recovered on its own"; echo "decision=healthy" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "CONFIRMED sustained failure (HTTP $C1 then $C2)."
+          echo "decision=rollback" >> "$GITHUB_OUTPUT"
+          echo "codes=$C1/$C2" >> "$GITHUB_OUTPUT"
+
+      - name: Circuit breaker (skip if we already acted recently)
+        id: breaker
+        if: steps.probe.outputs.decision == 'rollback'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # if an auto-rollback issue is already open, a human is on it — don't pile on
+          OPEN=$(gh issue list --label auto-rollback --state open --json number --jq 'length' 2>/dev/null || echo 0)
+          if [ "$OPEN" != "0" ]; then echo "open auto-rollback issue exists — skipping."; echo "go=no" >> "$GITHUB_OUTPUT";
+          else echo "go=yes" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Roll back to previous deployment (Vercel Instant Rollback)
+        if: steps.probe.outputs.decision == 'rollback' && steps.breaker.outputs.go == 'yes'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then echo "VERCEL_TOKEN not set — cannot auto-rollback. The issue below will alert you to roll back manually."; exit 0; fi
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" || true
+          # roll the production alias back to the previous good deployment
+          npx --yes vercel@latest rollback --yes --token="$VERCEL_TOKEN" || \
+          npx --yes vercel@latest rollback --token="$VERCEL_TOKEN" --yes || \
+          echo "Automatic rollback command failed — see the issue; roll back from the Vercel dashboard (Instant Rollback)."
+
+      - name: Open an alert issue
+        if: steps.probe.outputs.decision == 'rollback' && steps.breaker.outputs.go == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CODES: ${{ steps.probe.outputs.codes }}
+        run: |
+          gh label create auto-rollback --color B60205 --description "Automated health rollback" 2>/dev/null || true
+          gh issue create --label auto-rollback \
+            --title "Auto-rollback triggered: health check failing ($CODES)" \
+            --body "The health watchdog saw /api/health fail twice 60s apart (HTTP $CODES) and triggered a Vercel Instant Rollback to the previous deployment. Please investigate the last release. Close this issue once the app is healthy again (closing re-arms the watchdog)."
