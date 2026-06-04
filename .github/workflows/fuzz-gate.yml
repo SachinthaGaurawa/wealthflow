@@ -1,0 +1,76 @@
+name: Fuzz gate — sensitive paths (Phase 4 wiring)
+
+# Completes the sensitive-path guardrail. When a PR changes a critical file
+# (firestore.rules, auth/OAuth, *crypto*, money/FIFO/allocator), this job runs the
+# intensive property/fuzz suite. ONLY if it passes does it apply the `fuzz-passed`
+# label — which is exactly what policy/wealthflow.rego requires before such a change
+# may merge. On failure it removes the label and fails the check, so a risky change
+# to a critical path is mathematically barred from merging.
+#
+# Make this a REQUIRED status check together with policy-gate. The policy-gate
+# workflow re-runs on the `labeled` event, so adding the label here unblocks it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write     # to add/remove the fuzz-passed label
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Detect sensitive-path changes
+        id: detect
+        env:
+          BASE: ${{ github.base_ref }}
+        shell: bash
+        run: |
+          git fetch origin "$BASE" --depth=1 || true
+          FILES=$(git diff --name-only "origin/$BASE...HEAD" 2>/dev/null || git diff --name-only HEAD~1...HEAD)
+          echo "$FILES"
+          if echo "$FILES" | grep -E 'firestore\.rules|firebase\.json|auth|oauth|crypto|fifo-reconcile|allocator|send-otp|verify-otp' >/dev/null; then
+            echo "sensitive=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "sensitive=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run intensive fuzz/property suite
+        if: steps.detect.outputs.sensitive == 'yes'
+        id: fuzz
+        continue-on-error: true
+        env:
+          FUZZ_RUNS: '100000'    # the blueprint's heavy randomized-iteration gate
+        run: npm ci && npm test
+
+      - name: Apply or revoke the fuzz-passed label
+        if: steps.detect.outputs.sensitive == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh label create fuzz-passed --color 0E8A16 --description "Passed intensive fuzz gate" 2>/dev/null || true
+          if [ "${{ steps.fuzz.outcome }}" = "success" ]; then
+            echo "Fuzz passed → labelling fuzz-passed"
+            gh pr edit "$PR" --add-label fuzz-passed
+          else
+            echo "Fuzz FAILED → removing fuzz-passed and blocking"
+            gh pr edit "$PR" --remove-label fuzz-passed 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Non-sensitive change — fuzz gate not required
+        if: steps.detect.outputs.sensitive == 'no'
+        run: echo "No sensitive paths changed; fuzz gate not required for this PR."
