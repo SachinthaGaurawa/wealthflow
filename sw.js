@@ -184,4 +184,22 @@ self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
     }
+    // ESCAPE HATCH (Phase 0 self-heal): if the app ever detects it is broken/stuck,
+    // it posts { type: 'WF_HARD_RESET' }. We purge ALL caches and unregister this
+    // worker, then tell every open tab to reload from the network — guaranteeing a
+    // clean recovery to the latest deployed code. This is the safety net that makes
+    // auto-deploy recoverable; it never serves stale content.
+    if (event.data && event.data.type === 'WF_HARD_RESET') {
+        event.waitUntil((async () => {
+            try {
+                const keys = await caches.keys();
+                await Promise.all(keys.map(k => caches.delete(k)));
+            } catch (_) {}
+            try {
+                const cs = await self.clients.matchAll({ includeUncontrolled: true });
+                cs.forEach(c => { try { c.postMessage({ type: 'WF_RESET_DONE' }); } catch (_) {} });
+            } catch (_) {}
+            try { await self.registration.unregister(); } catch (_) {}
+        })());
+    }
 });
