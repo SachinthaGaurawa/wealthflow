@@ -1,0 +1,41 @@
+# CODEOWNERS — who must review changes to sensitive areas.
+# Combined with branch protection ("Require review from Code Owners") and GitHub's
+# required-reviewer rule, this forces a human review on anything touching money,
+# auth, security, data-access rules, the service worker, or dependencies — while
+# everything else can be auto-merged by the CI + auto-merge workflow.
+#
+# Replace @OWNER with your GitHub username (keep the @).
+
+# Money / accounting / allocation logic
+*fifo-reconcile*        @OWNER
+*allocator*             @OWNER
+predict-wealth.js       @OWNER
+market-data.js          @OWNER
+fx-rate.js              @OWNER
+
+# Authentication & one-time-passwords
+*auth*                  @OWNER
+send-otp.js             @OWNER
+verify-otp.js           @OWNER
+
+# Security / crypto / data-access rules
+*crypto*                @OWNER
+firestore.rules         @OWNER
+*.rules                 @OWNER
+firebase.json           @OWNER
+
+# Release / deploy control surface (the autonomous pipeline itself)
+approve-release.js      @OWNER
+release-brain.js        @OWNER
+.github/workflows/      @OWNER
+
+# Service worker (a bad SW can trap users on a broken cached build)
+sw.js                   @OWNER
+
+# Dependencies (supply-chain risk)
+package.json            @OWNER
+package-lock.json       @OWNER
+vercel.json             @OWNER
+
+# The monolith (holds money math + auth alongside UI — gate until modularised)
+index.html              @OWNER
