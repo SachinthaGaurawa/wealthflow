@@ -272,6 +272,12 @@
     <!-- Credit-card auto-✅ reconciliation engine (IMG_8884): cumulative-credit,
          full-coverage, oldest-first matching + dual SMS parser. window.WFReconcile -->
     <script src="wealthflow-cc-reconcile.js" defer></script>
+    <!-- Accurate text-layer statement parsing (DFCC etc.): reads EVERY row from a
+         text PDF and validates each amount against the running balance. window.WFStatementParser -->
+    <script src="wealthflow-statement-parser.js" defer></script>
+    <!-- Password-protected PDF support: prompts for a password ONLY when a PDF is
+         encrypted, unlocks it, and feeds clean text to the parser. window.WFPdfUnlock -->
+    <script src="wealthflow-pdf-unlock.js" defer></script>
 
     
 

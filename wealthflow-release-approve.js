@@ -173,6 +173,22 @@
     window.addEventListener('hashchange', function () { setTimeout(_inject, 250); });
     document.addEventListener('click', function () { setTimeout(function () { if (!document.getElementById('wfReleasePanel')) _inject(); }, 400); }, true);
 
+    // PERSISTENCE FIX: the card used to vanish when the Settings screen re-rendered,
+    // because the initial retry loop stops after the first success. A debounced
+    // MutationObserver now re-injects the card whenever it goes missing while a
+    // Settings section is on screen — so "Autonomous Release" no longer disappears.
+    try {
+        var _reinjectScheduled = false;
+        var _obs = new MutationObserver(function () {
+            if (_reinjectScheduled) return;
+            if (document.getElementById('wfReleasePanel')) return;          // already there
+            if (!document.querySelector('.settings-section')) return;        // not on Settings
+            _reinjectScheduled = true;
+            setTimeout(function () { _reinjectScheduled = false; _inject(); }, 300);
+        });
+        if (document.body) _obs.observe(document.body, { childList: true, subtree: true });
+    } catch (_) {}
+
     window.wfReleaseApprove = { showPanel: showPanel, _close: _close, _act: _act, _getPending: _getPending, _inject: _inject };
     console.log('[wfReleaseApprove] ✓ Release approval panel loaded — autonomous proposal, one-tap owner approval');
 })();
