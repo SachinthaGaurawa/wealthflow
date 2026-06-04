@@ -30,6 +30,13 @@
             var r = await fetch('/api/version', { cache: 'no-store' });
             if (!r.ok) return null;
             var j = await r.json();
+            // keep the visible App Version label in sync with the deployed version
+            try {
+                if (j && j.version) {
+                    var t = document.getElementById('wfVerText'); if (t) t.textContent = 'v' + j.version;
+                    var p = document.getElementById('wfVerPill'); if (p) p.textContent = 'v' + j.version + ' ✓';
+                }
+            } catch (_) {}
             return j && j.sha ? String(j.sha) : null;
         } catch (_) { return null; }
     }
