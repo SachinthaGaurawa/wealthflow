@@ -865,6 +865,47 @@
             }
         }
 
+        // ── HTML e-STATEMENT FAST PATH (v7.8.0) ──────────────────────────────
+        // Banks like Nations Trust send statements as an encrypted HTML file that
+        // unlocks with the date of birth (DDMMYYYY). Open it DIRECTLY: prompt for
+        // the DOB, decrypt in-app, and import the rows — no "HTML Viewer Q" app.
+        var _isHtml = file && (/text\/html/i.test(file.type || '') || /\.html?$/i.test(file.name || ''));
+        if (isCCOT && _isHtml && window.WFHtmlStatement && typeof window._showCCReviewModal === 'function') {
+            try {
+                if (showsOverlay && typeof window._showScanOverlay === 'function') window._showScanOverlay('🔓 Opening e-statement…', 'Unlocking and reading your statement', 20);
+                var _hres = await window.WFHtmlStatement.getStatementText(file);
+                if (_hres && _hres.cancelled) { if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay(); inputEl.value = ''; return; }
+                var _htx = (_hres && _hres.transactions) || [];
+                if (!_htx.length && _hres && _hres.text && window.WFStatementParser && window.WFStatementParser.hasTextLayer(_hres.text)) {
+                    _htx = (window.WFStatementParser.parseStatementText(_hres.text) || []);
+                }
+                if (_htx.length) {
+                    var _parsedH = {
+                        transactions: _htx.map(function (r) {
+                            var d = String(r.date || ''); var m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); if (m) d = m[3] + '-' + m[2] + '-' + m[1];
+                            return { date: d, description: r.narration, type: /cash advance|atm|cash withdraw/i.test(r.narration) ? 'cash_advance' : 'purchase', amount: r.amount, direction: r.direction };
+                        }),
+                        card_last4: '', currency: 'LKR', statement_period: ''
+                    };
+                    if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                    if (typeof window.notify === 'function') window.notify('✅ Imported ' + _htx.length + ' transactions from your e-statement.', 'success');
+                    window._showCCReviewModal(_parsedH, ccotBank || 'Bank Statement');
+                    inputEl.value = '';
+                    return;
+                }
+                if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                if (typeof window.notify === 'function') window.notify((_hres && _hres.notStatement) ? "That HTML file doesn't look like a bank statement." : "Couldn't read transactions from that e-statement.", 'warn');
+                inputEl.value = '';
+                return; // never fall through to image/PDF processing for an HTML file
+            } catch (_eH) {
+                console.warn('[' + V + '] HTML e-statement failed:', _eH && _eH.message);
+                if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                if (typeof window.notify === 'function') window.notify('Could not open that e-statement file.', 'warn');
+                inputEl.value = '';
+                return;
+            }
+        }
+
         // ── TEXT-PDF FAST PATH (v7.6.0) ──────────────────────────────────────
         // For statement/CC PDFs that have a real text layer, read the text
         // DIRECTLY (far more accurate than rendering to an image + AI OCR) and
