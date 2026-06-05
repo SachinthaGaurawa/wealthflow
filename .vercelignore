@@ -1,0 +1,26 @@
+# GitHub-Actions-only scripts (These have no web handlers)
+autonomous-fix-agent.js
+consensus-review.js
+consensus-review.mjs
+
+# Scratch, debug, and release tooling (These use heavy dependencies and break the build)
+release.cjs
+scratch_filebin.cjs
+scratch_firebase.cjs
+scratch_gofile.cjs
+scratch_puppeteer.cjs
+*.map
+
+# Test configurations and test folders
+vitest.config.js
+vitest_config.js
+router_test.js
+dedup_test.js
+*.test.js
+Test/
+tests/
+
+# CI Workflows, Policies, and Docs
+.github/
+policy/
+*.md
