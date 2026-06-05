@@ -865,6 +865,58 @@
             }
         }
 
+        // ── TEXT-PDF FAST PATH (v7.6.0) ──────────────────────────────────────
+        // For statement/CC PDFs that have a real text layer, read the text
+        // DIRECTLY (far more accurate than rendering to an image + AI OCR) and
+        // show every row in the review modal. This needs NO backend, so it works
+        // even when /api/vision-scan and /api/ai are unreachable — which is the
+        // 405 the user was hitting. Prompts for a password ONLY if the PDF is
+        // encrypted. Falls through to the vision cascade for scanned-image PDFs
+        // or on any failure.
+        if (isCCOT && isPdf && window.WFPdfUnlock && window.WFStatementParser && typeof window._showCCReviewModal === 'function') {
+            try {
+                if (showsOverlay && typeof window._showScanOverlay === 'function')
+                    window._showScanOverlay('📄 Reading statement text…', 'Extracting every line directly from the PDF', 20);
+                var _res = await window.WFPdfUnlock.getStatementText(file);
+                if (_res && _res.cancelled) {
+                    if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                    inputEl.value = '';
+                    return;
+                }
+                if (_res && _res.text && window.WFStatementParser.hasTextLayer(_res.text)) {
+                    var _rows = window.WFStatementParser.parseStatementText(_res.text);
+                    if (_rows && _rows.length) {
+                        var _toISO = function (d) { var m = String(d).match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? (m[3] + '-' + m[2] + '-' + m[1]) : (d || ''); };
+                        var _cardTok = (_res.text.match(/\d{6}[xX*]+\d{4}/) || [''])[0];
+                        var _parsed = {
+                            transactions: _rows.map(function (r) {
+                                return {
+                                    date: _toISO(r.date),
+                                    description: r.narration,
+                                    type: /cash advance|atm|cash withdraw/i.test(r.narration) ? 'cash_advance' : 'purchase',
+                                    amount: r.amount,
+                                    direction: r.direction,
+                                    _balanceVerified: r.valid
+                                };
+                            }),
+                            card_last4: (_cardTok.match(/\d{4}$/) || [''])[0],
+                            currency: 'LKR',
+                            statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || ''
+                        };
+                        if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
+                        if (typeof window.notify === 'function') window.notify('✅ Read ' + _rows.length + ' transactions directly from the PDF — high accuracy.', 'success');
+                        window._showCCReviewModal(_parsed, ccotBank || 'Bank Statement');
+                        inputEl.value = '';
+                        return;
+                    }
+                }
+                console.log('[' + V + '] PDF has no text layer → vision cascade');
+            } catch (_eTxt) {
+                console.warn('[' + V + '] text-PDF fast path failed, using vision:', _eTxt && _eTxt.message);
+                // fall through to the vision cascade below
+            }
+        }
+
         try {
             // ---- STEP A: file extraction ----
             if (showsOverlay && typeof window._showScanOverlay === 'function')
