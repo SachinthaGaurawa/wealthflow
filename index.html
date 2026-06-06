@@ -30,6 +30,24 @@
         var fails = getFails() + 1;
         setFails(fails);
 
+        // ── crash-loop guard: revert an unrenderable theme ──────────────────────
+        // On some iOS devices, switching to Light mode can crash the web process
+        // before boot finishes — and because the chosen theme is saved, every
+        // reload re-applies it and crashes again ("A problem repeatedly occurred"),
+        // locking the user out. If a previous boot failed, fall back to the safe
+        // Dark theme BEFORE anything renders, so the app can actually start.
+        if (fails >= 2) {
+            try {
+                var _sv = JSON.parse(localStorage.getItem('wf2_settings') || '{}');
+                if (_sv && _sv.theme && _sv.theme !== 'dark') {
+                    _sv.theme = 'dark';
+                    localStorage.setItem('wf2_settings', JSON.stringify(_sv));
+                    localStorage.setItem('wf_theme_reverted', '1');
+                }
+            } catch (_) {}
+            try { document.documentElement.setAttribute('data-theme', 'dark'); } catch (_) {}
+        }
+
         function markSuccess() {
             if (booted) return;
             booted = true;
@@ -282,6 +300,8 @@
     <script src="wealthflow-route.js" defer></script>
     <!-- Encrypted HTML e-statements (e.g. Nations Trust): unlock with DOB password, import directly -->
     <script src="wealthflow-html-statement.js" defer></script>
+    <!-- Subscription auto-routing: recurring bills → Subscriptions tab, auto-create + remember -->
+    <script src="wealthflow-subscriptions.js" defer></script>
 
     
 
@@ -1587,12 +1607,28 @@
         /* ================== TABLE ================== */
         .tbl-wrap {
             overflow-x: auto;
+            overflow-y: hidden;
             border-radius: var(--r2);
             border: 1px solid var(--border);
             margin-bottom: 10px;
             width: 100%;
             -webkit-overflow-scrolling: touch;
+            overscroll-behavior-x: contain;        /* swipe stays in the table, never triggers page-back */
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent, #f5a623) transparent;
         }
+        /* a visible, grabbable scrollbar so it's obvious the table slides sideways */
+        .tbl-wrap::-webkit-scrollbar { height: 8px; -webkit-appearance: none; }
+        .tbl-wrap::-webkit-scrollbar-thumb { background: var(--border2, #475569); border-radius: 6px; }
+        .tbl-wrap::-webkit-scrollbar-thumb:active { background: var(--accent, #f5a623); }
+        .tbl-wrap::-webkit-scrollbar-track { background: transparent; }
+        /* keep the first column (Description) in view while scrolling the rest */
+        .tbl-wrap table th:first-child,
+        .tbl-wrap table td:first-child {
+            position: sticky; left: 0; z-index: 2;
+            background: var(--card);
+        }
+        .tbl-wrap table thead th:first-child { z-index: 3; }
 
         table {
             width: 100%;
@@ -13047,6 +13083,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function initTheme() {
             const settings = DB.getObj('settings', { theme: 'dark' });
             document.documentElement.setAttribute('data-theme', settings.theme);
+            // If the boot-guard reverted Light→Dark after a crash, tell the user why.
+            try {
+                if (localStorage.getItem('wf_theme_reverted')) {
+                    localStorage.removeItem('wf_theme_reverted');
+                    setTimeout(function () { try { if (typeof notify === 'function') notify('Switched back to Dark mode — Light mode caused a display problem on this device.', 'warn'); } catch (_) {} }, 2500);
+                }
+            } catch (_) {}
             if ($('themeBtn')) $('themeBtn').innerHTML = settings.theme === 'dark' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>';
         }
 
@@ -22633,9 +22676,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 txns.forEach((t) => {
                     let routed = { tab: 'cconetime', ccType: t.type || 'purchase' };
                     if (window.WFRoute) routed = window.WFRoute.routeTransaction({ description: t.description, amount: t.amount, direction: t.direction }, _acctType);
-                    t._dest = routed.tab;                 // cconetime | expenses | income | cc_payment | skip
+                    t._dest = routed.tab;                 // cconetime | expenses | income | cc_payment | subscription | skip
                     t._cat = routed.category || '';
                     t._incType = routed.incomeType || '';
+                    t._subKind = routed.subKind || '';
+                    t._subName = routed.subName || '';
+                    t._subPhone = routed.subPhone || '';
                     if (routed.ccType && (!t.type || t._dest === 'cconetime')) t.type = routed.ccType;
                 });
             };
@@ -22648,6 +22694,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const _destOpts = (sel) => [
                 ['cconetime', '💳 CC One-Time'],
                 ['expenses', '🧾 Expense'],
+                ['subscription', '🔔 Subscription'],
                 ['income', '💰 Income'],
                 ['cc_payment', '✔ Card Payment'],
                 ['skip', '⊘ Skip']
@@ -22756,7 +22803,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const ccArr = DB.get('cconetime');
                 const expArr = DB.get('expenses');
                 const incArr = DB.get('income');
-                let cc = 0, exp = 0, inc = 0, skipped = 0;
+                let cc = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0;
                 rows.forEach((tr) => {
                     if (!tr.querySelector('._ccr_keep').checked) { skipped++; return; }
                     const date = tr.querySelector('._ccr_date').value || today();
@@ -22791,6 +22838,18 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const incType = (window.WFRoute ? window.WFRoute.incomeKind(desc) : 'other') || 'other';
                         incArr.push({ id: uid(), name: desc, company: bank || 'Statement', amount, rate: 0, monthly: 0, start: date, end: date, freq: 'one-time', day: '', oneOff: true, kind: 'received', incomeType: incType, receivedAmount: amount, source: 'statement', notes: 'Received income (from statement)', createdAt: new Date().toISOString() });
                         inc++;
+                    } else if (dest === 'subscription') {
+                        // Recurring bill → Subscriptions tab. Match an existing one
+                        // (even if the user renamed it — we remember the merchant),
+                        // else auto-create the best subscription, then record this
+                        // month's payment. Re-derive details from the (possibly
+                        // edited) description for accuracy.
+                        const si = (window.WFRoute && window.WFRoute.subscriptionInfo(desc)) || {};
+                        const routeInfo = { subName: si.name || desc, subKind: si.kind || 'other', subPhone: si.phone || null, category: si.category || 'Other' };
+                        if (window.WFSubs) {
+                            try { const res = window.WFSubs.apply({ description: desc, amount, direction: 'debit', date }, routeInfo); sub++; if (res && res.created) subCreated++; }
+                            catch (e) { console.warn('[WFSubs] apply failed:', e); skipped++; }
+                        } else { skipped++; }
                     } else {
                         skipped++; // cc_payment / skip — not saved as a ledger entry
                     }
@@ -22801,6 +22860,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
                 try { if (exp && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
                 try { if (inc && typeof renderIncome === 'function') renderIncome(); } catch (_) {}
+                try { if (sub && typeof renderSubscriptions === 'function') renderSubscriptions(); } catch (_) {}
                 try { if (typeof renderDash === 'function') renderDash(); } catch (_) {}
                 closeOvl();
                 try { closeModal('mdCCOT'); } catch (_) {}
@@ -22808,6 +22868,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (cc) parts.push(cc + ' CC One-Time');
                 if (exp) parts.push(exp + ' Expense' + (exp > 1 ? 's' : ''));
                 if (inc) parts.push(inc + ' Income');
+                if (sub) parts.push(sub + ' Subscription' + (sub > 1 ? 's' : '') + (subCreated ? (' · ' + subCreated + ' new') : ''));
                 if (parts.length) { notify('✅ Filed ' + parts.join(' · ') + (skipped ? (' · skipped ' + skipped) : ''), 'success'); triggerHaptic('success'); }
                 else { notify('Nothing added · ' + skipped + ' skipped', 'warn'); }
             };

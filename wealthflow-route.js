@@ -61,6 +61,43 @@
         ['Insurance',    /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|premium)\b/]
     ];
 
+    // ── subscriptions / recurring bills (mobile, ISP, streaming, utilities) ─────
+    //  Detected on bank debits so they land in the Subscriptions tab and record a
+    //  payment, instead of a generic expense. Accuracy first: only strong signals.
+    var SUB_PATTERNS = [
+        ['streaming', 'Entertainment', /\b(netflix|spotify|youtube premium|yt premium|disney\+?|hbo|hulu|amazon prime|prime video|apple music|apple\.com\/bill|itunes|icloud|google one|hotstar|deezer|crunchyroll)\b/],
+        ['mobile',    'Telecom',       /\b(dialog|mobitel|hutch|airtel|etisalat|slt mobitel|prepaid|postpaid|airtime|mobile bill|phone bill)\b/],
+        ['isp',       'Internet',      /\b(broadband|fibre|fiber|\bisp\b|internet bill|lanka bell|slt fibre|slt-fibre|peo ?tv|home internet)\b/],
+        ['utility',   'Utilities',     /\b(ceb|leco|electricity bill|water board|nwsdb|wasa|gas bill|litro|laugfs gas)\b/],
+        ['insurance', 'Insurance',     /\b(insurance premium|life cover|policy premium|aia|ceylinco|allianz|union assurance|sri lanka insurance)\b/]
+    ];
+    // a Sri Lankan mobile number in the narration → strong signal of a mobile/airtime bill
+    var RE_SUB_PHONE = /(?:\+?94|0)\s?7\d(?:[\s-]?\d){7}\b/;
+    function _brandFrom(desc) {
+        var m = norm(desc).match(/netflix|spotify|youtube|disney|hbo|hulu|prime video|amazon prime|apple music|itunes|icloud|google one|hotstar|dialog|mobitel|hutch|airtel|slt|lanka bell|ceb|leco|nwsdb/);
+        return m ? m[0] : '';
+    }
+    function subscriptionInfo(desc) {
+        var raw = desc || '';
+        var pm = raw.match(RE_SUB_PHONE);
+        var phone = pm ? pm[0].replace(/[\s-]/g, '') : null;
+        for (var i = 0; i < SUB_PATTERNS.length; i++) {
+            if (SUB_PATTERNS[i][2].test(norm(raw))) {
+                var brand = _brandFrom(raw);
+                var Brand = brand ? (brand.charAt(0).toUpperCase() + brand.slice(1)) : '';
+                var nm = (Brand && phone) ? (Brand + ' (' + phone + ')')
+                       : phone ? ('Mobile Connection (' + phone + ')')
+                       : Brand ? Brand
+                       : raw.replace(/\s+/g, ' ').trim().slice(0, 40);
+                var info = { isSubscription: true, kind: SUB_PATTERNS[i][0], category: SUB_PATTERNS[i][1], name: nm };
+                if (phone) info.phone = phone;   // phone is the most specific key → distinguishes multiple lines
+                return info;
+            }
+        }
+        if (phone) return { isSubscription: true, kind: 'mobile', category: 'Telecom', name: 'Mobile Connection (' + phone + ')', phone: phone };
+        return { isSubscription: false };
+    }
+
     function expenseCategory(desc) {
         var d = norm(desc);
         for (var i = 0; i < EXPENSE_CATS.length; i++) if (EXPENSE_CATS[i][1].test(d)) return EXPENSE_CATS[i][0];
@@ -116,6 +153,16 @@
 
         if (accountType === 'bank_account') {
             if (dir === 'debit') {
+                var subInfo = subscriptionInfo(desc);
+                if (subInfo.isSubscription) {
+                    out.tab = 'subscription';
+                    out.subKind = subInfo.kind;
+                    out.subName = subInfo.name;
+                    out.subPhone = subInfo.phone || null;
+                    out.category = subInfo.category;
+                    out.reason = 'recurring ' + subInfo.kind + ' bill → subscription';
+                    return out;
+                }
                 out.tab = 'expenses';
                 out.category = expenseCategory(desc);
                 if (out.category === 'Other') out.needsReview = true;
@@ -173,6 +220,7 @@
         accountTypeForLast4: accountTypeForLast4,
         inferAccountType: inferAccountType,
         expenseCategory: expenseCategory,
+        subscriptionInfo: subscriptionInfo,
         incomeKind: incomeKind,
         ccDebitType: ccDebitType
     };
