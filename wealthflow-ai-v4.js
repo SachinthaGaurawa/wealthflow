@@ -202,7 +202,8 @@
             // Quick mode wants 1800 px). We always include smaller
             // fallback rungs so we still fit under maxBytes if the
             // network is constrained.
-            var capDim = opts.maxDim || 2600;
+            var _isMobileV4 = (typeof navigator !== 'undefined' && /iphone|ipad|ipod|android/i.test(navigator.userAgent || '')) || (typeof window !== 'undefined' && window.innerWidth && window.innerWidth < 820);
+            var capDim = opts.maxDim || (_isMobileV4 ? 1800 : 2600);
             var dims;
             if (capDim >= 2800) dims = [capDim, 2400, 2000, 1600, 1300, 1000];
             else if (capDim >= 2200) dims = [capDim, 1900, 1600, 1300, 1000];

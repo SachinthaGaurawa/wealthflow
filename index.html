@@ -194,8 +194,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://js.puter.com/v2/"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+    <!-- v7.9.0 — Tesseract.js & TensorFlow.js are LAZY-loaded on demand (see
+         _wfLazyScript / ensureTesseract / ensureTF). Loading them at boot pushed
+         iOS near its web-process memory limit, so any extra allocation could
+         crash the page. They're optional (OCR fallback / image sharpening). -->
 
     <script src="wealthflow-scanner.js" defer></script>
     <script src="wealthflow-ai-v4.js" defer></script>
@@ -1629,6 +1631,17 @@
             background: var(--card);
         }
         .tbl-wrap table thead th:first-child { z-index: 3; }
+
+        /* Mobile expense/income rows — give the description its own full-width line.
+           (IMG_9114: on narrow screens the description was crushed into a tiny column
+           and wrapped one letter per line.) Desktop/laptop keeps the inline layout. */
+        @media (max-width: 640px) {
+            .exp-item-row { flex-wrap: wrap; align-items: flex-start !important; }
+            .exp-item-row .exp-badge { order: 1; }
+            .exp-item-row .exp-desc { order: 2; flex: 1 1 100% !important; }
+            .exp-item-row .exp-amt { order: 3; }
+            .exp-item-row .act-btns { order: 4; margin-left: auto; }
+        }
 
         table {
             width: 100%;
@@ -6126,7 +6139,7 @@
                 <div class="ai-vision-card__btns">
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Capture Photo</button>
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload File</button>
-                    <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,text/html,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,.html,.htm,image/*" id="ccot_ai_scan" style="display:none;" onchange="handleAIScan(event, 'ccot')">
+                    <input type="file" accept="application/pdf,text/html,.pdf,.PDF,.html,.htm,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif" id="ccot_ai_scan" style="display:none;" onchange="handleAIScan(event, 'ccot')">
                 </div>
             </div>
             <div class="fr">
@@ -8055,9 +8068,43 @@ Keep total under 200 words. No markdown, no asterisks.`;
             return filled;
         }
 
+        // ── Lazy loaders for heavy libraries (v7.9.0) ───────────────────────────
+        // TensorFlow.js and Tesseract.js are large and memory-hungry. Loading them
+        // at boot pushed iOS near its web-process memory ceiling, so ANY extra
+        // allocation (image decode, theme re-composite, even reflow while
+        // scrolling) could crash the page ("A problem repeatedly occurred"). They
+        // are optional — tf only sharpens images, Tesseract is a rare OCR fallback —
+        // so we load them on demand. This keeps baseline memory low.
+        window._wfLoadedLibs = window._wfLoadedLibs || {};
+        function _wfLazyScript(key, src) {
+            if (window._wfLoadedLibs[key]) return window._wfLoadedLibs[key];
+            window._wfLoadedLibs[key] = new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = src; s.async = true;
+                s.onload = () => resolve(true);
+                s.onerror = () => { window._wfLoadedLibs[key] = null; reject(new Error('Failed to load ' + key)); };
+                document.head.appendChild(s);
+            });
+            return window._wfLoadedLibs[key];
+        }
+        window.ensureTesseract = function () {
+            if (typeof Tesseract !== 'undefined') return Promise.resolve(true);
+            return _wfLazyScript('tesseract', 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
+        };
+        window.ensureTF = function () {
+            if (typeof tf !== 'undefined') return Promise.resolve(true);
+            // Skip TF on memory-constrained mobile/iOS — sharpening is optional and
+            // mobile is exactly where the crash happens.
+            var mobile = /iphone|ipad|ipod|android/i.test(navigator.userAgent || '') || (window.innerWidth && window.innerWidth < 820);
+            if (mobile) return Promise.resolve(false);
+            return _wfLazyScript('tf', 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js').then(() => true).catch(() => false);
+        };
+
         // --- Tesseract.js OCR Fallback (runs 100% in browser, no API needed) ---
         async function _ocrWithTesseract(file) {
+            await window.ensureTesseract();                 // lazy-load only when this fallback runs
             if (typeof Tesseract === 'undefined') throw new Error('Tesseract not loaded');
+            try { await window.ensureTF(); } catch (_) {}   // optional sharpening (desktop only)
             // Use enhanced image from canvas for better results
             const { base64 } = await _compressImageToBase64(file, 2000, 0.95, true);
             const enhancedDataUrl = 'data:image/jpeg;base64,' + base64;
@@ -16832,13 +16879,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const tone = isCurrent ? 'var(--accent)' : isPast ? 'var(--text3)' : 'var(--blue)';
                     const tag = isCurrent ? 'THIS MONTH' : isPast ? 'PAST' : 'UPCOMING';
                     const itemRows = items.map(x => `
-                        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
-                            <span class="badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.cat}</span>
-                            <div style="flex:1 1 0;min-width:0;overflow:hidden;">
+                        <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
+                            <span class="badge exp-badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.cat}</span>
+                            <div class="exp-desc" style="flex:1 1 0;min-width:0;overflow:hidden;">
                                 <div style="font-weight:600;font-size:13px;word-wrap:break-word;overflow-wrap:break-word;line-height:1.35;">${x.desc}</div>
                                 ${x.notes ? `<div style="font-size:11px;color:var(--text3);word-wrap:break-word;overflow-wrap:break-word;margin-top:2px;">${x.notes}</div>` : ''}
                             </div>
-                            <div style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
+                            <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
                             <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
                                 ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid">✅</button>` : ''}
                                 <button class="ib e" onclick="editExpense('${x.id}')" title="Edit">✏️</button>
