@@ -5014,7 +5014,7 @@
         <div class="main">
             <header class="topbar">
                 <div class="tb-left">
-                    <button class="mobile-btn" onclick="openSb()">☰</button>
+                    <button class="mobile-btn" onclick="openSb()"><i class=wfi-menu></i></button>
                     <div class="pg-title" id="pgTitle"><i class=wfi-dashboard></i> <span>Dashboard</span></div>
                 </div>
                 <div class="tb-right">
@@ -5529,7 +5529,7 @@
                                         <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ai_chat_scan" style="display:none;" onchange="_aiChatFilePicked(event)">
                                     </label>
                                 </div>
-                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;">➤</button>
+                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;"><i class=wfi-send></i></button>
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
                                 <div id="aiTypingIndicator" style="font-size:11px;color:var(--text3);display:none;">
@@ -5742,7 +5742,7 @@
             style="height:85vh; max-height:700px; display:flex; flex-direction:column; padding:0; overflow:hidden;">
             <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
                 <div class="md-title">🌐 AI Response Language</div>
-                <button class="md-x" onclick="closeModal('mdLanguage')">✕</button>
+                <button class="md-x" onclick="closeModal('mdLanguage')"><i class=wfi-x></i></button>
             </div>
             <div
                 style="padding:16px 20px 10px; background:var(--bg2); border-bottom:1px solid var(--border); flex-shrink:0;">
@@ -5756,13 +5756,13 @@
         </div>
     </div>
 
-    <button class="fab-ai-btn" id="fabAIBtn" onclick="toggleFloatingAI()" title="Ask AI">🤖</button>
+    <button class="fab-ai-btn" id="fabAIBtn" onclick="toggleFloatingAI()" title="Ask AI"><i class=wfi-bot></i></button>
     <div class="floating-ai-bar" id="floatingAIBar">
         <button class="floating-ai-close" onclick="toggleFloatingAI()" title="Close"
-            aria-label="Close AI bar">✕</button>
+            aria-label="Close AI bar"><i class=wfi-x></i></button>
         <input class="floating-ai-input" id="floatingAIInput" placeholder="Ask AI anything..."
             onkeydown="if(event.key==='Enter'){sendFloatingAI();event.preventDefault();}">
-        <button class="floating-ai-send" onclick="sendFloatingAI()">➤</button>
+        <button class="floating-ai-send" onclick="sendFloatingAI()"><i class=wfi-send></i></button>
     </div>
 
     <div id="notifs"></div>
@@ -5771,7 +5771,7 @@
         <div class="md md-sm" style="border: 1px solid var(--accent); box-shadow: 0 0 40px rgba(212,175,55,0.1);">
             <div class="md-hdr">
                 <div class="md-title" style="color:var(--accent);">✨ Export Elite Report</div><button class="md-x"
-                    onclick="closeModal('mdExport')">✕</button>
+                    onclick="closeModal('mdExport')"><i class=wfi-x></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">Generate a highly professional, bank-grade
                 statement for your business or personal records.</p>
@@ -5817,7 +5817,7 @@
         <div class="md" style="max-width:560px;">
             <div class="md-hdr">
                 <div class="md-title">📲 Install WealthFlow App</div>
-                <button class="md-x" onclick="closeModal('mdInstallGuide')">✕</button>
+                <button class="md-x" onclick="closeModal('mdInstallGuide')"><i class=wfi-x></i></button>
             </div>
             <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;">
                 <button class="btn btn-ghost btn-sm install-tab active" data-tab="android"
@@ -5891,7 +5891,7 @@
         <div class="md md-sm" style="border: 1px solid var(--red);">
             <div class="md-hdr">
                 <div class="md-title" style="color:var(--red);">⚠️ Core System Reset</div><button class="md-x"
-                    onclick="closeModal('mdFactoryReset')">✕</button>
+                    onclick="closeModal('mdFactoryReset')"><i class=wfi-x></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5;">This will wipe ALL
                 financial data from your devices and the cloud. <b style="color:var(--green);">Your Master PIN and
@@ -5918,7 +5918,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Restore Data</div><button class="md-x"
-                    onclick="closeModal('mdRestoreCloud')">✕</button>
+                    onclick="closeModal('mdRestoreCloud')"><i class=wfi-x></i></button>
             </div>
 
             <div
@@ -5947,7 +5947,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="mdIncomeTitle">Add Income / Investment Source</div><button class="md-x"
-                    onclick="closeModal('mdIncome')">✕</button>
+                    onclick="closeModal('mdIncome')"><i class=wfi-x></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Source Name *</label><input class="fi" id="i_name"
@@ -5996,7 +5996,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="mdLoanTitle">Add Bank Loan</div><button class="md-x"
-                    onclick="closeModal('mdLoan')">✕</button>
+                    onclick="closeModal('mdLoan')"><i class=wfi-x></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Loan Name *</label><input class="fi" id="l_name"
@@ -6062,7 +6062,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Skip / Double Bank Loan</div><button class="md-x"
-                    onclick="closeModal('mdSkipLoan')">✕</button>
+                    onclick="closeModal('mdSkipLoan')"><i class=wfi-x></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Select a loan plan, then choose a month to
                 skip. The payment will automatically double in the following month.</p>
@@ -6078,7 +6078,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="mdCCITitle">Add CC Installment Plan</div><button class="md-x"
-                    onclick="closeModal('mdCCI')">✕</button>
+                    onclick="closeModal('mdCCI')"><i class=wfi-x></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Product Name *</label><input class="fi" id="c_product"
@@ -6114,7 +6114,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Skip / Double CC Installment</div><button class="md-x"
-                    onclick="closeModal('mdSkip')">✕</button>
+                    onclick="closeModal('mdSkip')"><i class=wfi-x></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Select an installment plan, then choose a
                 month to skip. The payment will automatically double in the following month.</p>
@@ -6131,7 +6131,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div>
-                <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();">✕</button>
+                <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();"><i class=wfi-x></i></button>
             </div>
             <!-- ── v7.5.2 AI Vision card (matches user's reference screenshot) ──
                  Two buttons in a gold-bordered card. Capture Photo opens the
@@ -6188,7 +6188,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdChequeTitle">Add Cheque</div><button class="md-x"
-                    onclick="closeModal('mdCheque')">✕</button>
+                    onclick="closeModal('mdCheque')"><i class=wfi-x></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Cheque No. *</label><input class="fi" id="chq_no"
@@ -6232,7 +6232,7 @@
 
             <div class="md-hdr">
                 <div class="md-title" id="mdExpenseTitle">Add Monthly Expense</div>
-                <button class="md-x" onclick="closeModal('mdExpense')">✕</button>
+                <button class="md-x" onclick="closeModal('mdExpense')"><i class=wfi-x></i></button>
             </div>
             <!-- v7.5.2 — AI Vision card (same component as CC One-Time) -->
             <div class="ai-vision-card">
@@ -6304,7 +6304,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdTargetTitle">Create Savings Target</div><button class="md-x"
-                    onclick="closeModal('mdTarget')">✕</button>
+                    onclick="closeModal('mdTarget')"><i class=wfi-x></i></button>
             </div>
             <div class="fg"><label class="fl">Target Name *</label><input class="fi" id="t_name"
                     placeholder="House Fund"></div>
@@ -6325,7 +6325,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Add Saving Entry</div><button class="md-x"
-                    onclick="closeModal('mdSaving')">✕</button>
+                    onclick="closeModal('mdSaving')"><i class=wfi-x></i></button>
             </div>
             <div class="fg"><label class="fl">Target *</label><select class="fs" id="sav_tgt"></select></div>
             <div class="fr">
@@ -6352,7 +6352,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="savHistTitle">Savings History</div><button class="md-x"
-                    onclick="closeModal('mdSavHistory')">✕</button>
+                    onclick="closeModal('mdSavHistory')"><i class=wfi-x></i></button>
             </div>
             <div id="savHistContent"></div>
             <div class="md-ftr"><button class="btn btn-ghost" onclick="closeModal('mdSavHistory')">← Close</button>
@@ -6364,7 +6364,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Set Total Balance</div><button class="md-x"
-                    onclick="closeModal('mdBalSet')">✕</button>
+                    onclick="closeModal('mdBalSet')"><i class=wfi-x></i></button>
             </div>
             <div class="fg"><label class="fl">Total Balance (LKR) *</label><input class="fi money-input" id="bs_total"
                     placeholder="15,000,000"></div>
@@ -6382,7 +6382,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdBalFlowTitle">Log Balance Flow</div><button class="md-x"
-                    onclick="closeModal('mdBalFlow')">✕</button>
+                    onclick="closeModal('mdBalFlow')"><i class=wfi-x></i></button>
             </div>
             <div class="fg"><label class="fl">Type *</label><select class="fs" id="bf_type" onchange="bfTypeChanged()">
                     <option value="out">📤 Investment Out (Reduce Balance)</option>
@@ -6415,7 +6415,7 @@
     <div class="mo" id="mdConfirm" style="z-index:9999;">
         <div class="md md-sm">
             <div class="md-hdr" style="justify-content:flex-end;"><button class="md-x"
-                    onclick="closeModal('mdConfirm')">✕</button></div>
+                    onclick="closeModal('mdConfirm')"><i class=wfi-x></i></button></div>
             <div class="conf-icon" id="confIcon">✅</div>
             <div class="conf-msg" id="confMsg">Are you sure?</div>
             <div class="conf-det" id="confDet"></div>
@@ -6430,7 +6430,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">🔐 Change Master PIN</div><button class="md-x"
-                    onclick="closePinModal()">✕</button>
+                    onclick="closePinModal()"><i class=wfi-x></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:18px;line-height:1.5;">Your PIN is synced across
                 all devices. Changing it will <b style="color:var(--accent);">sign out all other active sessions</b> for
@@ -6458,7 +6458,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdSubTitle">Add Subscription / Bill</div>
-                <button class="md-x" onclick="closeModal('mdSubscription')">✕</button>
+                <button class="md-x" onclick="closeModal('mdSubscription')"><i class=wfi-x></i></button>
             </div>
             <!-- v7.5.2 — AI Vision card (same component as CC One-Time + Expense) -->
             <div class="ai-vision-card">
@@ -6525,7 +6525,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">🎭 AI Advisor Persona</div><button class="md-x"
-                    onclick="closeModal('mdAIPersona')">✕</button>
+                    onclick="closeModal('mdAIPersona')"><i class=wfi-x></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Choose how your AI advisor communicates
                 with you.</p>
@@ -6569,7 +6569,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">📸 AI Scanner Settings</div>
-                <button class="md-x" onclick="closeModal('mdScannerSettings')">✕</button>
+                <button class="md-x" onclick="closeModal('mdScannerSettings')"><i class=wfi-x></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Tune how receipts, invoices &amp; PDFs are scanned. Higher modes = more accurate but slower.</p>
 
@@ -6635,7 +6635,7 @@
         <div class="ai-lang-modal-content">
             <div class="ai-lang-modal-hdr">
                 <div class="ai-lang-modal-title">🌐 AI Response Language</div>
-                <button class="ai-lang-modal-close" onclick="closeLangModal()">✕</button>
+                <button class="ai-lang-modal-close" onclick="closeLangModal()"><i class=wfi-x></i></button>
             </div>
             <div class="ai-lang-search">
                 <input type="text" id="aiLangModalSearch" placeholder="Search languages..." oninput="_filterLangModal()">
@@ -8317,7 +8317,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     <div class="md md-sm">
                         <div class="md-hdr">
                             <div class="md-title">🤖 Which credit card / bank?</div>
-                            <button class="md-x" id="_wf_bank_x">✕</button>
+                            <button class="md-x" id="_wf_bank_x"><i class=wfi-x></i></button>
                         </div>
                         <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.55;">
                             Before AI scans the statement, please confirm the issuing bank. This unlocks the correct service-fee schedule (Sri Lanka 🇱🇰).
@@ -9264,7 +9264,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         return (tmp.innerText || tmp.textContent || '').trim();
                     } catch (_) { return String(rawText || '').trim(); }
                 })();
-                actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="(function(b){navigator.clipboard.writeText(b.getAttribute('data-copy')||'');b.textContent='✓ Copied';setTimeout(()=>b.textContent='📋 Copy',1500);})(this)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)">👍</button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)">👎</button>`;
+                actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="(function(b){navigator.clipboard.writeText(b.getAttribute('data-copy')||'');b.textContent='✓ Copied';setTimeout(()=>b.textContent='📋 Copy',1500);})(this)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)"><i class=wfi-thumbsUp></i></button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)"><i class=wfi-thumbsDown></i></button>`;
                 bubble.appendChild(actions);
             } else {
                 // User message — show time + an Edit button (like Claude/Gemini)
@@ -13013,7 +13013,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     filtered.map(v => `<div class="ac-item" onclick="acSelect('${inputId}','${v.replace(/'/g, "\\'")}')">
                         <span style="font-size:14px;">${icon}</span>
                         <span class="ac-item-text">${v}</span>
-                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')">✕</button>
+                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i class=wfi-x></i></button>
                     </div>`).join('');
                 drop.classList.add('show');
                 _openDropdowns.add(inputId);
@@ -13042,7 +13042,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             drop.innerHTML = `<div class="ac-sep">💡 Previous Entries</div>` +
                 items.map(v => `<div class="ac-item" onclick="acSelect('${inputId}','${v.replace(/'/g, "\\'")}')">
                     <span class="ac-item-text">${v}</span>
-                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')">✕</button>
+                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i class=wfi-x></i></button>
                 </div>`).join('');
             triggerHaptic('delete');
             notify('Entry removed from suggestions', 'info');
@@ -13749,7 +13749,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <div class="md md-sm" style="max-width:440px;">
                         <div class="md-hdr">
                             <div class="md-title">📅 Past months</div>
-                            <button class="md-x" onclick="this.closest('.mo').remove()">✕</button>
+                            <button class="md-x" onclick="this.closest('.mo').remove()"><i class=wfi-x></i></button>
                         </div>
                         <div class="md-body" style="text-align:center;padding:30px 20px;">
                             <div style="font-size:38px;margin-bottom:10px;">✨</div>
@@ -13785,7 +13785,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
                         <div class="md-title">📅 Confirm past months — ${source.name}</div>
-                        <button class="md-x" id="_pm_close">✕</button>
+                        <button class="md-x" id="_pm_close"><i class=wfi-x></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
                         <div style="background:var(--bg2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.5;">
@@ -13870,7 +13870,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <div class="md md-sm" style="background:var(--card);max-width:440px;">
                         <div class="md-hdr">
                             <div class="md-title">💸 Record Income — ${monthKey}</div>
-                            <button class="md-x" id="_pi_close">✕</button>
+                            <button class="md-x" id="_pi_close"><i class=wfi-x></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
                             Source: <b>${s.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${s.company}</span><br>
@@ -14496,7 +14496,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <div class="md md-sm" style="background:var(--card);max-width:440px;">
                         <div class="md-hdr">
                             <div class="md-title">${titleText} — ${monthKey}</div>
-                            <button class="md-x" id="_pp_close">✕</button>
+                            <button class="md-x" id="_pp_close"><i class=wfi-x></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
                             Loan: <b>${l.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${l.bank}</span><br>
@@ -14907,7 +14907,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         <div class="md-title">📅 ${l.name} — Live Amortization</div>
                         <div style="display:flex;gap:6px;align-items:center;">
                             <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${l.id}')" title="Generate professional PDF statement">📄 Statement</button>
-                            <button class="md-x" onclick="closeModal('mdLoanInstallments')">✕</button>
+                            <button class="md-x" onclick="closeModal('mdLoanInstallments')"><i class=wfi-x></i></button>
                         </div>
                     </div>
 
@@ -15005,8 +15005,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     if (m.isPartial) payCell += '<div style="font-size:10px;color:var(--red);margin-top:1px;">' + fmt(m.diff) + ' short</div>';
 
                     const actionBtn = m.paid
-                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${l.id}','${m.month}')">👁</button>`
-                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${l.id}','${m.month}')">💸</button>`;
+                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${l.id}','${m.month}')"><i class=wfi-eye></i></button>`
+                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${l.id}','${m.month}')"><i class=wfi-coins></i></button>`;
 
                     let row = '<tr ' + (isCurrent ? 'data-current-row="1" ' : '') + 'style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer;" ';
                     row += 'onclick="_payLoanInstallmentFromTable(\'' + l.id + '\',\'' + m.month + '\')" ';
@@ -15429,7 +15429,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <div style="display:flex;gap:6px;align-items:center;">
                             <button class="btn btn-ghost btn-sm" id="_ls_print">🖨 Print / PDF</button>
                             <button class="btn btn-ghost btn-sm" id="_ls_share">🔗 Share</button>
-                            <button class="md-x" id="_ls_close">✕</button>
+                            <button class="md-x" id="_ls_close"><i class=wfi-x></i></button>
                         </div>
                     </div>
                     <iframe id="_ls_frame" sandbox="allow-same-origin allow-modals allow-popups"
@@ -15936,7 +15936,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="md md-sm" style="max-width:580px;">
                     <div class="md-hdr">
                         <div class="md-title">✅ Shareable Link Ready</div>
-                        <button class="md-x" id="_surl_close">✕</button>
+                        <button class="md-x" id="_surl_close"><i class=wfi-x></i></button>
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
                         Anyone with this link can view the ${isElite ? 'Elite Report' : 'statement for <b>' + titleName.replace(/</g, '&lt;') + '</b>'}.
@@ -16350,7 +16350,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="md md-sm" style="max-width:420px;">
                     <div class="md-hdr">
                         <div class="md-title">👁 ${monthKey} Installment</div>
-                        <button class="md-x" id="_vli_close">✕</button>
+                        <button class="md-x" id="_vli_close"><i class=wfi-x></i></button>
                     </div>
                     <div style="padding:6px 0 16px;">
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
@@ -16697,7 +16697,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 else if (dl < 0) { cdCls = 'cd-danger'; cdTxt = '⚠️ Overdue ' + Math.abs(dl) + 'd'; }
                 else if (dl <= 10) { cdCls = 'cd-danger'; cdTxt = '🔴 ' + dl + ' days'; }
                 else if (dl <= 20) { cdCls = 'cd-warn'; cdTxt = dl + ' days'; }
-                const typeL = { purchase: 'Purchase', cash_advance: 'Cash Advance', fuel: '⛽ Fuel' }[item.type] || item.type;
+                const typeL = { purchase: 'Purchase', cash_advance: 'Cash Advance', fuel: 'Fuel', service_fee: 'Service Fee' }[item.type] || item.type;
                 const hasFee = (item.type === 'cash_advance' || item.type === 'fuel') && item.serviceFee > 0;
                 const combined = item.combinedTotal || (item.amount + (item.serviceFee || 0));
                 // Show COMBINED total as primary (what the user has to repay)
@@ -16975,7 +16975,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-gold"><div class="stat-label">Top Category</div><div class="stat-val" style="font-size:15px;">${topCat[0]}</div><div class="stat-meta">${fmtS(topCat[1])}</div></div>
         <div class="stat-card sc-green"><div class="stat-label">Paid</div><div class="stat-val">${filtered.filter(x => x.completed).length}</div><div class="stat-meta">of ${filtered.length}</div></div>
     `;
-            const catBadge = { Food: 'bg-g', Transport: 'bg-b', Utilities: 'bg-a', Medical: 'bg-r', Education: 'bg-p', Entertainment: 'bg-c', Clothing: 'bg-gr', Other: 'bg-gr' };
+            const catBadge = { Food: 'bg-g', Transport: 'bg-b', Utilities: 'bg-a', Medical: 'bg-r', Education: 'bg-p', Entertainment: 'bg-c', Clothing: 'bg-gr', Gift: 'bg-p', Gold: 'bg-a', 'Bank Charges': 'bg-r', Other: 'bg-gr' };
 
             // ── View mode: Schedule (month-grouped timeline, default) or Table ──
             // v7.5.3 — defaults to the Schedule timeline. The user's screenshots
@@ -17170,7 +17170,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <span style="color:var(--text2);">${s.date}${s.note ? ' · ' + s.note : ''}</span>
         <div style="display:flex;align-items:center;gap:8px;">
             <span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span>
-            <button class="ib d" onclick="deleteSaving('${tid}','${s.id}')">✕</button>
+            <button class="ib d" onclick="deleteSaving('${tid}','${s.id}')"><i class=wfi-x></i></button>
         </div>
     </div>`).join('') : '<div class="empty" style="padding:20px;"><div class="empty-sub">No saving entries yet</div></div>';
             openModal('mdSavHistory');
@@ -19191,7 +19191,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <button class="ab-btn ab-no" id="abno_${id}">${secondary}</button>
                     <button class="ab-btn ab-yes" id="abyes_${id}" style="background:${color};">${primary}</button>
                 </div>
-                <button class="ab-close" id="abx_${id}" aria-label="Dismiss">✕</button>
+                <button class="ab-close" id="abx_${id}" aria-label="Dismiss"><i class=wfi-x></i></button>
             `;
             document.body.appendChild(banner);
             requestAnimationFrame(() => banner.classList.add('show'));
@@ -20447,7 +20447,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
                         <div class="md-title">📊 Monthly amounts — ${s.name}</div>
-                        <button class="md-x" id="_sm_close">✕</button>
+                        <button class="md-x" id="_sm_close"><i class=wfi-x></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
                         <div style="background:var(--bg2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.5;">
@@ -20589,7 +20589,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                                 title="Set this month's actual amount (great for telecom, water, electricity)">
                                 📊 Set ${MONTHS[now.getMonth()].slice(0,3)}
                             </button>`
-                    : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts">📊</button>`;
+                    : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts"><i class=wfi-chartLine></i></button>`;
 
                 // v7.5.6 — show notes if present (was hidden entirely).
                 // Matches how expense rows and loan rows render notes:
@@ -21987,7 +21987,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     <div class="md md-sm" style="max-width:380px;">
                         <div class="md-hdr">
                             <div class="md-title">🔐 Confirm with PIN</div>
-                            <button class="md-x" id="_vp_close">✕</button>
+                            <button class="md-x" id="_vp_close"><i class=wfi-x></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:13px;color:var(--text2);">${reason}</div>
                         <div class="fg">
@@ -22919,12 +22919,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             requestAnimationFrame(() => overlay.classList.add('open'));
 
             const _destOpts = (sel) => [
-                ['cconetime', '💳 CC One-Time'],
-                ['expenses', '🧾 Expense'],
-                ['subscription', '🔔 Subscription'],
-                ['income', '💰 Income'],
-                ['cc_payment', '✔ Card Payment'],
-                ['skip', '⊘ Skip']
+                ['cconetime', 'CC One-Time'],
+                ['expenses', 'Expense'],
+                ['subscription', 'Subscription'],
+                ['income', 'Income'],
+                ['cc_payment', 'Card Payment'],
+                ['skip', 'Skip']
             ].map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
             const renderRows = () => txns.map((t, idx) => `
                 <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);">
@@ -22948,7 +22948,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 <div class="md" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
                         <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${bank}</div>
-                        <button class="md-x" id="_ccrx">✕</button>
+                        <button class="md-x" id="_ccrx"><i class=wfi-x></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
                         <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.55;">
@@ -23048,17 +23048,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     const past = _isPast(date);
 
                     if (dest === 'cconetime') {
-                        if (type === 'service_fee') { skipped++; return; }
                         if (_dupIn(ccArr, date, amount, desc, 'amount')) { dup++; return; }   // e.g. re-imported ATM/CEFT fee
                         const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
-                        let serviceFee = 0, feeMeta = null, combinedTotal = amount;
-                        if (type === 'cash_advance') {
-                            const r = _computeCashAdvanceFee(bank, amount);
-                            serviceFee = r.fee; feeMeta = { source: 'auto', kind: 'cash_advance', percent: r.percent, minFee: r.minFee, flat: r.flat, note: r.note }; combinedTotal = amount + serviceFee;
-                        } else if (type === 'fuel') {
-                            const r = _computeFuelFee(bank, amount);
-                            serviceFee = r.fee; feeMeta = { source: 'auto', kind: 'fuel', percent: r.percent, minFee: 0, flat: 0, note: r.note }; combinedTotal = amount + serviceFee;
-                        }
+                        // Statement imports carry the bank's REAL mandatory charges
+                        // (ATM withdrawal fee, CEFT charge, fuel surcharge…) as their
+                        // own statement lines — we save those lines as-is and NEVER
+                        // add a synthetic auto-fee here. Auto-fees remain only for
+                        // manual entry where no statement exists. → no duplication.
+                        const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
                         ccArr.push({ id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: 'AI-scanned from statement', paid: past, createdAt: new Date().toISOString() });
                         cc++;
                     } else if (dest === 'expenses') {

@@ -49,6 +49,8 @@
 
     // ── expense categories (Sri-Lanka-aware) ────────────────────────────────────
     var EXPENSE_CATS = [
+        ['Gold',          /\b(gold|jewell?er[sy]?|pawn(ing)?|gem stones?|vogue jewell|swarna mahal)\b/],
+        ['Gift',          /\b(gift|wedding gift|birthday gift|present shop|hallmark)\b/],
         ['Groceries',     /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa)\b/],
         ['Dining',        /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java)\b/],
         ['Fuel',          RE_FUEL],
@@ -60,6 +62,9 @@
         ['Education',     /\b(school|tuition|university|campus|course|institute|exam|books)\b/],
         ['Insurance',    /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|premium)\b/]
     ];
+
+    // mandatory bank charges (never skip, never duplicate)
+    var RE_BANK_FEE = /\b(atm (withdrawal )?(fee|charge)|withdrawal fee|ceft|cefts|slips( charge)?|stamp duty|debit tax|svc charge|service charge|bank charge(s)?|maintenance fee|ledger fee|sms (alert|charge)|e ?-?statement fee|cheque book (fee|charge)|fallback fee)\b/;
 
     // ── subscriptions / recurring bills (mobile, ISP, streaming, utilities) ─────
     //  Detected on bank debits so they land in the Subscriptions tab and record a
@@ -153,6 +158,16 @@
 
         if (accountType === 'bank_account') {
             if (dir === 'debit') {
+                // Mandatory bank charges (ATM fee, CEFT, SLIPS, stamp duty, SMS
+                // alerts, maintenance…) are real expenses the bank levies — they
+                // must be FILED ONCE as 'Bank Charges', never skipped and never
+                // duplicated (the modal de-dupes re-imports by date+amount+desc).
+                if (RE_BANK_FEE.test(norm(desc))) {
+                    out.tab = 'expenses';
+                    out.category = 'Bank Charges';
+                    out.reason = 'mandatory bank charge → expense (Bank Charges)';
+                    return out;
+                }
                 var subInfo = subscriptionInfo(desc);
                 if (subInfo.isSubscription) {
                     out.tab = 'subscription';
