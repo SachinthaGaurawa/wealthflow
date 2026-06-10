@@ -141,6 +141,8 @@
     })();
     </script>
     <meta charset="UTF-8">
+    <!-- Professional stroke icons (replaces emojis) — must load before app markup -->
+    <script src="wealthflow-icons.js"></script>
     <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
          "address-bar collapses when user pinches" behaviour that was
          showing up as a sudden full app refresh. Tap-to-zoom on form
@@ -4958,45 +4960,45 @@
 
             <nav class="sb-nav">
                 <div class="sb-group">Overview</div>
-                <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon">📊</span>
+                <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon"><i class=wfi-dashboard></i></span>
                     Dashboard</div>
-                <div class="nav-item" onclick="showPage('monthly',this)"><span class="nav-icon">📅</span> Monthly Plan
+                <div class="nav-item" onclick="showPage('monthly',this)"><span class="nav-icon"><i class=wfi-calendar></i></span> Monthly Plan
                 </div>
                 <div class="sb-group">Finance</div>
-                <div class="nav-item" onclick="showPage('income',this)"><span class="nav-icon">💰</span> Income &
-                    Investments</div>
-                <div class="nav-item" onclick="showPage('loans',this)"><span class="nav-icon">🏦</span> Bank Loans</div>
-                <div class="nav-item" onclick="showPage('ccinstall',this)"><span class="nav-icon">💳</span> CC
+                <div class="nav-item" onclick="showPage('incRecv',this)"><span class="nav-icon"><i class=wfi-wallet></i></span> Income</div>
+                <div class="nav-item" onclick="showPage('income',this)"><span class="nav-icon"><i class=wfi-chartLine></i></span> Investments</div>
+                <div class="nav-item" onclick="showPage('loans',this)"><span class="nav-icon"><i class=wfi-bank></i></span> Bank Loans</div>
+                <div class="nav-item" onclick="showPage('ccinstall',this)"><span class="nav-icon"><i class=wfi-card></i></span> CC
                     Installments</div>
-                <div class="nav-item" onclick="showPage('cconetime',this)"><span class="nav-icon">⏱️</span> CC One-Time
+                <div class="nav-item" onclick="showPage('cconetime',this)"><span class="nav-icon"><i class=wfi-clock></i></span> CC One-Time
                     <span class="nb" id="nb-ccot" style="display:none">!</span>
                 </div>
-                <div class="nav-item" onclick="showPage('cheques',this)"><span class="nav-icon">📄</span> Cheques <span
+                <div class="nav-item" onclick="showPage('cheques',this)"><span class="nav-icon"><i class=wfi-cheque></i></span> Cheques <span
                         class="nb" id="nb-chq" style="display:none">!</span></div>
                 <div class="sb-group">Tracking</div>
-                <div class="nav-item" onclick="showPage('expenses',this)"><span class="nav-icon">🧾</span> Monthly
+                <div class="nav-item" onclick="showPage('expenses',this)"><span class="nav-icon"><i class=wfi-receipt></i></span> Monthly
                     Expenses</div>
-                <div class="nav-item" onclick="showPage('targets',this)"><span class="nav-icon">🎯</span> Targets &
+                <div class="nav-item" onclick="showPage('targets',this)"><span class="nav-icon"><i class=wfi-target></i></span> Targets &
                     Savings</div>
                 <div class="sb-group">Tools</div>
-                <div class="nav-item" onclick="showPage('dscr',this)"><span class="nav-icon">📐</span> DSCR Calculator
+                <div class="nav-item" onclick="showPage('dscr',this)"><span class="nav-icon"><i class=wfi-ruler></i></span> DSCR Calculator
                 </div>
-                <div class="nav-item" onclick="showPage('score',this)"><span class="nav-icon">🏆</span> WealthFlow Score
+                <div class="nav-item" onclick="showPage('score',this)"><span class="nav-icon"><i class=wfi-trophy></i></span> WealthFlow Score
                 </div>
-                <div class="nav-item" onclick="showPage('subscriptions',this)"><span class="nav-icon">🔔</span>
+                <div class="nav-item" onclick="showPage('subscriptions',this)"><span class="nav-icon"><i class=wfi-bell></i></span>
                     Subscriptions</div>
-                <div class="nav-item" onclick="showPage('debtdemo',this)"><span class="nav-icon">💣</span> Debt
+                <div class="nav-item" onclick="showPage('debtdemo',this)"><span class="nav-icon"><i class=wfi-bomb></i></span> Debt
                     Demolisher</div>
-                <div class="nav-item" onclick="showPage('montecarlo',this)"><span class="nav-icon">🔮</span> Wealth
+                <div class="nav-item" onclick="showPage('montecarlo',this)"><span class="nav-icon"><i class=wfi-crystal></i></span> Wealth
                     Simulator</div>
-                <div class="nav-item" onclick="showPage('cashflow3d',this)"><span class="nav-icon">🌐</span> 3D Cash
+                <div class="nav-item" onclick="showPage('cashflow3d',this)"><span class="nav-icon"><i class=wfi-globe></i></span> 3D Cash
                     Flow</div>
-                <div class="nav-item" onclick="showPage('sessions',this)"><span class="nav-icon">📱</span> Active
+                <div class="nav-item" onclick="showPage('sessions',this)"><span class="nav-icon"><i class=wfi-devices></i></span> Active
                     Sessions</div>
                 <div class="nav-item ai-nav-pulse" onclick="showPage('ai',this)" id="aiNavItem"><span
                         class="nav-icon">🤖</span> AI Advisor <span class="nb" id="nb-ai"
                         style="display:none;background:linear-gradient(135deg,#d4af37,#f5a623);">✨</span></div>
-                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon">⚙️</span> Settings<span class="nb" id="nb-settings" style="display:none;background:#ef4444;color:#fff;">1</span>
+                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon"><i class=wfi-settings></i></span> Settings<span class="nb" id="nb-settings" style="display:none;background:#ef4444;color:#fff;">1</span>
                 </div>
                 <div class="nav-item" onclick="signOutGoogle()" style="color:var(--red);"><span
                         class="nav-icon">🚪</span> Sign Out</div>
@@ -5013,7 +5015,7 @@
             <header class="topbar">
                 <div class="tb-left">
                     <button class="mobile-btn" onclick="openSb()">☰</button>
-                    <div class="pg-title" id="pgTitle">📊 <span>Dashboard</span></div>
+                    <div class="pg-title" id="pgTitle"><i class=wfi-dashboard></i> <span>Dashboard</span></div>
                 </div>
                 <div class="tb-right">
                     <div class="network-wrap">
@@ -5105,9 +5107,21 @@
                     <div id="monthlyContent"></div>
                 </div>
 
+                <div class="page" id="page-incRecv">
+                    <div class="sh">
+                        <div class="sh-title">Income</div>
+                        <div class="sh-actions">
+                            <select class="fs" id="incRecvMonth" onchange="renderIncRecv()" style="max-width:160px;"></select>
+                            <button class="btn btn-primary btn-sm" onclick="openIncomeRecvModal()"><i class=wfi-plus></i> Add Income</button>
+                        </div>
+                    </div>
+                    <div class="stat-grid" id="incRecvStats" style="margin-bottom:14px;"></div>
+                    <div id="incRecvList"></div>
+                </div>
+
                 <div class="page" id="page-income">
                     <div class="sh">
-                        <div class="sh-title">Income & Investments</div>
+                        <div class="sh-title">Investments</div>
                         <div class="sh-actions">
                             <div class="sort-bar"><span class="sb-lbl">Sort:</span>
                                 <span class="sb-btn active" onclick="sortList('income','name',this)">Name</span>
@@ -5115,8 +5129,8 @@
                                 <span class="sb-btn" onclick="sortList('income','rate',this)">Rate</span>
                                 <span class="sb-btn" onclick="sortList('income','date',this)">Date</span>
                             </div>
-                            <button class="btn btn-primary btn-sm" onclick="clearIncomeForm(); openModal('mdIncome')">+
-                                Add Source</button>
+                            <button class="btn btn-primary btn-sm" onclick="clearIncomeForm(); openModal('mdIncome')"><i class=wfi-plus></i>
+                                Add Investment</button>
                         </div>
                     </div>
                     <div id="incomeList"></div>
@@ -5470,7 +5484,7 @@
                             </div>
                             <button class="btn btn-secondary btn-sm" onclick="openLangModal()" title="AI language">🌐 <span id="aiLangBadge">EN</span></button>
                             <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')" title="Change AI personality">🎭 Persona</button>
-                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history">🗑️</button>
+                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history"><i class=wfi-trash></i></button>
                         </div>
                     </div>
 
@@ -6254,6 +6268,8 @@
                         <option>Electronics &amp; Tech</option>
                         <option>Shopping (Home)</option>
                         <option>Insurance</option>
+                        <option>Gift</option>
+                        <option>Gold</option>
                         <option>Rent</option>
                         <option>Personal Care</option>
                         <option>Kids &amp; Family</option>
@@ -6843,8 +6859,9 @@
 
         // ==================== STATE MANAGEMENT ====================
         let appData = {
-            auth: {}, income: [], loans: [], ccinstall: [], cconetime: [],
-            cheques: [], expenses: [], targets: [], balance: { total: 0, flows: [] },
+            auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [],
+            cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
+            incomeReceived: {}, sessions: [], balance: { total: 0, flows: [] },
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
         let isInitialised = false;
@@ -12409,6 +12426,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 try { scheduleAutoBackup(); } catch (e) { console.error('[LAUNCH] scheduleAutoBackup error:', e); }
                 // Migrate legacy bank names ("AMEX" → "American Express (AMEX)") once per launch
                 try { _migrateBankNames(); } catch (e) { console.error('[LAUNCH] _migrateBankNames error:', e); }
+                try { _migrateIncomeSplit(); } catch (e) { console.error('[LAUNCH] _migrateIncomeSplit error:', e); }
                 try { updateCCOTBadge(); } catch (e) { }
                 try { updateChequeBadge(); } catch (e) { }
                 try { triggerProactiveEngagement(); } catch (e) { console.error('[LAUNCH] triggerProactiveEngagement error:', e); }
@@ -13051,7 +13069,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         // ==================== SIDEBAR ====================
-        const pgTitles = { dashboard: '📊 Dashboard', monthly: '📅 Monthly Plan', income: '💰 Income & Investments', loans: '🏦 Bank Loans', ccinstall: '💳 CC Installments', cconetime: '⏱️ CC One-Time Payments', cheques: '📄 Cheque Tracker', expenses: '🧾 Monthly Expenses', targets: '🎯 Targets & Savings', dscr: '📐 DSCR Calculator', settings: '⚙️ System Settings', ai: '🤖 <span style="color:var(--accent)">AI Advisor</span>', score: '🏆 WealthFlow Score', subscriptions: '🔔 Subscriptions', debtdemo: '💣 Debt Demolisher', montecarlo: '🔮 Wealth Simulator', cashflow3d: '🌐 3D Cash Flow', sessions: '📱 Active Sessions' };
+        const pgTitles = { dashboard: '<i class=wfi-dashboard></i> Dashboard', monthly: '<i class=wfi-calendar></i> Monthly Plan', income: '<i class=wfi-chartLine></i> Investments', incRecv: '<i class=wfi-wallet></i> Income', loans: '<i class=wfi-bank></i> Bank Loans', ccinstall: '<i class=wfi-card></i> CC Installments', cconetime: '<i class=wfi-clock></i> CC One-Time Payments', cheques: '<i class=wfi-cheque></i> Cheque Tracker', expenses: '<i class=wfi-receipt></i> Monthly Expenses', targets: '<i class=wfi-target></i> Targets & Savings', dscr: '<i class=wfi-ruler></i> DSCR Calculator', settings: '<i class=wfi-settings></i> System Settings', ai: '<i class=wfi-bot></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i class=wfi-trophy></i> WealthFlow Score', subscriptions: '<i class=wfi-bell></i> Subscriptions', debtdemo: '<i class=wfi-bomb></i> Debt Demolisher', montecarlo: '<i class=wfi-crystal></i> Wealth Simulator', cashflow3d: '<i class=wfi-globe></i> 3D Cash Flow', sessions: '<i class=wfi-devices></i> Active Sessions' };
 
         function showPage(name, navEl) {
             // RESTORED v6.9.2: biometric guard for sensitive zones
@@ -13110,7 +13128,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
 
         function renderPage(name) {
-            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions };
+            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv };
             if (fn[name]) fn[name]();
         }
 
@@ -13371,6 +13389,168 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 DB.set('income', DB.get('income').filter(x => x.id !== id)); renderIncome(); renderDash(); notify('Deleted', 'info');
             });
         }
+        /* ════════════════ INCOME TAB (received income) — v7.17.1 ════════════════
+           Income is now its OWN tab, structured like Expenses: simple received
+           entries {id, name, type, amount, month, date, received, source, notes}.
+           The old combined tab continues as "Investments" (unchanged machinery,
+           so the dashboard / DSCR / score keep reading DB.get('income')). A
+           one-time migration moves previously-filed received-income records
+           (oneOff + kind:'received') out of the investments store into here. */
+        const INC_TYPES = ['Salary', 'Interest', 'Dividend', 'Rent', 'Business', 'Pension', 'Gift', 'Refund', 'Other'];
+        const incTypeBadge = { Salary: 'bg-g', Interest: 'bg-b', Dividend: 'bg-p', Rent: 'bg-a', Business: 'bg-c', Pension: 'bg-gr', Gift: 'bg-p', Refund: 'bg-b', Other: 'bg-gr' };
+
+        function _migrateIncomeSplit() {
+            try {
+                const inv = DB.get('income') || [];
+                const moved = inv.filter(x => x && x.oneOff && x.kind === 'received');
+                if (!moved.length) return;
+                const recv = DB.get('incomeRecv') || [];
+                moved.forEach(m => {
+                    if (recv.some(r => r.id === m.id)) return;
+                    const t = (m.incomeType || 'other');
+                    recv.push({
+                        id: m.id, name: m.name || 'Income',
+                        type: t.charAt(0).toUpperCase() + t.slice(1),
+                        amount: m.receivedAmount || m.amount || 0,
+                        month: (m.start || '').slice(0, 7), date: m.start || '',
+                        received: true, source: m.source || 'manual',
+                        notes: m.notes || '', createdAt: m.createdAt || new Date().toISOString()
+                    });
+                });
+                DB.set('incomeRecv', recv);
+                DB.set('income', inv.filter(x => !(x && x.oneOff && x.kind === 'received')));
+                console.log('[Migrate] moved ' + moved.length + ' received-income records to the Income tab');
+            } catch (e) { console.warn('[Migrate] income split failed:', e && e.message); }
+        }
+
+        function renderIncRecv() {
+            const host = $('incRecvList'); if (!host) return;
+            let arr = (DB.get('incomeRecv') || []).slice();
+            // month filter
+            const months = [...new Set(arr.map(x => x.month).filter(Boolean))].sort().reverse();
+            const msel = $('incRecvMonth');
+            if (msel) {
+                const cur = msel.value;
+                msel.innerHTML = '<option value="">All Months</option>' + months.map(m => `<option value="${m}" ${m === cur ? 'selected' : ''}>${monthStrFmt(m + '-01')}</option>`).join('');
+                if (cur) arr = arr.filter(x => x.month === cur);
+            }
+            // stats
+            const now = new Date(); const ymNow = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+            const thisMonth = (DB.get('incomeRecv') || []).filter(x => x.month === ymNow);
+            const tmTot = thisMonth.reduce((s, x) => s + (x.amount || 0), 0);
+            const tot = arr.reduce((s, x) => s + (x.amount || 0), 0);
+            const typeMap = {}; arr.forEach(x => { typeMap[x.type] = (typeMap[x.type] || 0) + (x.amount || 0); });
+            const topType = Object.entries(typeMap).sort((a, b) => b[1] - a[1])[0] || ['-', 0];
+            if ($('incRecvStats')) $('incRecvStats').innerHTML = `
+        <div class="stat-card sc-green"><div class="stat-label">This Month</div><div class="stat-val">${fmtS(tmTot)}</div><div class="stat-meta">${thisMonth.length} entr${thisMonth.length === 1 ? 'y' : 'ies'}</div></div>
+        <div class="stat-card sc-gold"><div class="stat-label">Shown Total</div><div class="stat-val">${fmtS(tot)}</div><div class="stat-meta">${arr.length} entr${arr.length === 1 ? 'y' : 'ies'}</div></div>
+        <div class="stat-card sc-blue"><div class="stat-label">Top Type</div><div class="stat-val" style="font-size:15px;">${topType[0]}</div><div class="stat-meta">${fmtS(topType[1])}</div></div>
+        <div class="stat-card sc-red"><div class="stat-label">Received</div><div class="stat-val">${arr.filter(x => x.received).length}</div><div class="stat-meta">of ${arr.length}</div></div>`;
+            if (!arr.length) { host.innerHTML = emptyState('<i class=wfi-wallet style=font-size:28px></i>', 'No income recorded yet', 'Add salary, interest, rent — or import a bank statement'); return; }
+            // group by month, newest first (same reading order as Expenses)
+            const groups = {}; arr.forEach(x => { (groups[x.month || ''] = groups[x.month || ''] || []).push(x); });
+            const keys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+            host.innerHTML = keys.map(ym => {
+                const items = groups[ym].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+                const mt = items.reduce((s, x) => s + (x.amount || 0), 0);
+                const isCur = ym === ymNow, isPast = ym < ymNow;
+                const tone = isCur ? 'var(--accent)' : isPast ? 'var(--text3)' : 'var(--blue)';
+                const tag = isCur ? 'THIS MONTH' : isPast ? 'PAST' : 'UPCOMING';
+                const rows = items.map(x => `
+                    <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;">
+                        <span class="badge exp-badge ${incTypeBadge[x.type] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.type || 'Other'}</span>
+                        <div class="exp-desc" style="flex:1 1 0;min-width:0;overflow:hidden;">
+                            <div style="font-weight:600;font-size:13px;overflow-wrap:break-word;line-height:1.35;">${x.name}</div>
+                            ${x.notes ? `<div style="font-size:11px;color:var(--text3);overflow-wrap:break-word;margin-top:2px;">${x.notes}</div>` : ''}
+                        </div>
+                        <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:var(--green);flex-shrink:0;white-space:nowrap;font-size:12px;">+${fmt(x.amount)}</div>
+                        <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
+                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${x.id}')" title="Mark received"><i class=wfi-check></i></button>` : ''}
+                            <button class="ib e" onclick="editIncomeRecv('${x.id}')" title="Edit"><i class=wfi-edit></i></button>
+                            <button class="ib d" onclick="deleteIncomeRecv('${x.id}')" title="Delete"><i class=wfi-trash></i></button>
+                        </div>
+                    </div>`).join('');
+                return `
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;flex-wrap:wrap;">
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <div style="font-weight:800;font-size:15px;color:${tone};"><i class=wfi-calendar></i> ${ym ? monthStrFmt(ym + '-01') : 'Undated'}</div>
+                                <span class="badge" style="background:rgba(212,175,55,0.12);color:${tone};font-size:10px;font-weight:700;">${tag}</span>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="font-family:var(--mono);font-weight:800;color:var(--green);">+${fmt(mt)}</div>
+                                <div style="font-size:11px;color:var(--text3);">${items.filter(i => i.received).length} of ${items.length} received</div>
+                            </div>
+                        </div>${rows}
+                    </div>`;
+            }).join('');
+        }
+
+        let _incRecvEdit = null;
+        function openIncomeRecvModal(editId) {
+            _incRecvEdit = editId || null;
+            const x = editId ? (DB.get('incomeRecv') || []).find(r => r.id === editId) : null;
+            const ov = document.createElement('div');
+            ov.className = 'mo'; ov.id = 'mdIncRecvOv';
+            const opts = INC_TYPES.map(t => `<option ${x && x.type === t ? 'selected' : ''}>${t}</option>`).join('');
+            ov.innerHTML = `
+            <div class="md" style="max-width:440px;max-height:calc(100dvh - 28px);overflow-y:auto;-webkit-overflow-scrolling:touch;">
+                <div class="md-h"><div class="md-t"><i class=wfi-wallet></i> ${editId ? 'Edit' : 'Add'} Income</div><button class="md-x" onclick="closeIncRecvModal()"><i class=wfi-x></i></button></div>
+                <div class="fg"><label class="fl">Name / Source *</label><input class="fi" id="i2_name" placeholder="e.g. May Salary — ABC Ltd" value="${x ? (x.name || '').replace(/"/g, '&quot;') : ''}"></div>
+                <div class="fr">
+                    <div class="fg"><label class="fl">Type *</label><select class="fs" id="i2_type">${opts}</select></div>
+                    <div class="fg"><label class="fl">Amount (LKR) *</label><input class="fi money-input" id="i2_amount" inputmode="decimal" value="${x ? fmtN(x.amount || 0) : ''}"></div>
+                </div>
+                <div class="fr">
+                    <div class="fg"><label class="fl">Date received *</label><input class="fi" type="date" id="i2_date" value="${x ? (x.date || '') : (typeof today === 'function' ? today() : '')}"></div>
+                    <div class="fg"><label class="fl">Received?</label><select class="fs" id="i2_recv"><option value="1" ${!x || x.received ? 'selected' : ''}>Yes — received</option><option value="0" ${x && !x.received ? 'selected' : ''}>Not yet</option></select></div>
+                </div>
+                <div class="fg"><label class="fl">Notes</label><input class="fi" id="i2_notes" value="${x ? (x.notes || '').replace(/"/g, '&quot;') : ''}"></div>
+                <div style="display:flex;gap:8px;margin-top:14px;">
+                    <button class="btn btn-ghost" style="flex:1;" onclick="closeIncRecvModal()">Cancel</button>
+                    <button class="btn btn-primary" style="flex:2;" onclick="saveIncomeRecv()"><i class=wfi-check></i> Save Income</button>
+                </div>
+            </div>`;
+            document.body.appendChild(ov);
+            requestAnimationFrame(() => ov.classList.add('open'));
+            try { initMoneyInputs(); } catch (_) {}
+            ov.addEventListener('click', (e) => { if (e.target === ov) closeIncRecvModal(); });
+        }
+        function closeIncRecvModal() { const ov = $('mdIncRecvOv'); if (ov) { ov.classList.remove('open'); setTimeout(() => ov.remove(), 200); } _incRecvEdit = null; }
+        function saveIncomeRecv() {
+            const name = ($('i2_name').value || '').trim();
+            const type = $('i2_type').value || 'Other';
+            const amount = parseMoney($('i2_amount').value);
+            const date = $('i2_date').value;
+            if (!name || !amount || !date) { notify('Fill name, amount and date', 'error'); return; }
+            const arr = DB.get('incomeRecv') || [];
+            const rec = {
+                id: _incRecvEdit || uid(), name, type, amount,
+                month: date.slice(0, 7), date,
+                received: $('i2_recv').value === '1',
+                source: 'manual', notes: $('i2_notes').value || '',
+                createdAt: _incRecvEdit ? ((arr.find(r => r.id === _incRecvEdit) || {}).createdAt || new Date().toISOString()) : new Date().toISOString()
+            };
+            if (_incRecvEdit) { const i = arr.findIndex(r => r.id === _incRecvEdit); if (i > -1) arr[i] = rec; else arr.push(rec); }
+            else arr.push(rec);
+            DB.set('incomeRecv', arr);
+            closeIncRecvModal(); renderIncRecv();
+            notify(_incRecvEdit ? 'Income updated' : 'Income saved', 'success'); playUISound('success');
+        }
+        function editIncomeRecv(id) { openIncomeRecvModal(id); }
+        function deleteIncomeRecv(id) {
+            if (!confirm('Delete this income entry?')) return;
+            DB.set('incomeRecv', (DB.get('incomeRecv') || []).filter(r => r.id !== id));
+            renderIncRecv(); notify('Deleted', 'info');
+        }
+        function markIncRecvReceived(id) {
+            const arr = DB.get('incomeRecv') || [];
+            const r = arr.find(x => x.id === id); if (!r) return;
+            r.received = true; DB.set('incomeRecv', arr); renderIncRecv();
+            notify('Marked received', 'success');
+        }
+
+
         function renderIncome() {
             let arr = DB.get('income');
             const received = DB.getObj('incomeReceived', {});
@@ -13422,7 +13602,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div><div style="font-size:15px;font-weight:700;">${source.name}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${source.company} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
                     <div style="text-align:right;"><div style="font-size:21px;font-weight:800;font-family:var(--mono);color:var(--green);">${fmt(source.monthly)}</div><div style="font-size:11px;color:var(--text3);">${freqL}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editIncome('${source.id}')">✏️</button><button class="ib d" onclick="deleteIncome('${source.id}')">🗑️</button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editIncome('${source.id}')"><i class=wfi-edit></i></button><button class="ib d" onclick="deleteIncome('${source.id}')"><i class=wfi-trash></i></button></div>
                 </div>
             </div>
 
@@ -13446,7 +13626,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div style="font-size:12px;color:var(--text3);">This month (${curMonthStr}):</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     <button class="income-received-btn${isConfirmed ? ' confirmed' : ''}" onclick="${isConfirmed ? '' : `confirmIncomeReceived('${source.id}')`}" ${isConfirmed ? 'disabled' : ''}>
-                        ${isConfirmed ? '✅ Received & Confirmed' : '💚 Confirm Received'}
+                        ${isConfirmed ? '<i class=wfi-checkCircle></i> Received & Confirmed' : 'Confirm Received'}
                     </button>
                     <button class="income-past-btn" onclick="openPastMonthConfirm('${source.id}')" title="Confirm a previous month you missed (e.g. you were offline for a while, or this income started before you joined WealthFlow)">
                         📅 Past months
@@ -13498,7 +13678,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         // ── Past-month confirmation modal ────────────────────────────────
         // Lists every month from the income's start date up to LAST month
         // (we don't include the current month here — that's what the main
-        //  "💚 Confirm Received" button handles). Each unconfirmed month gets
+        //  "Confirm Received" button handles). Each unconfirmed month gets
         // a checkbox + editable amount; pre-filled with `source.monthly`.
         // The user can tick any combination of months and Save Selected.
         //
@@ -14549,7 +14729,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div><div class="loan-name">${l.name}</div><div class="loan-bank">🏦 ${l.bank}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="loan-monthly">${fmt(displayMonthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div>${monthlyHint}<div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editLoan('${l.id}')">✏️</button><button class="ib d" onclick="deleteLoan('${l.id}')">🗑️</button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editLoan('${l.id}')"><i class=wfi-edit></i></button><button class="ib d" onclick="deleteLoan('${l.id}')"><i class=wfi-trash></i></button></div>
                 </div>
             </div>
             <div class="pb" style="margin-bottom:6px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${prog.pct}%"></div></div>
@@ -16377,9 +16557,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.date}</td>
             <td style="min-width:110px;"><div class="pb" style="margin-bottom:3px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${Math.min(100, prog.pct)}%"></div></div><div style="font-size:10px;color:var(--text3);">${prog.paid}/${prog.total} (${prog.pct}%)</div></td>
             <td>${item.completed ? '<span class="badge bg-gr">Done</span>' : isActive ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-r">Overdue</span>'}</td>
-            <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${item.id}')" title="Mark Complete">✅</button>` : ''}
-                <button class="ib e" onclick="editCCI('${item.id}')">✏️</button>
-                <button class="ib d" onclick="deleteCCI('${item.id}')">🗑️</button></div></td>
+            <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${item.id}')" title="Mark Complete"><i class=wfi-check></i></button>` : ''}
+                <button class="ib e" onclick="editCCI('${item.id}')"><i class=wfi-edit></i></button>
+                <button class="ib d" onclick="deleteCCI('${item.id}')"><i class=wfi-trash></i></button></div></td>
         </tr>`;
             }).join('');
         }
@@ -16545,9 +16725,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
             <td>${item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}</td>
-            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')" title="Mark paid">✅</button>` : ''}
-                <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit">✏️</button>
-                <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete">🗑️</button></div></td>
+            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')" title="Mark paid"><i class=wfi-check></i></button>` : ''}
+                <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit"><i class=wfi-edit></i></button>
+                <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete"><i class=wfi-trash></i></button></div></td>
         </tr>`;
             }).join('');
         }
@@ -16661,9 +16841,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td>${statusMap[item.status] || ''}</td>
             <td class="td-m">${item.notes || ''}</td>
             <td><div class="act-btns">
-                ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${item.id}')" title="Clear">✅</button><button class="ib d" onclick="markChequeBounced('${item.id}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
-                <button class="ib e" onclick="editCheque('${item.id}')">✏️</button>
-                <button class="ib d" onclick="deleteCheque('${item.id}')">🗑️</button>
+                ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${item.id}')" title="Clear"><i class=wfi-check></i></button><button class="ib d" onclick="markChequeBounced('${item.id}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
+                <button class="ib e" onclick="editCheque('${item.id}')"><i class=wfi-edit></i></button>
+                <button class="ib d" onclick="deleteCheque('${item.id}')"><i class=wfi-trash></i></button>
             </div></td>
         </tr>`;
             }).join('');
@@ -16887,9 +17067,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                             </div>
                             <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
                             <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
-                                ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid">✅</button>` : ''}
-                                <button class="ib e" onclick="editExpense('${x.id}')" title="Edit">✏️</button>
-                                <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete">🗑️</button>
+                                ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i class=wfi-check></i></button>` : ''}
+                                <button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i class=wfi-edit></i></button>
+                                <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i class=wfi-trash></i></button>
                             </div>
                         </div>
                     `).join('');
@@ -16925,9 +17105,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         <td class="td-r">${fmt(x.amount)}</td>
         <td>${x.recurring ? '<span class="badge bg-b">🔄 Monthly</span>' : '<span class="badge bg-gr">Once</span>'}</td>
         <td>${x.completed ? '<span class="badge bg-g">✅ Paid</span>' : '<span class="badge bg-a">Pending</span>'}</td>
-        <td><div class="act-btns">${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')">✅</button>` : ''}
-            <button class="ib e" onclick="editExpense('${x.id}')">✏️</button>
-            <button class="ib d" onclick="deleteExpense('${x.id}')">🗑️</button></div></td>
+        <td><div class="act-btns">${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')"><i class=wfi-check></i></button>` : ''}
+            <button class="ib e" onclick="editExpense('${x.id}')"><i class=wfi-edit></i></button>
+            <button class="ib d" onclick="deleteExpense('${x.id}')"><i class=wfi-trash></i></button></div></td>
     </tr>`).join('');
         }
 
@@ -17045,7 +17225,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div><div class="tgt-name">${done ? '🏆 ' : ''} ${t.name}</div><div class="tgt-dates">📅 ${fmtDatePretty(t.start)} → ${fmtDatePretty(t.end)}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="tgt-big">${fmtS(t.amount)}</div><div style="font-size:11px;color:var(--text3);">Target · ${fmt(t.amount)}</div><div class="tgt-rem">${fmtS(remain)}</div><div style="font-size:11px;color:var(--text3);">Remaining</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editTarget('${t.id}')">✏️</button><button class="ib d" onclick="deleteTarget('${t.id}')">🗑️</button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editTarget('${t.id}')"><i class=wfi-edit></i></button><button class="ib d" onclick="deleteTarget('${t.id}')"><i class=wfi-trash></i></button></div>
                 </div>
             </div>
 
@@ -17230,7 +17410,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div class="flow-dot ${f.type === 'set' ? 'in' : f.type}">${dot}</div>
                     <div class="flow-info"><div class="flow-name">${f.company}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + f.notes : ''}</div></div>
                     <div class="flow-right"><div class="flow-amt ${f.type === 'out' ? 'out' : 'in'}">${f.type === 'out' ? '-' : '+'}${fmt(f.amount)}</div><div><span class="badge ${cls}">${lbl}</span></div></div>
-                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${f.id}')">✏️</button>` : ''}<button class="ib d" onclick="deleteBalFlow('${f.id}')">🗑️</button></div>
+                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${f.id}')"><i class=wfi-edit></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${f.id}')"><i class=wfi-trash></i></button></div>
                 </div>`;
             }).join('');
 
@@ -17713,7 +17893,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 ? `<div style="font-size:10px;color:var(--text3);margin-bottom:2px;line-height:1.3;">📋 ${loanLabel}</div>` : '';
             el.innerHTML = `
         <div class="fg" style="margin:0;flex:2;">${labelLine}<input class="fi money-input dscr-emi-input" value="${valStr}" placeholder="Monthly installment (CRIB / EMI in LKR)" oninput="calcDSCR()" title="Monthly installment as it appears on CRIB. NOT the outstanding balance, NOT the original loan amount."></div>
-        <div class="fg" style="margin:0;"><button class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove(); calcDSCR();" style="height:100%;">✕ Remove</button></div>
+        <div class="fg" style="margin:0;"><button class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove(); calcDSCR();" style="height:100%;"><i class=wfi-x></i> Remove</button></div>
     `;
             wrap.appendChild(el);
             initMoneyInputs();
@@ -20433,9 +20613,9 @@ Be direct and use real numbers. Avoid generic advice.`;
                         ${overrideBadge}
                     </div>
                     <div class="act-btns">
-                        <button type="button" class="sub-act cta-edit" onclick="editSubscription('${s.id}')" title="Edit subscription">✏️</button>
+                        <button type="button" class="sub-act cta-edit" onclick="editSubscription('${s.id}')" title="Edit subscription"><i class=wfi-edit></i></button>
                         ${thisMonthCta}
-                        <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${s.id}')" title="Delete">🗑️</button>
+                        <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${s.id}')" title="Delete"><i class=wfi-trash></i></button>
                     </div>
                 </div>`;
             }).join('');
@@ -22796,8 +22976,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     </div>
                     <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;">
                         <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;min-width:90px;">Cancel</button>
-                        <button class="btn btn-secondary" id="_ccr_ai" type="button" style="flex:2;min-width:150px;">🤖 Let AI auto-sort</button>
-                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;min-width:150px;">💾 Save &amp; file each row</button>
+                        <button class="btn btn-secondary" id="_ccr_ai" type="button" style="flex:2;min-width:150px;"><i class=wfi-bot></i> Let AI auto-sort</button>
+                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;min-width:150px;"><i class=wfi-check></i> Save &amp; file each row</button>
                     </div>
                     <div style="padding:0 16px 12px;font-size:11px;color:var(--text3);line-height:1.5;">🤖 <b>Auto-sort</b> sends the ticked rows to the background AI, which routes each to its correct tab (groceries → Expenses, salary → Income, etc.), learns merchants, and removes duplicates — you can close this and keep working.</div>
                 </div>`;
@@ -22849,8 +23029,13 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const rows = overlay.querySelectorAll('#_ccr_body tr');
                 const ccArr = DB.get('cconetime');
                 const expArr = DB.get('expenses');
-                const incArr = DB.get('income');
-                let cc = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0;
+                const incRecvArr = DB.get('incomeRecv');
+                let cc = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0;
+                // A statement row dated in the past is already settled → auto-tick it.
+                const _isPast = (d) => { try { const dt = new Date(d + 'T23:59:59'); return dt < new Date(); } catch (_) { return false; } };
+                const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                // Re-import / mandatory-fee de-dupe: same date + amount + merchant already filed?
+                const _dupIn = (list, d, a, name, amtKey) => list.some(r => r.date === d && Math.abs(((r[amtKey] != null ? r[amtKey] : r.amount) || 0) - a) < 0.01 && _nz(r.desc || r.name) === _nz(name));
                 rows.forEach((tr) => {
                     if (!tr.querySelector('._ccr_keep').checked) { skipped++; return; }
                     const date = tr.querySelector('._ccr_date').value || today();
@@ -22860,10 +23045,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     const amount = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
                     if (!desc || !amount) { skipped++; return; }
                     const month = (date || '').slice(0, 7);
+                    const past = _isPast(date);
 
                     if (dest === 'cconetime') {
-                        // Service-fee rows fold into their parent cash advance — not a separate line.
                         if (type === 'service_fee') { skipped++; return; }
+                        if (_dupIn(ccArr, date, amount, desc, 'amount')) { dup++; return; }   // e.g. re-imported ATM/CEFT fee
                         const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
                         let serviceFee = 0, feeMeta = null, combinedTotal = amount;
                         if (type === 'cash_advance') {
@@ -22873,24 +23059,25 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             const r = _computeFuelFee(bank, amount);
                             serviceFee = r.fee; feeMeta = { source: 'auto', kind: 'fuel', percent: r.percent, minFee: 0, flat: 0, note: r.note }; combinedTotal = amount + serviceFee;
                         }
-                        ccArr.push({ id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: 'AI-scanned from statement', paid: false, createdAt: new Date().toISOString() });
+                        ccArr.push({ id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: 'AI-scanned from statement', paid: past, createdAt: new Date().toISOString() });
                         cc++;
                     } else if (dest === 'expenses') {
+                        if (_dupIn(expArr, date, amount, desc, 'amount')) { dup++; return; }
                         const cat = (window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other';
-                        expArr.push({ id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: 'From statement', completed: false, createdAt: new Date().toISOString() });
+                        expArr.push({ id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: 'From statement', completed: past, createdAt: new Date().toISOString() });
                         exp++;
                     } else if (dest === 'income') {
-                        // Simple RECEIVED income (one-off) — NOT an investment. monthly:0 keeps it out
-                        // of recurring projections; the real amount lives in receivedAmount/amount.
-                        const incType = (window.WFRoute ? window.WFRoute.incomeKind(desc) : 'other') || 'other';
-                        incArr.push({ id: uid(), name: desc, company: bank || 'Statement', amount, rate: 0, monthly: 0, start: date, end: date, freq: 'one-time', day: '', oneOff: true, kind: 'received', incomeType: incType, receivedAmount: amount, source: 'statement', notes: 'Received income (from statement)', createdAt: new Date().toISOString() });
+                        // RECEIVED income → the Income tab (expense-style record). Past-dated ⇒ received.
+                        if (_dupIn(incRecvArr, date, amount, desc, 'amount')) { dup++; return; }
+                        let it = (window.WFRoute ? window.WFRoute.incomeKind(desc) : 'other') || 'other';
+                        it = it.charAt(0).toUpperCase() + it.slice(1);
+                        if (INC_TYPES.indexOf(it) < 0) it = 'Other';
+                        incRecvArr.push({ id: uid(), name: desc, type: it, amount, month, date, received: past, source: 'statement', notes: 'From statement', createdAt: new Date().toISOString() });
                         inc++;
                     } else if (dest === 'subscription') {
-                        // Recurring bill → Subscriptions tab. Match an existing one
-                        // (even if the user renamed it — we remember the merchant),
-                        // else auto-create the best subscription, then record this
-                        // month's payment. Re-derive details from the (possibly
-                        // edited) description for accuracy.
+                        // Recurring bill → Subscriptions tab. Match existing (remembers
+                        // the merchant even if renamed) else auto-create, then record
+                        // this month's payment. WFSubs de-dupes payments internally.
                         const si = (window.WFRoute && window.WFRoute.subscriptionInfo(desc)) || {};
                         const routeInfo = { subName: si.name || desc, subKind: si.kind || 'other', subPhone: si.phone || null, category: si.category || 'Other' };
                         if (window.WFSubs) {
@@ -22903,10 +23090,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
                 if (cc) DB.set('cconetime', ccArr);
                 if (exp) DB.set('expenses', expArr);
-                if (inc) DB.set('income', incArr);
+                if (inc) DB.set('incomeRecv', incRecvArr);
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
                 try { if (exp && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
-                try { if (inc && typeof renderIncome === 'function') renderIncome(); } catch (_) {}
+                try { if (inc && typeof renderIncRecv === 'function') renderIncRecv(); } catch (_) {}
                 try { if (sub && typeof renderSubscriptions === 'function') renderSubscriptions(); } catch (_) {}
                 try { if (typeof renderDash === 'function') renderDash(); } catch (_) {}
                 closeOvl();
@@ -22916,8 +23103,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (exp) parts.push(exp + ' Expense' + (exp > 1 ? 's' : ''));
                 if (inc) parts.push(inc + ' Income');
                 if (sub) parts.push(sub + ' Subscription' + (sub > 1 ? 's' : '') + (subCreated ? (' · ' + subCreated + ' new') : ''));
-                if (parts.length) { notify('✅ Filed ' + parts.join(' · ') + (skipped ? (' · skipped ' + skipped) : ''), 'success'); triggerHaptic('success'); }
-                else { notify('Nothing added · ' + skipped + ' skipped', 'warn'); }
+                const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '');
+                if (parts.length) { notify('✅ Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }
+                else { notify('Nothing added' + (dup ? (' · ' + dup + ' duplicate(s) ignored') : '') + (skipped ? (' · ' + skipped + ' skipped') : ''), 'warn'); }
             };
             overlay.addEventListener('click', (ev) => { if (ev.target === overlay) closeOvl(); });
         }
