@@ -656,6 +656,28 @@
             margin-bottom: 28px;
         }
 
+        /* Sliding feature showcase on the sign-in screen */
+        .auth-slider { margin: 0 0 24px; }
+        .auth-slides {
+            display: flex; overflow-x: auto; scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch; scroll-behavior: smooth;
+            scrollbar-width: none; gap: 0;
+        }
+        .auth-slides::-webkit-scrollbar { display: none; }
+        .auth-slide {
+            flex: 0 0 100%; scroll-snap-align: center; box-sizing: border-box;
+            padding: 22px 18px; text-align: center;
+            background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+            border: 1px solid var(--border, #243049); border-radius: 16px;
+        }
+        .auth-slide .as-ic { font-size: 30px; margin-bottom: 10px; display: flex; justify-content: center; }
+        .auth-slide .as-ic svg { width: 30px; height: 30px; }
+        .auth-slide .as-h { font-size: 16px; font-weight: 800; color: var(--text, #e8edf5); margin-bottom: 6px; }
+        .auth-slide .as-p { font-size: 12.5px; color: var(--text3, #8a97ad); line-height: 1.55; max-width: 320px; margin: 0 auto; }
+        .auth-dots { display: flex; gap: 7px; justify-content: center; margin-top: 14px; }
+        .auth-dots .ad { width: 7px; height: 7px; border-radius: 50%; background: var(--border2, #3a475e); transition: all .3s; cursor: pointer; }
+        .auth-dots .ad.on { width: 22px; border-radius: 4px; background: var(--accent, #34d399); }
+
         .pin-dots {
             display: flex;
             gap: 12px;
@@ -4755,7 +4777,35 @@
                     src="https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png"
                     alt="WealthFlow"></div>
             <div class="auth-title">WealthFlow Cloud</div>
-            <div class="auth-sub">Sign in to sync your financial data across all devices globally</div>
+            <div class="auth-sub">Take control of your money — track, plan and grow with confidence</div>
+
+            <!-- Sliding feature showcase (auto-advancing, swipeable) -->
+            <div class="auth-slider" id="authSlider" data-noicon>
+                <div class="auth-slides" id="authSlides">
+                    <div class="auth-slide">
+                        <div class="as-ic" style="color:#34d399"><i data-wfi="wallet"></i></div>
+                        <div class="as-h">Track every rupee</div>
+                        <div class="as-p">Scan bank statements &amp; cards — income, expenses and bills sorted automatically.</div>
+                    </div>
+                    <div class="auth-slide">
+                        <div class="as-ic" style="color:#60a5fa"><i data-wfi="chartLine"></i></div>
+                        <div class="as-h">See where it goes</div>
+                        <div class="as-p">Spending by category, net worth and DSCR — a clear picture, always current.</div>
+                    </div>
+                    <div class="auth-slide">
+                        <div class="as-ic" style="color:#f5a623"><i data-wfi="bell"></i></div>
+                        <div class="as-h">Never miss a bill</div>
+                        <div class="as-p">Subscriptions &amp; loan instalments tracked, with reminders before they're due.</div>
+                    </div>
+                    <div class="auth-slide">
+                        <div class="as-ic" style="color:#a78bfa"><i data-wfi="bot"></i></div>
+                        <div class="as-h">AI on your side</div>
+                        <div class="as-p">Ask anything about your finances and get smart, private advice in seconds.</div>
+                    </div>
+                </div>
+                <div class="auth-dots" id="authDots"></div>
+            </div>
+
             <button class="auth-btn" onclick="signInWithGoogle()"
                 style="display:flex;align-items:center;justify-content:center;gap:12px;background:#fff;color:#333;border:1.5px solid #dadce0;font-weight:600;border-radius:12px;padding:14px 20px;font-size:15px;box-shadow:0 2px 8px rgba(0,0,0,0.08);transition:all .25s;">
                 <svg width="20" height="20" viewBox="0 0 24 24">
@@ -4770,8 +4820,8 @@
                 </svg>
                 Continue with Google
             </button>
-            <div style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.6;">🔒 End-to-end encrypted ·
-                Your data stays yours<br>Powered by Google Firebase & Gemini AI</div>
+            <div style="margin-top:16px;font-size:11px;color:var(--text3);line-height:1.6;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;"><i data-wfi="lock"></i> End-to-end encrypted ·
+                Your data stays yours · Powered by Google Firebase &amp; Gemini AI</div>
         </div>
 
         <div class="auth-box" id="authLogin" style="display:none;">
@@ -4960,45 +5010,45 @@
 
             <nav class="sb-nav">
                 <div class="sb-group">Overview</div>
-                <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon"><i class=wfi-dashboard></i></span>
+                <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon"><i data-wfi="dashboard"></i></span>
                     Dashboard</div>
-                <div class="nav-item" onclick="showPage('monthly',this)"><span class="nav-icon"><i class=wfi-calendar></i></span> Monthly Plan
+                <div class="nav-item" onclick="showPage('monthly',this)"><span class="nav-icon"><i data-wfi="calendar"></i></span> Monthly Plan
                 </div>
                 <div class="sb-group">Finance</div>
-                <div class="nav-item" onclick="showPage('incRecv',this)"><span class="nav-icon"><i class=wfi-wallet></i></span> Income</div>
-                <div class="nav-item" onclick="showPage('income',this)"><span class="nav-icon"><i class=wfi-chartLine></i></span> Investments</div>
-                <div class="nav-item" onclick="showPage('loans',this)"><span class="nav-icon"><i class=wfi-bank></i></span> Bank Loans</div>
-                <div class="nav-item" onclick="showPage('ccinstall',this)"><span class="nav-icon"><i class=wfi-card></i></span> CC
+                <div class="nav-item" onclick="showPage('incRecv',this)"><span class="nav-icon"><i data-wfi="wallet"></i></span> Income</div>
+                <div class="nav-item" onclick="showPage('income',this)"><span class="nav-icon"><i data-wfi="chartLine"></i></span> Investments</div>
+                <div class="nav-item" onclick="showPage('loans',this)"><span class="nav-icon"><i data-wfi="bank"></i></span> Bank Loans</div>
+                <div class="nav-item" onclick="showPage('ccinstall',this)"><span class="nav-icon"><i data-wfi="card"></i></span> CC
                     Installments</div>
-                <div class="nav-item" onclick="showPage('cconetime',this)"><span class="nav-icon"><i class=wfi-clock></i></span> CC One-Time
+                <div class="nav-item" onclick="showPage('cconetime',this)"><span class="nav-icon"><i data-wfi="clock"></i></span> CC One-Time
                     <span class="nb" id="nb-ccot" style="display:none">!</span>
                 </div>
-                <div class="nav-item" onclick="showPage('cheques',this)"><span class="nav-icon"><i class=wfi-cheque></i></span> Cheques <span
+                <div class="nav-item" onclick="showPage('cheques',this)"><span class="nav-icon"><i data-wfi="cheque"></i></span> Cheques <span
                         class="nb" id="nb-chq" style="display:none">!</span></div>
                 <div class="sb-group">Tracking</div>
-                <div class="nav-item" onclick="showPage('expenses',this)"><span class="nav-icon"><i class=wfi-receipt></i></span> Monthly
+                <div class="nav-item" onclick="showPage('expenses',this)"><span class="nav-icon"><i data-wfi="receipt"></i></span> Monthly
                     Expenses</div>
-                <div class="nav-item" onclick="showPage('targets',this)"><span class="nav-icon"><i class=wfi-target></i></span> Targets &
+                <div class="nav-item" onclick="showPage('targets',this)"><span class="nav-icon"><i data-wfi="target"></i></span> Targets &
                     Savings</div>
                 <div class="sb-group">Tools</div>
-                <div class="nav-item" onclick="showPage('dscr',this)"><span class="nav-icon"><i class=wfi-ruler></i></span> DSCR Calculator
+                <div class="nav-item" onclick="showPage('dscr',this)"><span class="nav-icon"><i data-wfi="ruler"></i></span> DSCR Calculator
                 </div>
-                <div class="nav-item" onclick="showPage('score',this)"><span class="nav-icon"><i class=wfi-trophy></i></span> WealthFlow Score
+                <div class="nav-item" onclick="showPage('score',this)"><span class="nav-icon"><i data-wfi="trophy"></i></span> WealthFlow Score
                 </div>
-                <div class="nav-item" onclick="showPage('subscriptions',this)"><span class="nav-icon"><i class=wfi-bell></i></span>
+                <div class="nav-item" onclick="showPage('subscriptions',this)"><span class="nav-icon"><i data-wfi="bell"></i></span>
                     Subscriptions</div>
-                <div class="nav-item" onclick="showPage('debtdemo',this)"><span class="nav-icon"><i class=wfi-bomb></i></span> Debt
+                <div class="nav-item" onclick="showPage('debtdemo',this)"><span class="nav-icon"><i data-wfi="bomb"></i></span> Debt
                     Demolisher</div>
-                <div class="nav-item" onclick="showPage('montecarlo',this)"><span class="nav-icon"><i class=wfi-crystal></i></span> Wealth
+                <div class="nav-item" onclick="showPage('montecarlo',this)"><span class="nav-icon"><i data-wfi="crystal"></i></span> Wealth
                     Simulator</div>
-                <div class="nav-item" onclick="showPage('cashflow3d',this)"><span class="nav-icon"><i class=wfi-globe></i></span> 3D Cash
+                <div class="nav-item" onclick="showPage('cashflow3d',this)"><span class="nav-icon"><i data-wfi="globe"></i></span> 3D Cash
                     Flow</div>
-                <div class="nav-item" onclick="showPage('sessions',this)"><span class="nav-icon"><i class=wfi-devices></i></span> Active
+                <div class="nav-item" onclick="showPage('sessions',this)"><span class="nav-icon"><i data-wfi="devices"></i></span> Active
                     Sessions</div>
                 <div class="nav-item ai-nav-pulse" onclick="showPage('ai',this)" id="aiNavItem"><span
                         class="nav-icon">🤖</span> AI Advisor <span class="nb" id="nb-ai"
                         style="display:none;background:linear-gradient(135deg,#d4af37,#f5a623);">✨</span></div>
-                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon"><i class=wfi-settings></i></span> Settings<span class="nb" id="nb-settings" style="display:none;background:#ef4444;color:#fff;">1</span>
+                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon"><i data-wfi="settings"></i></span> Settings<span class="nb" id="nb-settings" style="display:none;background:#ef4444;color:#fff;">1</span>
                 </div>
                 <div class="nav-item" onclick="signOutGoogle()" style="color:var(--red);"><span
                         class="nav-icon">🚪</span> Sign Out</div>
@@ -5014,8 +5064,8 @@
         <div class="main">
             <header class="topbar">
                 <div class="tb-left">
-                    <button class="mobile-btn" onclick="openSb()"><i class=wfi-menu></i></button>
-                    <div class="pg-title" id="pgTitle"><i class=wfi-dashboard></i> <span>Dashboard</span></div>
+                    <button class="mobile-btn" onclick="openSb()"><i data-wfi="menu"></i></button>
+                    <div class="pg-title" id="pgTitle"><i data-wfi="dashboard"></i> <span>Dashboard</span></div>
                 </div>
                 <div class="tb-right">
                     <div class="network-wrap">
@@ -5112,7 +5162,7 @@
                         <div class="sh-title">Income</div>
                         <div class="sh-actions">
                             <select class="fs" id="incRecvMonth" onchange="renderIncRecv()" style="max-width:160px;"></select>
-                            <button class="btn btn-primary btn-sm" onclick="openIncomeRecvModal()"><i class=wfi-plus></i> Add Income</button>
+                            <button class="btn btn-primary btn-sm" onclick="openIncomeRecvModal()"><i data-wfi="plus"></i> Add Income</button>
                         </div>
                     </div>
                     <div class="stat-grid" id="incRecvStats" style="margin-bottom:14px;"></div>
@@ -5129,7 +5179,7 @@
                                 <span class="sb-btn" onclick="sortList('income','rate',this)">Rate</span>
                                 <span class="sb-btn" onclick="sortList('income','date',this)">Date</span>
                             </div>
-                            <button class="btn btn-primary btn-sm" onclick="clearIncomeForm(); openModal('mdIncome')"><i class=wfi-plus></i>
+                            <button class="btn btn-primary btn-sm" onclick="clearIncomeForm(); openModal('mdIncome')"><i data-wfi="plus"></i>
                                 Add Investment</button>
                         </div>
                     </div>
@@ -5484,7 +5534,7 @@
                             </div>
                             <button class="btn btn-secondary btn-sm" onclick="openLangModal()" title="AI language">🌐 <span id="aiLangBadge">EN</span></button>
                             <button class="btn btn-secondary btn-sm" onclick="openModal('mdAIPersona')" title="Change AI personality">🎭 Persona</button>
-                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history"><i class=wfi-trash></i></button>
+                            <button class="btn btn-ghost btn-sm" onclick="clearAIChat()" title="Clear chat history"><i data-wfi="trash"></i></button>
                         </div>
                     </div>
 
@@ -5529,7 +5579,7 @@
                                         <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ai_chat_scan" style="display:none;" onchange="_aiChatFilePicked(event)">
                                     </label>
                                 </div>
-                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;"><i class=wfi-send></i></button>
+                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;"><i data-wfi="send"></i></button>
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
                                 <div id="aiTypingIndicator" style="font-size:11px;color:var(--text3);display:none;">
@@ -5742,7 +5792,7 @@
             style="height:85vh; max-height:700px; display:flex; flex-direction:column; padding:0; overflow:hidden;">
             <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
                 <div class="md-title">🌐 AI Response Language</div>
-                <button class="md-x" onclick="closeModal('mdLanguage')"><i class=wfi-x></i></button>
+                <button class="md-x" onclick="closeModal('mdLanguage')"><i data-wfi="x"></i></button>
             </div>
             <div
                 style="padding:16px 20px 10px; background:var(--bg2); border-bottom:1px solid var(--border); flex-shrink:0;">
@@ -5756,13 +5806,13 @@
         </div>
     </div>
 
-    <button class="fab-ai-btn" id="fabAIBtn" onclick="toggleFloatingAI()" title="Ask AI"><i class=wfi-bot></i></button>
+    <button class="fab-ai-btn" id="fabAIBtn" onclick="toggleFloatingAI()" title="Ask AI"><i data-wfi="bot"></i></button>
     <div class="floating-ai-bar" id="floatingAIBar">
         <button class="floating-ai-close" onclick="toggleFloatingAI()" title="Close"
-            aria-label="Close AI bar"><i class=wfi-x></i></button>
+            aria-label="Close AI bar"><i data-wfi="x"></i></button>
         <input class="floating-ai-input" id="floatingAIInput" placeholder="Ask AI anything..."
             onkeydown="if(event.key==='Enter'){sendFloatingAI();event.preventDefault();}">
-        <button class="floating-ai-send" onclick="sendFloatingAI()"><i class=wfi-send></i></button>
+        <button class="floating-ai-send" onclick="sendFloatingAI()"><i data-wfi="send"></i></button>
     </div>
 
     <div id="notifs"></div>
@@ -5771,7 +5821,7 @@
         <div class="md md-sm" style="border: 1px solid var(--accent); box-shadow: 0 0 40px rgba(212,175,55,0.1);">
             <div class="md-hdr">
                 <div class="md-title" style="color:var(--accent);">✨ Export Elite Report</div><button class="md-x"
-                    onclick="closeModal('mdExport')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdExport')"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:16px;">Generate a highly professional, bank-grade
                 statement for your business or personal records.</p>
@@ -5817,7 +5867,7 @@
         <div class="md" style="max-width:560px;">
             <div class="md-hdr">
                 <div class="md-title">📲 Install WealthFlow App</div>
-                <button class="md-x" onclick="closeModal('mdInstallGuide')"><i class=wfi-x></i></button>
+                <button class="md-x" onclick="closeModal('mdInstallGuide')"><i data-wfi="x"></i></button>
             </div>
             <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;">
                 <button class="btn btn-ghost btn-sm install-tab active" data-tab="android"
@@ -5891,7 +5941,7 @@
         <div class="md md-sm" style="border: 1px solid var(--red);">
             <div class="md-hdr">
                 <div class="md-title" style="color:var(--red);">⚠️ Core System Reset</div><button class="md-x"
-                    onclick="closeModal('mdFactoryReset')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdFactoryReset')"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5;">This will wipe ALL
                 financial data from your devices and the cloud. <b style="color:var(--green);">Your Master PIN and
@@ -5918,7 +5968,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Restore Data</div><button class="md-x"
-                    onclick="closeModal('mdRestoreCloud')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdRestoreCloud')"><i data-wfi="x"></i></button>
             </div>
 
             <div
@@ -5947,7 +5997,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="mdIncomeTitle">Add Income / Investment Source</div><button class="md-x"
-                    onclick="closeModal('mdIncome')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdIncome')"><i data-wfi="x"></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Source Name *</label><input class="fi" id="i_name"
@@ -5996,7 +6046,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="mdLoanTitle">Add Bank Loan</div><button class="md-x"
-                    onclick="closeModal('mdLoan')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdLoan')"><i data-wfi="x"></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Loan Name *</label><input class="fi" id="l_name"
@@ -6062,7 +6112,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Skip / Double Bank Loan</div><button class="md-x"
-                    onclick="closeModal('mdSkipLoan')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdSkipLoan')"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Select a loan plan, then choose a month to
                 skip. The payment will automatically double in the following month.</p>
@@ -6078,7 +6128,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="mdCCITitle">Add CC Installment Plan</div><button class="md-x"
-                    onclick="closeModal('mdCCI')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdCCI')"><i data-wfi="x"></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Product Name *</label><input class="fi" id="c_product"
@@ -6114,7 +6164,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Skip / Double CC Installment</div><button class="md-x"
-                    onclick="closeModal('mdSkip')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdSkip')"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">Select an installment plan, then choose a
                 month to skip. The payment will automatically double in the following month.</p>
@@ -6131,7 +6181,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdCCOTTitle">Add CC One-Time Payment</div>
-                <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();"><i class=wfi-x></i></button>
+                <button class="md-x" onclick="closeModal('mdCCOT'); clearCCOTForm();"><i data-wfi="x"></i></button>
             </div>
             <!-- ── v7.5.2 AI Vision card (matches user's reference screenshot) ──
                  Two buttons in a gold-bordered card. Capture Photo opens the
@@ -6188,7 +6238,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdChequeTitle">Add Cheque</div><button class="md-x"
-                    onclick="closeModal('mdCheque')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdCheque')"><i data-wfi="x"></i></button>
             </div>
             <div class="fr">
                 <div class="fg"><label class="fl">Cheque No. *</label><input class="fi" id="chq_no"
@@ -6232,7 +6282,7 @@
 
             <div class="md-hdr">
                 <div class="md-title" id="mdExpenseTitle">Add Monthly Expense</div>
-                <button class="md-x" onclick="closeModal('mdExpense')"><i class=wfi-x></i></button>
+                <button class="md-x" onclick="closeModal('mdExpense')"><i data-wfi="x"></i></button>
             </div>
             <!-- v7.5.2 — AI Vision card (same component as CC One-Time) -->
             <div class="ai-vision-card">
@@ -6304,7 +6354,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdTargetTitle">Create Savings Target</div><button class="md-x"
-                    onclick="closeModal('mdTarget')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdTarget')"><i data-wfi="x"></i></button>
             </div>
             <div class="fg"><label class="fl">Target Name *</label><input class="fi" id="t_name"
                     placeholder="House Fund"></div>
@@ -6325,7 +6375,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Add Saving Entry</div><button class="md-x"
-                    onclick="closeModal('mdSaving')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdSaving')"><i data-wfi="x"></i></button>
             </div>
             <div class="fg"><label class="fl">Target *</label><select class="fs" id="sav_tgt"></select></div>
             <div class="fr">
@@ -6352,7 +6402,7 @@
         <div class="md">
             <div class="md-hdr">
                 <div class="md-title" id="savHistTitle">Savings History</div><button class="md-x"
-                    onclick="closeModal('mdSavHistory')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdSavHistory')"><i data-wfi="x"></i></button>
             </div>
             <div id="savHistContent"></div>
             <div class="md-ftr"><button class="btn btn-ghost" onclick="closeModal('mdSavHistory')">← Close</button>
@@ -6364,7 +6414,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">Set Total Balance</div><button class="md-x"
-                    onclick="closeModal('mdBalSet')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdBalSet')"><i data-wfi="x"></i></button>
             </div>
             <div class="fg"><label class="fl">Total Balance (LKR) *</label><input class="fi money-input" id="bs_total"
                     placeholder="15,000,000"></div>
@@ -6382,7 +6432,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdBalFlowTitle">Log Balance Flow</div><button class="md-x"
-                    onclick="closeModal('mdBalFlow')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdBalFlow')"><i data-wfi="x"></i></button>
             </div>
             <div class="fg"><label class="fl">Type *</label><select class="fs" id="bf_type" onchange="bfTypeChanged()">
                     <option value="out">📤 Investment Out (Reduce Balance)</option>
@@ -6415,7 +6465,7 @@
     <div class="mo" id="mdConfirm" style="z-index:9999;">
         <div class="md md-sm">
             <div class="md-hdr" style="justify-content:flex-end;"><button class="md-x"
-                    onclick="closeModal('mdConfirm')"><i class=wfi-x></i></button></div>
+                    onclick="closeModal('mdConfirm')"><i data-wfi="x"></i></button></div>
             <div class="conf-icon" id="confIcon">✅</div>
             <div class="conf-msg" id="confMsg">Are you sure?</div>
             <div class="conf-det" id="confDet"></div>
@@ -6430,7 +6480,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">🔐 Change Master PIN</div><button class="md-x"
-                    onclick="closePinModal()"><i class=wfi-x></i></button>
+                    onclick="closePinModal()"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:18px;line-height:1.5;">Your PIN is synced across
                 all devices. Changing it will <b style="color:var(--accent);">sign out all other active sessions</b> for
@@ -6458,7 +6508,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title" id="mdSubTitle">Add Subscription / Bill</div>
-                <button class="md-x" onclick="closeModal('mdSubscription')"><i class=wfi-x></i></button>
+                <button class="md-x" onclick="closeModal('mdSubscription')"><i data-wfi="x"></i></button>
             </div>
             <!-- v7.5.2 — AI Vision card (same component as CC One-Time + Expense) -->
             <div class="ai-vision-card">
@@ -6525,7 +6575,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">🎭 AI Advisor Persona</div><button class="md-x"
-                    onclick="closeModal('mdAIPersona')"><i class=wfi-x></i></button>
+                    onclick="closeModal('mdAIPersona')"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Choose how your AI advisor communicates
                 with you.</p>
@@ -6569,7 +6619,7 @@
         <div class="md md-sm">
             <div class="md-hdr">
                 <div class="md-title">📸 AI Scanner Settings</div>
-                <button class="md-x" onclick="closeModal('mdScannerSettings')"><i class=wfi-x></i></button>
+                <button class="md-x" onclick="closeModal('mdScannerSettings')"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Tune how receipts, invoices &amp; PDFs are scanned. Higher modes = more accurate but slower.</p>
 
@@ -6635,7 +6685,7 @@
         <div class="ai-lang-modal-content">
             <div class="ai-lang-modal-hdr">
                 <div class="ai-lang-modal-title">🌐 AI Response Language</div>
-                <button class="ai-lang-modal-close" onclick="closeLangModal()"><i class=wfi-x></i></button>
+                <button class="ai-lang-modal-close" onclick="closeLangModal()"><i data-wfi="x"></i></button>
             </div>
             <div class="ai-lang-search">
                 <input type="text" id="aiLangModalSearch" placeholder="Search languages..." oninput="_filterLangModal()">
@@ -8317,7 +8367,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     <div class="md md-sm">
                         <div class="md-hdr">
                             <div class="md-title">🤖 Which credit card / bank?</div>
-                            <button class="md-x" id="_wf_bank_x"><i class=wfi-x></i></button>
+                            <button class="md-x" id="_wf_bank_x"><i data-wfi="x"></i></button>
                         </div>
                         <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.55;">
                             Before AI scans the statement, please confirm the issuing bank. This unlocks the correct service-fee schedule (Sri Lanka 🇱🇰).
@@ -9264,7 +9314,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         return (tmp.innerText || tmp.textContent || '').trim();
                     } catch (_) { return String(rawText || '').trim(); }
                 })();
-                actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="(function(b){navigator.clipboard.writeText(b.getAttribute('data-copy')||'');b.textContent='✓ Copied';setTimeout(()=>b.textContent='📋 Copy',1500);})(this)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)"><i class=wfi-thumbsUp></i></button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)"><i class=wfi-thumbsDown></i></button>`;
+                actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="(function(b){navigator.clipboard.writeText(b.getAttribute('data-copy')||'');b.textContent='✓ Copied';setTimeout(()=>b.textContent='📋 Copy',1500);})(this)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)"><i data-wfi="thumbsUp"></i></button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)"><i data-wfi="thumbsDown"></i></button>`;
                 bubble.appendChild(actions);
             } else {
                 // User message — show time + an Edit button (like Claude/Gemini)
@@ -10822,7 +10872,37 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             buildDots('loginDots', 6, 0);
             buildDots('setupDots', 6, 0);
             buildDots('newPinDots', 6, 0);
+            try { if (viewId === 'authGoogle') startAuthSlider(); else stopAuthSlider(); } catch (_) {}
         }
+
+        // ── Sign-in feature slider (auto-advance + dots + swipe sync) ───────────
+        let _authSliderTimer = null;
+        function startAuthSlider() {
+            const track = $('authSlides'), dotsWrap = $('authDots');
+            if (!track || !dotsWrap) return;
+            try { if (window.WFIconHydrate) WFIconHydrate($('authSlider')); } catch (_) {}
+            const slides = track.children.length; if (!slides) return;
+            if (!dotsWrap.children.length) {
+                for (let i = 0; i < slides; i++) {
+                    const d = document.createElement('div'); d.className = 'ad' + (i === 0 ? ' on' : '');
+                    d.onclick = () => { track.scrollTo({ left: track.clientWidth * i, behavior: 'smooth' }); };
+                    dotsWrap.appendChild(d);
+                }
+            }
+            const sync = () => {
+                const i = Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+                [...dotsWrap.children].forEach((d, k) => d.classList.toggle('on', k === i));
+            };
+            track.onscroll = () => { clearTimeout(track._st); track._st = setTimeout(sync, 60); };
+            stopAuthSlider();
+            _authSliderTimer = setInterval(() => {
+                if (!document.body.contains(track) || $('authGoogle').style.display === 'none') { stopAuthSlider(); return; }
+                const i = Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+                const next = (i + 1) % slides;
+                track.scrollTo({ left: track.clientWidth * next, behavior: 'smooth' });
+            }, 3500);
+        }
+        function stopAuthSlider() { if (_authSliderTimer) { clearInterval(_authSliderTimer); _authSliderTimer = null; } }
 
         async function saveSecQ() {
             const sel = $('secQSelect').value;
@@ -12920,14 +13000,35 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') document.querySelectorAll('.mo.open').forEach(m => { m.classList.remove('open'); document.body.style.overflow = ''; });
         });
+        // Map legacy emoji/icon args to professional SVG icons.
+        const _confIconMap = { '🗑️':'trash','🗑':'trash','✅':'checkCircle','💳':'card','⚠️':'alert','💸':'coins','🔔':'bell','📄':'cheque','ℹ️':'info','🎯':'target' };
+        function _wfSetIcon(host, icon) {
+            if (!host) return;
+            host.textContent = '';
+            const key = (window.WFIcon && WFIcon.has(icon)) ? icon : _confIconMap[icon];
+            if (key && window.WFIconNode) { const n = WFIconNode(key); if (n) { n.setAttribute && n.setAttribute('width','40'); n.setAttribute && n.setAttribute('height','40'); host.appendChild(n); return; } }
+            host.textContent = icon || '';   // fallback (non-emoji text)
+        }
+        // Render a button label that may carry a leading icon key/emoji + text.
+        function _wfBtnLabel(btn, label) {
+            if (!btn) return;
+            btn.textContent = '';
+            const m = /^\s*(🗑️|🗑|✅|💳|⚠️|💸|🔔|ℹ️|🎯)\s*(.*)$/.exec(label || '');
+            if (m && window.WFIconNode) {
+                const key = _confIconMap[m[1]];
+                if (key) { const n = WFIconNode(key); if (n) btn.appendChild(n); }
+                btn.appendChild(document.createTextNode(' ' + m[2]));
+            } else { btn.textContent = label || ''; }
+        }
         function showConfirm(icon, msg, det, btnClass, btnText, cb) {
-            $('confIcon').textContent = icon;
+            _wfSetIcon($('confIcon'), icon);
             $('confMsg').textContent = msg;
             $('confDet').textContent = det;
             $('confBtn').className = `btn ${btnClass}`;
-            $('confBtn').textContent = btnText;
+            _wfBtnLabel($('confBtn'), btnText);
             $('confBtn').onclick = () => { closeModal('mdConfirm'); if (cb) cb(); };
             openModal('mdConfirm');
+            try { if (window.WFIconHydrate) WFIconHydrate(document.getElementById('mdConfirm')); } catch (_) {}
         }
 
 
@@ -13013,7 +13114,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     filtered.map(v => `<div class="ac-item" onclick="acSelect('${inputId}','${v.replace(/'/g, "\\'")}')">
                         <span style="font-size:14px;">${icon}</span>
                         <span class="ac-item-text">${v}</span>
-                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i class=wfi-x></i></button>
+                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i data-wfi="x"></i></button>
                     </div>`).join('');
                 drop.classList.add('show');
                 _openDropdowns.add(inputId);
@@ -13042,7 +13143,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             drop.innerHTML = `<div class="ac-sep">💡 Previous Entries</div>` +
                 items.map(v => `<div class="ac-item" onclick="acSelect('${inputId}','${v.replace(/'/g, "\\'")}')">
                     <span class="ac-item-text">${v}</span>
-                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i class=wfi-x></i></button>
+                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i data-wfi="x"></i></button>
                 </div>`).join('');
             triggerHaptic('delete');
             notify('Entry removed from suggestions', 'info');
@@ -13069,7 +13170,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         // ==================== SIDEBAR ====================
-        const pgTitles = { dashboard: '<i class=wfi-dashboard></i> Dashboard', monthly: '<i class=wfi-calendar></i> Monthly Plan', income: '<i class=wfi-chartLine></i> Investments', incRecv: '<i class=wfi-wallet></i> Income', loans: '<i class=wfi-bank></i> Bank Loans', ccinstall: '<i class=wfi-card></i> CC Installments', cconetime: '<i class=wfi-clock></i> CC One-Time Payments', cheques: '<i class=wfi-cheque></i> Cheque Tracker', expenses: '<i class=wfi-receipt></i> Monthly Expenses', targets: '<i class=wfi-target></i> Targets & Savings', dscr: '<i class=wfi-ruler></i> DSCR Calculator', settings: '<i class=wfi-settings></i> System Settings', ai: '<i class=wfi-bot></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i class=wfi-trophy></i> WealthFlow Score', subscriptions: '<i class=wfi-bell></i> Subscriptions', debtdemo: '<i class=wfi-bomb></i> Debt Demolisher', montecarlo: '<i class=wfi-crystal></i> Wealth Simulator', cashflow3d: '<i class=wfi-globe></i> 3D Cash Flow', sessions: '<i class=wfi-devices></i> Active Sessions' };
+        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Installments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions' };
 
         function showPage(name, navEl) {
             // RESTORED v6.9.2: biometric guard for sensitive zones
@@ -13446,7 +13547,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         <div class="stat-card sc-gold"><div class="stat-label">Shown Total</div><div class="stat-val">${fmtS(tot)}</div><div class="stat-meta">${arr.length} entr${arr.length === 1 ? 'y' : 'ies'}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Top Type</div><div class="stat-val" style="font-size:15px;">${topType[0]}</div><div class="stat-meta">${fmtS(topType[1])}</div></div>
         <div class="stat-card sc-red"><div class="stat-label">Received</div><div class="stat-val">${arr.filter(x => x.received).length}</div><div class="stat-meta">of ${arr.length}</div></div>`;
-            if (!arr.length) { host.innerHTML = emptyState('<i class=wfi-wallet style=font-size:28px></i>', 'No income recorded yet', 'Add salary, interest, rent — or import a bank statement'); return; }
+            if (!arr.length) { host.innerHTML = emptyState('<i data-wfi="wallet" style=font-size:28px></i>', 'No income recorded yet', 'Add salary, interest, rent — or import a bank statement'); return; }
             // group by month, newest first (same reading order as Expenses)
             const groups = {}; arr.forEach(x => { (groups[x.month || ''] = groups[x.month || ''] || []).push(x); });
             const keys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
@@ -13465,16 +13566,16 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         </div>
                         <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:var(--green);flex-shrink:0;white-space:nowrap;font-size:12px;">+${fmt(x.amount)}</div>
                         <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
-                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${x.id}')" title="Mark received"><i class=wfi-check></i></button>` : ''}
-                            <button class="ib e" onclick="editIncomeRecv('${x.id}')" title="Edit"><i class=wfi-edit></i></button>
-                            <button class="ib d" onclick="deleteIncomeRecv('${x.id}')" title="Delete"><i class=wfi-trash></i></button>
+                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${x.id}')" title="Mark received"><i data-wfi="check"></i></button>` : ''}
+                            <button class="ib e" onclick="editIncomeRecv('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
+                            <button class="ib d" onclick="deleteIncomeRecv('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
                         </div>
                     </div>`).join('');
                 return `
                     <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;">
                         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;flex-wrap:wrap;">
                             <div style="display:flex;align-items:center;gap:10px;">
-                                <div style="font-weight:800;font-size:15px;color:${tone};"><i class=wfi-calendar></i> ${ym ? monthStrFmt(ym + '-01') : 'Undated'}</div>
+                                <div style="font-weight:800;font-size:15px;color:${tone};"><i data-wfi="calendar"></i> ${ym ? monthStrFmt(ym + '-01') : 'Undated'}</div>
                                 <span class="badge" style="background:rgba(212,175,55,0.12);color:${tone};font-size:10px;font-weight:700;">${tag}</span>
                             </div>
                             <div style="text-align:right;">
@@ -13495,7 +13596,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const opts = INC_TYPES.map(t => `<option ${x && x.type === t ? 'selected' : ''}>${t}</option>`).join('');
             ov.innerHTML = `
             <div class="md" style="max-width:440px;max-height:calc(100dvh - 28px);overflow-y:auto;-webkit-overflow-scrolling:touch;">
-                <div class="md-h"><div class="md-t"><i class=wfi-wallet></i> ${editId ? 'Edit' : 'Add'} Income</div><button class="md-x" onclick="closeIncRecvModal()"><i class=wfi-x></i></button></div>
+                <div class="md-h"><div class="md-t"><i data-wfi="wallet"></i> ${editId ? 'Edit' : 'Add'} Income</div><button class="md-x" onclick="closeIncRecvModal()"><i data-wfi="x"></i></button></div>
                 <div class="fg"><label class="fl">Name / Source *</label><input class="fi" id="i2_name" placeholder="e.g. May Salary — ABC Ltd" value="${x ? (x.name || '').replace(/"/g, '&quot;') : ''}"></div>
                 <div class="fr">
                     <div class="fg"><label class="fl">Type *</label><select class="fs" id="i2_type">${opts}</select></div>
@@ -13508,7 +13609,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div class="fg"><label class="fl">Notes</label><input class="fi" id="i2_notes" value="${x ? (x.notes || '').replace(/"/g, '&quot;') : ''}"></div>
                 <div style="display:flex;gap:8px;margin-top:14px;">
                     <button class="btn btn-ghost" style="flex:1;" onclick="closeIncRecvModal()">Cancel</button>
-                    <button class="btn btn-primary" style="flex:2;" onclick="saveIncomeRecv()"><i class=wfi-check></i> Save Income</button>
+                    <button class="btn btn-primary" style="flex:2;" onclick="saveIncomeRecv()"><i data-wfi="check"></i> Save Income</button>
                 </div>
             </div>`;
             document.body.appendChild(ov);
@@ -13539,9 +13640,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
         function editIncomeRecv(id) { openIncomeRecvModal(id); }
         function deleteIncomeRecv(id) {
-            if (!confirm('Delete this income entry?')) return;
-            DB.set('incomeRecv', (DB.get('incomeRecv') || []).filter(r => r.id !== id));
-            renderIncRecv(); notify('Deleted', 'info');
+            showConfirm('🗑️', 'Delete Income?', 'This income entry will be removed. This cannot be undone.', 'btn-danger', '🗑️ Delete', () => {
+                DB.set('incomeRecv', (DB.get('incomeRecv') || []).filter(r => r.id !== id));
+                renderIncRecv(); try { renderDash(); } catch (_) {} notify('Income deleted', 'info');
+            });
         }
         function markIncRecvReceived(id) {
             const arr = DB.get('incomeRecv') || [];
@@ -13602,7 +13704,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div><div style="font-size:15px;font-weight:700;">${source.name}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${source.company} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
                     <div style="text-align:right;"><div style="font-size:21px;font-weight:800;font-family:var(--mono);color:var(--green);">${fmt(source.monthly)}</div><div style="font-size:11px;color:var(--text3);">${freqL}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editIncome('${source.id}')"><i class=wfi-edit></i></button><button class="ib d" onclick="deleteIncome('${source.id}')"><i class=wfi-trash></i></button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editIncome('${source.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteIncome('${source.id}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -13626,7 +13728,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div style="font-size:12px;color:var(--text3);">This month (${curMonthStr}):</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     <button class="income-received-btn${isConfirmed ? ' confirmed' : ''}" onclick="${isConfirmed ? '' : `confirmIncomeReceived('${source.id}')`}" ${isConfirmed ? 'disabled' : ''}>
-                        ${isConfirmed ? '<i class=wfi-checkCircle></i> Received & Confirmed' : 'Confirm Received'}
+                        ${isConfirmed ? '<i data-wfi="checkCircle"></i> Received & Confirmed' : 'Confirm Received'}
                     </button>
                     <button class="income-past-btn" onclick="openPastMonthConfirm('${source.id}')" title="Confirm a previous month you missed (e.g. you were offline for a while, or this income started before you joined WealthFlow)">
                         📅 Past months
@@ -13749,7 +13851,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <div class="md md-sm" style="max-width:440px;">
                         <div class="md-hdr">
                             <div class="md-title">📅 Past months</div>
-                            <button class="md-x" onclick="this.closest('.mo').remove()"><i class=wfi-x></i></button>
+                            <button class="md-x" onclick="this.closest('.mo').remove()"><i data-wfi="x"></i></button>
                         </div>
                         <div class="md-body" style="text-align:center;padding:30px 20px;">
                             <div style="font-size:38px;margin-bottom:10px;">✨</div>
@@ -13785,7 +13887,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
                         <div class="md-title">📅 Confirm past months — ${source.name}</div>
-                        <button class="md-x" id="_pm_close"><i class=wfi-x></i></button>
+                        <button class="md-x" id="_pm_close"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
                         <div style="background:var(--bg2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.5;">
@@ -13870,7 +13972,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <div class="md md-sm" style="background:var(--card);max-width:440px;">
                         <div class="md-hdr">
                             <div class="md-title">💸 Record Income — ${monthKey}</div>
-                            <button class="md-x" id="_pi_close"><i class=wfi-x></i></button>
+                            <button class="md-x" id="_pi_close"><i data-wfi="x"></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
                             Source: <b>${s.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${s.company}</span><br>
@@ -14496,7 +14598,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     <div class="md md-sm" style="background:var(--card);max-width:440px;">
                         <div class="md-hdr">
                             <div class="md-title">${titleText} — ${monthKey}</div>
-                            <button class="md-x" id="_pp_close"><i class=wfi-x></i></button>
+                            <button class="md-x" id="_pp_close"><i data-wfi="x"></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
                             Loan: <b>${l.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${l.bank}</span><br>
@@ -14729,7 +14831,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div><div class="loan-name">${l.name}</div><div class="loan-bank">🏦 ${l.bank}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="loan-monthly">${fmt(displayMonthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div>${monthlyHint}<div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editLoan('${l.id}')"><i class=wfi-edit></i></button><button class="ib d" onclick="deleteLoan('${l.id}')"><i class=wfi-trash></i></button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editLoan('${l.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteLoan('${l.id}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
             <div class="pb" style="margin-bottom:6px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${prog.pct}%"></div></div>
@@ -14907,7 +15009,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         <div class="md-title">📅 ${l.name} — Live Amortization</div>
                         <div style="display:flex;gap:6px;align-items:center;">
                             <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${l.id}')" title="Generate professional PDF statement">📄 Statement</button>
-                            <button class="md-x" onclick="closeModal('mdLoanInstallments')"><i class=wfi-x></i></button>
+                            <button class="md-x" onclick="closeModal('mdLoanInstallments')"><i data-wfi="x"></i></button>
                         </div>
                     </div>
 
@@ -15005,8 +15107,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     if (m.isPartial) payCell += '<div style="font-size:10px;color:var(--red);margin-top:1px;">' + fmt(m.diff) + ' short</div>';
 
                     const actionBtn = m.paid
-                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${l.id}','${m.month}')"><i class=wfi-eye></i></button>`
-                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${l.id}','${m.month}')"><i class=wfi-coins></i></button>`;
+                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${l.id}','${m.month}')"><i data-wfi="eye"></i></button>`
+                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${l.id}','${m.month}')"><i data-wfi="coins"></i></button>`;
 
                     let row = '<tr ' + (isCurrent ? 'data-current-row="1" ' : '') + 'style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer;" ';
                     row += 'onclick="_payLoanInstallmentFromTable(\'' + l.id + '\',\'' + m.month + '\')" ';
@@ -15429,7 +15531,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <div style="display:flex;gap:6px;align-items:center;">
                             <button class="btn btn-ghost btn-sm" id="_ls_print">🖨 Print / PDF</button>
                             <button class="btn btn-ghost btn-sm" id="_ls_share">🔗 Share</button>
-                            <button class="md-x" id="_ls_close"><i class=wfi-x></i></button>
+                            <button class="md-x" id="_ls_close"><i data-wfi="x"></i></button>
                         </div>
                     </div>
                     <iframe id="_ls_frame" sandbox="allow-same-origin allow-modals allow-popups"
@@ -15936,7 +16038,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="md md-sm" style="max-width:580px;">
                     <div class="md-hdr">
                         <div class="md-title">✅ Shareable Link Ready</div>
-                        <button class="md-x" id="_surl_close"><i class=wfi-x></i></button>
+                        <button class="md-x" id="_surl_close"><i data-wfi="x"></i></button>
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
                         Anyone with this link can view the ${isElite ? 'Elite Report' : 'statement for <b>' + titleName.replace(/</g, '&lt;') + '</b>'}.
@@ -16350,7 +16452,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="md md-sm" style="max-width:420px;">
                     <div class="md-hdr">
                         <div class="md-title">👁 ${monthKey} Installment</div>
-                        <button class="md-x" id="_vli_close"><i class=wfi-x></i></button>
+                        <button class="md-x" id="_vli_close"><i data-wfi="x"></i></button>
                     </div>
                     <div style="padding:6px 0 16px;">
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
@@ -16557,9 +16659,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.date}</td>
             <td style="min-width:110px;"><div class="pb" style="margin-bottom:3px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${Math.min(100, prog.pct)}%"></div></div><div style="font-size:10px;color:var(--text3);">${prog.paid}/${prog.total} (${prog.pct}%)</div></td>
             <td>${item.completed ? '<span class="badge bg-gr">Done</span>' : isActive ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-r">Overdue</span>'}</td>
-            <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${item.id}')" title="Mark Complete"><i class=wfi-check></i></button>` : ''}
-                <button class="ib e" onclick="editCCI('${item.id}')"><i class=wfi-edit></i></button>
-                <button class="ib d" onclick="deleteCCI('${item.id}')"><i class=wfi-trash></i></button></div></td>
+            <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${item.id}')" title="Mark Complete"><i data-wfi="check"></i></button>` : ''}
+                <button class="ib e" onclick="editCCI('${item.id}')"><i data-wfi="edit"></i></button>
+                <button class="ib d" onclick="deleteCCI('${item.id}')"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
             }).join('');
         }
@@ -16725,9 +16827,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
             <td>${item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}</td>
-            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')" title="Mark paid"><i class=wfi-check></i></button>` : ''}
-                <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit"><i class=wfi-edit></i></button>
-                <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete"><i class=wfi-trash></i></button></div></td>
+            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
+                <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit"><i data-wfi="edit"></i></button>
+                <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
             }).join('');
         }
@@ -16841,9 +16943,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td>${statusMap[item.status] || ''}</td>
             <td class="td-m">${item.notes || ''}</td>
             <td><div class="act-btns">
-                ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${item.id}')" title="Clear"><i class=wfi-check></i></button><button class="ib d" onclick="markChequeBounced('${item.id}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
-                <button class="ib e" onclick="editCheque('${item.id}')"><i class=wfi-edit></i></button>
-                <button class="ib d" onclick="deleteCheque('${item.id}')"><i class=wfi-trash></i></button>
+                ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${item.id}')" title="Clear"><i data-wfi="check"></i></button><button class="ib d" onclick="markChequeBounced('${item.id}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
+                <button class="ib e" onclick="editCheque('${item.id}')"><i data-wfi="edit"></i></button>
+                <button class="ib d" onclick="deleteCheque('${item.id}')"><i data-wfi="trash"></i></button>
             </div></td>
         </tr>`;
             }).join('');
@@ -17067,9 +17169,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                             </div>
                             <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
                             <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
-                                ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i class=wfi-check></i></button>` : ''}
-                                <button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i class=wfi-edit></i></button>
-                                <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i class=wfi-trash></i></button>
+                                ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
+                                <button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
+                                <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
                             </div>
                         </div>
                     `).join('');
@@ -17105,9 +17207,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         <td class="td-r">${fmt(x.amount)}</td>
         <td>${x.recurring ? '<span class="badge bg-b">🔄 Monthly</span>' : '<span class="badge bg-gr">Once</span>'}</td>
         <td>${x.completed ? '<span class="badge bg-g">✅ Paid</span>' : '<span class="badge bg-a">Pending</span>'}</td>
-        <td><div class="act-btns">${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')"><i class=wfi-check></i></button>` : ''}
-            <button class="ib e" onclick="editExpense('${x.id}')"><i class=wfi-edit></i></button>
-            <button class="ib d" onclick="deleteExpense('${x.id}')"><i class=wfi-trash></i></button></div></td>
+        <td><div class="act-btns">${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')"><i data-wfi="check"></i></button>` : ''}
+            <button class="ib e" onclick="editExpense('${x.id}')"><i data-wfi="edit"></i></button>
+            <button class="ib d" onclick="deleteExpense('${x.id}')"><i data-wfi="trash"></i></button></div></td>
     </tr>`).join('');
         }
 
@@ -17170,7 +17272,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <span style="color:var(--text2);">${s.date}${s.note ? ' · ' + s.note : ''}</span>
         <div style="display:flex;align-items:center;gap:8px;">
             <span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span>
-            <button class="ib d" onclick="deleteSaving('${tid}','${s.id}')"><i class=wfi-x></i></button>
+            <button class="ib d" onclick="deleteSaving('${tid}','${s.id}')"><i data-wfi="x"></i></button>
         </div>
     </div>`).join('') : '<div class="empty" style="padding:20px;"><div class="empty-sub">No saving entries yet</div></div>';
             openModal('mdSavHistory');
@@ -17225,7 +17327,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div><div class="tgt-name">${done ? '🏆 ' : ''} ${t.name}</div><div class="tgt-dates">📅 ${fmtDatePretty(t.start)} → ${fmtDatePretty(t.end)}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="tgt-big">${fmtS(t.amount)}</div><div style="font-size:11px;color:var(--text3);">Target · ${fmt(t.amount)}</div><div class="tgt-rem">${fmtS(remain)}</div><div style="font-size:11px;color:var(--text3);">Remaining</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editTarget('${t.id}')"><i class=wfi-edit></i></button><button class="ib d" onclick="deleteTarget('${t.id}')"><i class=wfi-trash></i></button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editTarget('${t.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteTarget('${t.id}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -17410,7 +17512,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div class="flow-dot ${f.type === 'set' ? 'in' : f.type}">${dot}</div>
                     <div class="flow-info"><div class="flow-name">${f.company}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + f.notes : ''}</div></div>
                     <div class="flow-right"><div class="flow-amt ${f.type === 'out' ? 'out' : 'in'}">${f.type === 'out' ? '-' : '+'}${fmt(f.amount)}</div><div><span class="badge ${cls}">${lbl}</span></div></div>
-                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${f.id}')"><i class=wfi-edit></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${f.id}')"><i class=wfi-trash></i></button></div>
+                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${f.id}')"><i data-wfi="edit"></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${f.id}')"><i data-wfi="trash"></i></button></div>
                 </div>`;
             }).join('');
 
@@ -17893,7 +17995,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 ? `<div style="font-size:10px;color:var(--text3);margin-bottom:2px;line-height:1.3;">📋 ${loanLabel}</div>` : '';
             el.innerHTML = `
         <div class="fg" style="margin:0;flex:2;">${labelLine}<input class="fi money-input dscr-emi-input" value="${valStr}" placeholder="Monthly installment (CRIB / EMI in LKR)" oninput="calcDSCR()" title="Monthly installment as it appears on CRIB. NOT the outstanding balance, NOT the original loan amount."></div>
-        <div class="fg" style="margin:0;"><button class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove(); calcDSCR();" style="height:100%;"><i class=wfi-x></i> Remove</button></div>
+        <div class="fg" style="margin:0;"><button class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove(); calcDSCR();" style="height:100%;"><i data-wfi="x"></i> Remove</button></div>
     `;
             wrap.appendChild(el);
             initMoneyInputs();
@@ -18572,8 +18674,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.16.1</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.16.1 ✓</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.19.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.19.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -18599,6 +18701,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const v = (window.wfUpdate && window.wfUpdate.version) || '';
                 const fv = document.getElementById('wfFooterVer');
                 if (fv && v) fv.textContent = 'WealthFlow v' + v + ' · Infinity Engine';
+                if (v) {
+                    const vt = document.getElementById('wfVerText'); if (vt) vt.textContent = 'v' + v;
+                    const vp = document.getElementById('wfVerPill'); if (vp) vp.textContent = 'v' + v;
+                    const sv = document.getElementById('wfSbVer'); if (sv) sv.textContent = 'WealthFlow v' + v + ' · Infinity Engine';
+                }
             } catch (_) {}
         }
 
@@ -19191,7 +19298,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <button class="ab-btn ab-no" id="abno_${id}">${secondary}</button>
                     <button class="ab-btn ab-yes" id="abyes_${id}" style="background:${color};">${primary}</button>
                 </div>
-                <button class="ab-close" id="abx_${id}" aria-label="Dismiss"><i class=wfi-x></i></button>
+                <button class="ab-close" id="abx_${id}" aria-label="Dismiss"><i data-wfi="x"></i></button>
             `;
             document.body.appendChild(banner);
             requestAnimationFrame(() => banner.classList.add('show'));
@@ -20447,7 +20554,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
                         <div class="md-title">📊 Monthly amounts — ${s.name}</div>
-                        <button class="md-x" id="_sm_close"><i class=wfi-x></i></button>
+                        <button class="md-x" id="_sm_close"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
                         <div style="background:var(--bg2);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.5;">
@@ -20589,7 +20696,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                                 title="Set this month's actual amount (great for telecom, water, electricity)">
                                 📊 Set ${MONTHS[now.getMonth()].slice(0,3)}
                             </button>`
-                    : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts"><i class=wfi-chartLine></i></button>`;
+                    : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts"><i data-wfi="chartLine"></i></button>`;
 
                 // v7.5.6 — show notes if present (was hidden entirely).
                 // Matches how expense rows and loan rows render notes:
@@ -20613,9 +20720,9 @@ Be direct and use real numbers. Avoid generic advice.`;
                         ${overrideBadge}
                     </div>
                     <div class="act-btns">
-                        <button type="button" class="sub-act cta-edit" onclick="editSubscription('${s.id}')" title="Edit subscription"><i class=wfi-edit></i></button>
+                        <button type="button" class="sub-act cta-edit" onclick="editSubscription('${s.id}')" title="Edit subscription"><i data-wfi="edit"></i></button>
                         ${thisMonthCta}
-                        <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${s.id}')" title="Delete"><i class=wfi-trash></i></button>
+                        <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${s.id}')" title="Delete"><i data-wfi="trash"></i></button>
                     </div>
                 </div>`;
             }).join('');
@@ -21987,7 +22094,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     <div class="md md-sm" style="max-width:380px;">
                         <div class="md-hdr">
                             <div class="md-title">🔐 Confirm with PIN</div>
-                            <button class="md-x" id="_vp_close"><i class=wfi-x></i></button>
+                            <button class="md-x" id="_vp_close"><i data-wfi="x"></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:13px;color:var(--text2);">${reason}</div>
                         <div class="fg">
@@ -22948,7 +23055,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 <div class="md" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
                         <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${bank}</div>
-                        <button class="md-x" id="_ccrx"><i class=wfi-x></i></button>
+                        <button class="md-x" id="_ccrx"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
                         <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text2);line-height:1.55;">
@@ -22976,8 +23083,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     </div>
                     <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;">
                         <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;min-width:90px;">Cancel</button>
-                        <button class="btn btn-secondary" id="_ccr_ai" type="button" style="flex:2;min-width:150px;"><i class=wfi-bot></i> Let AI auto-sort</button>
-                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;min-width:150px;"><i class=wfi-check></i> Save &amp; file each row</button>
+                        <button class="btn btn-secondary" id="_ccr_ai" type="button" style="flex:2;min-width:150px;"><i data-wfi="bot"></i> Let AI auto-sort</button>
+                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;min-width:150px;"><i data-wfi="check"></i> Save &amp; file each row</button>
                     </div>
                     <div style="padding:0 16px 12px;font-size:11px;color:var(--text3);line-height:1.5;">🤖 <b>Auto-sort</b> sends the ticked rows to the background AI, which routes each to its correct tab (groceries → Expenses, salary → Income, etc.), learns merchants, and removes duplicates — you can close this and keep working.</div>
                 </div>`;

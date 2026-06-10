@@ -1,12 +1,12 @@
-/*  wealthflow-icons.js — professional stroke icon system (no emojis)
+/*  wealthflow-icons.js — professional inline-SVG icon system (no emojis)  v2
  *
- *  Design: each icon is a Lucide-style stroke SVG, exposed as a CSS-mask class
- *  so markup can use a QUOTE-FREE tag —  <i class=wfi-edit></i>  — which is
- *  valid inside single-quoted strings, double-quoted strings, backtick
- *  templates AND static HTML alike. Icons render in currentColor, so they
- *  follow the theme automatically.
- *
- *  Also exposes  WFIcon('edit')  → '<i class=wfi-edit></i>' for new code.
+ *  Renders REAL inline <svg> (not CSS masks, not <img>) so icons are reliable on
+ *  iOS/Safari/PWA, inherit text color via stroke="currentColor", and need no
+ *  network. Two ways to use:
+ *    1) Markup written before this script runs:  <i data-wfi="edit"></i>
+ *       → hydrated into an <svg> automatically (also re-hydrated after renders).
+ *    2) From JS:  WFIcon('edit')  → an inline <svg> string (safe in templates).
+ *  For places that take textContent only, use WFIconNode('edit') → DOM node.
  */
 (function () {
     'use strict';
@@ -43,39 +43,129 @@
         lock:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
         gift:'<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5"/>',
         gem:'<path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/>',
+        moon:'<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+        sun:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.2" y1="4.2" x2="5.6" y2="5.6"/><line x1="18.4" y1="18.4" x2="19.8" y2="19.8"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.2" y1="19.8" x2="5.6" y2="18.4"/><line x1="18.4" y1="5.6" x2="19.8" y2="4.2"/>',
+        sparkles:'<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
         send:'<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9"/>',
         menu:'<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
         thumbsUp:'<path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/>',
         thumbsDown:'<path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/>',
         eye:'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
-        moon:'<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
-        sparkles:'<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>'
+        download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+        refresh:'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+        alert:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+        info:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'
     };
-    function svgUri(body) {
-        var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + body + '</svg>';
-        return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+    function svg(name, attrs) {
+        var d = P[name]; if (!d) return '';
+        return '<svg class="wfi wfi-' + name + '" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (attrs || '') + '>' + d + '</svg>';
     }
-    var css = [
-        '.wfi{display:inline-block;width:1em;height:1em;background-color:currentColor;vertical-align:-0.12em;flex-shrink:0;',
-        '-webkit-mask-position:center;-webkit-mask-repeat:no-repeat;-webkit-mask-size:contain;',
-        'mask-position:center;mask-repeat:no-repeat;mask-size:contain;}',
-        '.nav-icon .wfi{width:17px;height:17px;vertical-align:-3px;}',
-        '.ib .wfi{width:14px;height:14px;}',
-        '.ib.c .wfi{color:var(--green,#10b981);}',
-        '.ib.e .wfi{color:var(--accent,#d4af37);}',
-        '.ib.d .wfi{color:var(--red,#ef4444);}'
-    ].join('');
-    for (var name in P) {
-        var u = svgUri(P[name]);
-        css += '.wfi-' + name + '{-webkit-mask-image:' + u + ';mask-image:' + u + ';}';
+    function WFIcon(name) { return svg(name); }
+    WFIcon.has = function (n) { return !!P[n]; };
+    WFIcon.svg = svg;
+    function WFIconNode(name) {
+        var wrap = document.createElement('span');
+        wrap.className = 'wfi-host';
+        wrap.innerHTML = svg(name) || '';
+        return wrap.firstChild;
     }
+    // Hydrate <i data-wfi="name"> placeholders into real SVGs.
+    function hydrate(root) {
+        try {
+            (root || document).querySelectorAll('i[data-wfi]:not([data-wfi-done])').forEach(function (el) {
+                var n = el.getAttribute('data-wfi');
+                if (P[n]) { el.innerHTML = svg(n); el.setAttribute('data-wfi-done', '1'); el.style.display = 'inline-flex'; el.style.alignItems = 'center'; }
+            });
+        } catch (_) {}
+    }
+    // base sizing CSS (kept tiny; SVG inherits font-size via 1em)
     try {
-        var st = document.createElement('style');
-        st.id = 'wfIconStyles';
-        st.textContent = css;
+        var st = document.createElement('style'); st.id = 'wfIconStyles';
+        st.textContent = '.wfi{display:inline-block;vertical-align:-0.14em;flex-shrink:0}.nav-icon .wfi{font-size:17px;vertical-align:-3px}.ib .wfi{font-size:14px}.ib.c .wfi{color:var(--green,#10b981)}.ib.e .wfi{color:var(--accent,#d4af37)}.ib.d .wfi{color:var(--red,#ef4444)}i[data-wfi]{display:inline-flex;align-items:center;line-height:0}';
         (document.head || document.documentElement).appendChild(st);
     } catch (_) {}
-    function WFIcon(name) { return P[name] ? ('<i class=wfi-' + name + ' aria-hidden=true></i>') : ''; }
-    WFIcon.has = function (n) { return !!P[n]; };
     window.WFIcon = WFIcon;
+    window.WFIconNode = WFIconNode;
+    window.WFIconHydrate = hydrate;
+    // hydrate now (in case markup already parsed) + after DOM ready + on a light interval
+    function boot() { hydrate(document); }
+    if (document.readyState !== 'loading') boot(); else document.addEventListener('DOMContentLoaded', boot);
+    // observe DOM additions so dynamically-rendered <i data-wfi> get hydrated
+    try {
+        var mo = new MutationObserver(function (muts) {
+            for (var i = 0; i < muts.length; i++) { if (muts[i].addedNodes && muts[i].addedNodes.length) { hydrate(document); break; } }
+        });
+        if (document.body) mo.observe(document.body, { childList: true, subtree: true });
+        else document.addEventListener('DOMContentLoaded', function () { mo.observe(document.body, { childList: true, subtree: true }); });
+    } catch (_) {}
+})();
+
+/*  Auto-replace known emoji glyphs in rendered UI text with inline SVG icons.
+ *  Pure typography (→ ✓ ↑ ↓ • …) is intentionally kept. Runs after renders via
+ *  the same MutationObserver. Skips inputs, textareas, [contenteditable], <script>,
+ *  <style>, and any element marked data-noicon. */
+(function () {
+    'use strict';
+    if (!window.WFIcon) return;
+    var MAP = {
+        '📊':'chartLine','📈':'trendUp','📉':'chartLine','🧾':'receipt','📋':'receipt','🗑️':'trash','🗑':'trash',
+        '✅':'checkCircle','☑️':'checkCircle','❌':'x','✖️':'x','✕':'x','⚠️':'alert','⚠':'alert','ℹ️':'info',
+        '🎯':'target','💡':'sparkles','🧠':'bot','🤖':'bot','💰':'wallet','🏦':'bank','🔄':'refresh','📅':'calendar',
+        '🎉':'sparkles','✨':'sparkles','⏰':'clock','⏳':'clock','☁️':'globe','☁':'globe','⚡':'sparkles','🌐':'globe',
+        '📄':'cheque','🛡️':'lock','🛡':'lock','💳':'card','🔐':'lock','🔒':'lock','🔓':'lock','🔔':'bell','📱':'devices',
+        '💾':'download','💬':'info','📁':'receipt','👤':'bot','📸':'scan','📥':'download','📤':'upload','🔊':'bell',
+        '🔗':'globe','📐':'ruler','🏆':'trophy','💣':'bomb','🔮':'crystal','⚙️':'settings','⛽':'coins','💸':'coins',
+        '👍':'thumbsUp','👎':'thumbsDown','👁️':'eye','👁':'eye','💎':'gem','🎁':'gift','⬇️':'download','⬆️':'upload',
+        '📦':'receipt','💵':'wallet','💴':'wallet','💶':'wallet','💷':'wallet','🟢':'checkCircle','🔴':'alert','🟡':'alert'
+    };
+    // Build one regex of all emoji keys (longest first to match VS16 variants)
+    var keys = Object.keys(MAP).sort(function (a, b) { return b.length - a.length; });
+    var rx = new RegExp('(' + keys.map(function (k) { return k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')', 'g');
+    var SKIP = { SCRIPT:1, STYLE:1, TEXTAREA:1, INPUT:1, SVG:1, NOSCRIPT:1, OPTION:1, SELECT:1 };
+
+    function replaceIn(root) {
+        try {
+            root = root || document.body; if (!root) return;
+            var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode: function (n) {
+                    if (!n.nodeValue || !rx.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
+                    var p = n.parentNode;
+                    while (p && p.nodeType === 1) {
+                        if (SKIP[p.tagName]) return NodeFilter.FILTER_REJECT;
+                        if (p.isContentEditable) return NodeFilter.FILTER_REJECT;
+                        if (p.hasAttribute && p.hasAttribute('data-noicon')) return NodeFilter.FILTER_REJECT;
+                        p = p.parentNode;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            var hits = [], node;
+            while ((node = walker.nextNode())) hits.push(node);
+            hits.forEach(function (textNode) {
+                var val = textNode.nodeValue; rx.lastIndex = 0;
+                if (!rx.test(val)) return;
+                var frag = document.createDocumentFragment();
+                var last = 0, m; rx.lastIndex = 0;
+                while ((m = rx.exec(val))) {
+                    if (m.index > last) frag.appendChild(document.createTextNode(val.slice(last, m.index)));
+                    var key = MAP[m[1]];
+                    var node2 = key && window.WFIconNode ? window.WFIconNode(key) : null;
+                    if (node2) { node2.style.verticalAlign = '-0.14em'; frag.appendChild(node2); }
+                    else frag.appendChild(document.createTextNode(m[1]));
+                    last = m.index + m[1].length;
+                }
+                if (last < val.length) frag.appendChild(document.createTextNode(val.slice(last)));
+                if (textNode.parentNode) textNode.parentNode.replaceChild(frag, textNode);
+            });
+        } catch (_) {}
+    }
+    window.WFIconStripEmoji = replaceIn;
+    var _t = null;
+    function schedule() { if (_t) return; _t = setTimeout(function () { _t = null; replaceIn(document.body); }, 120); }
+    if (document.readyState !== 'loading') schedule(); else document.addEventListener('DOMContentLoaded', schedule);
+    try {
+        var mo = new MutationObserver(function (m) { for (var i = 0; i < m.length; i++) { if (m[i].addedNodes && m[i].addedNodes.length) { schedule(); break; } } });
+        function arm() { if (document.body) mo.observe(document.body, { childList: true, subtree: true }); }
+        if (document.body) arm(); else document.addEventListener('DOMContentLoaded', arm);
+    } catch (_) {}
 })();
