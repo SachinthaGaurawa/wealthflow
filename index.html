@@ -48,6 +48,21 @@
             try { document.documentElement.setAttribute('data-theme', 'dark'); } catch (_) {}
         }
 
+        // ── crash-loop guard #2: image-scan memory crash ───────────────────────
+        // An image scan that was mid-flight when the web process died leaves
+        // 'wf_img_scan_active' set. If we boot and still see it, the last image
+        // upload very likely crashed the process — so we permanently shrink the
+        // image cap and disable GPU enhancement to keep peak memory tiny. This
+        // is what lets the user actually get back INTO the app and still scan.
+        try {
+            if (localStorage.getItem('wf_img_scan_active') === '1') {
+                localStorage.removeItem('wf_img_scan_active');
+                var _n = (parseInt(localStorage.getItem('wf_img_crash_count') || '0', 10) || 0) + 1;
+                localStorage.setItem('wf_img_crash_count', String(_n));
+                localStorage.setItem('wf_img_safe_mode', '1');   // v4 reads this → 1100px cap, no TF
+            }
+        } catch (_) {}
+
         function markSuccess() {
             if (booted) return;
             booted = true;
@@ -306,6 +321,8 @@
     <script src="wealthflow-html-statement.js" defer></script>
     <!-- Subscription auto-routing: recurring bills → Subscriptions tab, auto-create + remember -->
     <script src="wealthflow-subscriptions.js" defer></script>
+    <!-- Statement import batches + Undo (last 6) -->
+    <script src="wealthflow-batches.js" defer></script>
 
     
 
@@ -6911,7 +6928,7 @@
         let appData = {
             auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [],
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
-            incomeReceived: {}, sessions: [], balance: { total: 0, flows: [] },
+            incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
         let isInitialised = false;
@@ -7970,6 +7987,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
             if ($('aiScanBar')) $('aiScanBar').style.width = pct + '%';
         }
         function _hideScanOverlay() {
+            try { localStorage.removeItem('wf_img_scan_active'); } catch (_) {}
             const ov = $('aiScanOverlay');
             if (ov) ov.style.display = 'none';
         }
@@ -8032,30 +8050,72 @@ Keep total under 200 words. No markdown, no asterisks.`;
             return canvas;
         }
 
-        // --- Ultra-HD Compress + Enhance Pipeline ---
-        function _compressImageToBase64(file, maxDim = 1600, quality = 0.88, applyEnhancement = false) {
-            return new Promise((resolve, reject) => {
+        // --- Ultra-HD Compress + Enhance Pipeline (memory-safe for iOS) ---
+        // Large phone photos (12MP HEIC) used to decode at full resolution AND run a
+        // TensorFlow pass — the combined memory spike crashed the iOS web process
+        // (and then looped on reload). This version decodes straight to a capped size
+        // with createImageBitmap (no full-res bitmap kept), caps lower on mobile,
+        // skips the heavy enhancement on mobile, and releases every buffer.
+        function _wfIsMobile() {
+            try { return /iphone|ipad|ipod|android/i.test(navigator.userAgent || '') || (window.innerWidth && window.innerWidth < 820); } catch (_) { return false; }
+        }
+        async function _compressImageToBase64(file, maxDim = 1600, quality = 0.88, applyEnhancement = false) {
+            const mobile = _wfIsMobile();
+            // Hard cap dimension on mobile to bound peak memory regardless of caller.
+            const cap = mobile ? Math.min(maxDim, 1600) : maxDim;
+            let bmp = null, canvas = null;
+            try {
+                // Preferred path: decode + downscale in ONE step (lowest peak memory).
+                if (typeof createImageBitmap === 'function') {
+                    // First get intrinsic size cheaply, then request a downscaled bitmap.
+                    let probe = await createImageBitmap(file);
+                    let w = probe.width, h = probe.height;
+                    if (w > h && w > cap) { h = Math.round((h * cap) / w); w = cap; }
+                    else if (h > cap) { w = Math.round((w * cap) / h); h = cap; }
+                    if (w !== probe.width || h !== probe.height) {
+                        bmp = await createImageBitmap(file, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
+                        probe.close && probe.close();
+                    } else { bmp = probe; }
+                    canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+                    ctx.drawImage(bmp, 0, 0, w, h);
+                    bmp.close && bmp.close(); bmp = null;          // release decoded pixels immediately
+                    if (applyEnhancement && !mobile) { try { _enhanceForOCR(canvas); } catch (_) {} }
+                    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+                    const base64 = dataUrl.split(',')[1];
+                    canvas.width = canvas.height = 0; canvas = null; // free canvas memory
+                    return { base64, kb: Math.round(base64.length * 0.75 / 1024) };
+                }
+            } catch (e) {
+                console.warn('[img] createImageBitmap path failed, falling back:', e && e.message);
+                try { if (bmp && bmp.close) bmp.close(); } catch (_) {}
+                try { if (canvas) { canvas.width = canvas.height = 0; } } catch (_) {}
+                bmp = null; canvas = null;
+            }
+            // Fallback (older browsers): FileReader + Image, still capped + released.
+            return await new Promise((resolve, reject) => {
                 const img = new Image();
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     img.onload = () => {
-                        let w = img.width, h = img.height;
-                        if (w > h && w > maxDim) { h = Math.round((h * maxDim) / w); w = maxDim; }
-                        else if (h > maxDim) { w = Math.round((w * maxDim) / h); h = maxDim; }
-                        const canvas = document.createElement('canvas');
-                        canvas.width = w; canvas.height = h;
-                        const ctx = canvas.getContext('2d');
-                        ctx.fillStyle = '#ffffff';
-                        ctx.fillRect(0, 0, w, h);
-                        ctx.drawImage(img, 0, 0, w, h);
-                        // ONLY apply GPU-accelerated enhancement for Tesseract.
-                        // AI models (Gemini/Ollama) need the natural, unadulterated image.
-                        if (applyEnhancement) {
-                            _enhanceForOCR(canvas);
-                        }
-                        const dataUrl = canvas.toDataURL('image/jpeg', quality);
-                        const base64 = dataUrl.split(',')[1];
-                        resolve({ base64, kb: Math.round(base64.length * 0.75 / 1024) });
+                        try {
+                            let w = img.width, h = img.height;
+                            if (w > h && w > cap) { h = Math.round((h * cap) / w); w = cap; }
+                            else if (h > cap) { w = Math.round((w * cap) / h); h = cap; }
+                            const c = document.createElement('canvas');
+                            c.width = w; c.height = h;
+                            const ctx = c.getContext('2d');
+                            ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+                            ctx.drawImage(img, 0, 0, w, h);
+                            if (applyEnhancement && !mobile) { try { _enhanceForOCR(c); } catch (_) {} }
+                            const dataUrl = c.toDataURL('image/jpeg', quality);
+                            const base64 = dataUrl.split(',')[1];
+                            c.width = c.height = 0;                 // free
+                            img.src = '';                            // release decoded image
+                            resolve({ base64, kb: Math.round(base64.length * 0.75 / 1024) });
+                        } catch (err) { reject(err); }
                     };
                     img.onerror = () => reject(new Error('Image load failed'));
                     img.src = e.target.result;
@@ -17085,7 +17145,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             // "UPCOMING / THIS MONTH / PAST" badges, descending newest-first.
             // Existing users with localStorage.wf_exp_view='table' keep that.
             const mode = window._expViewMode || (function(){
-                try { return localStorage.getItem('wf_exp_view') || 'schedule'; } catch (_) { return 'schedule'; }
+                try {
+                    // IMG_9147 grouped timeline is the mandatory default. Reset a
+                    // legacy stored 'table' preference ONCE so every user lands on
+                    // the schedule view; they can still switch afterwards.
+                    if (!localStorage.getItem('wf_exp_view_v2')) { localStorage.setItem('wf_exp_view', 'schedule'); localStorage.setItem('wf_exp_view_v2', '1'); }
+                    return localStorage.getItem('wf_exp_view') || 'schedule';
+                } catch (_) { return 'schedule'; }
             })();
             // Sync the toggle buttons to the active mode (handles page-reload).
             try {
@@ -18286,6 +18352,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload Statement</button>
                     <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Photo</button>
                 </div>
+                <!-- Recent statement imports — each can be undone (removes every
+                     payment that import created, across all tabs). Keeps last 6. -->
+                <div id="wfBatchList" style="margin-top:14px;"></div>
             </div>
             <!-- v7.11.1 — Card & Account Registry entry. Maps a last-4 to credit-card
                  vs bank-account so the brain routes service-charge debits correctly. -->
@@ -18674,8 +18743,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.19.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.19.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.20.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.20.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -18707,6 +18776,48 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const sv = document.getElementById('wfSbVer'); if (sv) sv.textContent = 'WealthFlow v' + v + ' · Infinity Engine';
                 }
             } catch (_) {}
+            try { renderBatchList(); } catch (_) {}
+        }
+
+        // ── Recent statement imports + UNDO (last 6) ────────────────────────────
+        function renderBatchList() {
+            const host = document.getElementById('wfBatchList'); if (!host) return;
+            const batches = (window.WFBatch ? WFBatch.list() : []).slice().reverse(); // newest first
+            if (!batches.length) { host.innerHTML = '<div style="font-size:11.5px;color:var(--text3);">No statement imports yet. Uploaded statements appear here so you can undo them.</div>'; return; }
+            const tabLabel = { cconetime: 'CC One-Time', expenses: 'Expenses', incomeRecv: 'Income', subscription: 'Subscriptions' };
+            host.innerHTML = '<div style="font-weight:700;font-size:12.5px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:6px;"><i data-wfi="refresh"></i> Recent imports — tap Undo to remove that statement\'s payments</div>'
+                + batches.map(b => {
+                    const c = b.counts || {};
+                    const bits = Object.keys(tabLabel).filter(k => c[k]).map(k => c[k] + ' ' + tabLabel[k]);
+                    const when = (function(){ try { const d = new Date(b.at); return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } })();
+                    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);margin-bottom:6px;">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-weight:600;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(b.label || 'Statement')}</div>
+                            <div style="font-size:11px;color:var(--text3);margin-top:2px;">${when}${bits.length ? ' · ' + bits.join(' · ') : ''}</div>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,0.3);flex-shrink:0;" onclick="undoBatch('${b.id}')"><i data-wfi="refresh"></i> Undo</button>
+                    </div>`;
+                }).join('');
+            try { if (window.WFIconHydrate) WFIconHydrate(host); } catch (_) {}
+        }
+        function undoBatch(batchId) {
+            const b = (window.WFBatch ? WFBatch.list() : []).find(x => x.id === batchId);
+            if (!b) { notify('That import is no longer available', 'warn'); return; }
+            const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.subscription || 0);
+            showConfirm('🗑️', 'Undo this statement import?', 'This removes all ' + total + ' payment' + (total === 1 ? '' : 's') + ' this import added — across Expenses, Income, CC One-Time and Subscriptions. This cannot be redone.', 'btn-danger', '↺ Undo import', () => {
+                let res = null; try { res = WFBatch.undo(batchId); } catch (e) { console.warn('[WFBatch] undo failed:', e); }
+                if (!res) { notify('Undo failed', 'error'); return; }
+                // refresh every affected tab + dashboard
+                try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
+                try { renderExpenses(); } catch (_) {}
+                try { renderIncRecv(); } catch (_) {}
+                try { renderSubscriptions(); } catch (_) {}
+                try { renderDash(); } catch (_) {}
+                try { renderBatchList(); } catch (_) {}
+                const r = res.removed || {};
+                notify('Import undone — removed ' + ((r.cconetime || 0) + (r.expenses || 0) + (r.incomeRecv || 0) + (r.subscription || 0)) + ' payment(s)', 'success');
+                try { setDirty(true); } catch (_) {}
+            });
         }
 
         // ISSUE 3 FIX — AI Language picker helpers
@@ -23143,6 +23254,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                 // Re-import / mandatory-fee de-dupe: same date + amount + merchant already filed?
                 const _dupIn = (list, d, a, name, amtKey) => list.some(r => r.date === d && Math.abs(((r[amtKey] != null ? r[amtKey] : r.amount) || 0) - a) < 0.01 && _nz(r.desc || r.name) === _nz(name));
+                // One undoable batch per import (records every payment it creates).
+                const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (bank + ' statement') : 'Statement'), 'statement') : null);
                 rows.forEach((tr) => {
                     if (!tr.querySelector('._ccr_keep').checked) { skipped++; return; }
                     const date = tr.querySelector('._ccr_date').value || today();
@@ -23163,12 +23276,16 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // add a synthetic auto-fee here. Auto-fees remain only for
                         // manual entry where no statement exists. → no duplication.
                         const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
-                        ccArr.push({ id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: 'AI-scanned from statement', paid: past, createdAt: new Date().toISOString() });
+                        const _rec = { id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: 'AI-scanned from statement', paid: past, createdAt: new Date().toISOString() };
+                        if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'cconetime', _rec.id); }
+                        ccArr.push(_rec);
                         cc++;
                     } else if (dest === 'expenses') {
                         if (_dupIn(expArr, date, amount, desc, 'amount')) { dup++; return; }
                         const cat = (window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other';
-                        expArr.push({ id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: 'From statement', completed: past, createdAt: new Date().toISOString() });
+                        const _rec = { id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: 'From statement', completed: past, createdAt: new Date().toISOString() };
+                        if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'expenses', _rec.id); }
+                        expArr.push(_rec);
                         exp++;
                     } else if (dest === 'income') {
                         // RECEIVED income → the Income tab (expense-style record). Past-dated ⇒ received.
@@ -23176,7 +23293,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         let it = (window.WFRoute ? window.WFRoute.incomeKind(desc) : 'other') || 'other';
                         it = it.charAt(0).toUpperCase() + it.slice(1);
                         if (INC_TYPES.indexOf(it) < 0) it = 'Other';
-                        incRecvArr.push({ id: uid(), name: desc, type: it, amount, month, date, received: past, source: 'statement', notes: 'From statement', createdAt: new Date().toISOString() });
+                        const _rec = { id: uid(), name: desc, type: it, amount, month, date, received: past, source: 'statement', notes: 'From statement', createdAt: new Date().toISOString() };
+                        if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'incomeRecv', _rec.id); }
+                        incRecvArr.push(_rec);
                         inc++;
                     } else if (dest === 'subscription') {
                         // Recurring bill → Subscriptions tab. Match existing (remembers
@@ -23185,7 +23304,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const si = (window.WFRoute && window.WFRoute.subscriptionInfo(desc)) || {};
                         const routeInfo = { subName: si.name || desc, subKind: si.kind || 'other', subPhone: si.phone || null, category: si.category || 'Other' };
                         if (window.WFSubs) {
-                            try { const res = window.WFSubs.apply({ description: desc, amount, direction: 'debit', date }, routeInfo); sub++; if (res && res.created) subCreated++; }
+                            try {
+                                const res = window.WFSubs.apply({ description: desc, amount, direction: 'debit', date }, routeInfo);
+                                sub++; if (res && res.created) subCreated++;
+                                if (_batch && res && res.paymentAdded) WFBatch.recordSub(_batch, { subId: res.subId, paymentDate: res.paymentDate || date, amount: res.amount != null ? res.amount : amount, createdSub: !!res.created });
+                            }
                             catch (e) { console.warn('[WFSubs] apply failed:', e); skipped++; }
                         } else { skipped++; }
                     } else {
@@ -23195,6 +23318,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (cc) DB.set('cconetime', ccArr);
                 if (exp) DB.set('expenses', expArr);
                 if (inc) DB.set('incomeRecv', incRecvArr);
+                if (_batch) { try { WFBatch.commit(_batch); } catch (_) {} }
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
                 try { if (exp && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
                 try { if (inc && typeof renderIncRecv === 'function') renderIncRecv(); } catch (_) {}
