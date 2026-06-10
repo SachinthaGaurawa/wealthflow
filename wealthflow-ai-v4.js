@@ -180,9 +180,93 @@
         var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
         var isImage = (file.type || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(file.name || '');
 
-        // ---- IMAGE: compress to fit under maxBytes ----
+        // ---- IMAGE: compress to fit under maxBytes (memory-safe for iOS) ----
         if (!isPdf) {
             if (!isImage) throw new Error('Unsupported file type: ' + (file.type || file.name));
+
+            var _isMobileV4 = (typeof navigator !== 'undefined' && /iphone|ipad|ipod|android/i.test(navigator.userAgent || '')) || (typeof window !== 'undefined' && window.innerWidth && window.innerWidth < 820);
+            // Mobile gets a hard, lower cap — a 12MP phone photo decoded at full
+            // resolution (≈48 MB RGBA) plus several canvases used to spike the
+            // iOS web-process past its memory ceiling → the app crashed and then
+            // crash-looped on reload. We now DECODE STRAIGHT TO A CAPPED SIZE via
+            // createImageBitmap (the browser never materialises the full-res
+            // bitmap), reuse ONE canvas, and release every buffer immediately.
+            // If a previous image scan crashed the process, the boot guard sets
+            // wf_img_safe_mode — we then use an even smaller cap and skip TF.
+            var _imgSafe = false;
+            try { _imgSafe = localStorage.getItem('wf_img_safe_mode') === '1'; } catch (_) {}
+            var capDim = opts.maxDim || (_isMobileV4 ? 1400 : 2400);
+            if (_isMobileV4 && capDim > 1600) capDim = 1600;   // never exceed on mobile
+            if (_imgSafe) capDim = Math.min(capDim, 1100);     // post-crash: stay tiny
+            // Mark an image scan as in-flight so the boot guard can detect a
+            // process crash during this operation and drop into image-safe mode.
+            try { localStorage.setItem('wf_img_scan_active', '1'); } catch (_) {}
+            var dims;
+            if (capDim >= 2800) dims = [capDim, 2200, 1800, 1400, 1100];
+            else if (capDim >= 2200) dims = [capDim, 1800, 1500, 1200];
+            else if (capDim >= 1600) dims = [capDim, 1300, 1050];
+            else dims = [capDim, 1100, 900];
+            var quals = [0.9, 0.82, 0.72, 0.6];
+
+            // Decode once, downscaled, with createImageBitmap when available.
+            async function _decodeCapped(maxDim) {
+                if (typeof createImageBitmap === 'function') {
+                    var probe = await createImageBitmap(file);
+                    var w0 = probe.width, h0 = probe.height, w = w0, h = h0;
+                    if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+                    else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+                    var bmp = probe;
+                    if (w !== w0 || h !== h0) {
+                        bmp = await createImageBitmap(file, { resizeWidth: w, resizeHeight: h, resizeQuality: 'high' });
+                        probe.close && probe.close();
+                    }
+                    return { bmp: bmp, w: w, h: h };
+                }
+                return null; // signal fallback
+            }
+
+            // Preferred path — bitmap decode, one canvas, released each rung.
+            if (typeof createImageBitmap === 'function') {
+                for (var di = 0; di < dims.length; di++) {
+                    var dec = null, canvas = null;
+                    try {
+                        dec = await _decodeCapped(dims[di]);
+                        if (!dec) break;
+                        canvas = document.createElement('canvas');
+                        canvas.width = dec.w; canvas.height = dec.h;
+                        var ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, dec.w, dec.h);
+                        ctx.drawImage(dec.bmp, 0, 0, dec.w, dec.h);
+                        dec.bmp.close && dec.bmp.close();   // free decoded pixels NOW
+                        // TF enhancement: desktop only + small images only.
+                        if (opts.enhance !== false && !_isMobileV4 && typeof tf !== 'undefined' &&
+                            typeof window._enhanceForOCR === 'function' && dec.w * dec.h < 3000000) {
+                            try { window._enhanceForOCR(canvas); } catch (_) { }
+                        }
+                        for (var qi = 0; qi < quals.length; qi++) {
+                            var dataUrl = canvas.toDataURL('image/jpeg', quals[qi]);
+                            var base64 = dataUrl.split(',')[1];
+                            var size = approxBase64Bytes(base64);
+                            if (size <= maxBytes) {
+                                canvas.width = canvas.height = 0;   // release
+                                try { localStorage.removeItem('wf_img_scan_active'); } catch (_) {}
+                                return { images: [base64], isPdf: false, pageCount: 1, dimensions: [{ w: dec.w, h: dec.h, bytes: size }] };
+                            }
+                        }
+                        canvas.width = canvas.height = 0;   // release before next rung
+                    } catch (err) {
+                        try { if (dec && dec.bmp && dec.bmp.close) dec.bmp.close(); } catch (_) {}
+                        try { if (canvas) canvas.width = canvas.height = 0; } catch (_) {}
+                        // fall through to next rung / fallback
+                        if (di === dims.length - 1) {
+                            console.warn('[v4 image] bitmap path failed, trying FileReader fallback:', err && err.message);
+                        }
+                    }
+                }
+            }
+
+            // Fallback (older engines without createImageBitmap): single decode,
+            // capped, released. Avoids the multi-canvas pile-up of the old code.
             var img = await new Promise(function (resolve, reject) {
                 var imgEl = new Image();
                 var reader = new FileReader();
@@ -194,50 +278,31 @@
                 reader.onerror = function () { reject(new Error('File read failed')); };
                 reader.readAsDataURL(file);
             });
-
-            // Adaptive scale-down — keep MUCH higher resolution & quality for
-            // accurate recognition of text, badges, models, fine detail.
-            // v7.5.1: the caller can pass opts.maxDim to anchor the ladder
-            // to a specific resolution (e.g. Frontier mode wants 3000 px,
-            // Quick mode wants 1800 px). We always include smaller
-            // fallback rungs so we still fit under maxBytes if the
-            // network is constrained.
-            var _isMobileV4 = (typeof navigator !== 'undefined' && /iphone|ipad|ipod|android/i.test(navigator.userAgent || '')) || (typeof window !== 'undefined' && window.innerWidth && window.innerWidth < 820);
-            var capDim = opts.maxDim || (_isMobileV4 ? 1800 : 2600);
-            var dims;
-            if (capDim >= 2800) dims = [capDim, 2400, 2000, 1600, 1300, 1000];
-            else if (capDim >= 2200) dims = [capDim, 1900, 1600, 1300, 1000];
-            else if (capDim >= 1800) dims = [capDim, 1500, 1200, 1000];
-            else dims = [capDim, 1300, 1000];
-            var quals = [0.95, 0.90, 0.82, 0.72, 0.6];
-            for (var di = 0; di < dims.length; di++) {
-                var maxDim = dims[di];
-                var w = img.naturalWidth, h = img.naturalHeight;
-                if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
-                else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
-                var canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                var ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.drawImage(img, 0, 0, w, h);
-
-                // Optional TF.js enhancement (sharper text)
-                if (opts.enhance !== false && typeof tf !== 'undefined' &&
-                    typeof window._enhanceForOCR === 'function' && w * h < 4000000) {
-                    try { window._enhanceForOCR(canvas); } catch (_) { }
-                }
-
-                for (var qi = 0; qi < quals.length; qi++) {
-                    var dataUrl = canvas.toDataURL('image/jpeg', quals[qi]);
-                    var base64 = dataUrl.split(',')[1];
-                    var size = approxBase64Bytes(base64);
-                    if (size <= maxBytes) {
-                        return { images: [base64], isPdf: false, pageCount: 1, dimensions: [{ w: w, h: h, bytes: size }] };
+            try {
+                for (var di2 = 0; di2 < dims.length; di2++) {
+                    var maxDim = dims[di2];
+                    var w = img.naturalWidth, h = img.naturalHeight;
+                    if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+                    else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+                    var c2 = document.createElement('canvas');
+                    c2.width = w; c2.height = h;
+                    var ctx2 = c2.getContext('2d');
+                    ctx2.fillStyle = '#fff'; ctx2.fillRect(0, 0, w, h);
+                    ctx2.drawImage(img, 0, 0, w, h);
+                    for (var qi2 = 0; qi2 < quals.length; qi2++) {
+                        var du2 = c2.toDataURL('image/jpeg', quals[qi2]);
+                        var b2 = du2.split(',')[1];
+                        var sz2 = approxBase64Bytes(b2);
+                        if (sz2 <= maxBytes) {
+                            c2.width = c2.height = 0; img.src = '';
+                            try { localStorage.removeItem('wf_img_scan_active'); } catch (_) {}
+                            return { images: [b2], isPdf: false, pageCount: 1, dimensions: [{ w: w, h: h, bytes: sz2 }] };
+                        }
                     }
+                    c2.width = c2.height = 0;   // release before next rung
                 }
-            }
+            } finally { try { img.src = ''; } catch (_) {} }
+            try { localStorage.removeItem('wf_img_scan_active'); } catch (_) {}
             throw new Error('Image too large to send (max ' + fmtBytes(maxBytes) + ')');
         }
 
@@ -2159,6 +2224,9 @@
         // Also hide the original expense-modal overlay if visible
         var oldOv = document.getElementById('aiScanOverlay');
         if (oldOv) oldOv.style.display = 'none';
+        // Scan finished (success, cancel or error) → clear the image-crash
+        // in-flight flag so a NON-crash failure can't trigger image-safe mode.
+        try { localStorage.removeItem('wf_img_scan_active'); } catch (_) {}
     }
 
     /* =========================================================================

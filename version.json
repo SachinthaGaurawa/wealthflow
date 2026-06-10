@@ -1,11 +1,11 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.19.0",
+  "latest": "7.20.0",
   "mandatory": [
     "7.16.0",
     "7.16.1"
   ],
   "securitySchedule": "monthly",
-  "notes": "Income & Investments split into two tabs \u00b7 professional icon system (emojis removed) \u00b7 Gift & Gold categories \u00b7 statement imports auto-mark past payments paid/received \u00b7 mandatory bank charges (ATM/CEFT) filed once \u2014 never duplicated, never skipped \u00b7 offline-boot persistence fix for subscriptions & sessions (multi-device consistency)",
-  "version": "7.19.0"
+  "notes": "Critical iOS image-upload crash fixed (memory-safe decode, no crash-loop, auto image-safe recovery) \u00b7 statement imports auto-mark past payments paid/received \u00b7 last-6 statement imports can be undone (removes every payment across all tabs) \u00b7 default Expenses view = grouped timeline (newest first) \u00b7 App Version now shows live build \u00b7 professional SVG icons (no boxes)",
+  "version": "7.20.0"
 }

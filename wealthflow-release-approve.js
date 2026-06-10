@@ -141,10 +141,21 @@
     // ── self-inject a matching card into Settings (mirrors wealthflow-intel-panel) ──
     function _inject() {
         if (document.getElementById('wfReleasePanel')) return true;
+        // Only inject while the Settings PAGE is actually active — otherwise the
+        // card used to attach to whatever ".settings-section" happened to be in
+        // the DOM and appeared to "move around" between pages/renders.
+        var settingsPage = document.getElementById('page-settings');
+        if (!settingsPage || !settingsPage.classList.contains('active')) return false;
+        // Stable anchor: always sit immediately AFTER the AI engine / intel card
+        // inside Settings. Fall back to the Settings content container's END only
+        // if that anchor isn't present — never to a random last section elsewhere.
         var host = null;
-        var intel = document.getElementById('wfIntelPanel');           // sit right after the AI engine card
+        var intel = settingsPage.querySelector('#wfIntelPanel');
         if (intel && intel.closest) host = intel.closest('.settings-section') || intel;
-        if (!host) { var all = document.querySelectorAll('.settings-section'); if (all.length) host = all[all.length - 1]; }
+        if (!host) {
+            var secs = settingsPage.querySelectorAll('.settings-section');
+            if (secs.length) host = secs[secs.length - 1];
+        }
         if (!host || !host.parentNode) return false;
         var card = document.createElement('div');
         card.className = 'settings-section';
@@ -171,18 +182,18 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(_tryInjectRepeatedly, 2600); });
     else setTimeout(_tryInjectRepeatedly, 1200);
     window.addEventListener('hashchange', function () { setTimeout(_inject, 250); });
-    document.addEventListener('click', function () { setTimeout(function () { if (!document.getElementById('wfReleasePanel')) _inject(); }, 400); }, true);
 
-    // PERSISTENCE FIX: the card used to vanish when the Settings screen re-rendered,
-    // because the initial retry loop stops after the first success. A debounced
-    // MutationObserver now re-injects the card whenever it goes missing while a
-    // Settings section is on screen — so "Autonomous Release" no longer disappears.
+    // PERSISTENCE FIX: the card used to vanish when the Settings screen re-rendered.
+    // A debounced MutationObserver re-injects it whenever it goes missing WHILE THE
+    // SETTINGS PAGE IS ACTIVE — and _inject() itself now refuses to attach anywhere
+    // else, so "Autonomous Release" stays in ONE fixed spot and never wanders.
     try {
         var _reinjectScheduled = false;
         var _obs = new MutationObserver(function () {
             if (_reinjectScheduled) return;
             if (document.getElementById('wfReleasePanel')) return;          // already there
-            if (!document.querySelector('.settings-section')) return;        // not on Settings
+            var sp = document.getElementById('page-settings');
+            if (!sp || !sp.classList.contains('active')) return;            // Settings not active
             _reinjectScheduled = true;
             setTimeout(function () { _reinjectScheduled = false; _inject(); }, 300);
         });

@@ -114,7 +114,7 @@
         var map = (DB && DB.get ? DB.get('subMerchantMap') : null) || {};
         var r = applyToArrays(txn, routeInfo, subs, map);
         if (DB && DB.set) { DB.set('subscriptions', r.subscriptions); DB.set('subMerchantMap', r.map); }
-        return { subId: r.subId, name: r.name, created: r.created, paymentAdded: r.paymentAdded, via: r.via };
+        return { subId: r.subId, name: r.name, created: r.created, paymentAdded: r.paymentAdded, via: r.via, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
     }
 
     window.WFSubs = {
