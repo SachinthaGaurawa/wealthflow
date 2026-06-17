@@ -1,12 +1,47 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.21.0",
+  "latest": "7.22.0",
   "mandatory": [
     "7.16.0",
     "7.16.1"
   ],
   "securitySchedule": "monthly",
   "notes": {
+    "7.22.0": {
+      "date": "2026-06-18",
+      "type": "full",
+      "headline": "CRIB credit intelligence — rebuilt & supercharged",
+      "sections": [
+        {
+          "title": "New",
+          "items": [
+            "CRIB Credit Report: attach a report (PDF or photo) and get a deep AI analysis, in your chosen AI Response Language, in a warm human voice.",
+            "A separate action plan shows exactly how to raise your CRIB score, advance your risk category and strengthen your personal CRIB account.",
+            "Every report is tracked over time with a score ring, score-history line chart, outstanding/overdue trends, a latest-vs-previous delta table and a facilities breakdown.",
+            "Re-upload the same report and WealthFlow recognises it — it is not saved twice, but you still get the full analysis and comparison.",
+            "Re-analyse any past report in your current language, and export any analysis to a text file."
+          ]
+        },
+        {
+          "title": "Fixed",
+          "items": [
+            "CRIB AI now reliably produces the analysis, advice, charts and graphs (the structured AI path no longer gets rewritten by the chat engine).",
+            "Duplicate CRIB reports are now correctly detected and rejected, using two independent fingerprints.",
+            "Comparison between past and present CRIB reports now works.",
+            "The Subscription tab no longer bleeds into Income, Investments, Expenses, Settings or any other tab — it now lives in its own page.",
+            "All AI replies now honour your selected AI Response Language app-wide (no more silent English fallback)."
+          ]
+        },
+        {
+          "title": "Improved",
+          "items": [
+            "Google Cloud Vision OCR now runs on every image AI call — receipts, one-time card charges, bank statements, CRIB and the AI advisor — for sharper, more accurate reading.",
+            "The AI advisor now knows and stays in sync with your CRIB reports, including deletions.",
+            "Your CRIB credit health now feeds into your WealthFlow score."
+          ]
+        }
+      ]
+    },
     "7.12.2": {
       "date": "2026-06-01",
       "type": "minor",
@@ -16,7 +51,7 @@
           "title": "New",
           "items": [
             "Check for updates button and a full system self-check in Settings.",
-            "Update types are now labelled \u2014 Full, Minor, or Security."
+            "Update types are now labelled — Full, Minor, or Security."
           ]
         },
         {
@@ -65,7 +100,7 @@
         {
           "title": "Fixed",
           "items": [
-            "System self-check no longer shows a false \"CHECK\" on Cloud sync \u2014 it now detects Firestore correctly (14/14)."
+            "System self-check no longer shows a false \"CHECK\" on Cloud sync — it now detects Firestore correctly (14/14)."
           ]
         },
         {
@@ -85,7 +120,7 @@
         {
           "title": "New",
           "items": [
-            "Your feedback is now scored and prioritised automatically \u2014 security and crashes first.",
+            "Your feedback is now scored and prioritised automatically — security and crashes first.",
             "Auto-install toggle for urgent security updates (like Android).",
             "A red badge on Settings shows when an update is waiting."
           ]
@@ -183,7 +218,7 @@
         {
           "title": "Fixed",
           "items": [
-            "The Software Update section now always appears in Settings \u2014 fixed a timing issue where it could be missing."
+            "The Software Update section now always appears in Settings — fixed a timing issue where it could be missing."
           ]
         }
       ]
@@ -196,7 +231,7 @@
         {
           "title": "Fixed",
           "items": [
-            "Swiping down from the top no longer reloads the app or shows an error \u2014 pull-to-refresh is now disabled."
+            "Swiping down from the top no longer reloads the app or shows an error — pull-to-refresh is now disabled."
           ]
         }
       ]
@@ -209,7 +244,7 @@
         {
           "title": "Fixed",
           "items": [
-            "Clicking any button in the Software Update section no longer hides the whole section \u2014 it is now a permanent part of Settings.",
+            "Clicking any button in the Software Update section no longer hides the whole section — it is now a permanent part of Settings.",
             "App version is now consistent in the footer and sidebar too."
           ]
         }
@@ -223,7 +258,7 @@
         {
           "title": "Fixed (critical)",
           "items": [
-            "Fixed the black screen some users saw after updating. The app now has a Boot Guard that automatically clears the broken update and restores a working version \u2014 your data is always safe."
+            "Fixed the black screen some users saw after updating. The app now has a Boot Guard that automatically clears the broken update and restores a working version — your data is always safe."
           ]
         },
         {
@@ -255,7 +290,7 @@
         }
       ]
     },
-    "7.21.0": "CRIB credit-report intelligence (AI analysis + advice in your language, dedup, history charts, score factor, delete-sync) \u00b7 Google Cloud Vision OCR across the whole app (sharper reading of dense/zoomed-out statements) \u00b7 encrypted HTML e-statements now open on every device (Nations Trust AMEX) \u00b7 Income tab: matching card spacing + Table/Schedule views + sorting \u00b7 AI now writes a useful note per imported transaction (no more \"from statement\") \u00b7 repeated same-category charges accumulate per month with a tap-to-view history \u00b7 faster startup \u00b7 AI advisor now knows your CRIB + subscriptions + received income"
+    "7.21.0": "CRIB credit-report intelligence (AI analysis + advice in your language, dedup, history charts, score factor, delete-sync) · Google Cloud Vision OCR across the whole app (sharper reading of dense/zoomed-out statements) · encrypted HTML e-statements now open on every device (Nations Trust AMEX) · Income tab: matching card spacing + Table/Schedule views + sorting · AI now writes a useful note per imported transaction (no more \"from statement\") · repeated same-category charges accumulate per month with a tap-to-view history · faster startup · AI advisor now knows your CRIB + subscriptions + received income"
   },
-  "version": "7.21.0"
+  "version": "7.22.0"
 }

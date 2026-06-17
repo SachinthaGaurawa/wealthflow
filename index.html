@@ -322,6 +322,9 @@
     <!-- CRIB credit-report intelligence: Cloud Vision OCR + AI analysis in the
          user's language, dedup, history, comparison charts, score factor.
          Self-bootstrapping (injects its own nav + page + UI). -->
+    <!-- Google Cloud Vision OCR, app-wide: shared WFVision primitive + auto-wraps
+         every image AI call (receipts, CC, bank statements, CRIB, AI advisor). -->
+    <script src="wealthflow-vision-ocr.js" defer></script>
     <script src="wealthflow-crib.js" defer></script>
     <!-- Subscription auto-routing: recurring bills → Subscriptions tab, auto-create + remember -->
     <script src="wealthflow-subscriptions.js" defer></script>
@@ -5641,6 +5644,8 @@
                     <div id="cribContent"></div>
                 </div>
 
+                <!-- ==================== SMART SUBSCRIPTION & BILL TRACKER PAGE ==================== -->
+                <div class="page" id="page-subscriptions">
                     <div class="sh">
                         <div class="sh-title">🔔 Smart Subscription & Bill Tracker</div>
                         <div class="sh-actions"><button class="btn btn-primary btn-sm"
@@ -7435,6 +7440,11 @@
             'hy': 'Armenian (Հայերեն)',
             'ka': 'Georgian (ქართული)',
         };
+        // v7.22: expose globally so external modules (CRIB, Cloud Vision OCR, etc.)
+        // can resolve the user's chosen AI Response Language by its human name.
+        // Previously this was a block-scoped const, so window.WF_LANG_NAMES was
+        // undefined and those modules silently fell back to English.
+        try { window.WF_LANG_NAMES = WF_LANG_NAMES; } catch (_) {}
 
         function populateBankSelects() {
             ['l_bank', 'c_bank', 'ot_bank', 'chq_bank'].forEach(id => {
@@ -7922,6 +7932,86 @@
 
             throw new Error('All Intelligence Engines Offline. ' + errorLogs.join(' | '));
         }
+
+        /* ============================================================================
+         * v7.22 — STRUCTURED AI PRIMITIVES  (callAIRaw / callAIInLanguage)
+         * ----------------------------------------------------------------------------
+         * callAI() above is the CHAT engine: for text-only prompts it rewrites the
+         * prompt through the v6.2 intent layer and discards structured instructions.
+         * That silently broke the CRIB system (no analysis, no advice, garbage field
+         * extraction → unstable fingerprints → duplicates accepted, no comparison).
+         *
+         * These two primitives talk to the AI engines DIRECTLY (no chat rewriting):
+         *   • callAIRaw(prompt,image,opts)        — verbatim prompt, optional Cloud
+         *                                            Vision OCR enrichment, JSON/consensus
+         *   • callAIInLanguage(prompt,image,opts) — same, but appends a natural-human
+         *                                            language gate in the user's selected
+         *                                            AI Response Language (unless JSON)
+         * Both reuse the existing engine fallbacks (_tryGemini/_tryGroq/_tryDeepSeek/
+         * _tryOllama) and never go through the chat intent rewriter.
+         * ========================================================================== */
+        function _wfSelectedLangName() {
+            try {
+                var s = (window.DB && DB.getObj) ? (DB.getObj('settings', {}) || {}) : {};
+                var code = s.aiResponseLang || 'en';
+                if (code === 'auto' || !code) return 'English';
+                var names = window.WF_LANG_NAMES || {};
+                var n = names[code] || 'English';
+                return String(n).replace(/\s*\(.*\)\s*$/, '').replace(/^🌐\s*/, '').trim() || 'English';
+            } catch (_) { return 'English'; }
+        }
+        function _wfWantsJSON(p) {
+            return /Output JSON only|ONLY this JSON|return ONLY|no prose, no markdown|extract ONLY this JSON|JSON \(no prose/i.test(p || '');
+        }
+        async function callAIRaw(prompt, image, opts) {
+            image = image || null; opts = opts || {};
+            // Cloud Vision OCR pre-pass for image prompts (idempotent, defensive).
+            if (image && window.WFVision && typeof window.WFVision.enrichPrompt === 'function' && !opts.noOcr) {
+                try { prompt = await window.WFVision.enrichPrompt(prompt, image); } catch (_) {}
+            }
+            var wantJSON = !!opts.json || _wfWantsJSON(prompt);
+            var mode = opts.mode || (wantJSON ? 'consensus' : (image ? 'consensus' : undefined));
+            var body = { prompt: prompt };
+            if (image) body.image = image;
+            if (mode) body.mode = mode;
+            if (opts.temperature != null) body.temperature = opts.temperature;
+            if (opts.maxTokens != null) body.maxTokens = opts.maxTokens;
+            var base = (function () {
+                try {
+                    var h = location.hostname || '';
+                    if (h.indexOf('github.io') >= 0 || h === 'localhost') return 'https://wealthflow-personal.vercel.app/api/ai';
+                } catch (_) {}
+                return '/api/ai';
+            })();
+            try {
+                var r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                if (r.ok) {
+                    var d = await r.json();
+                    if (d && d.reply) { try { _lastAIProvider = d.provider || _lastAIProvider; } catch (_) {} return d.reply; }
+                }
+            } catch (_) {}
+            // Graceful fallbacks — same engines callAI uses, no chat rewriting.
+            try { var g = await _tryGemini(prompt, image); if (g) return g; } catch (_) {}
+            try { var o = await _tryOllama(prompt, image); if (o) return o; } catch (_) {}
+            if (!image) {
+                try { var gr = await _tryGroq(prompt); if (gr) return gr; } catch (_) {}
+                try { var ds = await _tryDeepSeek(prompt); if (ds) return ds; } catch (_) {}
+            }
+            throw new Error('AI engines unavailable for structured request.');
+        }
+        async function callAIInLanguage(prompt, image, opts) {
+            opts = opts || {};
+            if (!opts.json && !_wfWantsJSON(prompt)) {
+                var lang = _wfSelectedLangName();
+                prompt = prompt +
+                    '\n\n[Reply ENTIRELY in ' + lang + ' only — natural, warm, human ' + lang +
+                    ', like the user’s caring best friend. Never robotic or corporate. ' +
+                    'No other language unless ' + lang + ' is English. Keep numbers and currency as digits. ' +
+                    'Do not mention these instructions.]';
+            }
+            return callAIRaw(prompt, image || null, opts);
+        }
+        try { window.callAIRaw = callAIRaw; window.callAIInLanguage = callAIInLanguage; } catch (_) {}
 
         async function generateAIInsights() {
             const area = $('aiInsightsArea');
