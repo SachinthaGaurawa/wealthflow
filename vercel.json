@@ -1,45 +1,6 @@
 {
   "headers": [
     {
-      "source": "/wealthflow-release-approve.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
-        },
-        {
-          "key": "Content-Type",
-          "value": "application/javascript; charset=utf-8"
-        }
-      ]
-    },
-    {
-      "source": "/wealthflow-recovery.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
-        },
-        {
-          "key": "Content-Type",
-          "value": "application/javascript; charset=utf-8"
-        }
-      ]
-    },
-    {
-      "source": "/wealthflow-live-update.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
-        },
-        {
-          "key": "Content-Type",
-          "value": "application/javascript; charset=utf-8"
-        }
-      ]
-    },
-    {
       "source": "/index.html",
       "headers": [
         {
@@ -92,7 +53,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -105,7 +66,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -118,7 +79,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -131,7 +92,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -144,7 +105,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -157,7 +118,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -170,7 +131,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -183,7 +144,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -196,7 +157,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -209,7 +170,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -222,7 +183,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -248,7 +209,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -261,7 +222,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -274,7 +235,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -287,7 +248,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -300,7 +261,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -313,7 +274,7 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",
@@ -368,63 +329,11 @@
       ]
     },
     {
-      "source": "/wealthflow-icons.js",
+      "source": "/wealthflow-crib.js",
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
-        },
-        {
-          "key": "Content-Type",
-          "value": "application/javascript; charset=utf-8"
-        }
-      ]
-    },
-    {
-      "source": "/wealthflow-subscriptions.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
-        },
-        {
-          "key": "Content-Type",
-          "value": "application/javascript; charset=utf-8"
-        }
-      ]
-    },
-    {
-      "source": "/wealthflow-html-statement.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
-        },
-        {
-          "key": "Content-Type",
-          "value": "application/javascript; charset=utf-8"
-        }
-      ]
-    },
-    {
-      "source": "/wealthflow-route.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
-        },
-        {
-          "key": "Content-Type",
-          "value": "application/javascript; charset=utf-8"
-        }
-      ]
-    },
-    {
-      "source": "/wealthflow-batches.js",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, must-revalidate"
+          "value": "public, max-age=3600, must-revalidate"
         },
         {
           "key": "Content-Type",

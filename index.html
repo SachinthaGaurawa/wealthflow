@@ -207,10 +207,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://js.puter.com/v2/"></script>
+    <script src="https://js.puter.com/v2/" defer></script>
     <!-- v7.9.0 — Tesseract.js & TensorFlow.js are LAZY-loaded on demand (see
          _wfLazyScript / ensureTesseract / ensureTF). Loading them at boot pushed
          iOS near its web-process memory limit, so any extra allocation could
@@ -319,6 +319,10 @@
     <script src="wealthflow-route.js" defer></script>
     <!-- Encrypted HTML e-statements (e.g. Nations Trust): unlock with DOB password, import directly -->
     <script src="wealthflow-html-statement.js" defer></script>
+    <!-- CRIB credit-report intelligence: Cloud Vision OCR + AI analysis in the
+         user's language, dedup, history, comparison charts, score factor.
+         Self-bootstrapping (injects its own nav + page + UI). -->
+    <script src="wealthflow-crib.js" defer></script>
     <!-- Subscription auto-routing: recurring bills → Subscriptions tab, auto-create + remember -->
     <script src="wealthflow-subscriptions.js" defer></script>
     <!-- Statement import batches + Undo (last 6) -->
@@ -5052,6 +5056,7 @@
                 </div>
                 <div class="nav-item" onclick="showPage('score',this)"><span class="nav-icon"><i data-wfi="trophy"></i></span> WealthFlow Score
                 </div>
+                <div class="nav-item" id="wfCribNavItem" onclick="showPage('crib',this)"><span class="nav-icon"><i data-wfi="fileText"></i></span> CRIB Credit Report</div>
                 <div class="nav-item" onclick="showPage('subscriptions',this)"><span class="nav-icon"><i data-wfi="bell"></i></span>
                     Subscriptions</div>
                 <div class="nav-item" onclick="showPage('debtdemo',this)"><span class="nav-icon"><i data-wfi="bomb"></i></span> Debt
@@ -5179,10 +5184,15 @@
                         <div class="sh-title">Income</div>
                         <div class="sh-actions">
                             <select class="fs" id="incRecvMonth" onchange="renderIncRecv()" style="max-width:160px;"></select>
+                            <div class="exp-view-toggle">
+                                <button class="exp-vbtn" id="incViewTable" onclick="setIncRecvView('table',this)">📋 Table</button>
+                                <button class="exp-vbtn active" id="incViewSched" onclick="setIncRecvView('schedule',this)">📅 Schedule</button>
+                            </div>
+                            <div class="sort-bar"><span class="sb-btn active" onclick="sortIncRecv('date',this)">Date</span><span class="sb-btn" onclick="sortIncRecv('amount',this)">Amount</span><span class="sb-btn" onclick="sortIncRecv('name',this)">Name</span><span class="sb-btn" onclick="sortIncRecv('type',this)">Type</span></div>
                             <button class="btn btn-primary btn-sm" onclick="openIncomeRecvModal()"><i data-wfi="plus"></i> Add Income</button>
                         </div>
                     </div>
-                    <div class="stat-grid" id="incRecvStats" style="margin-bottom:14px;"></div>
+                    <div class="g3" id="incRecvStats" style="margin-bottom:16px;"></div>
                     <div id="incRecvList"></div>
                 </div>
 
@@ -5619,8 +5629,18 @@
                     <div id="scoreContent"></div>
                 </div>
 
-                <!-- ==================== SUBSCRIPTION TRACKER PAGE ==================== -->
-                <div class="page" id="page-subscriptions">
+                <!-- ==================== CRIB CREDIT REPORT PAGE ==================== -->
+                <div class="page" id="page-crib">
+                    <div class="sh">
+                        <div class="sh-title">📑 CRIB Credit Report</div>
+                        <div class="sh-actions">
+                            <button class="btn btn-primary btn-sm" onclick="WFCrib._upload()"><i data-wfi="plus"></i> Attach CRIB Report</button>
+                        </div>
+                    </div>
+                    <input type="file" id="crib_upload" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" style="display:none;" onchange="if(window.WFCrib&&WFCrib._onUploadEvt)WFCrib._onUploadEvt(event)">
+                    <div id="cribContent"></div>
+                </div>
+
                     <div class="sh">
                         <div class="sh-title">🔔 Smart Subscription & Bill Tracker</div>
                         <div class="sh-actions"><button class="btn btn-primary btn-sm"
@@ -6929,6 +6949,7 @@
             auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [],
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
+            cribReports: [], cribAnalyses: {},
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
         let isInitialised = false;
@@ -8857,6 +8878,24 @@ Be conversational and precise.`;
             const expByCategory = {};
             curExpenses.forEach(e => { expByCategory[e.category] = (expByCategory[e.category] || 0) + e.amount; });
 
+            // ── extra data so the advisor knows EVERYTHING the user has ──
+            let cribSummary = '';
+            try { if (window.WFCrib && typeof window.WFCrib.contextForAdvisor === 'function') cribSummary = window.WFCrib.contextForAdvisor(); } catch (_) {}
+            let receivedThisMonth = 0, subsCount = 0, subsMonthly = 0, ccPending = 0;
+            try {
+                const incRecv = DB.get('incomeRecv') || [];
+                receivedThisMonth = incRecv.filter(x => x.month === curMonthStr && x.received).reduce((s, x) => s + (x.amount || 0), 0);
+            } catch (_) {}
+            try {
+                const subs = DB.get('subscriptions') || [];
+                subsCount = subs.length;
+                subsMonthly = subs.reduce((s, x) => s + (x.amount || x.monthly || 0), 0);
+            } catch (_) {}
+            try {
+                const cconetime = DB.get('cconetime') || [];
+                ccPending = cconetime.filter(c => !c.paid).reduce((s, x) => s + (x.amount || 0), 0);
+            } catch (_) {}
+
             return {
                 userName: currentUser ? (currentUser.displayName || 'User') : 'User',
                 totalMonthlyIncome: totalIncome,
@@ -8868,6 +8907,11 @@ Be conversational and precise.`;
                 activeLoans: activeLoans.length,
                 savingsTargets: targets.length,
                 expenseByCategory: expByCategory,
+                receivedThisMonth: receivedThisMonth,
+                subscriptionsCount: subsCount,
+                subscriptionsMonthly: subsMonthly,
+                ccOneTimePending: ccPending,
+                cribSummary: cribSummary,
                 incomeDetails: activeIncome.map(i => `${i.name}: LKR ${(i.monthly || 0).toLocaleString()}`).join(', '),
                 loanDetails: activeLoans.map(l => `${l.name}: LKR ${(l.monthly || 0).toLocaleString()}/mo`).join(', '),
                 targetDetails: targets.map(t => {
@@ -8930,7 +8974,10 @@ CURRENT FINANCIAL SNAPSHOT:
 • Income: ${ctx.incomeDetails || 'Not set'}
 • Loans: ${ctx.loanDetails || 'None'}
 • Top Expenses: ${ctx.topExpenses || 'None recorded'}
-• Targets: ${ctx.targetDetails || 'None'}${personaNote}${styleHints}
+• Targets: ${ctx.targetDetails || 'None'}
+• Income received this month: LKR ${(ctx.receivedThisMonth || 0).toLocaleString()}
+• Subscriptions/bills: ${ctx.subscriptionsCount || 0} (LKR ${(ctx.subscriptionsMonthly || 0).toLocaleString()}/mo)
+• CC one-time pending: LKR ${(ctx.ccOneTimePending || 0).toLocaleString()}${ctx.cribSummary ? ('\n' + ctx.cribSummary) : ''}${personaNote}${styleHints}
 
 YOUR PERSONALITY & CRITICAL RULES:
 
@@ -13289,7 +13336,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
 
         function renderPage(name) {
-            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv };
+            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv, crib: () => { try { if (window.WFCrib) window.WFCrib.render(); } catch (_) {} } };
             if (fn[name]) fn[name]();
         }
 
@@ -13608,11 +13655,47 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         <div class="stat-card sc-blue"><div class="stat-label">Top Type</div><div class="stat-val" style="font-size:15px;">${topType[0]}</div><div class="stat-meta">${fmtS(topType[1])}</div></div>
         <div class="stat-card sc-red"><div class="stat-label">Received</div><div class="stat-val">${arr.filter(x => x.received).length}</div><div class="stat-meta">of ${arr.length}</div></div>`;
             if (!arr.length) { host.innerHTML = emptyState('<i data-wfi="wallet" style=font-size:28px></i>', 'No income recorded yet', 'Add salary, interest, rent — or import a bank statement'); return; }
-            // group by month, newest first (same reading order as Expenses)
+
+            // ── sorting (applies to both views) ──
+            const ss = window._incRecvSort || { field: 'date', dir: -1 };
+            const sortItems = (list) => list.slice().sort((a, b) => {
+                let cmp;
+                if (ss.field === 'amount') cmp = (a.amount || 0) - (b.amount || 0);
+                else if (ss.field === 'name') cmp = String(a.name || '').localeCompare(String(b.name || ''));
+                else if (ss.field === 'type') cmp = String(a.type || '').localeCompare(String(b.type || ''));
+                else cmp = String(a.date || a.createdAt || '').localeCompare(String(b.date || b.createdAt || '')); // date
+                return ss.dir * cmp;   // dir = -1 → descending (newest / largest first), +1 → ascending
+            });
+
+            const view = window._incRecvView || 'schedule';
+
+            // ── TABLE view (mirrors Expenses table) ──
+            if (view === 'table') {
+                const rowsT = sortItems(arr).map(x => `
+                    <tr>
+                        <td><div style="font-weight:600;">${x.name || ''}</div>${x.notes ? `<div style="font-size:11px;color:var(--text3);">${x.notes}</div>` : ''}</td>
+                        <td><span class="badge exp-badge ${incTypeBadge[x.type] || 'bg-gr'}" style="font-size:10px;">${x.type || 'Other'}</span></td>
+                        <td>${x.month ? monthStrFmt(x.month + '-01') : '—'}</td>
+                        <td style="font-family:var(--mono);font-weight:700;color:var(--green);white-space:nowrap;">+${fmt(x.amount)}</td>
+                        <td>${x.received ? '<span class="badge bg-g" style="font-size:10px;">✓ Received</span>' : '<span class="badge bg-gr" style="font-size:10px;">Pending</span>'}</td>
+                        <td><div class="act-btns" style="display:flex;gap:4px;">
+                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${x.id}')" title="Mark received"><i data-wfi="check"></i></button>` : ''}
+                            <button class="ib e" onclick="editIncomeRecv('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
+                            <button class="ib d" onclick="deleteIncomeRecv('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
+                        </div></td>
+                    </tr>`).join('');
+                host.innerHTML = `<div class="tbl-wrap"><table>
+                    <thead><tr><th>Source</th><th>Type</th><th>Month</th><th>Amount</th><th>Status</th><th></th></tr></thead>
+                    <tbody>${rowsT}</tbody></table></div>`;
+                try { if (window.WFIconHydrate) WFIconHydrate(host); } catch (_) {}
+                return;
+            }
+
+            // ── SCHEDULE view (month-grouped, newest first) ──
             const groups = {}; arr.forEach(x => { (groups[x.month || ''] = groups[x.month || ''] || []).push(x); });
             const keys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
             host.innerHTML = keys.map(ym => {
-                const items = groups[ym].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+                const items = sortItems(groups[ym]);
                 const mt = items.reduce((s, x) => s + (x.amount || 0), 0);
                 const isCur = ym === ymNow, isPast = ym < ymNow;
                 const tone = isCur ? 'var(--accent)' : isPast ? 'var(--text3)' : 'var(--blue)';
@@ -13645,7 +13728,28 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         </div>${rows}
                     </div>`;
             }).join('');
+            try { if (window.WFIconHydrate) WFIconHydrate(host); } catch (_) {}
         }
+
+        function setIncRecvView(mode, btn) {
+            window._incRecvView = mode;
+            try { localStorage.setItem('wf_inc_view', mode); } catch (_) {}
+            ['incViewTable', 'incViewSched'].forEach(id => { const e = $(id); if (e) e.classList.remove('active'); });
+            if (btn) btn.classList.add('active');
+            else { const e = $(mode === 'table' ? 'incViewTable' : 'incViewSched'); if (e) e.classList.add('active'); }
+            renderIncRecv();
+        }
+        function sortIncRecv(field, btn) {
+            const cur = window._incRecvSort || { field: 'date', dir: -1 };
+            // toggle if same field; else sensible default (desc for date/amount, asc for name/type)
+            const defDir = (field === 'name' || field === 'type') ? 1 : -1;
+            window._incRecvSort = { field, dir: (cur.field === field ? -cur.dir : defDir) };
+            if (btn && btn.parentNode) { btn.parentNode.querySelectorAll('.sb-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+            renderIncRecv();
+        }
+        try { window._incRecvView = localStorage.getItem('wf_inc_view') || 'schedule'; } catch (_) { window._incRecvView = 'schedule'; }
+        window.setIncRecvView = setIncRecvView;
+        window.sortIncRecv = sortIncRecv;
 
         let _incRecvEdit = null;
         function openIncomeRecvModal(editId) {
@@ -17226,7 +17330,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const isPast = ym < ymNow;
                     const tone = isCurrent ? 'var(--accent)' : isPast ? 'var(--text3)' : 'var(--blue)';
                     const tag = isCurrent ? 'THIS MONTH' : isPast ? 'PAST' : 'UPCOMING';
-                    const itemRows = items.map(x => `
+                    // Group this month's items by category. Categories with MORE
+                    // THAN ONE entry are ACCUMULATED into a single line showing the
+                    // combined total + a history toggle that reveals each individual
+                    // transaction (date + amount). This is what makes repeated
+                    // same-category charges across one or many statements sum into
+                    // the month, while the per-transaction history stays viewable.
+                    const _renderSingle = (x) => `
                         <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
                             <span class="badge exp-badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.cat}</span>
                             <div class="exp-desc" style="flex:1 1 0;min-width:0;overflow:hidden;">
@@ -17239,8 +17349,45 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 <button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
                                 <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
                             </div>
-                        </div>
-                    `).join('');
+                        </div>`;
+                    const _catGroups = {};
+                    items.forEach(x => { (_catGroups[x.cat || 'Other'] = _catGroups[x.cat || 'Other'] || []).push(x); });
+                    const itemRows = Object.keys(_catGroups).map(cat => {
+                        const catItems = _catGroups[cat];
+                        if (catItems.length === 1) return _renderSingle(catItems[0]);
+                        // accumulate
+                        const catTotal = catItems.reduce((a, b) => a + (b.amount || 0), 0);
+                        const catPaid = catItems.filter(i => i.completed).length;
+                        const gid = ('expcat_' + ym + '_' + cat).replace(/[^a-zA-Z0-9_]/g, '_');
+                        const history = catItems
+                            .slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+                            .map(x => `
+                                <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:8px 12px 8px 22px;border-radius:8px;background:var(--bg);margin-bottom:5px;${x.completed ? 'opacity:.6;' : ''}">
+                                    <div style="flex:1 1 0;min-width:0;overflow:hidden;">
+                                        <div style="font-weight:600;font-size:12.5px;overflow-wrap:break-word;line-height:1.35;">${x.desc}</div>
+                                        <div style="font-size:11px;color:var(--text3);margin-top:1px;">${x.date ? fmtDatePretty(x.date) : (x.month || '')}${x.notes ? ' · ' + x.notes : ''}</div>
+                                    </div>
+                                    <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
+                                    <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
+                                        ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
+                                        <button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
+                                        <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
+                                    </div>
+                                </div>`).join('');
+                        return `
+                            <div style="margin-bottom:6px;">
+                                <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);cursor:pointer;" onclick="_toggleExpCat('${gid}')">
+                                    <span class="badge exp-badge ${catBadge[cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${cat}</span>
+                                    <div style="flex:1 1 0;min-width:0;overflow:hidden;">
+                                        <div style="font-weight:700;font-size:13px;line-height:1.35;">${cat} <span style="font-weight:600;color:var(--text3);font-size:11.5px;">· ${catItems.length} transactions</span></div>
+                                        <div style="font-size:11px;color:var(--accent);margin-top:1px;"><i data-wfi="history"></i> Tap to view history (${catPaid}/${catItems.length} paid)</div>
+                                    </div>
+                                    <div class="exp-amt" style="font-family:var(--mono);font-weight:800;color:var(--red);flex-shrink:0;white-space:nowrap;font-size:13px;">${fmt(catTotal)}</div>
+                                    <span id="${gid}_caret" style="flex-shrink:0;color:var(--text3);font-size:13px;transition:transform .2s;">▾</span>
+                                </div>
+                                <div id="${gid}" style="display:none;margin-top:5px;">${history}</div>
+                            </div>`;
+                    }).join('');
                     return `
                         <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:14px;">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:10px;flex-wrap:wrap;">
@@ -17257,10 +17404,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                     `;
                 }).join('');
+                try { if (window.WFIconHydrate) WFIconHydrate(schedHost); } catch (_) {}
                 return;
             }
-
-            // Default — table view
             if (wrap) wrap.style.display = '';
             const schedHost = document.getElementById('expScheduleWrap');
             if (schedHost) schedHost.style.display = 'none';
@@ -17278,6 +17424,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             <button class="ib d" onclick="deleteExpense('${x.id}')"><i data-wfi="trash"></i></button></div></td>
     </tr>`).join('');
         }
+
+        // Toggle the history list under an accumulated expense category.
+        function _toggleExpCat(gid) {
+            const el = document.getElementById(gid);
+            const caret = document.getElementById(gid + '_caret');
+            if (!el) return;
+            const open = el.style.display !== 'none';
+            el.style.display = open ? 'none' : '';
+            if (caret) caret.style.transform = open ? '' : 'rotate(180deg)';
+            try { if (!open && window.WFIconHydrate) WFIconHydrate(el); } catch (_) {}
+        }
+        window._toggleExpCat = _toggleExpCat;
 
         // ==================== TARGETS ====================
         function saveTarget() {
@@ -18743,8 +18901,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.20.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.20.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.21.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.21.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -23102,6 +23260,44 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
         // Editable review table — user can untick rows, fix amounts, then
         // bulk-save everything they keep.
+        // ── AI-authored statement notes ────────────────────────────────────────
+        // The AI writes a short, useful note for each imported transaction (in the
+        // user's language), cleaning up the raw merchant text or saying what it
+        // most likely is. It DECIDES per row whether a note adds value — rows that
+        // are already clear get an empty note (no more generic "from statement").
+        // One batched call (fast); on any failure notes are left blank (clean).
+        async function _aiStatementNotes(items) {
+            const out = {};
+            if (!items || !items.length) return out;
+            const sig = (it) => (it.date || '') + '|' + String(it.desc || '').toLowerCase() + '|' + it.amount;
+            let langName = 'English';
+            try {
+                const s = DB.getObj('settings', {}); const names = window.WF_LANG_NAMES || {};
+                const code = s.aiResponseLang || 'en';
+                if (code && code !== 'en' && code !== 'auto') langName = (names[code] || code).replace(/\s*\(.*\)\s*$/, '').replace(/^🌐\s*/, '');
+            } catch (_) {}
+            const prompt =
+                'You are labelling bank-statement transactions for a personal finance app. For EACH transaction below, write a SHORT, natural note (max 6 words) in ' + langName +
+                ' that helps the user instantly recognise it later — clean up the raw merchant text, or say what it most likely is (e.g. "Monthly mobile reload", "Supermarket groceries", "Fuel"). ' +
+                'If the title is already perfectly clear and a note would add nothing, return an empty string "" for that item. ' +
+                'Return ONLY a JSON array of strings, SAME length and order as the input. No prose, no markdown.\n\nTransactions:\n' +
+                JSON.stringify(items.map((it, i) => ({ i: i, name: it.desc, amount: it.amount, type: it.type })));
+            try {
+                const raw = await Promise.race([
+                    callAI(prompt),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 14000))
+                ]);
+                let t = String(raw || '').replace(/```json|```/g, '').trim();
+                let arr = null;
+                try { arr = JSON.parse(t); } catch (_) { const m = t.match(/\[[\s\S]*\]/); if (m) { try { arr = JSON.parse(m[0]); } catch (_) {} } }
+                if (Array.isArray(arr)) {
+                    items.forEach((it, i) => { const n = (arr[i] == null ? '' : String(arr[i])).trim(); if (n && !/^from statement$/i.test(n)) out[sig(it)] = n.slice(0, 60); });
+                }
+            } catch (_) { /* leave notes blank on failure — never generic filler */ }
+            return out;
+        }
+        window._aiStatementNotes = _aiStatementNotes;
+
         function _showCCReviewModal(parsed, bank) {
             const txns = parsed.transactions.map((t, i) => ({
                 ...t,
@@ -23242,7 +23438,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 closeOvl();
             };
 
-            $ovl('#_ccr_save').onclick = () => {
+            $ovl('#_ccr_save').onclick = async () => {
                 // Route every ticked row to the destination chosen in its "Goes to" cell.
                 const rows = overlay.querySelectorAll('#_ccr_body tr');
                 const ccArr = DB.get('cconetime');
@@ -23254,6 +23450,31 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                 // Re-import / mandatory-fee de-dupe: same date + amount + merchant already filed?
                 const _dupIn = (list, d, a, name, amtKey) => list.some(r => r.date === d && Math.abs(((r[amtKey] != null ? r[amtKey] : r.amount) || 0) - a) < 0.01 && _nz(r.desc || r.name) === _nz(name));
+
+                // ── AI authors a useful note per row (it decides which need one) ──
+                // Gather the rows we'll actually file, ask the AI once, then look up
+                // each note by a stable signature. A clean note ('') is used when
+                // the AI judges none is needed — never the old "from statement".
+                const _noteItems = [];
+                rows.forEach((tr) => {
+                    if (!tr.querySelector('._ccr_keep').checked) return;
+                    const d = tr.querySelector('._ccr_date').value || today();
+                    const ds = (tr.querySelector('._ccr_desc').value || '').trim();
+                    const am = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
+                    const ty = tr.querySelector('._ccr_type').value;
+                    if (ds && am) _noteItems.push({ date: d, desc: ds, amount: am, type: ty });
+                });
+                let _notesMap = {};
+                if (_noteItems.length) {
+                    try { if (typeof window._showScanOverlay === 'function') window._showScanOverlay('✍️ Writing notes…', 'Letting AI label each transaction', 90); } catch (_) {}
+                    try { _notesMap = await _aiStatementNotes(_noteItems); } catch (_) { _notesMap = {}; }
+                    try { if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay(); } catch (_) {}
+                }
+                const _noteFor = (date, desc, amount) => {
+                    const k = (date || '') + '|' + String(desc || '').toLowerCase() + '|' + amount;
+                    return _notesMap[k] || '';
+                };
+
                 // One undoable batch per import (records every payment it creates).
                 const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (bank + ' statement') : 'Statement'), 'statement') : null);
                 rows.forEach((tr) => {
@@ -23276,14 +23497,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // add a synthetic auto-fee here. Auto-fees remain only for
                         // manual entry where no statement exists. → no duplication.
                         const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
-                        const _rec = { id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: 'AI-scanned from statement', paid: past, createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: past, createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'cconetime', _rec.id); }
                         ccArr.push(_rec);
                         cc++;
                     } else if (dest === 'expenses') {
                         if (_dupIn(expArr, date, amount, desc, 'amount')) { dup++; return; }
                         const cat = (window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other';
-                        const _rec = { id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: 'From statement', completed: past, createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'expenses', _rec.id); }
                         expArr.push(_rec);
                         exp++;
@@ -23293,7 +23514,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         let it = (window.WFRoute ? window.WFRoute.incomeKind(desc) : 'other') || 'other';
                         it = it.charAt(0).toUpperCase() + it.slice(1);
                         if (INC_TYPES.indexOf(it) < 0) it = 'Other';
-                        const _rec = { id: uid(), name: desc, type: it, amount, month, date, received: past, source: 'statement', notes: 'From statement', createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), name: desc, type: it, amount, month, date, received: past, source: 'statement', notes: _noteFor(date, desc, amount), createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'incomeRecv', _rec.id); }
                         incRecvArr.push(_rec);
                         inc++;

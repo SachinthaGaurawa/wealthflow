@@ -384,6 +384,39 @@ async function callOpenRouterVision(image, prompt, openrouterKey) {
     return text;
 }
 
+// ── Google Cloud Vision — DOCUMENT_TEXT_DETECTION ──────────────────────────
+// Far superior to generic OCR for dense, small or zoomed-out text (bank
+// statements, CRIB reports). Returns the full document text. Uses the same
+// Google Cloud API key family as Gemini (project: wealthflow-6dffb).
+async function callCloudVision(image, visionKey) {
+    if (!visionKey) throw new Error('no_key');
+    const url = `https://vision.googleapis.com/v1/images:annotate?key=${visionKey}`;
+    const resp = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            requests: [{
+                image: { content: image },
+                features: [{ type: 'DOCUMENT_TEXT_DETECTION', maxResults: 1 }],
+                imageContext: { languageHints: ['en', 'si', 'ta'] }
+            }]
+        })
+    }, 22000);
+    if (!resp.ok) {
+        let detail = '';
+        try { const j = await resp.json(); detail = j.error && j.error.message ? j.error.message : ''; } catch (_) {}
+        throw new Error(`status ${resp.status}${detail ? ' — ' + detail : ''}`);
+    }
+    const data = await resp.json();
+    const r0 = data.responses && data.responses[0];
+    if (r0 && r0.error) throw new Error(r0.error.message || 'vision error');
+    const text = (r0 && r0.fullTextAnnotation && r0.fullTextAnnotation.text)
+        || (r0 && r0.textAnnotations && r0.textAnnotations[0] && r0.textAnnotations[0].description)
+        || '';
+    if (!text || text.trim().length < 5) throw new Error('empty_text');
+    return text;
+}
+
 async function callOcrSpace(image, ocrKey) {
     const key = ocrKey || 'helloworld';
     const form = new URLSearchParams();
@@ -908,6 +941,9 @@ export default async function handler(req, res) {
         mistralKey: process.env.MISTRAL_API_KEY,
         cohereKey: process.env.COHERE_API_KEY,
         ocrSpaceKey: process.env.OCR_SPACE_API_KEY,
+        // Google Cloud Vision (same project key family as Gemini). High-accuracy
+        // OCR anchor for dense/small/zoomed-out text.
+        visionKey: process.env.GOOGLE_VISION_API_KEY || process.env.CLOUD_VISION_API_KEY || process.env.VISION_API_KEY || process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY,
         // ---- new in v3.5 ----
         githubToken: process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN,
         togetherKey: process.env.TOGETHER_API_KEY,
@@ -988,8 +1024,16 @@ export default async function handler(req, res) {
     const results = await Promise.all(engines.map(e => runEngine(e.name, e.fn, hints)));
 
     if (mode === 'ultra' || mode === 'frontier') {
+        // Primary OCR anchor: Google Cloud Vision (best for dense/small text),
+        // fall back to OCR.space only if Vision is unavailable/fails.
+        let rawText = null, ocrEngineName = 'cloud-vision+text-llm';
         try {
-            const rawText = await callOcrSpace(image, keys.ocrSpaceKey);
+            rawText = await callCloudVision(image, keys.visionKey);
+        } catch (eV) {
+            try { rawText = await callOcrSpace(image, keys.ocrSpaceKey); ocrEngineName = 'ocr.space+text-llm'; }
+            catch (eO) { results.push({ name: 'ocr-anchor', success: false, ms: 0, error: 'vision:' + eV.message + ' | ocrspace:' + eO.message }); }
+        }
+        if (rawText) {
             try {
                 const structuredText = await structureRawText(rawText, hints, keys);
                 const parsed = extractJSON(structuredText);
@@ -997,14 +1041,12 @@ export default async function handler(req, res) {
                     const fields = normaliseEngineOutput(parsed, hints);
                     if (fields) {
                         fields.raw_text = rawText;
-                        results.push({ name: 'ocr.space+text-llm', success: true, ms: 0, fields });
+                        results.push({ name: ocrEngineName, success: true, ms: 0, fields });
                     }
                 }
             } catch (e) {
-                results.push({ name: 'ocr.space+text-llm', success: false, ms: 0, error: e.message });
+                results.push({ name: ocrEngineName, success: false, ms: 0, error: e.message });
             }
-        } catch (e) {
-            results.push({ name: 'ocr.space', success: false, ms: 0, error: e.message });
         }
     }
 
@@ -1012,14 +1054,16 @@ export default async function handler(req, res) {
     if (!cons) {
         if (mode !== 'ultra' && mode !== 'frontier') {
             try {
-                const rawText = await callOcrSpace(image, keys.ocrSpaceKey);
+                let rawText = null;
+                try { rawText = await callCloudVision(image, keys.visionKey); }
+                catch (_) { rawText = await callOcrSpace(image, keys.ocrSpaceKey); }
                 const structuredText = await structureRawText(rawText, hints, keys);
                 const parsed = extractJSON(structuredText);
                 if (parsed) {
                     const fields = normaliseEngineOutput(parsed, hints);
                     if (fields) {
                         fields.raw_text = rawText;
-                        results.push({ name: 'ocr.space+text-llm (fallback)', success: true, ms: 0, fields });
+                        results.push({ name: 'ocr-anchor+text-llm (fallback)', success: true, ms: 0, fields });
                         const cons2 = consensus(results, hints);
                         if (cons2) {
                             return res.status(200).json({
