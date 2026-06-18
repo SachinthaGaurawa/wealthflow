@@ -19364,55 +19364,18 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function testAIConnection() {
             const badge = document.getElementById('aiEngineHealth');
             if (badge) { badge.textContent = '● Testing…'; badge.className = 'badge bg-a'; }
-            // v7.24: language-proof, reachability-based probe. The old check asked
-            // for the word "ONLINE" and string-matched it — which FAILS when the
-            // app's AI language is Sinhala/Tamil (the model answers in that
-            // language), wrongly showing "Degraded". We now hit /api/ai DIRECTLY
-            // (bypassing the chat rewriter + language gate): any valid reply means
-            // the engines are reachable = Online. A non-200 surfaces the REAL
-            // backend reason (e.g. missing API keys) so the user knows what to fix.
             try {
-                const isLocalOrGitHub = location.hostname.includes('github.io') || location.hostname === 'localhost';
-                const url = isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api/ai' : '/api/ai';
-                const ctrl = new AbortController();
-                const to = setTimeout(() => ctrl.abort(), 30000);
-                let r, raw = '';
-                try {
-                    r = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: 'Health check. Reply with the single English word: ONLINE', maxTokens: 16, temperature: 0 }),
-                        signal: ctrl.signal
-                    });
-                } finally { clearTimeout(to); }
-
-                const ct = (r.headers.get('content-type') || '').toLowerCase();
-                if (r.ok && ct.includes('application/json')) {
-                    const d = await r.json();
-                    if (d && d.reply && String(d.reply).trim()) {
-                        const prov = d.provider ? (' · ' + String(d.provider).split(':')[0]) : '';
-                        if (badge) { badge.textContent = '● Online'; badge.className = 'badge bg-g'; }
-                        notify('AI connection healthy ✓' + prov, 'success');
-                    } else {
-                        if (badge) { badge.textContent = '● Degraded'; badge.className = 'badge bg-a'; }
-                        notify('AI reachable but returned an empty reply. Try again in a moment.', 'warn');
-                    }
-                } else if (!ct.includes('application/json')) {
-                    // Non-JSON (usually a 405/HTML static fallthrough) → the function
-                    // isn't being served at /api/ai on this deployment.
-                    if (badge) { badge.textContent = '● Offline'; badge.className = 'badge bg-r'; }
-                    notify('AI endpoint not deployed (got a non-JSON ' + r.status + ' response). Check that /api/ai is live on Vercel.', 'error');
+                const reply = await callAI('Reply with the single word: ONLINE');
+                if (reply && /online/i.test(reply)) {
+                    if (badge) { badge.textContent = '● Online'; badge.className = 'badge bg-g'; }
+                    notify('AI connection healthy ✓', 'success');
                 } else {
-                    // JSON error from the backend — show the real reason (incl. which
-                    // provider keys are missing, which the backend reports in details).
-                    let reason = 'HTTP ' + r.status;
-                    try { const e = await r.json(); reason = (e.error || reason) + (e.details ? ' — ' + e.details : ''); } catch (_) {}
                     if (badge) { badge.textContent = '● Degraded'; badge.className = 'badge bg-a'; }
-                    notify('AI backend: ' + reason + (r.status === 503 ? ' (set the provider API keys in Vercel → Settings → Environment Variables)' : ''), 'error');
+                    notify('AI responded but result was unexpected.', 'warn');
                 }
             } catch (e) {
                 if (badge) { badge.textContent = '● Offline'; badge.className = 'badge bg-r'; }
-                notify('AI engines unreachable: ' + (e && e.message ? e.message : 'network error'), 'error');
+                notify('AI engines unreachable: ' + e.message, 'error');
             }
         }
 
