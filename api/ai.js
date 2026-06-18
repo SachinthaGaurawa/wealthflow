@@ -53,6 +53,18 @@ export default async function handler(req, res) {
     const groqKey     = process.env.GROQ_API_KEY;
     const ollamaKey   = process.env.OLLAMA_API_KEY || OLLAMA_FALLBACK_KEY;
     const hfKey       = process.env.HUGGINGFACE_API_KEY || process.env.HF_API_KEY || process.env.HF_TOKEN;
+    // v7.24 — every additional provider the owner has configured in Vercel.
+    const anthropicKey  = process.env.ANTHROPIC_API_KEY;
+    const xaiKey        = process.env.XAI_API_KEY;
+    const mistralKey    = process.env.MISTRAL_API_KEY;
+    const togetherKey   = process.env.TOGETHER_API_KEY;
+    const fireworksKey  = process.env.FIREWORKS_API_KEY;
+    const openrouterKey = process.env.OPENROUTER_API_KEY;
+    const cerebrasKey   = process.env.CEREBRAS_API_KEY;
+    const sambanovaKey  = process.env.SAMBANOVA_API_KEY;
+    const nvidiaKey     = process.env.NVIDIA_API_KEY;
+    const githubKey     = process.env.GITHUB_MODELS_TOKEN;
+    const cohereKey     = process.env.COHERE_API_KEY;
 
     // Vision requests need deterministic output (low temp) and more room for detail
     const isVision = !!image;
@@ -227,6 +239,88 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'huggingface' };
     }
 
+    // ---------- ENGINES 6-16: every other provider configured in Vercel ----------
+    // Most are OpenAI-compatible (/chat/completions + Bearer). One factory builds
+    // them all; Anthropic and Cohere use their own shapes below. Each fires in
+    // parallel with the rest and contributes to fastest/consensus selection.
+    function makeOAI(opts) {
+        return async function () {
+            if (!opts.key) throw new Error(opts.name + ' key not configured');
+            if (image && !opts.visionModel) throw new Error(opts.name + ' skipped (text-only)');
+            const model = image ? opts.visionModel : opts.textModel;
+            const content = image
+                ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }]
+                : prompt;
+            const body = {
+                model,
+                messages: [{ role: 'user', content }],
+                temperature: temp,
+                max_tokens: Math.min(tokens, opts.maxTokens || 4096)
+            };
+            if (!image && opts.jsonMode && /return only.*json|extract.*json|\{[^}]*"vendor"[^}]*\}/i.test(prompt)) {
+                body.response_format = { type: 'json_object' };
+            }
+            const headers = Object.assign(
+                { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.key}` },
+                opts.extraHeaders || {}
+            );
+            const r = await fetchWithTimeout(opts.url, { method: 'POST', headers, body: JSON.stringify(body) }, opts.timeout || 22000);
+            if (!r.ok) {
+                const t = await r.text().catch(() => '');
+                throw new Error(`${opts.name} status ${r.status}: ${t.substring(0, 160)}`);
+            }
+            const data = await r.json();
+            let text = data.choices?.[0]?.message?.content;
+            if (Array.isArray(text)) text = text.map(p => (p && (p.text || p.content)) || '').join('');
+            if (!text || !String(text).trim()) throw new Error(opts.name + ' returned empty');
+            return { reply: String(text), provider: opts.provider };
+        };
+    }
+
+    const fetchXAI = makeOAI({ name: 'xAI', provider: 'xai:grok', key: xaiKey, url: 'https://api.x.ai/v1/chat/completions', textModel: 'grok-2-latest', visionModel: 'grok-2-vision-latest', jsonMode: true });
+    const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', textModel: 'mistral-large-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
+    const fetchTogether = makeOAI({ name: 'Together', provider: 'together', key: togetherKey, url: 'https://api.together.xyz/v1/chat/completions', textModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', visionModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' });
+    const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
+    const fetchOpenRouter = makeOAI({ name: 'OpenRouter', provider: 'openrouter', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'meta-llama/llama-3.3-70b-instruct', visionModel: 'meta-llama/llama-3.2-90b-vision-instruct', extraHeaders: { 'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' } });
+    const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', textModel: 'llama-3.3-70b', visionModel: null });
+    const fetchSambaNova = makeOAI({ name: 'SambaNova', provider: 'sambanova', key: sambanovaKey, url: 'https://api.sambanova.ai/v1/chat/completions', textModel: 'Meta-Llama-3.3-70B-Instruct', visionModel: 'Llama-3.2-90B-Vision-Instruct' });
+    const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', textModel: 'meta/llama-3.3-70b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
+    const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.inference.ai.azure.com/chat/completions', textModel: 'Llama-3.3-70B-Instruct', visionModel: 'gpt-4o', jsonMode: true });
+
+    // ---------- ENGINE: ANTHROPIC CLAUDE (native Messages API, vision) ----------
+    async function fetchAnthropic() {
+        if (!anthropicKey) throw new Error('Anthropic key not configured');
+        const content = image
+            ? [{ type: 'text', text: prompt }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } }]
+            : prompt;
+        const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
+            body: JSON.stringify({ model: 'claude-3-5-sonnet-20241022', max_tokens: Math.min(tokens, 4096), temperature: temp, messages: [{ role: 'user', content }] })
+        });
+        if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`Anthropic status ${r.status}: ${t.substring(0, 160)}`); }
+        const data = await r.json();
+        const text = Array.isArray(data.content) ? data.content.map(b => b.text || '').join('') : '';
+        if (!text.trim()) throw new Error('Anthropic returned empty');
+        return { reply: text, provider: 'anthropic:claude-3.5-sonnet' };
+    }
+
+    // ---------- ENGINE: COHERE (native v2 chat, text-only) ----------
+    async function fetchCohere() {
+        if (image) throw new Error('Cohere skipped (text-only)');
+        if (!cohereKey) throw new Error('Cohere key not configured');
+        const r = await fetchWithTimeout('https://api.cohere.com/v2/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cohereKey}` },
+            body: JSON.stringify({ model: 'command-r-plus-08-2024', messages: [{ role: 'user', content: prompt }], temperature: temp })
+        });
+        if (!r.ok) throw new Error(`Cohere status ${r.status}`);
+        const data = await r.json();
+        const text = Array.isArray(data.message?.content) ? data.message.content.map(c => c.text || '').join('') : '';
+        if (!text.trim()) throw new Error('Cohere returned empty');
+        return { reply: text, provider: 'cohere:command-r-plus' };
+    }
+
     // ---------- PARALLEL MULTI-ENGINE EXECUTION ----------
     // All engines fire SIMULTANEOUSLY (not one-by-one). This is dramatically
     // faster and more reliable: a slow/down provider no longer blocks the rest.
@@ -238,18 +332,39 @@ export default async function handler(req, res) {
 
     let engines;
     if (isVision) {
+        // Every vision-capable provider contributes to consensus on receipts/statements.
         engines = [
-            { name: 'Gemini', fn: fetchGemini },
-            { name: 'Ollama', fn: fetchOllama },
-            { name: 'Groq',   fn: fetchGroq }
+            { name: 'Gemini',       fn: fetchGemini },
+            { name: 'Groq',         fn: fetchGroq },
+            { name: 'Ollama',       fn: fetchOllama },
+            { name: 'Anthropic',    fn: fetchAnthropic },
+            { name: 'GitHubModels', fn: fetchGitHub },
+            { name: 'xAI',          fn: fetchXAI },
+            { name: 'Together',     fn: fetchTogether },
+            { name: 'Fireworks',    fn: fetchFireworks },
+            { name: 'NVIDIA',       fn: fetchNvidia },
+            { name: 'Mistral',      fn: fetchMistral },
+            { name: 'SambaNova',    fn: fetchSambaNova },
+            { name: 'OpenRouter',   fn: fetchOpenRouter }
         ];
     } else {
         engines = [
-            { name: 'Gemini',   fn: fetchGemini },
-            { name: 'DeepSeek', fn: fetchDeepSeek },
-            { name: 'Groq',     fn: fetchGroq },
-            { name: 'Ollama',   fn: fetchOllama },
-            { name: 'HF',       fn: fetchHuggingFace }
+            { name: 'Gemini',       fn: fetchGemini },
+            { name: 'DeepSeek',     fn: fetchDeepSeek },
+            { name: 'Groq',         fn: fetchGroq },
+            { name: 'Ollama',       fn: fetchOllama },
+            { name: 'Anthropic',    fn: fetchAnthropic },
+            { name: 'xAI',          fn: fetchXAI },
+            { name: 'Mistral',      fn: fetchMistral },
+            { name: 'Together',     fn: fetchTogether },
+            { name: 'Fireworks',    fn: fetchFireworks },
+            { name: 'OpenRouter',   fn: fetchOpenRouter },
+            { name: 'Cerebras',     fn: fetchCerebras },
+            { name: 'SambaNova',    fn: fetchSambaNova },
+            { name: 'NVIDIA',       fn: fetchNvidia },
+            { name: 'GitHubModels', fn: fetchGitHub },
+            { name: 'Cohere',       fn: fetchCohere },
+            { name: 'HF',           fn: fetchHuggingFace }
         ];
     }
 
