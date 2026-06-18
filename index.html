@@ -324,6 +324,7 @@
          Self-bootstrapping (injects its own nav + page + UI). -->
     <!-- Google Cloud Vision OCR, app-wide: shared WFVision primitive + auto-wraps
          every image AI call (receipts, CC, bank statements, CRIB, AI advisor). -->
+    <script src="wealthflow-format.js" defer></script>
     <script src="wealthflow-vision-ocr.js" defer></script>
     <script src="wealthflow-crib.js" defer></script>
     <!-- Subscription auto-routing: recurring bills → Subscriptions tab, auto-create + remember -->
@@ -1309,6 +1310,10 @@
 
         .content {
             padding: 22px 26px;
+            /* v7.23: reserve space so the floating AI button never covers the
+               last list row's action buttons (delete/edit) — esp. when a tab
+               has only ONE expense/income/investment. */
+            padding-bottom: 112px;
             flex: 1;
         }
 
@@ -3753,6 +3758,7 @@
 
             .content {
                 padding: 14px 16px;
+                padding-bottom: calc(108px + env(safe-area-inset-bottom, 0px));
             }
 
             .topbar {
@@ -5635,7 +5641,7 @@
                 <!-- ==================== CRIB CREDIT REPORT PAGE ==================== -->
                 <div class="page" id="page-crib">
                     <div class="sh">
-                        <div class="sh-title">📑 CRIB Credit Report</div>
+                        <div class="sh-title"><i data-wfi="fileText"></i> CRIB Credit Report</div>
                         <div class="sh-actions">
                             <button class="btn btn-primary btn-sm" onclick="WFCrib._upload()"><i data-wfi="plus"></i> Attach CRIB Report</button>
                         </div>
@@ -20791,7 +20797,7 @@ Provide a 6-8 sentence ACTIONABLE improvement plan focusing on these 3 weak area
 
 Be direct and use real numbers. Avoid generic advice.`;
                 const reply = await callAI(prompt);
-                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(16,185,129,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">🧠 Personalized Score Improvement Plan:</b><br><br>${reply.replace(/\n/g, '<br>')}</div>`;
+                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(16,185,129,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">🧠 Personalized Score Improvement Plan:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
                 out.innerHTML = `<div style="color:var(--red);font-size:12px;">⚠️ AI analysis unavailable: ${e.message}</div>`;
             }
@@ -21511,7 +21517,7 @@ In 5-7 sentences, provide:
 
 Be direct, specific, and use real LKR numbers from above. Format with clear paragraphs.`;
                 const reply = await callAI(prompt);
-                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(239,68,68,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">🧠 Personalized Debt Strategy:</b><br><br>${reply.replace(/\n/g, '<br>')}</div>`;
+                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(239,68,68,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">🧠 Personalized Debt Strategy:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
                 out.innerHTML = `<div style="color:var(--red);font-size:12px;">⚠️ AI analysis unavailable: ${e.message}</div>`;
             }
@@ -21757,7 +21763,7 @@ In 5-7 sentences:
 
 Be concrete and reference actual LKR figures. No generic advice.`;
                 const reply = await callAI(prompt);
-                target.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(59,130,246,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">🔮 AI Simulation Interpretation:</b><br><br>${reply.replace(/\n/g, '<br>')}</div>`;
+                target.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(59,130,246,.04));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:16px;font-size:13px;color:var(--text);line-height:1.8;"><b style="color:var(--accent);">🔮 AI Simulation Interpretation:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
                 target.innerHTML = `<div style="color:var(--red);font-size:12px;">⚠️ AI analysis unavailable: ${e.message}</div>`;
             }
@@ -21944,7 +21950,7 @@ NET: LKR ${(data.groups.Income - data.groups.Loans - data.groups.CC - data.group
 
 Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. Use LKR.`;
                 const reply = await callAI(prompt);
-                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(16,185,129,.05));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:14px;font-size:13px;color:var(--text);line-height:1.7;"><b style="color:var(--accent);">🧠 AI Cash Flow Analysis:</b><br><br>${reply.replace(/\n/g, '<br>')}</div>`;
+                out.innerHTML = `<div style="background:linear-gradient(145deg,rgba(212,175,55,.08),rgba(16,185,129,.05));border:1px solid rgba(212,175,55,.25);border-radius:10px;padding:14px;font-size:13px;color:var(--text);line-height:1.7;"><b style="color:var(--accent);">🧠 AI Cash Flow Analysis:</b><br><br>${(window.WFFmt && WFFmt.render) ? WFFmt.render(reply) : reply.replace(/\n/g, '<br>')}</div>`;
             } catch (e) {
                 out.innerHTML = `<div style="color:var(--red);font-size:12px;">⚠️ AI analysis unavailable: ${e.message}</div>`;
             }

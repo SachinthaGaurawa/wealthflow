@@ -208,7 +208,14 @@
     function _ocrAll(images) {
         return (images || []).reduce(function (acc, img) {
             return acc.then(function (txt) {
-                return _cloudVisionOCR(img).then(function (t) { return txt + (t ? ('\n\n' + t) : ''); });
+                // v7.23: enhance (upscale/contrast/sharpen) faint or zoomed-out
+                // CRIB scans before Cloud Vision for maximum text accuracy.
+                var prep = (window.WF_AI_V4 && WF_AI_V4.utils && WF_AI_V4.utils.enhanceImageForOCR)
+                    ? WF_AI_V4.utils.enhanceImageForOCR(img).catch(function () { return img; })
+                    : Promise.resolve(img);
+                return prep.then(function (enh) {
+                    return _cloudVisionOCR(enh || img).then(function (t) { return txt + (t ? ('\n\n' + t) : ''); });
+                });
             });
         }, Promise.resolve('')).then(function (full) { return (full || '').trim(); });
     }
@@ -490,6 +497,11 @@
     function _destroyCharts() {
         try { Object.keys(_charts).forEach(function (k) { try { _charts[k].destroy(); } catch (_) {} delete _charts[k]; }); } catch (_) {}
     }
+    // v7.23: render AI markdown (bold/italic/lists) safely instead of raw text.
+    function _fmt(t) {
+        try { return (window.WFFmt && WFFmt.render) ? WFFmt.render(t) : _esc(String(t == null ? '' : t)).replace(/\n/g, '<br>'); }
+        catch (_) { return _esc(String(t == null ? '' : t)); }
+    }
 
     function _ensureNavAndPage() {
         if (!document.getElementById('wfCribNavItem')) {
@@ -500,7 +512,7 @@
                 var item = document.createElement('div');
                 item.className = 'nav-item'; item.id = 'wfCribNavItem';
                 item.setAttribute('onclick', "WFCrib.open()");
-                item.innerHTML = '<span class="nav-icon">\uD83D\uDCD1</span> CRIB Credit Report';
+                item.innerHTML = '<span class="nav-icon"><i data-wfi="fileText"></i></span> CRIB Credit Report';
                 if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(item, anchor.nextSibling);
                 else { var nav = document.querySelector('.nav-items, .sidebar-nav, nav'); if (nav) nav.appendChild(item); }
             } catch (_) {}
@@ -512,8 +524,8 @@
                     var pg = document.createElement('div');
                     pg.className = 'page'; pg.id = 'page-crib';
                     pg.innerHTML =
-                        '<div class="sh"><div class="sh-title">\uD83D\uDCD1 CRIB Credit Report</div>' +
-                        '<div class="sh-actions"><button class="btn btn-primary btn-sm" onclick="WFCrib._upload()">\uD83D\uDCCE Attach CRIB Report</button></div></div>' +
+                        '<div class="sh"><div class="sh-title"><i data-wfi="fileText"></i> CRIB Credit Report</div>' +
+                        '<div class="sh-actions"><button class="btn btn-primary btn-sm" onclick="WFCrib._upload()"><i data-wfi="upload"></i> Attach CRIB Report</button></div></div>' +
                         '<input type="file" id="crib_upload" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" style="display:none;">' +
                         '<div id="cribContent"></div>';
                     ref.parentNode.insertBefore(pg, ref.nextSibling);
@@ -572,10 +584,10 @@
         if (!reports.length) {
             host.innerHTML =
                 '<div style="text-align:center;padding:48px 18px;color:var(--text3,#8a97ad);">' +
-                '<div style="font-size:44px;margin-bottom:12px;">\uD83D\uDCD1</div>' +
+                '<div style="font-size:44px;margin-bottom:12px;color:var(--text3,#8a97ad);"><i data-wfi="fileText"></i></div>' +
                 '<div style="font-size:17px;font-weight:700;color:var(--text2,#aeb9cc);margin-bottom:6px;">No CRIB report yet</div>' +
                 '<div style="font-size:13px;margin-bottom:18px;line-height:1.6;">Attach your CRIB credit report (PDF or photo). WealthFlow reads it with Cloud Vision, analyses it in your language, tracks it over time, compares it to your past reports, and factors it into your score.</div>' +
-                '<button class="btn btn-primary" onclick="WFCrib._upload()">\uD83D\uDCCE Attach CRIB Report</button></div>';
+                '<button class="btn btn-primary" onclick="WFCrib._upload()"><i data-wfi="upload"></i> Attach CRIB Report</button></div>';
             return;
         }
         var latest = reports[0];
@@ -608,13 +620,13 @@
 
         /* AI trend narrative */
         if (an && an.compare) {
-            html += '<div style="background:linear-gradient(145deg,rgba(99,102,241,0.07),var(--card,#0f1626));border:1px solid #6366f1;border-radius:16px;padding:16px;margin-bottom:16px;"><div style="font-weight:700;margin-bottom:6px;color:#a5b4fc;">\uD83D\uDCC8 Trend</div><div style="font-size:14px;line-height:1.7;color:var(--text,#e8edf5);white-space:pre-wrap;">' + _esc(an.compare) + '</div></div>';
+            html += '<div style="background:linear-gradient(145deg,rgba(99,102,241,0.07),var(--card,#0f1626));border:1px solid #6366f1;border-radius:16px;padding:16px;margin-bottom:16px;"><div style="font-weight:700;margin-bottom:6px;color:#a5b4fc;"><i data-wfi="trendUp"></i> Trend</div><div style="font-size:14px;line-height:1.7;color:var(--text,#e8edf5);">' + _fmt(an.compare) + '</div></div>';
         }
 
         /* Score history chart */
         if (cmp.count >= 2) {
-            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;">\uD83D\uDCC9 Score history</div><div style="height:220px;"><canvas id="cribScoreChart"></canvas></div></div>';
-            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;">\uD83D\uDCB0 Outstanding & overdue over time</div><div style="height:200px;"><canvas id="cribDebtChart"></canvas></div></div>';
+            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;"><i data-wfi="chartLine"></i> Score history</div><div style="height:220px;"><canvas id="cribScoreChart"></canvas></div></div>';
+            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;"><i data-wfi="coins"></i> Outstanding & overdue over time</div><div style="height:200px;"><canvas id="cribDebtChart"></canvas></div></div>';
             /* Delta table */
             var dl = cmp.deltas || {};
             var rowsT = [
@@ -622,7 +634,7 @@
                 ['Defaults', dl.defaults, true], ['Overdue (LKR)', dl.overdue, true],
                 ['Inquiries (6mo)', dl.inquiries, true], ['Facilities', dl.facilities, true]
             ];
-            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;">\uD83D\uDD0E Latest vs previous report</div><div style="display:flex;flex-direction:column;gap:8px;">';
+            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;"><i data-wfi="eye"></i> Latest vs previous report</div><div style="display:flex;flex-direction:column;gap:8px;">';
             rowsT.forEach(function (r) {
                 if (r[1] == null) return;
                 var lowerBetter = r[2];
@@ -638,32 +650,32 @@
         var fg = _facilityGroups(focus.fields || {});
         var fgKeys = Object.keys(fg);
         if (fgKeys.length >= 2) {
-            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;">\uD83C\uDFE6 Credit facilities breakdown</div><div style="height:220px;"><canvas id="cribFacChart"></canvas></div></div>';
+            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:10px;"><i data-wfi="bank"></i> Credit facilities breakdown</div><div style="height:220px;"><canvas id="cribFacChart"></canvas></div></div>';
         } else if (fgKeys.length === 1) {
-            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:6px;">\uD83C\uDFE6 Credit facilities</div><div style="font-size:13px;color:var(--text2,#aeb9cc);">' + _esc(fgKeys[0]) + ': LKR ' + fmtNum(fg[fgKeys[0]]) + '</div></div>';
+            html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:6px;"><i data-wfi="bank"></i> Credit facilities</div><div style="font-size:13px;color:var(--text2,#aeb9cc);">' + _esc(fgKeys[0]) + ': LKR ' + fmtNum(fg[fgKeys[0]]) + '</div></div>';
         }
 
         /* Analysis + advice */
         if (an) {
-            if (an.analysis) html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:8px;">\uD83E\uDDE0 Analysis</div><div style="font-size:14px;line-height:1.7;color:var(--text,#e8edf5);white-space:pre-wrap;">' + _esc(an.analysis) + '</div></div>';
-            if (an.advice) html += '<div style="background:linear-gradient(145deg,rgba(16,185,129,0.07),var(--card,#0f1626));border:1px solid var(--green,#10b981);border-radius:16px;padding:18px;margin-bottom:16px;"><div style="font-weight:700;margin-bottom:8px;color:var(--green,#10b981);">\uD83D\uDCA1 How to improve your CRIB (your plan)</div><div style="font-size:14px;line-height:1.7;color:var(--text,#e8edf5);white-space:pre-wrap;">' + _esc(an.advice) + '</div></div>';
+            if (an.analysis) html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:8px;"><i data-wfi="sparkles"></i> Analysis</div><div style="font-size:14px;line-height:1.7;color:var(--text,#e8edf5);">' + _fmt(an.analysis) + '</div></div>';
+            if (an.advice) html += '<div style="background:linear-gradient(145deg,rgba(16,185,129,0.07),var(--card,#0f1626));border:1px solid var(--green,#10b981);border-radius:16px;padding:18px;margin-bottom:16px;"><div style="font-weight:700;margin-bottom:8px;color:var(--green,#10b981);"><i data-wfi="target"></i> How to improve your CRIB (your plan)</div><div style="font-size:14px;line-height:1.7;color:var(--text,#e8edf5);">' + _fmt(an.advice) + '</div></div>';
             if (an.lang) html += '<div style="font-size:11px;color:var(--text3,#8a97ad);margin:-8px 2px 14px;">Analysed in ' + _esc(an.lang) + '. <a href="javascript:void(0)" onclick="WFCrib._reanalyse(\'' + focus.id + '\')" style="color:var(--accent,#f5a623);font-weight:600;text-decoration:none;">Re-analyse in current language</a></div>';
         } else {
-            html += '<div style="' + card + 'text-align:center;"><div style="font-size:13px;color:var(--text2,#aeb9cc);margin-bottom:10px;">Analysis is still generating or unavailable.</div><button class="btn btn-primary btn-sm" onclick="WFCrib._reanalyse(\'' + focus.id + '\')">\uD83E\uDDE0 Analyse now</button></div>';
+            html += '<div style="' + card + 'text-align:center;"><div style="font-size:13px;color:var(--text2,#aeb9cc);margin-bottom:10px;">Analysis is still generating or unavailable.</div><button class="btn btn-primary btn-sm" onclick="WFCrib._reanalyse(\'' + focus.id + '\')"><i data-wfi="sparkles"></i> Analyse now</button></div>';
         }
 
         /* All reports list */
-        html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:12px;">\uD83D\uDDC2\uFE0F All CRIB reports (' + reports.length + ')</div>';
+        html += '<div style="' + card + '"><div style="font-weight:700;margin-bottom:12px;"><i data-wfi="history"></i> All CRIB reports (' + reports.length + ')</div>';
         reports.forEach(function (r) {
             var isF = r.id === focus.id;
             var rb = _band(r.score);
             html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border,#1b2436);">';
             html += '<div style="cursor:pointer;flex:1;" onclick="WFCrib.render(\'' + r.id + '\')"><div style="font-weight:' + (isF ? '800' : '600') + ';color:' + (isF ? 'var(--accent,#f5a623)' : 'var(--text,#e8edf5)') + ';">' + (r.score != null ? (r.score + '/' + (r.scoreMax || 900)) : 'Report') + ' <span style="font-size:11px;font-weight:700;color:' + rb.color + ';">' + rb.label + '</span>' + (r.category ? (' <span style="font-size:11px;color:var(--text3,#8a97ad);">\u00B7 ' + _esc(r.category) + '</span>') : '') + '</div>';
             html += '<div style="font-size:12px;color:var(--text3,#8a97ad);">' + _esc(r.dateLabel || new Date(r.ts).toISOString().slice(0, 10)) + ' \u00B7 ' + _esc(r.fileName || '') + '</div></div>';
-            html += '<button title="Delete" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--red,#ef4444);" onclick="WFCrib._del(\'' + r.id + '\')">\uD83D\uDDD1\uFE0F</button></div>';
+            html += '<button title="Delete" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--red,#ef4444);" onclick="WFCrib._del(\'' + r.id + '\')"><i data-wfi="trash"></i></button></div>';
         });
-        html += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" onclick="WFCrib._upload()">\uD83D\uDCCE Attach another report</button>';
-        html += '<button class="btn btn-sm" style="background:var(--bg2,#0b1220);border:1px solid var(--border2,#243049);color:var(--text2,#aeb9cc);" onclick="WFCrib._export(\'' + focus.id + '\')">\u2B07\uFE0F Export this analysis</button></div>';
+        html += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" onclick="WFCrib._upload()"><i data-wfi="upload"></i> Attach another report</button>';
+        html += '<button class="btn btn-sm" style="background:var(--bg2,#0b1220);border:1px solid var(--border2,#243049);color:var(--text2,#aeb9cc);" onclick="WFCrib._export(\'' + focus.id + '\')"><i data-wfi="download"></i> Export this analysis</button></div>';
         html += '</div>';
 
         host.innerHTML = html;
