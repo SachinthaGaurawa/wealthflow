@@ -1,12 +1,26 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.23.0",
+  "latest": "7.24.0",
   "mandatory": [
     "7.16.0",
     "7.16.1"
   ],
   "securitySchedule": "monthly",
   "notes": {
+    "7.24.0": {
+      "date": "2026-06-18",
+      "type": "security",
+      "headline": "AI diagnostic fixed — now language-proof and honest about backend status",
+      "sections": [
+        {
+          "title": "Fixed",
+          "items": [
+            "The Settings → \"Run Diagnostic\" check no longer shows a false \"Degraded / result was unexpected\" when your AI language is Sinhala or Tamil. It used to demand the literal English word \"ONLINE\"; because the AI answered in your language, the match failed even though the AI was working fine.",
+            "The diagnostic now probes the AI endpoint directly and reports the TRUTH: Online when the engine replies (in any language), the exact backend reason if it fails (including which provider API keys are missing), and Offline only when the endpoint is truly unreachable."
+          ]
+        }
+      ]
+    },
     "7.23.0": {
       "date": "2026-06-18",
       "type": "full",
@@ -322,5 +336,5 @@
     },
     "7.21.0": "CRIB credit-report intelligence (AI analysis + advice in your language, dedup, history charts, score factor, delete-sync) · Google Cloud Vision OCR across the whole app (sharper reading of dense/zoomed-out statements) · encrypted HTML e-statements now open on every device (Nations Trust AMEX) · Income tab: matching card spacing + Table/Schedule views + sorting · AI now writes a useful note per imported transaction (no more \"from statement\") · repeated same-category charges accumulate per month with a tap-to-view history · faster startup · AI advisor now knows your CRIB + subscriptions + received income"
   },
-  "version": "7.23.0"
+  "version": "7.24.0"
 }
