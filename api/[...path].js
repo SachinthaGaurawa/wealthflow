@@ -64,13 +64,13 @@ function setCors(res) {
     res.setHeader('Access-Control-Max-Age', '86400');
 }
 
-// Resolve the endpoint name from the catch-all segments or the raw URL.
+
 function resolveName(req) {
     var seg = req && req.query && req.query.path;
     if (Array.isArray(seg) && seg.length) return String(seg[0]).toLowerCase();
     if (typeof seg === 'string' && seg) return seg.split('/')[0].toLowerCase();
     try {
-        var path = (req.url || '').split('?')[0];                 // /api/ai
+        var path = (req.url || '').split('?')[0];                 
         var m = path.match(/\/api\/([^\/?]+)/);
         if (m) return decodeURIComponent(m[1]).toLowerCase();
     } catch (_) {}
@@ -79,32 +79,38 @@ function resolveName(req) {
 
 export default async function handler(req, res) {
     setCors(res);
-    if (req.method === 'OPTIONS') { res.status(204).end(); return; }  // fast pre-flight
+    if (req.method === 'OPTIONS') { res.status(204).end(); return; }
 
     var name = resolveName(req);
     if (!name || name === 'index') {
-        res.status(200).json({ ok: true, service: 'wealthflow-api', router: 'v7.24.0', endpoints: Object.keys(HANDLERS).length });
-        return;
+        return res.status(200).json({ ok: true, service: 'wealthflow-api', router: 'v7.24.1', endpoints: Object.keys(HANDLERS).length });
     }
 
     var load = HANDLERS[name];
     if (!load) {
-        res.status(404).json({ error: 'Unknown endpoint', endpoint: name });
-        return;
+        return res.status(404).json({ error: 'Unknown endpoint', endpoint: name });
     }
 
     try {
-        var mod = await load();
+        var mod;
+        try {
+            mod = await load();
+        } catch (importErr) {
+            console.error(`[api-router] Module import missing for ${name}:`, importErr);
+            return res.status(500).json({ error: 'Endpoint file not bundled by Vercel', endpoint: name, detail: importErr.message });
+        }
+
         var fn = mod && (mod.default || mod.handler || mod);
         if (typeof fn !== 'function') {
-            res.status(500).json({ error: 'Endpoint has no handler', endpoint: name });
-            return;
+            return res.status(500).json({ error: 'Endpoint has no valid export handler', endpoint: name });
         }
+        
         return await fn(req, res);
     } catch (err) {
         console.error('[api-router] ' + name + ' failed:', err && err.stack || err);
         if (!res.headersSent) {
-            res.status(500).json({ error: 'Endpoint crashed', endpoint: name, detail: String(err && err.message || err) });
+            res.status(500).json({ error: 'Endpoint runtime crash', endpoint: name, detail: String(err && err.message || err) });
         }
     }
 }
+
