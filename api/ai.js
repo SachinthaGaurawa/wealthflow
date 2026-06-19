@@ -13,18 +13,16 @@
 // Notes on Ollama Cloud:
 //   The correct endpoint for hosted models on ollama.com is https://ollama.com/api/chat
 //   with `Authorization: Bearer $OLLAMA_API_KEY`. The chat API accepts `images` (base64
-//   array) inside the `messages[].images` field for vision models.
+//   array) inside the `messages[].images` field for vision 
+
+// ==================== WealthFlow AI Engine v6.5.1 ====================
 
 export const config = {
-    maxDuration: 45 // seconds — long enough for deep responses
+    maxDuration: 45 
 };
 
-// ----- Embedded fallback Ollama key (project key supplied by the project owner)
-// This is intentionally low-trust: it works for low-volume use, but if you want
-// production-grade limits, set OLLAMA_API_KEY in Vercel and it'll take precedence.
 const OLLAMA_FALLBACK_KEY = 'f2e8db440e7e4028a40a0aefbf8dbec5.7efl7SycTPjEwR645yJmxTs1';
 
-// Helper: fetch with timeout — prevents one slow provider from blocking the chain
 async function fetchWithTimeout(url, options, timeoutMs = 22000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -36,7 +34,6 @@ async function fetchWithTimeout(url, options, timeoutMs = 22000) {
 }
 
 export default async function handler(req, res) {
-    // CORS — allow the public Vercel deployment to be called from anywhere
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -44,16 +41,15 @@ export default async function handler(req, res) {
     if (req.method === 'OPTIONS') return res.status(200).end();
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const { prompt, image, temperature, maxTokens, preferredProvider } = req.body || {};
+    const body = req.body || {};
+    const { prompt, image, temperature, maxTokens, preferredProvider } = body;
     if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
-    // Pull keys ONLY from environment (Ollama has an embedded fallback)
     const geminiKey   = process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY;
     const deepseekKey = process.env.DEEPSEEK_API_KEY;
     const groqKey     = process.env.GROQ_API_KEY;
     const ollamaKey   = process.env.OLLAMA_API_KEY || OLLAMA_FALLBACK_KEY;
     const hfKey       = process.env.HUGGINGFACE_API_KEY || process.env.HF_API_KEY || process.env.HF_TOKEN;
-    // v7.24 — every additional provider the owner has configured in Vercel.
     const anthropicKey  = process.env.ANTHROPIC_API_KEY;
     const xaiKey        = process.env.XAI_API_KEY;
     const mistralKey    = process.env.MISTRAL_API_KEY;
@@ -66,12 +62,10 @@ export default async function handler(req, res) {
     const githubKey     = process.env.GITHUB_MODELS_TOKEN;
     const cohereKey     = process.env.COHERE_API_KEY;
 
-    // Vision requests need deterministic output (low temp) and more room for detail
     const isVision = !!image;
     const temp   = (typeof temperature === 'number') ? temperature : (isVision ? 0.05 : 0.7);
     const tokens = (typeof maxTokens   === 'number') ? maxTokens   : (isVision ? 4096 : 2500);
 
-    // ---------- ENGINE 1: GEMINI (Primary, supports vision) ----------
     async function fetchGemini() {
         if (!geminiKey) throw new Error('Gemini key not configured');
         const model = isVision ? 'gemini-2.5-flash' : 'gemini-2.0-flash';
@@ -81,7 +75,6 @@ export default async function handler(req, res) {
         if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
 
         const generationConfig = { temperature: temp, maxOutputTokens: tokens };
-        // If the prompt asks for JSON, hint the model to enforce it
         if (/\{[^}]*"vendor"[^}]*\}/i.test(prompt) || /return only.*json/i.test(prompt)) {
             generationConfig.responseMimeType = 'application/json';
         }
@@ -113,17 +106,13 @@ export default async function handler(req, res) {
         throw new Error('Gemini returned an empty response');
     }
 
-    // ---------- ENGINE 2: DEEPSEEK (Fallback, text-only) ----------
     async function fetchDeepSeek() {
         if (image) throw new Error('DeepSeek skipped (text-only)');
         if (!deepseekKey) throw new Error('DeepSeek key not configured');
 
         const response = await fetchWithTimeout('https://api.deepseek.com/chat/completions', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${deepseekKey}`
-            },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
             body: JSON.stringify({
                 model: 'deepseek-chat',
                 messages: [{ role: 'user', content: prompt }],
@@ -139,11 +128,8 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'deepseek' };
     }
 
-    // ---------- ENGINE 3: GROQ (ultra-fast text + vision via Llava) ----------
     async function fetchGroq() {
         if (!groqKey) throw new Error('Groq key not configured');
-
-        // Build payload — text-only vs vision differ
         let payload;
         if (image) {
             payload = {
@@ -166,13 +152,11 @@ export default async function handler(req, res) {
                 max_tokens: tokens
             };
         }
-
         const response = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
             body: JSON.stringify(payload)
         });
-
         if (!response.ok) throw new Error(`Groq status ${response.status}`);
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content;
@@ -180,30 +164,19 @@ export default async function handler(req, res) {
         return { reply: text, provider: image ? 'groq:llava' : 'groq:llama-3.3' };
     }
 
-    // ---------- ENGINE 4: OLLAMA CLOUD (vision + text, hosted) ----------
-    // Correct endpoint for the *hosted* ollama.com API:
-    //   POST https://ollama.com/api/chat   (Authorization: Bearer ...)
-    // Note: model names like "gpt-oss:120b" or "llama3.2-vision:11b" work directly here.
     async function fetchOllama() {
         if (!ollamaKey) throw new Error('Ollama key not configured');
-
         const message = { role: 'user', content: prompt };
         if (image) message.images = [image];
-
-        // Pick the right model: vision-capable for images, text-only otherwise
         const model = image ? 'llama3.2-vision' : 'gpt-oss:120b';
 
         const response = await fetchWithTimeout('https://ollama.com/api/chat', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${ollamaKey}`
-            },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ollamaKey}` },
             body: JSON.stringify({
                 model,
                 messages: [message],
                 stream: false,
-                // Suggest JSON output if the prompt hints at it
                 ...(/return only.*json|extract.*json/i.test(prompt) ? { format: 'json' } : {}),
                 options: { temperature: temp, num_predict: Math.min(tokens, 4096) }
             })
@@ -219,7 +192,6 @@ export default async function handler(req, res) {
         return { reply: text, provider: `ollama:${model}` };
     }
 
-    // ---------- ENGINE 5: HuggingFace Inference (optional, last resort) ----------
     async function fetchHuggingFace() {
         if (!hfKey) throw new Error('HuggingFace key not configured');
         if (image) throw new Error('HF skipped (text-only here)');
@@ -239,10 +211,6 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'huggingface' };
     }
 
-    // ---------- ENGINES 6-16: every other provider configured in Vercel ----------
-    // Most are OpenAI-compatible (/chat/completions + Bearer). One factory builds
-    // them all; Anthropic and Cohere use their own shapes below. Each fires in
-    // parallel with the rest and contributes to fastest/consensus selection.
     function makeOAI(opts) {
         return async function () {
             if (!opts.key) throw new Error(opts.name + ' key not configured');
@@ -251,20 +219,20 @@ export default async function handler(req, res) {
             const content = image
                 ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } }]
                 : prompt;
-            const body = {
+            const payload = {
                 model,
                 messages: [{ role: 'user', content }],
                 temperature: temp,
                 max_tokens: Math.min(tokens, opts.maxTokens || 4096)
             };
             if (!image && opts.jsonMode && /return only.*json|extract.*json|\{[^}]*"vendor"[^}]*\}/i.test(prompt)) {
-                body.response_format = { type: 'json_object' };
+                payload.response_format = { type: 'json_object' };
             }
             const headers = Object.assign(
                 { 'Content-Type': 'application/json', 'Authorization': `Bearer ${opts.key}` },
                 opts.extraHeaders || {}
             );
-            const r = await fetchWithTimeout(opts.url, { method: 'POST', headers, body: JSON.stringify(body) }, opts.timeout || 22000);
+            const r = await fetchWithTimeout(opts.url, { method: 'POST', headers, body: JSON.stringify(payload) }, opts.timeout || 22000);
             if (!r.ok) {
                 const t = await r.text().catch(() => '');
                 throw new Error(`${opts.name} status ${r.status}: ${t.substring(0, 160)}`);
@@ -287,7 +255,6 @@ export default async function handler(req, res) {
     const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', textModel: 'meta/llama-3.3-70b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
     const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.inference.ai.azure.com/chat/completions', textModel: 'Llama-3.3-70B-Instruct', visionModel: 'gpt-4o', jsonMode: true });
 
-    // ---------- ENGINE: ANTHROPIC CLAUDE (native Messages API, vision) ----------
     async function fetchAnthropic() {
         if (!anthropicKey) throw new Error('Anthropic key not configured');
         const content = image
@@ -305,7 +272,6 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'anthropic:claude-3.5-sonnet' };
     }
 
-    // ---------- ENGINE: COHERE (native v2 chat, text-only) ----------
     async function fetchCohere() {
         if (image) throw new Error('Cohere skipped (text-only)');
         if (!cohereKey) throw new Error('Cohere key not configured');
@@ -321,18 +287,9 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'cohere:command-r-plus' };
     }
 
-    // ---------- PARALLEL MULTI-ENGINE EXECUTION ----------
-    // All engines fire SIMULTANEOUSLY (not one-by-one). This is dramatically
-    // faster and more reliable: a slow/down provider no longer blocks the rest.
-    //
-    //  • mode=fastest  → first valid reply wins (best for chat latency)
-    //  • mode=consensus→ collect all replies, pick the best (best for accuracy
-    //                     on vision / JSON extraction / critical answers)
     const errorLog = [];
-
     let engines;
     if (isVision) {
-        // Every vision-capable provider contributes to consensus on receipts/statements.
         engines = [
             { name: 'Gemini',       fn: fetchGemini },
             { name: 'Groq',         fn: fetchGroq },
@@ -368,12 +325,10 @@ export default async function handler(req, res) {
         ];
     }
 
-    // Wants JSON (receipt extraction etc.) → use consensus for max accuracy.
     const wantsJSON = /\{[^}]*"vendor"[^}]*\}|return only.*json|extract.*json/i.test(prompt);
-    const requestedMode = (req.body && req.body.mode) ? String(req.body.mode) : null;
+    const requestedMode = body.mode ? String(body.mode) : null;
     const mode = requestedMode || ((isVision || wantsJSON) ? 'consensus' : 'fastest');
 
-    // Wrap each engine call so a rejection becomes a tagged result, never throws.
     function run(engine) {
         const started = Date.now();
         return Promise.resolve()
@@ -388,22 +343,18 @@ export default async function handler(req, res) {
 
     const isValid = (txt) => typeof txt === 'string' && txt.trim().length > 1;
 
-    // ---- MODE: FASTEST (race — first valid reply wins) ----
     if (mode === 'fastest') {
         const pending = engines.map(run);
         const settled = [];
-        // Resolve as soon as ANY engine returns a valid reply.
         const winner = await new Promise((resolve) => {
             let remaining = pending.length;
             pending.forEach(p => p.then(r => {
                 settled.push(r);
                 if (r.ok && isValid(r.reply)) resolve(r);
-                if (--remaining === 0) resolve(null); // all done, none valid
+                if (--remaining === 0) resolve(null);
             }));
         });
         if (winner) {
-            // Let the remaining engines settle in the background (no-op) — we
-            // already have our fast answer.
             return res.status(200).json({
                 reply: winner.reply,
                 provider: winner.provider,
@@ -412,10 +363,8 @@ export default async function handler(req, res) {
                 engines: engines.map(e => e.name)
             });
         }
-        // Fall through to consensus handling if the race produced nothing.
     }
 
-    // ---- MODE: CONSENSUS (gather all, choose the best) ----
     const results = await Promise.all(engines.map(run));
     const good = results.filter(r => r.ok && isValid(r.reply));
 
@@ -426,14 +375,10 @@ export default async function handler(req, res) {
         });
     }
 
-    // Scoring: prefer the response most representative of the set.
-    //  • JSON tasks → the one that parses AND agrees with the majority on key fields
-    //  • Prose      → the longest substantive answer (proxy for completeness),
-    //                 lightly weighted toward faster engines on ties
     function tryParse(s) {
         try {
-            const m = s.match(/\{[\s\S]*\}/);
-            return m ? JSON.parse(m[0]) : null;
+            const match = s.match(/\{[\s\S]*\}/);
+            return match ? JSON.parse(match[0]) : null;
         } catch (_) { return null; }
     }
 
@@ -441,7 +386,6 @@ export default async function handler(req, res) {
     if (wantsJSON) {
         const parsed = good.map(r => ({ r, j: tryParse(r.reply) })).filter(x => x.j);
         if (parsed.length) {
-            // Majority vote on the "amount"/"vendor" fields when present.
             const tally = {};
             parsed.forEach(({ j }) => {
                 const key = JSON.stringify([j.amount ?? null, (j.vendor || '').toLowerCase().trim()]);
@@ -456,7 +400,6 @@ export default async function handler(req, res) {
             best = good.sort((a, b) => b.reply.length - a.reply.length)[0];
         }
     } else {
-        // Prose: longest substantive wins; tie-break by speed.
         best = good.sort((a, b) => {
             const d = b.reply.trim().length - a.reply.trim().length;
             if (Math.abs(d) > 120) return d;
