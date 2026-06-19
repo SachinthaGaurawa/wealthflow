@@ -25,11 +25,15 @@
 
     function norm(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 
-    // ── transfers / reversals / refunds — never income, never an expense ───────
-    var RE_TRANSFER = /\b(transfer|fund transfer|own account|reversal|reversed|refund|chargeback|charge back|returned|cancellation|void)\b/;
+    // ── GENUINE internal / own-account movements ONLY ─────────────────────────
+    //  These alone are neither income nor expense. A person-to-person CEFT
+    //  "Inward/Outward Transfer <name>" is NOT this — it is real money in/out and
+    //  is filed by direction. The old broad /transfer/ pattern wrongly skipped
+    //  salary transfers, deposits and payments, dumping dozens of rows to Review.
+    var RE_TRANSFER = /\b(own account|own a\/?c|to own|from own|between own|self transfer|transfer to self|inter[\s-]?account|internal transfer|sweep|book transfer)\b/;
 
     // ── credit-card debit sub-typing ───────────────────────────────────────────
-    var RE_FUEL = /\b(fuel|petrol|diesel|filling station|fuel station|ceypetco|lanka ioc|ioc|gas station|petroleum)\b/;
+    var RE_FUEL = /\b(fuel|petrol|diesel|filling station|fuel station|ceypetco|lanka ioc|ioc|gas station|petroleum|dunhinda)\b/;
     var RE_CASH_ADV = /\b(cash advance|cash adv|atm|cash withdrawal|cash withdraw|withdrawal)\b/;
     var RE_CC_FEE = /\b(annual fee|late fee|finance charge|interest charge|service charge|over limit|overlimit|joining fee|card fee)\b/;
 
@@ -44,27 +48,34 @@
         ['dividend', /\b(dividend|div cr|div\.)\b/],
         ['rent',     /\b(rent|rental|lease income)\b/],
         ['business', /\b(invoice|sales|business|merchant settlement|pos settlement|sett)\b/],
-        ['pension',  /\b(pension|epf|etf|gratuity)\b/]
+        ['pension',  /\b(pension|epf|etf|gratuity)\b/],
+        ['gift',     /\b(gift|donation|present)\b/],
+        ['deposit',  /\b(cash deposit|cash dep|crm cash|crm deposit|cash credit|deposit)\b/],
+        ['transfer', /\b(inward ceft|inward transfer|ceft inward|transfer credit|inward remittance|remittance|fund transfer|inward)\b/]
     ];
 
     // ── expense categories (Sri-Lanka-aware) ────────────────────────────────────
     var EXPENSE_CATS = [
         ['Gold',          /\b(gold|jewell?er[sy]?|pawn(ing)?|gem stones?|vogue jewell|swarna mahal)\b/],
-        ['Gift',          /\b(gift|wedding gift|birthday gift|present shop|hallmark)\b/],
-        ['Groceries',     /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa)\b/],
-        ['Dining',        /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java)\b/],
+        ['Gift',          /\b(wedding gift|birthday gift|present shop|hallmark)\b/],
+        ['Groceries',     /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa|super ?city|lanka sathosa)\b/],
+        ['Dining',        /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos)\b/],
         ['Fuel',          RE_FUEL],
-        ['Transport',     /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway)\b/],
-        ['Utilities',     /\b(ceb|electricity|lecо|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment)\b/],
-        ['Shopping',      /\b(odel|nolimit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress)\b/],
-        ['Health',        /\b(pharmacy|hospital|medical|clinic|channel|lab|nawaloka|asiri|hemas|durdans)\b/],
+        ['Transport',     /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway|interchange|\brda\b|\betc\b|highway|wiper|tyre|tire|vehicle|auto ?parts?|spare ?parts?|service station|garage|leyland|car wash)\b/],
+        ['Utilities',     /\b(ceb|ceylon electricity|electricity|leco|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment|gas)\b/],
+        ['Shopping',      /\b(odel|nolimit|no limit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress|koko|mintpay|mint pay|ecom|showroom|singer|abans|softlogic)\b/],
+        ['Health',        /\b(pharmacy|hospital|medical|clinic|channel|lab|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri)\b/],
         ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube|game|scope|pvr)\b/],
         ['Education',     /\b(school|tuition|university|campus|course|institute|exam|books)\b/],
-        ['Insurance',    /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|premium)\b/]
+        ['Insurance',     /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|premium)\b/],
+        ['Cash Withdrawal', /\b(atm wtd|atm withdrawal|cash withdrawal|cash wd|atm cash|cash withdraw)\b/],
+        ['Transfer',      /\b(outward ceft|outward transfer|transfer out|fund transfer|outward)\b/]
     ];
 
-    // mandatory bank charges (never skip, never duplicate)
-    var RE_BANK_FEE = /\b(atm (withdrawal )?(fee|charge)|withdrawal fee|ceft|cefts|slips( charge)?|stamp duty|debit tax|svc charge|service charge|bank charge(s)?|maintenance fee|ledger fee|sms (alert|charge)|e ?-?statement fee|cheque book (fee|charge)|fallback fee)\b/;
+    // mandatory bank charges (never skip, never duplicate). MUST require an
+    // explicit charge/fee/surcharge word — bare "ceft"/"cefts" appears in real
+    // money transfers ("CEFTS/6010/FT/BOC/..."), which are NOT fees.
+    var RE_BANK_FEE = /\b(atm (withdrawal )?(fee|charge)|withdrawal fee|cefts? charges?|slips charges?|stamp duty|debit tax|svc charge|service charge|bank charges?|maintenance fee|ledger fee|sms (alert|charge)|alert charges?|fuel surcharge|surcharge|e ?-?statement fee|cheque book (fee|charge)|fallback fee)\b/;
 
     // ── subscriptions / recurring bills (mobile, ISP, streaming, utilities) ─────
     //  Detected on bank debits so they land in the Subscriptions tab and record a
@@ -134,9 +145,9 @@
         if (!d) return null;
         // STRONG credit signals win first — a refund/reversal of a POS purchase, or a
         // "PAYMENT - THANK YOU" on a card, is money IN even though it mentions a purchase/payment.
-        if (/\b(refund|reversal|reversed|charge ?back|cash ?back|reimburse(ment)?|payment received|received from|funds? received|thank ?you|autopay|auto pay|salary|payroll|wages|emolument|stipend|deposit|cash deposit|inward|inward remittance|remittance in|credited|credit interest|interest credit|fd interest|savings interest|dividend|bonus|incentive|rent received|rental income|pension|epf|etf|gratuity|transfer in|ceft inward|slips inward|loan disburse(ment)?)\b/.test(d)) return 'credit';
+        if (/\b(refund|reversal|reversed|charge ?back|cash ?back|reimburse(ment)?|payment received|received from|funds? received|thank ?you|autopay|auto pay|salary|payroll|wages|emolument|stipend|deposit|cash dep|cash deposit|crm cash|crm deposit|inward|inward remittance|remittance in|credited|credit interest|interest credit|fd interest|savings interest|dividend|bonus|incentive|rent received|rental income|pension|epf|etf|gratuity|transfer in|transfer credit|inward transfer|ceft inward|slips inward|loan disburse(ment)?)\b/.test(d)) return 'credit';
         // STRONG debit signals.
-        if (/\b(purchase|pos|point of sale|withdrawal|withdraw|atm|cash advance|cash adv|payment to|paid to|bill payment|utility bill|service fee|annual fee|late fee|finance charge|interest charge|surcharge|installment|instalment|standing order|direct debit|transfer out|loan repayment|emi|insurance premium|premium|stamp duty|debit tax|vat)\b/.test(d)) return 'debit';
+        if (/\b(purchase|pos|point of sale|pos transaction|withdrawal|withdraw|atm wtd|atm|cash advance|cash adv|payment to|paid to|bill payment|billpmt|utility bill|ecom|outward|outward transfer|transfer out|service fee|annual fee|late fee|finance charge|interest charge|surcharge|installment|instalment|standing order|direct debit|loan repayment|emi|insurance premium|premium|stamp duty|debit tax|vat)\b/.test(d)) return 'debit';
         return null; // no decisive signal
     }
 
@@ -172,6 +183,13 @@
      */
     function routeTransaction(tx, accountType) {
         tx = tx || {};
+        // HARD GUARD: statement balance lines (opening/closing/brought-forward/
+        // available/ledger balance) are NOT transactions. Even if the extractor
+        // leaks one, it must never become phantom income or an expense.
+        var RE_BALANCE = /\b(b\/?f balance|c\/?f balance|opening balance|closing balance|balance (b\/?f|c\/?f|forward|brought forward|carried forward)|brought forward|carried forward|available balance|ledger balance|book balance|previous balance|balance as (at|on))\b/;
+        if (RE_BALANCE.test(norm(tx.description || ''))) {
+            return { tab: 'skip', category: null, incomeType: null, ccType: null, isTransfer: false, needsReview: false, reason: 'statement balance line — not a transaction' };
+        }
         var dres = resolveDirection(tx);
         var dir = dres.dir;
         var lowConf = !dres.confident;      // direction was a pure guess → ask the user
@@ -207,19 +225,19 @@
         }
 
         if (accountType === 'bank_account') {
-            // Own-account transfers / reversals move money around — they are neither
-            // income nor an expense. Catch them BEFORE the debit/credit split so a
-            // transfer-out isn't mis-filed as a spend.
+            // GENUINE own-account / internal movements are neither income nor an
+            // expense. They are confidently identified (narrow pattern), so they
+            // are skipped WITHOUT nagging the user for Review.
             if (isTransfer) {
                 out.tab = 'skip';
-                out.needsReview = true;
-                out.reason = 'transfer / reversal / own-account movement — not income or expense';
+                out.needsReview = false;
+                out.reason = 'own-account / internal movement — not income or expense';
                 return out;
             }
             if (dir === 'debit') {
-                // Mandatory bank charges (ATM fee, CEFT, SLIPS, stamp duty, SMS
-                // alerts, maintenance…) are real expenses the bank levies — they
-                // must be FILED ONCE as 'Bank Charges', never skipped and never
+                // Mandatory bank charges (ATM fee, CEFT charges, SLIPS, stamp duty,
+                // SMS alerts, surcharge, maintenance…) are real expenses the bank
+                // levies — filed ONCE as 'Bank Charges', never skipped, never
                 // duplicated (the modal de-dupes re-imports by date+amount+desc).
                 if (RE_BANK_FEE.test(norm(desc))) {
                     out.tab = 'expenses';
@@ -239,21 +257,18 @@
                 }
                 out.tab = 'expenses';
                 out.category = expenseCategory(desc);
-                if (out.category === 'Other') out.needsReview = true;
-                if (lowConf) out.needsReview = true;
-                out.reason = 'bank debit → expense';
-            } else { // credit on a bank account
-                if (isTransfer) {
-                    out.tab = 'skip';
-                    out.needsReview = true;
-                    out.reason = 'transfer/reversal/refund — not income';
-                } else {
-                    out.tab = 'income';
-                    out.incomeType = incomeKind(desc); // salary/interest/dividend/... or 'other' — NEVER 'investment'
-                    if (out.incomeType === 'other') out.needsReview = true;
-                    if (lowConf) out.needsReview = true;
-                    out.reason = 'bank credit → income (' + out.incomeType + ')';
-                }
+                // 'Other' is a valid catch-all bucket — we FILE it as an expense
+                // rather than dumping it to Review. Review is reserved ONLY for rows
+                // whose direction itself is a pure guess (truly unidentifiable).
+                if (lowConf) { out.needsReview = true; out.reason = 'bank debit → expense (direction inferred — confirm)'; }
+                else out.reason = 'bank debit → expense (' + out.category + ')';
+            } else { // credit on a bank account = money IN = income
+                out.tab = 'income';
+                out.incomeType = incomeKind(desc); // salary/interest/dividend/deposit/transfer/... or 'other' — NEVER 'investment'
+                // 'other' income is still FILED as income (not sent to Review). Only
+                // a guessed direction triggers Review.
+                if (lowConf) { out.needsReview = true; out.reason = 'bank credit → income (direction inferred — confirm)'; }
+                else out.reason = 'bank credit → income (' + out.incomeType + ')';
             }
             return out;
         }

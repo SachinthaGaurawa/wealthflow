@@ -617,6 +617,10 @@
             '"direction":"debit","type":"purchase","merchant_category":"","notes":""}' +
             ']}\n\n' +
             'Rules:\n' +
+            '- "description" = the COMPLETE narration EXACTLY as printed — keep payee/merchant names, ' +
+            'and key phrases like "Inward Ceft Transfer <name>", "Outward Ceft Transfer <name>", ' +
+            '"POS Transaction - <merchant>", "CASH DEP", "ATM WTD", "MB BillPmt/<biller>". Do NOT shorten, ' +
+            'abbreviate or paraphrase it — the full text is what lets the system pick the right category.\n' +
             '- Include the FULL ORIGINAL amount printed. NEVER round or truncate.\n' +
             '- "direction" must be EXACTLY "debit" or "credit" — THIS IS CRITICAL, get it right for every row:\n' +
             '  • "debit"  = money OUT / a charge: purchases, cash advances, fees, interest, fuel, POS.\n' +

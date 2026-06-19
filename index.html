@@ -5294,6 +5294,9 @@
                         💡 <strong style="color:var(--accent);">50-Day Rule:</strong> One-time CC purchases must be
                         repaid within 50 days. <span style="color:var(--red);">Final 10 days shown in red.</span>
                     </div>
+                    <!-- Per-card / per-bank filter (shown by renderCCOT only when the
+                         user has cards from more than one bank). -->
+                    <div id="ccotFilterBar" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
                     <div class="tbl-wrap">
                         <table>
                             <thead>
@@ -13426,6 +13429,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (name === 'settings') {
                 try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {}
                 setTimeout(() => { try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {} }, 400);
+                // Real-time AI Engine Status: probe the backend the moment Settings
+                // opens so the badge reflects reality (not a stale hardcoded value).
+                setTimeout(() => { try { refreshAIEngineBadge(); } catch (_) {} }, 60);
             }
         }
 
@@ -16947,6 +16953,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (overrideRaw) {
                     serviceFee = parseMoney(overrideRaw) || 0;
                     feeMeta = { source: 'override', kind: type, percent: null, minFee: null, flat: null, note: 'User-set override.' };
+                } else if (existing && existing.feeMeta && existing.feeMeta.source === 'statement') {
+                    // Editing a row IMPORTED FROM A STATEMENT — the bank already
+                    // listed its cash-advance/fuel/surcharge fees as their own
+                    // separate statement lines (imported as separate records).
+                    // Re-synthesising an auto-fee here would DOUBLE-COUNT it, so we
+                    // preserve the statement's own figures (serviceFee stays 0).
+                    serviceFee = existing.serviceFee || 0;
+                    feeMeta = existing.feeMeta;
                 } else if (type === 'cash_advance') {
                     const r = _computeCashAdvanceFee(bank, amount);
                     serviceFee = r.fee;
@@ -17042,8 +17056,47 @@ table.amort tbody tr { page-break-inside: avoid; }
             const nb = $('nb-ccot');
             if (nb) { nb.style.display = urgent > 0 ? '' : 'none'; nb.textContent = urgent; }
         }
+        var _ccotBankFilter = 'all';
+        function setCCOTBankFilter(bank) { _ccotBankFilter = bank || 'all'; renderCCOT(); }
+        window.setCCOTBankFilter = setCCOTBankFilter;
         function renderCCOT() {
             let arr = DB.get('cconetime');
+
+            // ── Per-card / per-bank filter ─────────────────────────────────────
+            // A user may hold several credit cards from different banks. Group the
+            // one-time payments by bank so each card can be viewed on its own, with
+            // a live count + outstanding balance per card.
+            const fbar = $('ccotFilterBar');
+            const banks = [...new Set(arr.map(x => x.bank).filter(Boolean))].sort();
+            if (fbar) {
+                if (banks.length > 1) {
+                    const outstanding = (b) => arr
+                        .filter(x => !x.paid && (b === 'all' || x.bank === b))
+                        .reduce((s, x) => s + (x.combinedTotal || x.amount || 0), 0);
+                    const count = (b) => arr.filter(x => b === 'all' || x.bank === b).length;
+                    if (_ccotBankFilter !== 'all' && !banks.includes(_ccotBankFilter)) _ccotBankFilter = 'all';
+                    const chip = (key, label) => {
+                        const active = _ccotBankFilter === key;
+                        const due = outstanding(key);
+                        return `<button onclick="setCCOTBankFilter('${String(key).replace(/'/g, "\\'")}')"
+                            style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 14px;border-radius:var(--r2);cursor:pointer;
+                            border:1px solid ${active ? 'var(--accent)' : 'var(--border2)'};
+                            background:${active ? 'rgba(212,175,55,.14)' : 'var(--card)'};
+                            color:${active ? 'var(--accent)' : 'var(--text2)'};transition:all .15s;">
+                            <span style="font-weight:700;font-size:12px;">${label} <span style="opacity:.7;font-weight:600;">· ${count(key)}</span></span>
+                            <span style="font-size:10px;font-family:var(--mono);color:${due > 0 ? 'var(--red)' : 'var(--text3)'};">Due: LKR ${fmt(due)}</span>
+                        </button>`;
+                    };
+                    fbar.innerHTML = chip('all', '🗂️ All cards') + banks.map(b => chip(b, b)).join('');
+                    fbar.style.display = 'flex';
+                } else {
+                    _ccotBankFilter = 'all';
+                    fbar.style.display = 'none';
+                    fbar.innerHTML = '';
+                }
+            }
+            if (_ccotBankFilter !== 'all') arr = arr.filter(x => x.bank === _ccotBankFilter);
+
             const s = sortState['ccot'];
             if (s?.field) arr.sort((a, b) => {
                 if (s.field === 'days') return s.dir * (dLeft(a.deadline) - dLeft(b.deadline));
@@ -17051,7 +17104,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return 0;
             });
             const tbody = $('ccotBody');
-            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('⏱️', 'No one-time payments', 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
+            if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('⏱️', _ccotBankFilter === 'all' ? 'No one-time payments' : 'No payments for ' + _ccotBankFilter, 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
             tbody.innerHTML = arr.map(item => {
                 const dl = dLeft(item.deadline);
                 let cdCls = 'cd-safe', cdTxt = dl + ' days';
@@ -18575,7 +18628,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div class="setting-label">Triple-Engine AI System</div>
                     <div class="setting-desc">Powered by Gemini · DeepSeek · Groq with automatic failover. Keys are securely managed on the backend.</div>
                 </div>
-                <span id="aiEngineHealth" class="badge bg-g" style="padding:6px 12px;">● Online</span>
+                <span id="aiEngineHealth" class="badge bg-gr" style="padding:6px 12px;">● Checking…</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info">
@@ -18997,8 +19050,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.24.1</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.24.1</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.25.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.25.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -19361,60 +19414,93 @@ table.amort tbody tr { page-break-inside: avoid; }
             });
         }
 
-        async function testAIConnection() {
+        // ── AI Engine Status: ONE robust probe, used by both the auto-refresh
+        //    (on Settings open) and the manual "Run Diagnostic" button. ───────────
+        //  Why the old badge falsely showed "Degraded": it asked the model for the
+        //  word "ONLINE" with maxTokens:16 — a reasoning model can spend all 16
+        //  tokens "thinking", returning an EMPTY reply → false Degraded. Now we
+        //  (a) raise the budget so there's always output room, and (b) treat ANY
+        //  healthy 200-JSON from /api/ai as Online (the endpoint + at least one
+        //  engine answered). Only a real backend error object or a non-200 is
+        //  Degraded; only a non-JSON / network failure is Offline.
+        let _aiHealthCache = { cls: '', txt: '', ts: 0 };
+
+        function _setEngineBadge(txt, cls) {
             const badge = document.getElementById('aiEngineHealth');
-            if (badge) { badge.textContent = '● Testing…'; badge.className = 'badge bg-a'; }
-            // v7.24: language-proof, reachability-based probe. The old check asked
-            // for the word "ONLINE" and string-matched it — which FAILS when the
-            // app's AI language is Sinhala/Tamil (the model answers in that
-            // language), wrongly showing "Degraded". We now hit /api/ai DIRECTLY
-            // (bypassing the chat rewriter + language gate): any valid reply means
-            // the engines are reachable = Online. A non-200 surfaces the REAL
-            // backend reason (e.g. missing API keys) so the user knows what to fix.
+            if (badge) { badge.textContent = txt; badge.className = 'badge ' + cls; }
+            _aiHealthCache = { cls, txt, ts: Date.now() };
+        }
+
+        // Apply the badge in real time when Settings opens. Uses a 60s cache so
+        // flipping toggles (which re-render Settings) doesn't spam the backend.
+        function refreshAIEngineBadge() {
+            const badge = document.getElementById('aiEngineHealth');
+            if (!badge) return;
+            if (_aiHealthCache.txt && (Date.now() - _aiHealthCache.ts) < 60000) {
+                badge.textContent = _aiHealthCache.txt;
+                badge.className = 'badge ' + _aiHealthCache.cls;
+                return;
+            }
+            badge.textContent = '● Checking…';
+            badge.className = 'badge bg-gr';
+            probeAIEngine({ manual: false });
+        }
+
+        async function probeAIEngine(opts) {
+            opts = opts || {};
+            const manual = !!opts.manual;
+            _setEngineBadge(manual ? '● Testing…' : '● Checking…', 'bg-gr');
             try {
                 const isLocalOrGitHub = location.hostname.includes('github.io') || location.hostname === 'localhost';
                 const url = isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api/ai' : '/api/ai';
                 const ctrl = new AbortController();
                 const to = setTimeout(() => ctrl.abort(), 30000);
-                let r, raw = '';
+                let r;
                 try {
                     r = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: 'Health check. Reply with the single English word: ONLINE', maxTokens: 16, temperature: 0 }),
+                        // maxTokens 64 (not 16) so reasoning models still emit output;
+                        // language-proof — we no longer string-match "ONLINE".
+                        body: JSON.stringify({ prompt: 'Health check — reply OK.', maxTokens: 64, temperature: 0 }),
                         signal: ctrl.signal
                     });
                 } finally { clearTimeout(to); }
 
                 const ct = (r.headers.get('content-type') || '').toLowerCase();
-                if (r.ok && ct.includes('application/json')) {
-                    const d = await r.json();
-                    if (d && d.reply && String(d.reply).trim()) {
-                        const prov = d.provider ? (' · ' + String(d.provider).split(':')[0]) : '';
-                        if (badge) { badge.textContent = '● Online'; badge.className = 'badge bg-g'; }
-                        notify('AI connection healthy ✓' + prov, 'success');
-                    } else {
-                        if (badge) { badge.textContent = '● Degraded'; badge.className = 'badge bg-a'; }
-                        notify('AI reachable but returned an empty reply. Try again in a moment.', 'warn');
-                    }
-                } else if (!ct.includes('application/json')) {
-                    // Non-JSON (usually a 405/HTML static fallthrough) → the function
-                    // isn't being served at /api/ai on this deployment.
-                    if (badge) { badge.textContent = '● Offline'; badge.className = 'badge bg-r'; }
-                    notify('AI endpoint not deployed (got a non-JSON ' + r.status + ' response). Check that /api/ai is live on Vercel.', 'error');
+                if (!ct.includes('application/json')) {
+                    // Non-JSON (usually an HTML 405/SPA fallthrough) → /api/ai isn't
+                    // deployed as a function on this deployment.
+                    _setEngineBadge('● Offline', 'bg-r');
+                    if (manual) notify('AI endpoint not deployed (got a non-JSON ' + r.status + ' response). Check that /api/ai is live on Vercel.', 'error');
+                    return;
+                }
+                let d = {};
+                try { d = await r.json(); } catch (_) { d = {}; }
+
+                if (r.ok && !d.error) {
+                    // Endpoint alive + at least one engine answered (or the keyless
+                    // fallback did) = ONLINE. This is the real, working state.
+                    const prov = d.provider ? (' · ' + String(d.provider).split(':')[0]) : '';
+                    _setEngineBadge('● Online', 'bg-g');
+                    if (manual) notify('AI connection healthy ✓' + prov, 'success');
                 } else {
-                    // JSON error from the backend — show the real reason (incl. which
-                    // provider keys are missing, which the backend reports in details).
-                    let reason = 'HTTP ' + r.status;
-                    try { const e = await r.json(); reason = (e.error || reason) + (e.details ? ' — ' + e.details : ''); } catch (_) {}
-                    if (badge) { badge.textContent = '● Degraded'; badge.className = 'badge bg-a'; }
-                    notify('AI backend: ' + reason + (r.status === 503 ? ' (set the provider API keys in Vercel → Settings → Environment Variables)' : ''), 'error');
+                    // A real backend error (e.g. all providers failed / keys missing).
+                    let reason = (d && d.error) ? String(d.error) : ('HTTP ' + r.status);
+                    if (d && d.details) reason += ' — ' + d.details;
+                    _setEngineBadge('● Degraded', 'bg-a');
+                    if (manual) notify('AI backend: ' + reason + (r.status === 503 ? ' (set the provider API keys in Vercel → Environment Variables)' : ''), 'error');
                 }
             } catch (e) {
-                if (badge) { badge.textContent = '● Offline'; badge.className = 'badge bg-r'; }
-                notify('AI engines unreachable: ' + (e && e.message ? e.message : 'network error'), 'error');
+                _setEngineBadge('● Offline', 'bg-r');
+                if (manual) notify('AI engines unreachable: ' + (e && e.message ? e.message : 'network error'), 'error');
             }
         }
+
+        // Manual "Run Diagnostic" button → always a fresh probe with notifications.
+        async function testAIConnection() { _aiHealthCache.ts = 0; return probeAIEngine({ manual: true }); }
+        window.refreshAIEngineBadge = refreshAIEngineBadge;
+        window.testAIConnection = testAIConnection;
 
         // Initialize SW + notifications on app launch
         window.addEventListener('load', async () => {
