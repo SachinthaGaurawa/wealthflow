@@ -1,12 +1,36 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.24.0",
+  "latest": "7.24.1",
   "mandatory": [
     "7.16.0",
     "7.16.1"
   ],
   "securitySchedule": "monthly",
   "notes": {
+    "7.24.1": {
+      "date": "2026-06-19",
+      "type": "full",
+      "headline": "Bank-statement AI now reads income vs expense correctly — plus sharper Cloud Vision OCR",
+      "sections": [
+        {
+          "title": "Fixed (critical)",
+          "items": [
+            "Imported statement rows are no longer all dumped into Expenses. The AI now reads each line's direction (money in vs money out) from the debit/credit column, the CR/DR marker, the amount sign, and the wording — so salary, deposits, interest, refunds and reversals land in Income (or as a card payment), never as an expense.",
+            "A refund or \"PAYMENT - THANK YOU\" on a card is now correctly treated as money in, even when the line also mentions a purchase or POS."
+          ]
+        },
+        {
+          "title": "Improved",
+          "items": [
+            "Every row is identified before filing: known shops map to the right expense category, recurring services (Netflix, Spotify, Dialog, SLT, insurance, utilities) file under Subscriptions with the exact service named, and own-account transfers are skipped.",
+            "Subscriptions are now detected on credit-card charges too, not just bank debits.",
+            "When the AI genuinely can't tell what a row is, it no longer guesses silently — the row is flagged \"Please review\" in the import screen and sent to Settings -> Needs-Review so you decide.",
+            "Cloud Vision OCR accuracy raised: images are sharpened, upscaled and contrast-boosted before scanning, dense-document detection is used, and Sinhala/Tamil/English are all hinted — far fewer missed or misread rows on blurry or zoomed-out statements.",
+            "All AI engines keep running in parallel for consensus, so the extracted figures are cross-checked for accuracy."
+          ]
+        }
+      ]
+    },
     "7.24.0": {
       "date": "2026-06-18",
       "type": "security",
@@ -336,5 +360,5 @@
     },
     "7.21.0": "CRIB credit-report intelligence (AI analysis + advice in your language, dedup, history charts, score factor, delete-sync) · Google Cloud Vision OCR across the whole app (sharper reading of dense/zoomed-out statements) · encrypted HTML e-statements now open on every device (Nations Trust AMEX) · Income tab: matching card spacing + Table/Schedule views + sorting · AI now writes a useful note per imported transaction (no more \"from statement\") · repeated same-category charges accumulate per month with a tap-to-view history · faster startup · AI advisor now knows your CRIB + subscriptions + received income"
   },
-  "version": "7.24.0"
+  "version": "7.24.1"
 }

@@ -123,13 +123,46 @@
         return 'purchase';
     }
 
-    function dirOf(tx) {
-        var x = (tx && tx.direction) || '';
-        if (x === 'credit' || x === 'debit') return x;
-        // fall back to a numeric/sign hint if present
-        if (tx && typeof tx.signedAmount === 'number') return tx.signedAmount < 0 ? 'debit' : 'credit';
-        return 'debit';
+    // ── DIRECTION INFERENCE (credit = money IN, debit = money OUT) ─────────────
+    //  THE fix for "income shown as expense". Statements don't always hand the
+    //  extractor a clean debit/credit flag, so without this every row used to
+    //  fall through to the 'debit' default → everything became an expense and
+    //  real income (salary, deposits, refunds, interest) was impossible to see.
+    //  We now read every available signal and only flag for review as a last resort.
+    function directionFromDescription(desc) {
+        var d = norm(desc);
+        if (!d) return null;
+        // STRONG credit signals win first — a refund/reversal of a POS purchase, or a
+        // "PAYMENT - THANK YOU" on a card, is money IN even though it mentions a purchase/payment.
+        if (/\b(refund|reversal|reversed|charge ?back|cash ?back|reimburse(ment)?|payment received|received from|funds? received|thank ?you|autopay|auto pay|salary|payroll|wages|emolument|stipend|deposit|cash deposit|inward|inward remittance|remittance in|credited|credit interest|interest credit|fd interest|savings interest|dividend|bonus|incentive|rent received|rental income|pension|epf|etf|gratuity|transfer in|ceft inward|slips inward|loan disburse(ment)?)\b/.test(d)) return 'credit';
+        // STRONG debit signals.
+        if (/\b(purchase|pos|point of sale|withdrawal|withdraw|atm|cash advance|cash adv|payment to|paid to|bill payment|utility bill|service fee|annual fee|late fee|finance charge|interest charge|surcharge|installment|instalment|standing order|direct debit|transfer out|loan repayment|emi|insurance premium|premium|stamp duty|debit tax|vat)\b/.test(d)) return 'debit';
+        return null; // no decisive signal
     }
+
+    // → { dir:'credit'|'debit', confident:bool }. confident=false ONLY when nothing
+    //   identifies the row at all — those get flagged for the user's Needs-Review.
+    function resolveDirection(tx) {
+        tx = tx || {};
+        var x = String(tx.direction == null ? '' : tx.direction).toLowerCase().trim();
+        if (x === 'credit' || x === 'cr' || x === 'c') return { dir: 'credit', confident: true };
+        if (x === 'debit'  || x === 'dr' || x === 'd') return { dir: 'debit',  confident: true };
+        if (typeof tx.signedAmount === 'number') return { dir: tx.signedAmount < 0 ? 'debit' : 'credit', confident: true };
+        if (typeof tx.amount === 'number' && tx.amount < 0) return { dir: 'debit', confident: true };
+        if (/^\s*\[credit\]/i.test(String(tx.description || ''))) return { dir: 'credit', confident: true };
+        var inferred = directionFromDescription(tx.description || '');
+        if (inferred) return { dir: inferred, confident: true };
+        // A recognised spend (known merchant category, subscription, fuel, cash adv,
+        // bank charge) is confidently a debit even without a direction flag.
+        var dsc = tx.description || '';
+        if (expenseCategory(dsc) !== 'Other' || subscriptionInfo(dsc).isSubscription ||
+            RE_FUEL.test(norm(dsc)) || RE_CASH_ADV.test(norm(dsc)) || RE_BANK_FEE.test(norm(dsc))) {
+            return { dir: 'debit', confident: true };
+        }
+        return { dir: 'debit', confident: false }; // genuinely unidentifiable → ASK the user
+    }
+
+    function dirOf(tx) { return resolveDirection(tx).dir; }
 
     /* routeTransaction(tx, accountType)
      *   tx = { description, amount, direction:'debit'|'credit' }
@@ -139,16 +172,33 @@
      */
     function routeTransaction(tx, accountType) {
         tx = tx || {};
-        var dir = dirOf(tx);
+        var dres = resolveDirection(tx);
+        var dir = dres.dir;
+        var lowConf = !dres.confident;      // direction was a pure guess → ask the user
         var desc = tx.description || '';
         var isTransfer = RE_TRANSFER.test(norm(desc));
         var out = { tab: 'skip', category: null, incomeType: null, ccType: null, isTransfer: isTransfer, needsReview: false, reason: '' };
 
         if (accountType === 'credit_card') {
             if (dir === 'debit') {
-                out.tab = 'cconetime';
-                out.ccType = ccDebitType(desc);
-                out.reason = 'credit-card charge';
+                // Recurring charges on a card are still subscriptions — detect the
+                // exact service so they file under Subscriptions, not a flat charge.
+                var subCC = subscriptionInfo(desc);
+                if (subCC.isSubscription) {
+                    out.tab = 'subscription';
+                    out.subKind = subCC.kind;
+                    out.subName = subCC.name;
+                    out.subPhone = subCC.phone || null;
+                    out.category = subCC.category;
+                    out.ccType = ccDebitType(desc);
+                    out.reason = 'recurring ' + subCC.kind + ' charge on card → subscription';
+                } else {
+                    out.tab = 'cconetime';
+                    out.ccType = ccDebitType(desc);
+                    out.category = expenseCategory(desc);
+                    out.reason = 'credit-card charge';
+                }
+                if (lowConf) { out.needsReview = true; out.reason += ' (direction inferred — confirm)'; }
             } else { // credit on a credit card = payment/refund toward the card
                 out.tab = 'cc_payment';
                 out.reason = 'payment/credit on the card (reconciliation, not income)';
@@ -157,6 +207,15 @@
         }
 
         if (accountType === 'bank_account') {
+            // Own-account transfers / reversals move money around — they are neither
+            // income nor an expense. Catch them BEFORE the debit/credit split so a
+            // transfer-out isn't mis-filed as a spend.
+            if (isTransfer) {
+                out.tab = 'skip';
+                out.needsReview = true;
+                out.reason = 'transfer / reversal / own-account movement — not income or expense';
+                return out;
+            }
             if (dir === 'debit') {
                 // Mandatory bank charges (ATM fee, CEFT, SLIPS, stamp duty, SMS
                 // alerts, maintenance…) are real expenses the bank levies — they
@@ -181,6 +240,7 @@
                 out.tab = 'expenses';
                 out.category = expenseCategory(desc);
                 if (out.category === 'Other') out.needsReview = true;
+                if (lowConf) out.needsReview = true;
                 out.reason = 'bank debit → expense';
             } else { // credit on a bank account
                 if (isTransfer) {
@@ -191,6 +251,7 @@
                     out.tab = 'income';
                     out.incomeType = incomeKind(desc); // salary/interest/dividend/... or 'other' — NEVER 'investment'
                     if (out.incomeType === 'other') out.needsReview = true;
+                    if (lowConf) out.needsReview = true;
                     out.reason = 'bank credit → income (' + out.incomeType + ')';
                 }
             }
@@ -237,7 +298,9 @@
         expenseCategory: expenseCategory,
         subscriptionInfo: subscriptionInfo,
         incomeKind: incomeKind,
-        ccDebitType: ccDebitType
+        ccDebitType: ccDebitType,
+        resolveDirection: resolveDirection,
+        directionFromDescription: directionFromDescription
     };
     root.WFRoute = API;
     if (typeof module !== 'undefined' && module.exports) module.exports = API;

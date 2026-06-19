@@ -116,12 +116,32 @@
                 r.onload = function () {
                     var image = new Image();
                     image.onload = function () {
-                        var maxDim = 2000, w = image.naturalWidth, h = image.naturalHeight;
+                        var maxDim = 2000, minDim = 1600, w = image.naturalWidth, h = image.naturalHeight;
+                        // scale DOWN if oversized
                         if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
-                        else if (h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+                        else if (h >= w && h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+                        // scale UP if tiny / zoomed-out — bigger glyphs read far better
+                        var longest = Math.max(w, h);
+                        if (longest && longest < minDim) { var up = minDim / longest; w = Math.round(w * up); h = Math.round(h * up); }
                         var c = document.createElement('canvas'); c.width = w; c.height = h;
-                        var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(image, 0, 0, w, h);
-                        var b64 = c.toDataURL('image/jpeg', 0.85).split(',')[1];
+                        var cx = c.getContext('2d');
+                        cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h);
+                        try { cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = 'high'; } catch (_) {}
+                        cx.drawImage(image, 0, 0, w, h);
+                        // Light grayscale + contrast stretch sharpens faint statement text
+                        // for OCR. Guarded by a pixel cap so we never strain mobile memory.
+                        try {
+                            if (w * h <= 4500000) {
+                                var id = cx.getImageData(0, 0, w, h), px = id.data, k = 1.18, b = 128 * (1 - k), i, v;
+                                for (i = 0; i < px.length; i += 4) {
+                                    v = px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114; // luminance
+                                    v = v * k + b; v = v < 0 ? 0 : (v > 255 ? 255 : v);
+                                    px[i] = px[i + 1] = px[i + 2] = v;
+                                }
+                                cx.putImageData(id, 0, 0);
+                            }
+                        } catch (_) { /* tainted/huge canvas — raw draw is still fine */ }
+                        var b64 = c.toDataURL('image/jpeg', 0.9).split(',')[1];
                         c.width = c.height = 0; image.src = '';
                         resolve([b64]);
                     };

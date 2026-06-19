@@ -614,10 +614,16 @@
             'with this exact schema (no markdown, no comments, no prose):\n\n' +
             '{"statement_period":"YYYY-MM","transactions":[' +
             '{"date":"YYYY-MM-DD","description":"merchant or vendor","amount":1500.50,' +
-            '"type":"purchase","merchant_category":"","notes":""}' +
+            '"direction":"debit","type":"purchase","merchant_category":"","notes":""}' +
             ']}\n\n' +
             'Rules:\n' +
             '- Include the FULL ORIGINAL amount printed. NEVER round or truncate.\n' +
+            '- "direction" must be EXACTLY "debit" or "credit" — THIS IS CRITICAL, get it right for every row:\n' +
+            '  • "debit"  = money OUT / a charge: purchases, cash advances, fees, interest, fuel, POS.\n' +
+            '  • "credit" = money IN / reduces what is owed: payments received, "PAYMENT - THANK YOU",\n' +
+            '    refunds, reversals, cashback, rebates, statement credits, salary/deposits (on a bank account).\n' +
+            '  • Look at the column the amount sits in (Debit vs Credit) and any CR/DR marker. When a line\n' +
+            '    says CR, or sits in a credit/payment column, it is "credit". Everything else is "debit".\n' +
             '- "type" must be EXACTLY one of: purchase, cash_advance, service_fee, fuel\n' +
             '  • cash_advance = ATM withdrawals, cash advance entries, "MB"/"DE" cash w/d codes\n' +
             '  • fuel = petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum, ' +
@@ -626,11 +632,12 @@
             '    fuel surcharges, fees that pair with another row\n' +
             '  • purchase = everything else (groceries, restaurants, online, retail)\n' +
             '- "date" in YYYY-MM-DD; if only day+month is printed, use ' + thisYear + ' as the year.\n' +
-            '- Skip the closing balance row, opening balance row, and payment-received rows.\n' +
-            '- If a row is clearly a credit/refund, prefix description with "[CREDIT] " and keep ' +
-            '  amount positive.\n' +
-            '- If you cannot read a column clearly, still include the row with a best-effort guess. ' +
-            '  NEVER omit a transaction.\n\n' +
+            '- Skip ONLY the opening-balance and closing-balance summary rows. Do NOT skip payment rows —\n' +
+            '  include them with direction:"credit" so they reconcile correctly.\n' +
+            '- If a row is clearly a credit/refund, ALSO prefix description with "[CREDIT] ", keep amount positive.\n' +
+            '- Read top-to-bottom and return EVERY line, including faint, wrapped, or partially-cut rows. ' +
+            '  Count the rows; if the printed statement shows N transaction lines, your array MUST have N items. ' +
+            '  If you cannot read a column clearly, still include the row with a best-effort guess. NEVER omit a transaction.\n\n' +
             'CRITICAL: Output ONLY the JSON object. No markdown fences, no explanations.';
     }
 

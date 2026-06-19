@@ -18997,8 +18997,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.21.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.21.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.24.1</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.24.1</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -19364,18 +19364,55 @@ table.amort tbody tr { page-break-inside: avoid; }
         async function testAIConnection() {
             const badge = document.getElementById('aiEngineHealth');
             if (badge) { badge.textContent = '● Testing…'; badge.className = 'badge bg-a'; }
+            // v7.24: language-proof, reachability-based probe. The old check asked
+            // for the word "ONLINE" and string-matched it — which FAILS when the
+            // app's AI language is Sinhala/Tamil (the model answers in that
+            // language), wrongly showing "Degraded". We now hit /api/ai DIRECTLY
+            // (bypassing the chat rewriter + language gate): any valid reply means
+            // the engines are reachable = Online. A non-200 surfaces the REAL
+            // backend reason (e.g. missing API keys) so the user knows what to fix.
             try {
-                const reply = await callAI('Reply with the single word: ONLINE');
-                if (reply && /online/i.test(reply)) {
-                    if (badge) { badge.textContent = '● Online'; badge.className = 'badge bg-g'; }
-                    notify('AI connection healthy ✓', 'success');
+                const isLocalOrGitHub = location.hostname.includes('github.io') || location.hostname === 'localhost';
+                const url = isLocalOrGitHub ? 'https://wealthflow-personal.vercel.app/api/ai' : '/api/ai';
+                const ctrl = new AbortController();
+                const to = setTimeout(() => ctrl.abort(), 30000);
+                let r, raw = '';
+                try {
+                    r = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: 'Health check. Reply with the single English word: ONLINE', maxTokens: 16, temperature: 0 }),
+                        signal: ctrl.signal
+                    });
+                } finally { clearTimeout(to); }
+
+                const ct = (r.headers.get('content-type') || '').toLowerCase();
+                if (r.ok && ct.includes('application/json')) {
+                    const d = await r.json();
+                    if (d && d.reply && String(d.reply).trim()) {
+                        const prov = d.provider ? (' · ' + String(d.provider).split(':')[0]) : '';
+                        if (badge) { badge.textContent = '● Online'; badge.className = 'badge bg-g'; }
+                        notify('AI connection healthy ✓' + prov, 'success');
+                    } else {
+                        if (badge) { badge.textContent = '● Degraded'; badge.className = 'badge bg-a'; }
+                        notify('AI reachable but returned an empty reply. Try again in a moment.', 'warn');
+                    }
+                } else if (!ct.includes('application/json')) {
+                    // Non-JSON (usually a 405/HTML static fallthrough) → the function
+                    // isn't being served at /api/ai on this deployment.
+                    if (badge) { badge.textContent = '● Offline'; badge.className = 'badge bg-r'; }
+                    notify('AI endpoint not deployed (got a non-JSON ' + r.status + ' response). Check that /api/ai is live on Vercel.', 'error');
                 } else {
+                    // JSON error from the backend — show the real reason (incl. which
+                    // provider keys are missing, which the backend reports in details).
+                    let reason = 'HTTP ' + r.status;
+                    try { const e = await r.json(); reason = (e.error || reason) + (e.details ? ' — ' + e.details : ''); } catch (_) {}
                     if (badge) { badge.textContent = '● Degraded'; badge.className = 'badge bg-a'; }
-                    notify('AI responded but result was unexpected.', 'warn');
+                    notify('AI backend: ' + reason + (r.status === 503 ? ' (set the provider API keys in Vercel → Settings → Environment Variables)' : ''), 'error');
                 }
             } catch (e) {
                 if (badge) { badge.textContent = '● Offline'; badge.className = 'badge bg-r'; }
-                notify('AI engines unreachable: ' + e.message, 'error');
+                notify('AI engines unreachable: ' + (e && e.message ? e.message : 'network error'), 'error');
             }
         }
 
@@ -23419,6 +23456,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     t._subKind = routed.subKind || '';
                     t._subName = routed.subName || '';
                     t._subPhone = routed.subPhone || '';
+                    t._review = !!routed.needsReview;     // AI is unsure → ask the user
                     if (routed.ccType && (!t.type || t._dest === 'cconetime')) t.type = routed.ccType;
                 });
             };
@@ -23437,10 +23475,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 ['skip', 'Skip']
             ].map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
             const renderRows = () => txns.map((t, idx) => `
-                <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);">
+                <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);${t._review ? 'background:rgba(245,166,35,.07);box-shadow:inset 3px 0 0 var(--accent,#f5a623);' : ''}">
                     <td style="padding:6px 6px;"><input type="checkbox" class="_ccr_keep" ${t._keep ? 'checked' : ''}></td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${t.date || ''}" style="width:130px;font-size:12px;"></td>
-                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:150px;"></td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — AI wasn\'t sure</div>' : ''}</td>
                     <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select></td>
                     <td style="padding:6px 6px;">
                         <select class="fs _ccr_type" style="font-size:11px;">
