@@ -623,17 +623,28 @@
             'abbreviate or paraphrase it — the full text is what lets the system pick the right category.\n' +
             '- Include the FULL ORIGINAL amount printed. NEVER round or truncate.\n' +
             '- "direction" must be EXACTLY "debit" or "credit" — THIS IS CRITICAL, get it right for every row:\n' +
-            '  • "debit"  = money OUT / a charge: purchases, cash advances, fees, interest, fuel, POS.\n' +
-            '  • "credit" = money IN / reduces what is owed: payments received, "PAYMENT - THANK YOU",\n' +
-            '    refunds, reversals, cashback, rebates, statement credits, salary/deposits (on a bank account).\n' +
-            '  • Look at the column the amount sits in (Debit vs Credit) and any CR/DR marker. When a line\n' +
-            '    says CR, or sits in a credit/payment column, it is "credit". Everything else is "debit".\n' +
+            '  • "debit"  = money OUT / a charge: purchases, cash advances, fees, interest, fuel, POS, withdrawals.\n' +
+            '  • "credit" = money IN / reduces what is owed: deposits, salary, "PAYMENT - THANK YOU",\n' +
+            '    refunds, reversals, cashback, rebates, statement credits, interest earned, money received.\n' +
+            '  • TWO-COLUMN BANK STATEMENTS (savings/current accounts) print SEPARATE "Debits/Withdrawal" and\n' +
+            '    "Credits/Deposit" columns — usually with 0.00 in the unused one. The direction is decided ONLY\n' +
+            '    by WHICH column holds the NON-ZERO amount: an amount in the CREDIT/DEPOSIT column → "credit";\n' +
+            '    an amount in the DEBIT/WITHDRAWAL column → "debit". Put that NON-ZERO figure in "amount".\n' +
+            '  • A money transfer ("CEFT", "CEFTS/6056/<NAME>", "Inward Transfer", "Outward Transfer",\n' +
+            '    "Fund Transfer", "FT") is NOT automatically a debit. "Inward"/received = credit; "Outward"/sent\n' +
+            '    = debit; and if neither word is shown, use the column the amount sits in. NEVER default a\n' +
+            '    transfer to debit.\n' +
+            '  • CROSS-CHECK with the running Balance column when present: if the balance went UP from the row\n' +
+            '    above, this row was a "credit"; if it went DOWN, it was a "debit". Use this to resolve any doubt.\n' +
+            '  • A "CR"/"DR" marker, or sitting in a credit/payment column, also means credit/debit respectively.\n' +
             '- "type" must be EXACTLY one of: purchase, cash_advance, service_fee, fuel\n' +
             '  • cash_advance = ATM withdrawals, cash advance entries, "MB"/"DE" cash w/d codes\n' +
-            '  • fuel = petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum, ' +
-            '    Shell, fuel station names ending in "Filling Station"/"Fuel Station"/"Pvt Ltd")\n' +
-            '  • service_fee = cash-advance fees, interest charges, finance charges, late fees, ' +
-            '    fuel surcharges, fees that pair with another row\n' +
+            '  • fuel = ONLY an actual fuel/petrol/diesel STATION PURCHASE (Ceypetco, IOC, Lanka IOC, '+
+            'Cargills Petroleum, Shell, names with "Filling Station"/"Fuel Station", or a station such '+
+            'as "Dunhinda Brothers"/"Morawaka Fuel Station"). A "FUEL SURCHARGE"/"FUEL LEVY" is NOT fuel.\n' +
+            '  • service_fee = ANY fee/charge/duty: cash-advance fees ("LOCAL CASH ADVANCE FEE (DB)"), '+
+            'interest, finance charges, late fees, FUEL SURCHARGE, stamp duty, service charge. '+
+            'A surcharge or "... FEE" is always service_fee — never type it as fuel or cash_advance.\n' +
             '  • purchase = everything else (groceries, restaurants, online, retail)\n' +
             '- "date" in YYYY-MM-DD; if only day+month is printed, use ' + thisYear + ' as the year.\n' +
             '- Skip ONLY the opening-balance and closing-balance summary rows. Do NOT skip payment rows —\n' +
@@ -915,8 +926,9 @@
         if ($('ot_type')) {
             var hay = (String(result.vendor || '') + ' ' + String(result.category || '') + ' ' + String(result.rawText || '') + ' ' + String(result.description || '')).toLowerCase();
             var type = 'purchase';
-            if (/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/.test(hay)) type = 'cash_advance';
-            else if (/\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel|petrol|diesel)\b/.test(hay)) type = 'fuel';
+            if (/\b(cash[\s\-]*advance[\s\-]*fee|local cash advance fee|service[\s\-]*fee|finance[\s\-]*charge|interest[\s\-]*charge|late[\s\-]*fee|fuel[\s\-]*surcharge|surcharge|stamp duty|annual fee)\b/.test(hay)) type = 'service_fee';
+            else if (/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/.test(hay)) type = 'cash_advance';
+            else if (/\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel\s*station|dunhinda|morawaka fuel|petrol|diesel|fuel)\b/.test(hay)) type = 'fuel';
             $('ot_type').value = type;
             filled = true;
         }

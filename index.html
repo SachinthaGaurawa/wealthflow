@@ -19050,8 +19050,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.25.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.25.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.26.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.26.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -23716,8 +23716,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // own statement lines — we save those lines as-is and NEVER
                         // add a synthetic auto-fee here. Auto-fees remain only for
                         // manual entry where no statement exists. → no duplication.
+                        // A charge on a CC statement is money the user OWES and must
+                        // repay within 50 days — NOT a repayment. It is unpaid until
+                        // the user actually settles it, no matter how old the charge
+                        // is (an old one simply shows as Pending or Overdue). The
+                        // previous `paid: past` wrongly marked EVERY imported charge
+                        // "Paid" because statement dates are always in the past.
                         const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
-                        const _rec = { id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: past, createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: false, createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'cconetime', _rec.id); }
                         ccArr.push(_rec);
                         cc++;

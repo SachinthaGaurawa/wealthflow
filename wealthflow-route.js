@@ -35,7 +35,7 @@
     // ── credit-card debit sub-typing ───────────────────────────────────────────
     var RE_FUEL = /\b(fuel|petrol|diesel|filling station|fuel station|ceypetco|lanka ioc|ioc|gas station|petroleum|dunhinda)\b/;
     var RE_CASH_ADV = /\b(cash advance|cash adv|atm|cash withdrawal|cash withdraw|withdrawal)\b/;
-    var RE_CC_FEE = /\b(annual fee|late fee|finance charge|interest charge|service charge|over limit|overlimit|joining fee|card fee)\b/;
+    var RE_CC_FEE = /\b(annual fee|late fee|finance charge|interest charge|service charge|over ?limit|joining fee|card fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return)\b/;
 
     // ── credit-card credit = a payment toward the card (not income) ─────────────
     var RE_CC_PAYMENT = /\b(payment|paid|thank you|received|settlement|autopay|standing order)\b/;
@@ -128,9 +128,12 @@
 
     function ccDebitType(desc) {
         var d = norm(desc);
-        if (RE_FUEL.test(d)) return 'fuel';
-        if (RE_CASH_ADV.test(d)) return 'cash_advance';
+        // A fee / surcharge / duty WINS over fuel and cash-advance: "FUEL SURCHARGE"
+        // is a fee (not a fuel buy), and "LOCAL CASH ADVANCE FEE" is a fee (not the
+        // advance itself). Order matters — check the fee pattern first.
         if (RE_CC_FEE.test(d)) return 'service_fee';
+        if (RE_CASH_ADV.test(d)) return 'cash_advance';
+        if (RE_FUEL.test(d)) return 'fuel';
         return 'purchase';
     }
 

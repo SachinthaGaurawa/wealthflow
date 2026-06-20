@@ -1,12 +1,13 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.25.0",
+  "latest": "7.26.0",
   "mandatory": [
     "7.16.0",
     "7.16.1"
   ],
   "securitySchedule": "monthly",
   "notes": {
+    "7.26.0": "Bank statements now read with bank-grade accuracy. For text-based PDF statements (NTB, DFCC, HNB) WealthFlow reads every line directly from the PDF and decides income vs expense from the running balance itself — the bank's own ground truth — so deposits, salary and inward CEFT transfers correctly land in Income and never as an Expense. Recognises all Sri Lankan statement date styles (04-Dec-2025, 01/05/2026, etc.). 'FUEL SURCHARGE' is now correctly a service fee (not fuel); only real fuel-station purchases are fuel. Charges imported from a credit-card statement are now logged as UNPAID amounts you still owe under the 50-day rule — they are no longer wrongly marked Paid.",
     "7.25.0": "Bank-statement categorisation trained on real Sri Lankan statements (CEFT inward/outward transfers, POS merchants, cash deposits, expressway tolls, pharmacies, fuel) so far fewer rows land in Skip/Review. New per-card view in CC One-Time Payments. Real-time, accurate AI Engine Status. Statement imports no longer double-add cash-advance/fuel service fees.",
     "7.24.1": {
       "date": "2026-06-19",
