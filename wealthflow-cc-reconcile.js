@@ -80,47 +80,70 @@
         };
     }
 
-    /*  parseCardSms(text) → { type:'debit'|'credit', amount, cardLast4, date|null, merchant|null, availableBalance|null } | null
-     *  Handles the two real Sri Lankan card SMS formats supplied:
+    /*  parseCardSms(text) → { type:'debit'|'credit', amount, cardLast4, date|null, merchant|null, isCashAdvance, availableBalance|null } | null
+     *
+     *  Format-AGNOSTIC: the two Sri Lankan examples below are only samples. This
+     *  recognises a wide range of bank card SMS — many debit/credit verbs, card-mask
+     *  styles (376657*****0276 · ****0276 · ending 0276 · Card No xxxx0276), currencies
+     *  (LKR/Rs/USD/$), and date styles (03-06-2026 · 2026-06-03 · 03/06/26 · 03 Jun 2026 · 03-Jun-2026).
      *    debit : "Transaction Approved on your Card 376657*****0276 for LKR 24000.00 at Cash advance from MB Available Bal LKR 131561.38"
      *    credit: "Thank you for your payment of LKR 20,000.00 made to Card # 376657*****0276 on 03-06-2026."
      */
     function parseCardSms(text) {
         if (!text) return null;
-        var s = String(text);
-        var cardM = s.match(/Card\s*#?\s*(\d{4,6}\*+\d{4})/i);
-        var cardLast4 = cardM ? cardM[1].slice(-4) : null;
+        var s = String(text).replace(/\s+/g, ' ').trim();
+        if (!/card|credit|debit|payment|transaction|spent|withdraw|cash advance|pos\b/i.test(s)) return null;
 
-        // CREDIT — a payment made TO the card
-        var payM = s.match(/payment of\s*(?:LKR|Rs\.?|USD|\$)?\s*([\d,]+\.?\d*)/i);
-        if (payM) {
-            var dM = s.match(/on\s+(\d{1,2}[-/]\d{1,2}[-/]\d{4})/i);
-            return {
-                type: 'credit',
-                amount: _amt(payM[1]),
-                cardLast4: cardLast4,
-                date: dM ? dM[1] : null,
-                merchant: null,
-                availableBalance: null
-            };
+        // ---- card last 4 (many mask styles) ----
+        var cardLast4 = null;
+        var cm = s.match(/\b\d{4,6}[*xX•·]{2,}\s*(\d{4})\b/)                       // 376657*****0276
+            || s.match(/(?:ending|ends|end)\s*(?:in|with)?\s*[:#]?\s*(\d{4})\b/i)  // ending in 0276
+            || s.match(/card\s*(?:no\.?|number|#|:)?\s*[xX*•·\d\s-]*?(\d{4})\b/i)  // Card No xxxx0276 / Card # ...0276
+            || s.match(/[xX*•·]{2,}\s*(\d{4})\b/);                                 // ****0276
+        if (cm) cardLast4 = cm[1];
+
+        // ---- available balance (optional) ----
+        var availM = s.match(/Av(?:ailable|l)\.?\s*Bal(?:ance)?\.?\s*(?:is)?\s*[:.]?\s*(?:LKR|Rs\.?|USD|\$)?\s*([\d,]+\.?\d*)/i);
+        var availableBalance = availM ? _amt(availM[1]) : null;
+
+        // ---- date (keep raw; the caller normalises) ----
+        var dateRaw = null;
+        var dm = s.match(/\b(?:on|dated|date)\s*[:]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\b/i)      // on 03-06-2026 / 03/06/26
+            || s.match(/\b(?:on|dated|date)\s*[:]?\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})\b/i)          // on 2026-06-03
+            || s.match(/\b(?:on|dated|date)\s*[:]?\s*(\d{1,2}[-\s][A-Za-z]{3,9}[-\s]\d{2,4})\b/i)// 03 Jun 2026 / 03-Jun-2026
+            || s.match(/\b(\d{1,2}[-/]\d{1,2}[-/]\d{4})\b/);
+        if (dm) dateRaw = dm[1];
+
+        function amtNear(re) { var m = s.match(re); return m ? _amt(m[1]) : null; }
+        var anyAmt = /(?:LKR|Rs\.?|USD|INR|\$)\s*([\d,]+\.?\d*)/i;
+
+        // ---- direction detection ----
+        var creditRe = /(thank you for your payment|payment\s+of|payment\s+received|received\s+with\s+thanks|amount\s+credited|has\s+been\s+credited|credited\s+(?:to|with)|\bcredited\b|re-?payment|reversal|refund(?:ed)?|cash\s*payment\s*finacle)/i;
+        var debitRe = /(transaction\s+approved|approved\s+on\s+your\s+card|debited|debit\s+of|\bspent\b|\bcharged\b|withdraw(?:n|al)?|cash\s+advance|cash\s+adv|\bpurchase\b|\bpos\b|txn\s+of|spent\s+at|paid\s+at|used\s+(?:at|for))/i;
+        var isCredit = creditRe.test(s);
+        var isDebit = debitRe.test(s);
+        // "payment ... made TO (your) card" → credit even though it says "payment"
+        if (/payment[^.]*\b(?:made\s+)?to\s+(?:your\s+)?card/i.test(s)) { isCredit = true; isDebit = false; }
+        // a "payment ... at <merchant>" is a purchase (debit)
+        if (/payment\s+(?:of\s+[\d.,]+\s+)?at\s+/i.test(s)) { isDebit = true; isCredit = false; }
+
+        // ---- CREDIT (money INTO the card) ----
+        if (isCredit && !isDebit) {
+            var camt = amtNear(/(?:payment\s+of|credited\s*(?:with|by)?|received|refund(?:ed)?\s*(?:of)?|reversal\s*(?:of)?|amount)\s*(?:LKR|Rs\.?|USD|INR|\$)?\s*([\d,]+\.?\d*)/i) || amtNear(anyAmt);
+            return { type: 'credit', amount: camt, cardLast4: cardLast4, date: dateRaw, merchant: null, isCashAdvance: false, availableBalance: availableBalance };
         }
 
-        // DEBIT — a charge / cash advance FROM the card
-        var debM = s.match(/(?:for|of)\s*(?:LKR|Rs\.?|USD|\$)?\s*([\d,]+\.?\d*)\s*at\s+(.+?)(?:\s+Available\s+Bal|\.|$)/i);
-        if (/Transaction Approved/i.test(s) || debM) {
-            var amtM = debM ? debM[1] : (s.match(/(?:for|of)\s*(?:LKR|Rs\.?|USD|\$)?\s*([\d,]+\.?\d*)/i) || [])[1];
-            var availM = s.match(/Available\s+Bal(?:ance)?\s*(?:LKR|Rs\.?)?\s*([\d,]+\.?\d*)/i);
-            return {
-                type: 'debit',
-                amount: _amt(amtM),
-                cardLast4: cardLast4,
-                date: null,                                  // debit SMS carries no txn date → caller uses receipt time
-                merchant: debM ? debM[2].trim() : null,
-                isCashAdvance: /cash advance/i.test(s),
-                availableBalance: availM ? _amt(availM[1]) : null
-            };
-        }
-        return null;
+        // ---- DEBIT (money OUT of the card) — capture amount + merchant ----
+        var debM = s.match(/(?:for|of)\s*(?:LKR|Rs\.?|USD|INR|\$)?\s*([\d,]+\.?\d*)\s*(?:at|to|in|towards)\s+(.+?)(?:\s+Av(?:ailable|l)\.?\s*Bal|\.\s|\.$|\s+Call\b|$)/i);
+        var damt = debM ? _amt(debM[1]) : amtNear(/(?:spent|debited|charged|withdrawn|purchase\s+of|txn\s+of|for|of)\s*(?:LKR|Rs\.?|USD|INR|\$)?\s*([\d,]+\.?\d*)/i);
+        if (damt == null) damt = amtNear(anyAmt);
+        if (damt == null) return null;
+        return {
+            type: 'debit', amount: damt, cardLast4: cardLast4, date: dateRaw,
+            merchant: debM ? debM[2].trim() : null,
+            isCashAdvance: /cash\s+advance|cash\s+adv|\batm\b/i.test(s),
+            availableBalance: availableBalance
+        };
     }
 
     window.WFReconcile = { reconcileCard: reconcileCard, parseCardSms: parseCardSms, _dateMs: _dateMs };

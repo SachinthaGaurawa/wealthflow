@@ -5297,6 +5297,10 @@
                     <!-- Per-card / per-bank filter (shown by renderCCOT only when the
                          user has cards from more than one bank). -->
                     <div id="ccotFilterBar" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:14px;"></div>
+                    <!-- v7.27.0 — Card payments / credits + auto-✅ reconciliation summary.
+                         Populated by renderCCOT(): lists every payment made TO the card and
+                         shows how the running credit pool auto-settles charges oldest-first. -->
+                    <div id="ccotReconcilePanel"></div>
                     <div class="tbl-wrap">
                         <table>
                             <thead>
@@ -6960,7 +6964,7 @@
 
         // ==================== STATE MANAGEMENT ====================
         let appData = {
-            auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [],
+            auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             cribReports: [], cribAnalyses: {},
@@ -7046,6 +7050,28 @@
                     console.log('[Migrate] Bank names migrated: AMEX → American Express (AMEX)');
                 }
             } catch (e) { console.warn('[Migrate] bank name migration failed:', e && e.message); }
+        }
+
+        // v7.27.0 — one-time correction for the old `paid:past` CC-statement import bug.
+        // That bug marked EVERY imported charge "Paid" (statement dates are always in
+        // the past). A real charge is unpaid until settled. We safely un-pay ONLY
+        // statement-imported charges that were never manually settled (manual settle now
+        // records paidAt + paidManually) and aren't auto-matched to a recorded payment.
+        // Gated by a flag so it runs exactly once and never re-opens a charge later paid.
+        function _migrateCCOTPaidFix() {
+            try {
+                if (localStorage.getItem('wf2_ccot_paidfix_v727')) return;
+                const arr = DB.get('cconetime') || [];
+                let changed = false;
+                arr.forEach(c => {
+                    if (c && c.paid === true && !c.paidManually && !c.paidAt && !c.autoPaid &&
+                        c.feeMeta && c.feeMeta.source === 'statement') {
+                        c.paid = false; changed = true;
+                    }
+                });
+                if (changed) { DB.set('cconetime', arr); if (typeof setDirty === 'function') setDirty(true); console.log('[Migrate] CCOT paid-fix: un-paid wrongly-Paid imported charges'); }
+                localStorage.setItem('wf2_ccot_paidfix_v727', '1');
+            } catch (e) { console.warn('[Migrate] CCOT paid-fix failed:', e && e.message); }
         }
 
         function syncToCloud() {
@@ -12713,6 +12739,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 // Migrate legacy bank names ("AMEX" → "American Express (AMEX)") once per launch
                 try { _migrateBankNames(); } catch (e) { console.error('[LAUNCH] _migrateBankNames error:', e); }
                 try { _migrateIncomeSplit(); } catch (e) { console.error('[LAUNCH] _migrateIncomeSplit error:', e); }
+                // v7.27.0 — one-time fix for the old `paid:past` import bug + initial auto-match
+                try { _migrateCCOTPaidFix(); } catch (e) { console.error('[LAUNCH] _migrateCCOTPaidFix error:', e); }
+                try { if (typeof reconcileCC === 'function') reconcileCC(); } catch (e) { }
                 try { updateCCOTBadge(); } catch (e) { }
                 try { updateChequeBadge(); } catch (e) { }
                 try { triggerProactiveEngagement(); } catch (e) { console.error('[LAUNCH] triggerProactiveEngagement error:', e); }
@@ -17039,12 +17068,12 @@ table.amort tbody tr { page-break-inside: avoid; }
         function markCCOTPaid(id) {
             showConfirm('💳', 'Mark as Paid?', 'Confirm this CC payment has been repaid.', 'btn-success', '✅ Mark Paid', () => {
                 const arr = DB.get('cconetime'); const i = arr.findIndex(x => x.id === id);
-                if (i > -1) { arr[i].paid = true; DB.set('cconetime', arr); renderCCOT(); updateCCOTBadge(); notify('Marked as paid!'); }
+                if (i > -1) { arr[i].paid = true; arr[i].paidManually = true; arr[i].autoPaid = false; arr[i].paidAt = Date.now(); DB.set('cconetime', arr); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Marked as paid!'); }
             });
         }
         function deleteCCOT(id) {
             showConfirm('🗑️', 'Delete?', '', 'btn-danger', '🗑️ Delete', () => {
-                DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== id)); renderCCOT(); updateCCOTBadge(); notify('Deleted', 'info');
+                DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== id)); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Deleted', 'info');
             });
         }
         function dLeft(deadline) {
@@ -17059,8 +17088,185 @@ table.amort tbody tr { page-break-inside: avoid; }
         var _ccotBankFilter = 'all';
         function setCCOTBankFilter(bank) { _ccotBankFilter = bank || 'all'; renderCCOT(); }
         window.setCCOTBankFilter = setCCOTBankFilter;
+
+        // ── v7.27.0 — Credit-card auto-✅ reconciliation ──────────────────────────
+        //  Charges (debits) and payments (credits) on the SAME card are matched by
+        //  WFReconcile.reconcileCard(): credits accumulate and settle charges from the
+        //  OLDEST date first (smaller amount first within a day); a charge is auto-✅
+        //  only when the running credit pool can FULLY cover it, and an uncovered older
+        //  charge blocks newer ones. Manually-paid charges are settled independently and
+        //  are never touched. The result is persisted onto each charge (paid + autoPaid).
+        function _ccKey(r) { return String(r && r.bank || '').toLowerCase().trim() + '|' + String(r && (r.card_last4 || r.last4) || '').trim(); }
+        function reconcileCC() {
+            try {
+                if (!window.WFReconcile || typeof window.WFReconcile.reconcileCard !== 'function') return false;
+                const charges = DB.get('cconetime') || [];
+                const pays = DB.get('ccPayments') || [];
+                const groups = {};
+                charges.forEach(c => { const k = _ccKey(c); (groups[k] = groups[k] || { d: [], c: [] }).d.push(c); });
+                pays.forEach(p => { const k = _ccKey(p); (groups[k] = groups[k] || { d: [], c: [] }).c.push(p); });
+                let changed = false;
+                Object.keys(groups).forEach(k => {
+                    const g = groups[k];
+                    // Manually-settled charges are out of the FIFO pool entirely.
+                    const fifo = g.d.filter(x => !x.paidManually);
+                    const debits = fifo.map(x => ({ id: x.id, amount: (x.combinedTotal != null ? x.combinedTotal : (x.amount || 0) + (x.serviceFee || 0)), date: x.date }));
+                    const credits = g.c.map(p => ({ amount: p.amount, date: p.date }));
+                    const res = window.WFReconcile.reconcileCard(debits, credits);
+                    const settled = new Set(res.settledIds || []);
+                    fifo.forEach(x => {
+                        const want = settled.has(x.id);
+                        if (!!x.paid !== want || !!x.autoPaid !== want) {
+                            x.paid = want; x.autoPaid = want;
+                            if (want) { if (!x.paidAt) x.paidAt = Date.now(); }
+                            else { x.paidAt = undefined; }
+                            changed = true;
+                        }
+                    });
+                });
+                if (changed) DB.set('cconetime', charges);
+                return changed;
+            } catch (e) { try { console.warn('[reconcileCC]', e); } catch (_) {} return false; }
+        }
+        window.reconcileCC = reconcileCC;
+
+        // Record a payment/credit made TO a card. Stored just like a charge so it can
+        // settle outstanding charges automatically (oldest first).
+        function addCCPayment(p) {
+            const arr = DB.get('ccPayments') || [];
+            arr.push({
+                id: uid(), bank: p.bank || '', card_last4: p.card_last4 || p.last4 || '',
+                amount: Math.abs(parseFloat(p.amount) || 0), date: p.date || today(),
+                desc: p.desc || 'Payment', source: p.source || 'manual', createdAt: new Date().toISOString()
+            });
+            DB.set('ccPayments', arr);
+            reconcileCC(); renderCCOT(); updateCCOTBadge();
+        }
+        window.addCCPayment = addCCPayment;
+
+        // v7.27.0 — ingest a single bank card SMS (debit OR credit) using the dual
+        // parser in WFReconcile, store it like any other charge/payment, then auto-✅.
+        //   debit : "Transaction Approved on your Card 376657*****0276 for LKR 24000.00 at Cash advance from MB ..."
+        //   credit: "Thank you for your payment of LKR 20,000.00 made to Card # 376657*****0276 on 03-06-2026."
+        function _smsDateToISO(s) {
+            const m = String(s || '').match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+            return m ? (m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2)) : today();
+        }
+        function wfIngestCardSms(text, opts) {
+            try {
+                if (!window.WFReconcile || typeof window.WFReconcile.parseCardSms !== 'function') return null;
+                const p = window.WFReconcile.parseCardSms(text);
+                if (!p || !p.amount) return null;
+                const bank = (opts && opts.bank) || (p.cardLast4 ? ('Card ••' + p.cardLast4) : 'Card');
+                const date = p.date ? _smsDateToISO(p.date) : ((opts && opts.date) || today());
+                if (p.type === 'credit') {
+                    addCCPayment({ bank, card_last4: p.cardLast4 || '', amount: p.amount, date, desc: 'Payment', source: 'sms' });
+                    return { kind: 'payment', amount: p.amount, bank };
+                }
+                const arr = DB.get('cconetime') || [];
+                const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
+                const ccType = (window.WFRoute && window.WFRoute.ccDebitType) ? window.WFRoute.ccDebitType(p.merchant || '') : (p.isCashAdvance ? 'cash_advance' : 'purchase');
+                arr.push({ id: uid(), desc: p.merchant || 'Card charge', bank, card_last4: p.cardLast4 || '', type: ccType, amount: p.amount, serviceFee: 0, feeMeta: { source: 'sms' }, combinedTotal: p.amount, date, deadline: dl.toISOString().split('T')[0], paid: false, createdAt: new Date().toISOString() });
+                DB.set('cconetime', arr);
+                reconcileCC(); renderCCOT(); updateCCOTBadge();
+                return { kind: 'charge', amount: p.amount, bank, type: ccType };
+            } catch (e) { try { console.warn('[wfIngestCardSms]', e); } catch (_) {} return null; }
+        }
+        window.wfIngestCardSms = wfIngestCardSms;
+
+        function deleteCCPayment(id) {
+            showConfirm('🗑️', 'Delete this payment?', 'Removing a credit may re-open charges it had settled.', 'btn-danger', '🗑️ Delete', () => {
+                DB.set('ccPayments', (DB.get('ccPayments') || []).filter(x => x.id !== id));
+                reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Payment removed', 'info');
+            });
+        }
+        window.deleteCCPayment = deleteCCPayment;
+
+        // Manual "Record a card payment" modal (same overlay pattern as the importer).
+        function openCCPaymentModal() {
+            const banks = [...new Set((DB.get('cconetime') || []).map(x => x.bank).filter(Boolean))];
+            const bankOpts = banks.map(b => `<option value="${String(b).replace(/"/g, '&quot;')}">${b}</option>`).join('');
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.innerHTML = `
+                <div class="md" style="max-width:440px;">
+                    <div class="md-hdr"><div class="md-title">💳 Record a card payment</div><button class="md-x" id="_ccpx"><i data-wfi="x"></i></button></div>
+                    <div class="md-body">
+                        <div class="fg"><label class="fl">Card / Bank</label>
+                            <input list="_ccpay_banks" id="_ccpay_bank" class="fi" placeholder="e.g. NTB AMEX" value="${banks[0] ? String(banks[0]).replace(/"/g, '&quot;') : ''}">
+                            <datalist id="_ccpay_banks">${bankOpts}</datalist></div>
+                        <div class="fg"><label class="fl">Amount paid (LKR) *</label>
+                            <input id="_ccpay_amt" class="fi money-input" inputmode="decimal" placeholder="20,000"></div>
+                        <div class="fg"><label class="fl">Date *</label>
+                            <input id="_ccpay_date" type="date" class="fi" value="${today()}"></div>
+                        <div class="fg"><label class="fl">Note</label>
+                            <input id="_ccpay_desc" class="fi" value="Payment"></div>
+                        <div style="font-size:11px;color:var(--text3);line-height:1.5;">This credit is matched to your charges automatically — oldest first. A charge turns ✅ only when the total paid fully covers it.</div>
+                    </div>
+                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);">
+                        <button class="btn btn-ghost" id="_ccp_cancel" type="button" style="flex:1;">Cancel</button>
+                        <button class="btn btn-success" id="_ccp_save" type="button" style="flex:2;"><i data-wfi="check"></i> Save payment</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => { try { overlay.classList.remove('open'); } catch (_) {} setTimeout(() => overlay.remove(), 180); };
+            overlay.querySelector('#_ccpx').onclick = close;
+            overlay.querySelector('#_ccp_cancel').onclick = close;
+            try { if (typeof window.wfIcons === 'function') window.wfIcons(); else if (window.lucide && lucide.createIcons) lucide.createIcons(); } catch (_) {}
+            overlay.querySelector('#_ccp_save').onclick = () => {
+                const bank = (overlay.querySelector('#_ccpay_bank').value || '').trim();
+                const amount = parseMoney(overlay.querySelector('#_ccpay_amt').value) || 0;
+                const date = overlay.querySelector('#_ccpay_date').value || today();
+                const desc = (overlay.querySelector('#_ccpay_desc').value || 'Payment').trim();
+                if (!amount) { notify('Enter an amount', 'warn'); return; }
+                addCCPayment({ bank, amount, date, desc, source: 'manual' });
+                notify('💚 Payment recorded — charges auto-matched', 'success'); close();
+            };
+        }
+        window.openCCPaymentModal = openCCPaymentModal;
+
+        // Per-card payments + auto-match summary panel (shown above the charges table).
+        function _renderCCReconcilePanel() {
+            const host = $('ccotReconcilePanel');
+            if (!host) return;
+            const charges = DB.get('cconetime') || [];
+            let pays = DB.get('ccPayments') || [];
+            if (_ccotBankFilter !== 'all') pays = pays.filter(p => p.bank === _ccotBankFilter);
+            const scoped = _ccotBankFilter === 'all' ? charges : charges.filter(c => c.bank === _ccotBankFilter);
+            const totalPaid = pays.reduce((s, p) => s + (p.amount || 0), 0);
+            const totalCharged = scoped.reduce((s, c) => s + (c.combinedTotal != null ? c.combinedTotal : (c.amount || 0) + (c.serviceFee || 0)), 0);
+            const settledCount = scoped.filter(c => c.autoPaid).length;
+            const addBtn = `<button class="btn btn-success" style="padding:7px 14px;font-size:12px;" onclick="openCCPaymentModal()"><i data-wfi="plus"></i> Record payment</button>`;
+            if (!pays.length) {
+                host.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:var(--card);border:1px solid var(--border2);border-radius:var(--r2);padding:12px 16px;margin-bottom:14px;">
+                    <div style="font-size:12px;color:var(--text2);line-height:1.5;">💳 <b>No card payments recorded yet.</b> Import a statement (payments auto-detected) or add one — charges then turn ✅ automatically, oldest first.</div>${addBtn}</div>`;
+                return;
+            }
+            const rows = pays.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).map(p => `
+                <tr><td style="font-weight:600;">${p.desc || 'Payment'}</td>
+                    <td><span class="badge bg-b">${p.bank || '—'}</span></td>
+                    <td class="td-a" style="color:var(--green,#16a34a);font-weight:700;">+${fmt(p.amount || 0)}</td>
+                    <td class="td-m">${p.date || ''}</td>
+                    <td><button class="ib d" onclick="deleteCCPayment('${p.id}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('');
+            const surplus = totalPaid - totalCharged;
+            host.innerHTML = `
+                <div style="background:var(--card);border:1px solid var(--border2);border-radius:var(--r2);padding:14px 16px;margin-bottom:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;"><div style="font-weight:800;font-size:14px;">💚 Card payments / credits</div>${addBtn}</div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px;">
+                        <div style="background:var(--bg2);border-radius:10px;padding:8px 12px;"><div style="font-size:10px;color:var(--text3);">Total paid</div><div style="font-family:var(--mono);font-weight:800;color:var(--green,#16a34a);">${fmt(totalPaid)}</div></div>
+                        <div style="background:var(--bg2);border-radius:10px;padding:8px 12px;"><div style="font-size:10px;color:var(--text3);">Total charged</div><div style="font-family:var(--mono);font-weight:800;">${fmt(totalCharged)}</div></div>
+                        <div style="background:var(--bg2);border-radius:10px;padding:8px 12px;"><div style="font-size:10px;color:var(--text3);">Auto-matched ✅</div><div style="font-family:var(--mono);font-weight:800;">${settledCount} charge${settledCount === 1 ? '' : 's'}</div></div>
+                        <div style="background:var(--bg2);border-radius:10px;padding:8px 12px;"><div style="font-size:10px;color:var(--text3);">${surplus >= 0 ? 'Credit surplus' : 'Still owing'}</div><div style="font-family:var(--mono);font-weight:800;color:${surplus >= 0 ? 'var(--green,#16a34a)' : 'var(--red)'};">${fmt(Math.abs(surplus))}</div></div>
+                    </div>
+                    <div class="tbl-wrap"><table style="font-size:12px;"><thead><tr><th>Payment</th><th>Card</th><th style="text-align:right;">Amount</th><th>Date</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+                </div>`;
+        }
+
         function renderCCOT() {
+            reconcileCC();
             let arr = DB.get('cconetime');
+            _renderCCReconcilePanel();
 
             // ── Per-card / per-bank filter ─────────────────────────────────────
             // A user may hold several credit cards from different banks. Group the
@@ -17108,7 +17314,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             tbody.innerHTML = arr.map(item => {
                 const dl = dLeft(item.deadline);
                 let cdCls = 'cd-safe', cdTxt = dl + ' days';
-                if (item.paid) { cdCls = 'cd-done'; cdTxt = '✅ Paid'; }
+                if (item.paid) { cdCls = 'cd-done'; cdTxt = item.autoPaid ? '✅ Auto-matched' : '✅ Paid'; }
                 else if (dl < 0) { cdCls = 'cd-danger'; cdTxt = '⚠️ Overdue ' + Math.abs(dl) + 'd'; }
                 else if (dl <= 10) { cdCls = 'cd-danger'; cdTxt = '🔴 ' + dl + ' days'; }
                 else if (dl <= 20) { cdCls = 'cd-warn'; cdTxt = dl + ' days'; }
@@ -17139,7 +17345,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.date}</td>
             <td class="td-m">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
-            <td>${item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}</td>
+            <td>${item.autoPaid ? '<span class="badge bg-g" title="Auto-matched to a card payment (oldest charge first)">✅ Auto-paid</span>' : item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}</td>
             <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
                 <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit"><i data-wfi="edit"></i></button>
                 <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete"><i data-wfi="trash"></i></button></div></td>
@@ -19050,8 +19256,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.26.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.26.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.27.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.27.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -23336,7 +23542,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             appData = {
                 auth: currentAuth,
-                income: [], loans: [], ccinstall: [], cconetime: [],
+                income: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
                 cheques: [], expenses: [], targets: [], balance: { total: 0, flows: [] },
                 settings: currentSettings
             };
@@ -23517,6 +23723,55 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
         window._aiStatementNotes = _aiStatementNotes;
 
+        // ── v7.27.0 — WealthFlow's OWN AI classification engine ───────────────────
+        // Sends every line to the FULL multi-model CONSENSUS backend (/api/ai →
+        // ALL configured engines vote: Gemini, Groq, DeepSeek, Ollama, Anthropic,
+        // Mistral, xAI, Together, Fireworks, OpenRouter, Cerebras, SambaNova, NVIDIA,
+        // GitHub Models, Cohere). Works for ANY source — a credit-card statement, a
+        // bank-account statement, or a pasted SMS, from ANY bank (not a fixed template).
+        // Applied CONSERVATIVELY by the caller: it only upgrades the generic
+        // "purchase"/"Other" default and never overrides a deterministically certain
+        // fee / fuel / cash-advance type, so accuracy only ever goes up. Fails silently.
+        async function _aiClassifyRows(items) {
+            const out = {};
+            if (!items || !items.length) return out;
+            const sig = (it) => (it.date || '') + '|' + String(it.desc || '').toLowerCase() + '|' + it.amount;
+            const prompt =
+                'You are the classification engine of a personal-finance app. The lines below may come from a CREDIT-CARD statement, a BANK-ACCOUNT statement, OR a pasted bank SMS, from ANY bank and in ANY format — classify by MEANING, never by a fixed template. ' +
+                'For EACH transaction decide two fields:\n' +
+                '1) "type" — EXACTLY one of: "purchase", "cash_advance", "service_fee", "fuel".\n' +
+                '   • cash_advance = ATM cash withdrawal, "cash advance", "cash advance from MB".\n' +
+                '   • service_fee = ANY bank or government charge: stamp duty, debit tax, VAT, government levy, fuel SURCHARGE, cash-advance fee, processing/service/annual/late/over-limit fee, CEFT/CEFTS/SLIPS charge, commission, ledger fee.\n' +
+                '   • fuel = buying fuel AT a filling/petrol/gas station (e.g. Ceypetco, Lanka IOC, Sinopec, a named fuel station). IMPORTANT: a "fuel surcharge" is a FEE → service_fee, NOT fuel.\n' +
+                '   • purchase = any normal goods/services purchase, or a transfer/deposit/salary line (the Type column is only used for card fees & fuel — for everything else just use "purchase").\n' +
+                '2) "category" — a short human expense/income category (Groceries, Dining, Fuel, Utilities, Telecom, Health, Shopping, Travel, Transport, Bank Charges, Government, Entertainment, Salary, Transfer, Other).\n' +
+                'Return ONLY a JSON array, SAME length & order as the input, each element {"i":<index>,"type":"...","category":"..."}. No prose, no markdown.\n\nTransactions:\n' +
+                JSON.stringify(items.map((it, i) => ({ i: i, desc: it.desc, amount: it.amount })));
+            try {
+                const raw = await Promise.race([
+                    callAIRaw(prompt, null, { json: true }),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 16000))
+                ]);
+                let t = String(raw || '').replace(/```json|```/g, '').trim();
+                let arr = null;
+                try { arr = JSON.parse(t); } catch (_) { const m = t.match(/\[[\s\S]*\]/); if (m) { try { arr = JSON.parse(m[0]); } catch (_) {} } }
+                if (Array.isArray(arr)) {
+                    arr.forEach((row) => {
+                        if (!row || row.i == null || !items[row.i]) return;
+                        const it = items[row.i];
+                        const ty = String(row.type || '').toLowerCase().replace(/[^a-z_]/g, '');
+                        const cat = String(row.category || '').trim().slice(0, 24);
+                        out[sig(it)] = {
+                            type: (['purchase', 'cash_advance', 'service_fee', 'fuel'].indexOf(ty) >= 0) ? ty : null,
+                            category: cat || null
+                        };
+                    });
+                }
+            } catch (_) { /* deterministic result stands */ }
+            return out;
+        }
+        window._aiClassifyRows = _aiClassifyRows;
+
         function _showCCReviewModal(parsed, bank) {
             const txns = parsed.transactions.map((t, i) => ({
                 ...t,
@@ -23543,7 +23798,17 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     t._subName = routed.subName || '';
                     t._subPhone = routed.subPhone || '';
                     t._review = !!routed.needsReview;     // AI is unsure → ask the user
-                    if (routed.ccType && (!t.type || t._dest === 'cconetime')) t.type = routed.ccType;
+                    if (_acctType === 'bank_account') {
+                        // For a bank account the "Type" column is only meaningful for
+                        // fees and fuel — everything else is blank (the "Goes to"
+                        // column does the real routing). This stops e.g. a bank
+                        // "Fuel Surcharge" from showing Type=Fuel.
+                        let bt = '';
+                        try { if (window.WFRoute && window.WFRoute.ccDebitType) { const d = window.WFRoute.ccDebitType(t.description || ''); bt = (d === 'service_fee' || d === 'fuel') ? d : ''; } } catch (_) {}
+                        t.type = bt;
+                    } else if (routed.ccType && (!t.type || t._dest === 'cconetime')) {
+                        t.type = routed.ccType;
+                    }
                 });
             };
             _routeAll();
@@ -23567,12 +23832,18 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — AI wasn\'t sure</div>' : ''}</td>
                     <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select></td>
                     <td style="padding:6px 6px;">
-                        <select class="fs _ccr_type" style="font-size:11px;">
-                            <option value="purchase" ${t.type==='purchase'?'selected':''}>Purchase</option>
-                            <option value="cash_advance" ${t.type==='cash_advance'?'selected':''}>Cash Advance</option>
-                            <option value="service_fee" ${t.type==='service_fee'?'selected':''}>Service Fee</option>
-                            <option value="fuel" ${t.type==='fuel'?'selected':''}>⛽ Fuel</option>
-                        </select>
+                        ${_acctType === 'bank_account'
+                            ? `<select class="fs _ccr_type" style="font-size:11px;">
+                            <option value="" ${!t.type ? 'selected' : ''}>—</option>
+                            <option value="service_fee" ${t.type === 'service_fee' ? 'selected' : ''}>Service Fee</option>
+                            <option value="fuel" ${t.type === 'fuel' ? 'selected' : ''}>⛽ Fuel</option>
+                        </select>`
+                            : `<select class="fs _ccr_type" style="font-size:11px;">
+                            <option value="purchase" ${t.type === 'purchase' ? 'selected' : ''}>Purchase</option>
+                            <option value="cash_advance" ${t.type === 'cash_advance' ? 'selected' : ''}>Cash Advance</option>
+                            <option value="service_fee" ${t.type === 'service_fee' ? 'selected' : ''}>Service Fee</option>
+                            <option value="fuel" ${t.type === 'fuel' ? 'selected' : ''}>⛽ Fuel</option>
+                        </select>`}
                     </td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_amount money-input" value="${fmtN(t.amount||0)}" inputmode="decimal" style="width:110px;font-size:12px;text-align:right;font-family:var(--mono);"></td>
                 </tr>
@@ -23633,6 +23904,35 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             if ($ovl('#_ccr_typeCC')) $ovl('#_ccr_typeCC').onclick = () => _setAcctType('credit_card');
             if ($ovl('#_ccr_typeBank')) $ovl('#_ccr_typeBank').onclick = () => _setAcctType('bank_account');
 
+            // 🤖 v7.27.0 — WealthFlow's own AI refines each row's Type/Category in the
+            // background (multi-model consensus) AFTER the table is shown, so the user
+            // never waits. It only upgrades the generic "purchase"/"Other" guess, never
+            // overrides a deterministically-certain fee/fuel/cash-advance type, and
+            // leaves any cell the user already changed untouched.
+            (async () => {
+                try {
+                    const items = txns.filter(t => t.description && (parseFloat(t.amount) || 0)).map(t => ({ date: t.date, desc: t.description, amount: t.amount }));
+                    if (!items.length || typeof _aiClassifyRows !== 'function') return;
+                    const map = await _aiClassifyRows(items);
+                    if (!map) return;
+                    let touched = 0;
+                    txns.forEach((t, idx) => {
+                        const k = (t.date || '') + '|' + String(t.description || '').toLowerCase() + '|' + t.amount;
+                        const ai = map[k];
+                        if (!ai) return;
+                        if (ai.category && (!t._cat || t._cat === 'Other')) t._cat = ai.category;
+                        const prior = t.type;
+                        const better = ai.type && prior === 'purchase' && ai.type !== 'purchase' &&
+                            (_acctType !== 'bank_account' || ai.type === 'service_fee' || ai.type === 'fuel');
+                        if (!better) return;
+                        const tr = overlay.querySelector('#_ccr_body tr[data-idx="' + idx + '"]');
+                        const sel = tr && tr.querySelector('._ccr_type');
+                        if (sel && sel.value === prior) { t.type = ai.type; try { sel.value = ai.type; } catch (_) {} touched++; }
+                    });
+                    if (touched) { try { notify('🤖 AI refined ' + touched + ' transaction type' + (touched === 1 ? '' : 's') + ' for accuracy', 'info'); } catch (_) {} }
+                } catch (_) {}
+            })();
+
             // 🤖 Let AI auto-sort — hand the ticked rows to the background queue
             const aiBtn = $ovl('#_ccr_ai');
             if (aiBtn) aiBtn.onclick = () => {
@@ -23662,9 +23962,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // Route every ticked row to the destination chosen in its "Goes to" cell.
                 const rows = overlay.querySelectorAll('#_ccr_body tr');
                 const ccArr = DB.get('cconetime');
+                const ccPayArr = DB.get('ccPayments') || [];
                 const expArr = DB.get('expenses');
                 const incRecvArr = DB.get('incomeRecv');
-                let cc = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0;
+                let cc = 0, ccPay = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0;
                 // A statement row dated in the past is already settled → auto-tick it.
                 const _isPast = (d) => { try { const dt = new Date(d + 'T23:59:59'); return dt < new Date(); } catch (_) { return false; } };
                 const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -23758,14 +24059,26 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             }
                             catch (e) { console.warn('[WFSubs] apply failed:', e); skipped++; }
                         } else { skipped++; }
+                    } else if (dest === 'cc_payment') {
+                        // A credit / payment made TO the card (e.g. "CASH PAYMENT FINACLE",
+                        // "PAYMENT - THANK YOU"). Stored like a charge so it auto-settles
+                        // outstanding charges, oldest first. NOT a ledger income/expense.
+                        if (_dupIn(ccPayArr, date, amount, desc, 'amount')) { dup++; return; }
+                        const _pay = { id: uid(), bank, card_last4: (parsed && (parsed.card_last4 || parsed.last4)) || '', amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
+                        if (_batch) { WFBatch.tag(_batch, _pay); WFBatch.record(_batch, 'ccPayments', _pay.id); }
+                        ccPayArr.push(_pay);
+                        ccPay++;
                     } else {
-                        skipped++; // cc_payment / skip — not saved as a ledger entry
+                        skipped++; // skip — not saved as a ledger entry
                     }
                 });
                 if (cc) DB.set('cconetime', ccArr);
+                if (ccPay) DB.set('ccPayments', ccPayArr);
                 if (exp) DB.set('expenses', expArr);
                 if (inc) DB.set('incomeRecv', incRecvArr);
                 if (_batch) { try { WFBatch.commit(_batch); } catch (_) {} }
+                // Auto-✅ match the new payments against outstanding charges (oldest first).
+                try { if (cc || ccPay) reconcileCC(); } catch (_) {}
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
                 try { if (exp && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
                 try { if (inc && typeof renderIncRecv === 'function') renderIncRecv(); } catch (_) {}
@@ -23775,6 +24088,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 try { closeModal('mdCCOT'); } catch (_) {}
                 const parts = [];
                 if (cc) parts.push(cc + ' CC One-Time');
+                if (ccPay) parts.push(ccPay + ' Card Payment' + (ccPay > 1 ? 's' : ''));
                 if (exp) parts.push(exp + ' Expense' + (exp > 1 ? 's' : ''));
                 if (inc) parts.push(inc + ' Income');
                 if (sub) parts.push(sub + ' Subscription' + (sub > 1 ? 's' : '') + (subCreated ? (' · ' + subCreated + ' new') : ''));
