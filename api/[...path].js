@@ -30,6 +30,7 @@ const HANDLERS = {
     'ai': () => import('../ai.js'),
     'approve-release': () => import('../approve-release.js'),
     'autonomous-brain': () => import('../autonomous-brain.js'),
+    'classify-charge': () => import('../classify-charge.js'),
     'edenai': () => import('../edenai.js'),
     'feedback': () => import('../feedback.js'),
     'feedback-triage': () => import('../feedback-triage.js'),
