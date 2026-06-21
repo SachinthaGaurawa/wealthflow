@@ -2,126 +2,6 @@
 <html lang="en" data-theme="dark">
 
 <head>
-    <!-- ════════════════════════════════════════════════════════════════════
-         v7.16.0 — INLINE BOOT GUARD (must be the FIRST script; no dependencies)
-         True crash recovery for a black-screen / bad-bundle. Unlike the old
-         self-heal (which rolled back DATA and waited for 3 JS error events),
-         this uses an INDEPENDENT timer + an explicit success heartbeat, and on
-         repeated failure it PURGES THE BROKEN CODE CACHE + unregisters the
-         service worker so a reload fetches fresh, working files. It NEVER
-         touches the user's financial data (wf2_*, IndexedDB).
-         Escalation: 1=reload · 2=skipWaiting+reload · 3=purge caches+SW+reload
-         · 4=inline Safe-Mode screen. Fires wf_boot_success when the app or the
-         login screen actually renders (wired to __wfBootCompleted()).
-         ════════════════════════════════════════════════════════════════════ -->
-    <script>
-    (function () {
-        'use strict';
-        var TIMEOUT_MS = 11000;  // longer than the 8s splash failsafe, so a slow
-                                 // (healthy) boot is rescued gently first; the
-                                 // guard only escalates if even that didn't render
-        var KEY = 'wf_boot_fails';
-        var booted = false, timer = null;
-
-        function getFails() { try { return parseInt(localStorage.getItem(KEY) || '0', 10) || 0; } catch (_) { return 0; } }
-        function setFails(n) { try { localStorage.setItem(KEY, String(n)); } catch (_) {} }
-
-        // increment the failure counter at the very start of every boot
-        var fails = getFails() + 1;
-        setFails(fails);
-
-        function markSuccess() {
-            if (booted) return;
-            booted = true;
-            setFails(0);
-            if (timer) { clearTimeout(timer); timer = null; }
-            try { if (window.__wfBootCompleted) window.__wfBootCompleted(); } catch (_) {}
-        }
-        // the app dispatches this when the dashboard/login actually renders
-        window.addEventListener('wf_boot_success', markSuccess);
-        // also expose a direct hook (so existing code can call it too)
-        window.__wfBootGuardSuccess = markSuccess;
-
-        function purgeCodeAndSW(cb) {
-            var done = 0, need = 2;
-            function step() { done++; if (done >= need && cb) cb(); }
-            // delete only wealthflow-* caches (CODE), never IndexedDB / wf2_*
-            try {
-                if (window.caches && caches.keys) {
-                    caches.keys().then(function (keys) {
-                        var dels = keys.filter(function (k) { return k.indexOf('wealthflow-') === 0; }).map(function (k) { return caches.delete(k); });
-                        Promise.all(dels).then(step, step);
-                    }, step);
-                } else step();
-            } catch (_) { step(); }
-            // unregister all service workers
-            try {
-                if ('serviceWorker' in navigator) {
-                    navigator.serviceWorker.getRegistrations().then(function (regs) {
-                        Promise.all(regs.map(function (r) { return r.unregister(); })).then(step, step);
-                    }, step);
-                } else step();
-            } catch (_) { step(); }
-        }
-
-        function hardReload() { try { location.reload(); } catch (_) { try { location.href = location.href; } catch (__) {} } }
-
-        function safeMode() {
-            try {
-                var ov = document.createElement('div');
-                ov.id = 'wfSafeMode';
-                ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#0a0e1a;color:#e6e7eb;display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;';
-                ov.innerHTML =
-                    '<div style="max-width:420px;text-align:center;">' +
-                        '<div style="font-size:20px;font-weight:800;margin-bottom:10px;">WealthFlow needs to recover</div>' +
-                        '<div style="font-size:14px;line-height:1.6;color:#8b95a8;margin-bottom:22px;">The app didn\'t start correctly after an update. Your financial data is safe in the cloud. Choose an option below to restore it.</div>' +
-                        '<button id="wfSmRestore" style="width:100%;padding:14px;border:none;border-radius:12px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-size:15px;font-weight:800;margin-bottom:12px;cursor:pointer;">Restore working version</button>' +
-                        '<button id="wfSmReset" style="width:100%;padding:14px;border:1px solid #1f2638;border-radius:12px;background:transparent;color:#c7cdd9;font-size:14px;font-weight:700;cursor:pointer;">Reset app (data stays safe in the cloud)</button>' +
-                        '<div style="font-size:11px;color:#5b6478;margin-top:18px;">Your transactions are never deleted by this screen.</div>' +
-                    '</div>';
-                (document.body || document.documentElement).appendChild(ov);
-                document.getElementById('wfSmRestore').onclick = function () { setFails(0); purgeCodeAndSW(function () { setTimeout(hardReload, 200); }); };
-                document.getElementById('wfSmReset').onclick = function () { setFails(0); purgeCodeAndSW(function () { setTimeout(hardReload, 200); }); };
-            } catch (_) { setFails(0); purgeCodeAndSW(hardReload); }
-        }
-
-        function recover() {
-            if (booted) return;
-            try {
-                if (fails <= 1) {
-                    // 1st: transient hiccup — just reload
-                    hardReload();
-                } else if (fails === 2) {
-                    // 2nd: ask a waiting SW to take over, then reload
-                    try {
-                        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-                            navigator.serviceWorker.getRegistrations().then(function (regs) {
-                                regs.forEach(function (r) { if (r.waiting) { try { r.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {} } });
-                                setTimeout(hardReload, 600);
-                            }, function () { hardReload(); });
-                        } else hardReload();
-                    } catch (_) { hardReload(); }
-                } else if (fails === 3) {
-                    // 3rd: the bundle is bad — purge code caches + SW, fetch fresh
-                    purgeCodeAndSW(function () { setTimeout(function () { try { location.reload(true); } catch (_) { hardReload(); } }, 300); });
-                } else {
-                    // 4th+: stop reloading; show Safe Mode so the user is never trapped
-                    safeMode();
-                }
-            } catch (_) { try { safeMode(); } catch (__) {} }
-        }
-
-        // independent watchdog — does NOT depend on the app's error events
-        timer = setTimeout(recover, TIMEOUT_MS);
-
-        // if the very first scripts throw synchronously during initial execution,
-        // a black screen can occur without 'wf_boot_success'; the timer covers it.
-        // We also listen for a hard early error as a fast path on repeat failures.
-        window.addEventListener('error', function () {
-            if (!booted && fails >= 3) { if (timer) clearTimeout(timer); recover(); }
-        });
-    })();
-    </script>
     <meta charset="UTF-8">
     <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
          "address-bar collapses when user pinches" behaviour that was
@@ -183,80 +63,17 @@
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
     <script src="wealthflow-ml.js" defer></script>
-    <!-- v7.16.0 — The old wealthflow-self-heal.js was REMOVED. It rolled back
-         DATA and waited for 3 JS error events, so it never fired during a real
-         black screen and could loop on the same broken cached bundle. It is
-         replaced by the INLINE BOOT GUARD at the very top of <head>, which
-         purges the broken CODE cache + service worker and never touches data. -->
-    <!-- v7.11.0 — Client-side encryption layer (AES-256-GCM, PBKDF2). MUST
-         load FIRST among the intelligence modules: the learning memory, the
-         background queue and the review queue all persist through wfCrypto so
-         their data is ciphertext at rest and in the cloud sync snapshot. -->
-    <script src="wealthflow-crypto.js" defer></script>
-    <!-- v7.6.1 / v7.8.0 — Autonomous Brain client: FIFO reconciliation,
-         predictive wealth refresh, FX conversion. Provides window.wfApplyBrainResult
-         used by the allocator + SMS-paste + background queue. -->
+    <!-- v7.6.1 / v7.8.0 — Autonomous Brain client: card registry, FIFO
+         reconciliation, predictive wealth refresh. (SMS removed in v7.8.0.)
+         Adds window.wfApplyBrainResult, wfFifoReconcile, wfRefreshPredictions,
+         wfFxConvert, wfCardRegistry. -->
     <script src="wealthflow-autonomous.js" defer></script>
-    <!-- v7.10.0 — Time-bucketed allocator. MUST load AFTER autonomous.js.
-         Adds window.wfAllocate, window.wfFindDuplicate, window.wfTimeBucket
-         so every transaction lands in its OWN month/year (not today's).
-         Also migrates existing records to back-fill missing month/year stamps. -->
-    <script src="wealthflow-allocator.js" defer></script>
-    <!-- v7.11.0 — Self-learning merchant memory. Remembers which category a
-         shop/restaurant/service belongs to after you confirm it once, so the
-         same merchant is classified instantly & correctly next time.
-         Adds window.wfMemory. Persists encrypted via wfCrypto. -->
-    <script src="wealthflow-ai-memory.js" defer></script>
-    <!-- v7.11.1 — Shared high-accuracy category intelligence. 600+ Sri-Lanka-aware
-         keywords + income/investment detection + agentic web-search hook. Every
-         entry point (SMS paste, OCR, statement scan, queue) classifies the same
-         way. Adds window.wfCategoryAI. -->
-    <script src="wealthflow-category-ai.js" defer></script>
-    <!-- v7.11.1 — Card & Account Registry UI. The wfCardRegistry backend stayed;
-         this re-adds the modal to map a last-4 to credit-card vs bank-account so
-         the brain routes service-charge debits correctly. Adds window.wfOpenCardRegistry. -->
-    <script src="wealthflow-card-registry.js" defer></script>
-    <!-- v7.13.0 — Feedback Intelligence: scores & ranks all user feedback by
-         urgency (security/crashes first), clusters duplicates so repeated
-         reports raise priority. The honest, transparent version of "AI considers
-         all feedback". Adds window.wfFeedbackAI. -->
-    <script src="wealthflow-feedback-ai.js" defer></script>
-    <!-- v7.12.0 — In-app Update System. -->
-    <script src="wealthflow-update-system.js" defer></script>
-    <!-- v7.11.0 — Multi-signal duplicate defence. Detects the same transaction
-         arriving twice (statement + SMS, or a re-paste) using amount + day +
-         merchant + card, and never deletes on a weak signal.
-         Adds window.wfDedup. -->
-    <script src="wealthflow-dedup.js" defer></script>
-    <!-- v7.11.0 — Persistent "ask-me-later" review queue. When the AI genuinely
-         can't be sure, the item waits here (encrypted, across sessions) and the
-         user is prompted on their next visit. Resolving teaches wfMemory.
-         Adds window.wfReview. -->
-    <script src="wealthflow-review.js" defer></script>
-    <!-- v7.11.0 — Autonomous background processing engine + live progress bar.
-         Hand it a paste or statement; it files everything on its own while you
-         keep working or close the app, surfacing only genuine unknowns.
-         Adds window.wfQueue. -->
-    <script src="wealthflow-queue.js" defer></script>
-    <!-- v7.11.0 — Screenshot → SMS OCR. Attach one or many screenshots of your
-         bank-SMS thread; reads the text on-device (Tesseract.js, private) with
-         an optional server-vision fallback, then feeds the SAME splitter+brain.
-         Adds window.wfVisionSms. -->
-    <script src="wealthflow-vision-sms.js" defer></script>
-    <!-- v7.10.0 — Manual SMS Paste Classifier. The user copies any bank SMS
-         from their phone, pastes here (one or many at once), and the AI:
-           • parses amount, date, merchant, card last-4
-           • resolves merchant from 250+ entry DB (Cargills, Keells, Dialog,
-             Netflix, AWS, etc.) AND falls back to web-search lookup
-           • routes to the right tab (Expense / Income / Subscription / CC /
-             Loan / Goal) with confidence scoring
-           • allocates to the correct calendar month/year (not today)
-         Zero setup. Works for any bank worldwide. No API keys, no OAuth. -->
-    <script src="wealthflow-sms-paste.js" defer></script>
-    <!-- v7.11.0 — Intelligence settings panel. Self-injects a framed card into
-         Settings surfacing learned-merchant count, the review queue, a
-         duplicate scanner, background-engine status and encryption status. -->
-    <script src="wealthflow-intel-panel.js" defer></script>
+    <!-- v7.6.2 — AutoPilot: zero-setup automation. Auto-discovers cards from
+         transaction history, detects hidden subscriptions, surfaces insights
+         as toasts, and powers the one-tap Setup Wizard. Loads AFTER the
+         autonomous module since it depends on wfCardRegistry, wfRefreshPredictions. -->
+    <script src="wealthflow-autopilot.js" defer></script>
+    <script src="wealthflow-intelligence.js" defer></script>
 
     
 
@@ -334,9 +151,6 @@
                element, others on the actual scroller. */
             overscroll-behavior-y: contain;
             overscroll-behavior-x: contain;
-            /* v7.15.2 — also set 'none' (stronger than contain) so no
-               glow/refresh chaining can occur at the root scroller. */
-            overscroll-behavior: none;
         }
 
         body {
@@ -353,7 +167,6 @@
                metric changed. Single taps + scrolling still work. */
             overscroll-behavior-y: contain;
             overscroll-behavior-x: contain;
-            overscroll-behavior: none;
             touch-action: pan-x pan-y;
         }
 
@@ -4585,13 +4398,7 @@
             var _bootCompleted = false;
 
             // Expose a global flag so the main boot code can cancel the failsafe
-            window.__wfBootCompleted = function () {
-                _bootCompleted = true;
-                // also tell the Boot Guard the app actually rendered (single
-                // source of truth for "boot succeeded")
-                try { if (window.__wfBootGuardSuccess) window.__wfBootGuardSuccess(); } catch (_) {}
-                try { window.dispatchEvent(new Event('wf_boot_success')); } catch (_) {}
-            };
+            window.__wfBootCompleted = function () { _bootCompleted = true; };
 
             function emergencyBoot() {
                 if (_bootCompleted) return; // Normal boot already worked
@@ -4625,15 +4432,6 @@
                     var gv3 = document.getElementById('authGoogle');
                     if (gv3) gv3.style.display = '';
                 }
-
-                // If we got here and the auth screen exists, the HTML/CSS DID
-                // load — this is a slow boot, not a broken bundle. Tell the Boot
-                // Guard so it does NOT purge caches / loop on a slow connection.
-                try {
-                    if (document.getElementById('authScreen') && window.__wfBootGuardSuccess) {
-                        window.__wfBootGuardSuccess();
-                    }
-                } catch (_) {}
             }
 
             // Set the failsafe timer
@@ -4922,7 +4720,7 @@
                 <div class="nav-item ai-nav-pulse" onclick="showPage('ai',this)" id="aiNavItem"><span
                         class="nav-icon">🤖</span> AI Advisor <span class="nb" id="nb-ai"
                         style="display:none;background:linear-gradient(135deg,#d4af37,#f5a623);">✨</span></div>
-                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon">⚙️</span> Settings<span class="nb" id="nb-settings" style="display:none;background:#ef4444;color:#fff;">1</span>
+                <div class="nav-item" onclick="showPage('settings',this)"><span class="nav-icon">⚙️</span> Settings
                 </div>
                 <div class="nav-item" onclick="signOutGoogle()" style="color:var(--red);"><span
                         class="nav-icon">🚪</span> Sign Out</div>
@@ -4931,7 +4729,7 @@
                 <div class="sb-user" id="sbUser"><span class="sb-user-initial">👤</span><span
                         class="sb-user-name">WealthFlow User</span></div>
                 <div class="sb-date" id="sbDate">-</div>
-                <div class="sb-ver" id="wfSbVer">WealthFlow · Infinity Engine</div>
+                <div class="sb-ver">WealthFlow v7.8.0 · Infinity Engine</div>
             </div>
         </aside>
 
@@ -4970,6 +4768,12 @@
 
                 <div class="page active" id="page-dashboard">
                     <div class="g5" id="dashStats" style="margin-bottom:16px;"></div>
+
+                    <!-- v7.6.2 — AutoPilot Tile: live insights, forecast summary,
+                         and one-tap actions, rendered by renderAutoPilotTile()
+                         on every dashboard refresh. -->
+                    <div id="quarantineTile" style="margin-bottom:16px;display:none;"></div>
+                    <div id="autopilotTile" style="margin-bottom:16px;"></div>
 
                     <div class="golden-frame">
                         <div class="gf-header">
@@ -6165,29 +5969,13 @@
                 <div class="fg"><label class="fl">Description *</label><input class="fi" id="e_desc"
                         placeholder="Electricity Bill" oninput="autoDetectCategory(this.value)"></div>
                 <div class="fg"><label class="fl">Category *</label><select class="fs" id="e_cat">
-                        <option>Food &amp; Groceries</option>
-                        <option>Dining</option>
+                        <option>Food & Groceries</option>
                         <option>Transport</option>
-                        <option>Fuel</option>
                         <option>Utilities</option>
-                        <option>Telecom</option>
-                        <option>Healthcare</option>
+                        <option>Medical</option>
                         <option>Education</option>
                         <option>Entertainment</option>
-                        <option>Subscriptions</option>
-                        <option>Shopping</option>
-                        <option>Shopping (Fashion)</option>
-                        <option>Electronics &amp; Tech</option>
-                        <option>Shopping (Home)</option>
-                        <option>Insurance</option>
-                        <option>Rent</option>
-                        <option>Personal Care</option>
-                        <option>Kids &amp; Family</option>
-                        <option>Pets</option>
-                        <option>Travel</option>
-                        <option>Charity</option>
-                        <option>Government</option>
-                        <option>Banking</option>
+                        <option>Clothing</option>
                         <option>Other</option>
                     </select></div>
             </div>
@@ -6644,10 +6432,6 @@
 
         firebase.initializeApp(firebaseConfig);
         db = firebase.firestore();
-        // Expose globally so the self-check, feedback form and other modules can
-        // detect that Firestore initialised (db is otherwise a local variable).
-        try { window.db = db; } catch (_) {}
-        try { window.firebase = firebase; } catch (_) {}
         // Expose for the auto-backup SW-fallback helper, which needs both
         // the projectId and the apiKey to construct the Firestore REST URL.
         try { window.firebaseConfig = firebaseConfig; } catch (_) {}
@@ -7318,46 +7102,6 @@
         document.onmousemove = resetAutoLockTimer;
         document.onkeypress = resetAutoLockTimer;
         document.ontouchstart = resetAutoLockTimer;
-
-        // ── v7.15.2 — KILL pull-to-refresh (the swipe-down-at-top reload) ──────
-        // CSS overscroll-behavior alone doesn't stop it on installed PWAs / some
-        // Android WebViews, so we block the gesture in JS: if the page (or the
-        // nearest scrollable ancestor) is already at the very top and the finger
-        // moves DOWN, we preventDefault so the browser can't trigger a refresh.
-        // Normal scrolling, and scrolling inside any inner scroller, still work.
-        (function installPullToRefreshGuard() {
-            let startY = 0;
-            let startedAtTop = false;
-
-            function nearestScrollable(el) {
-                while (el && el !== document.body && el !== document.documentElement) {
-                    try {
-                        const oy = getComputedStyle(el).overflowY;
-                        if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) return el;
-                    } catch (_) {}
-                    el = el.parentElement;
-                }
-                return null;
-            }
-
-            document.addEventListener('touchstart', (e) => {
-                if (!e.touches || e.touches.length !== 1) { startedAtTop = false; return; }
-                startY = e.touches[0].clientY;
-                const sc = nearestScrollable(e.target);
-                // "at top" = the relevant scroller (inner or the whole page) is at scrollTop 0
-                const pageTop = (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0) <= 0;
-                startedAtTop = sc ? (sc.scrollTop <= 0) : pageTop;
-            }, { passive: true });
-
-            document.addEventListener('touchmove', (e) => {
-                if (!startedAtTop || !e.touches || e.touches.length !== 1) return;
-                const dy = e.touches[0].clientY - startY;
-                // pulling DOWN while already at the top → block the refresh gesture
-                if (dy > 0 && e.cancelable) {
-                    e.preventDefault();
-                }
-            }, { passive: false });
-        })();
 
         setInterval(() => {
             if (!$('app').classList.contains('show')) return;
@@ -8842,16 +8586,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
             if (!msg) return;
 
-            // Make sure the AI chat page is visible — pills can be tapped from
-            // the dashboard/welcome, and if we stayed on another page the reply
-            // would render off-screen and look like "nothing happened".
-            try {
-                const aiPage = document.getElementById('page-ai');
-                if (aiPage && !aiPage.classList.contains('active') && typeof showPage === 'function') {
-                    showPage('ai');
-                }
-            } catch (_) {}
-
             if (input) { input.value = ''; autoResizeAIInput(input); }
 
             // Show user message
@@ -9475,25 +9209,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
         window._sendSuggestion = _sendSuggestion;
         window.initAISuggestionPills = initAISuggestionPills;
-
-        // BULLETPROOF: a single document-level delegated handler catches every
-        // suggestion pill no matter which container rendered it or when. This
-        // guarantees the chips always fire even if a specific container missed
-        // its local binding (the bug the user kept hitting).
-        if (!window._wfPillGlobalBound) {
-            window._wfPillGlobalBound = true;
-            document.addEventListener('click', function (ev) {
-                const btn = ev.target.closest && ev.target.closest('.ai-suggestion-pill, [data-q]');
-                if (!btn) return;
-                const q = btn.getAttribute('data-q');
-                if (!q) return;
-                ev.preventDefault();
-                if (typeof sendAIMessage === 'function') {
-                    try { if (typeof triggerHaptic === 'function') triggerHaptic('light'); } catch (_) {}
-                    sendAIMessage(q);
-                }
-            }, true);  // capture phase — runs even if something stops propagation
-        }
 
         // ==================== TEXT-TO-SPEECH (Read Aloud) ====================
         function _readAIAloud(btn) {
@@ -10617,26 +10332,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     buildDots('setupDots', 6, 0);
                 } else if (pinMode === 'setup_confirm') {
                     if (pin === pinTemp) {
-                        // SAFETY: before creating a brand-new PIN, make one final
-                        // check that the cloud doesn't already have one. If it
-                        // does, this is an existing user who reached setup by
-                        // mistake (sync race) — send them to LOGIN instead of
-                        // overwriting their real PIN.
-                        try {
-                            if (typeof userDocRef !== 'undefined' && userDocRef && currentUser) {
-                                const fresh = await userDocRef.get({ source: 'server' }).catch(() => null);
-                                const cAuth = fresh && fresh.exists ? (fresh.data() || {}).auth : null;
-                                if (cAuth && cAuth.pin) {
-                                    appData.auth = Object.assign({}, appData.auth, cAuth);
-                                    try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch (_) {}
-                                    pinMode = 'login'; pinTemp = '';
-                                    buildDots('loginDots', 6, 0);
-                                    notify('Welcome back — please enter your existing PIN.', 'info');
-                                    showAuthView('authLogin');
-                                    return;
-                                }
-                            }
-                        } catch (_) {}
                         const hash = await sha256(pin + 'wf_salt_sg2026');
                         const auth = DB.getObj('auth');
                         auth.pin = hash;
@@ -10940,28 +10635,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         window._autoFillOTP = otpParam;
                     }
                     console.log('[RECOVERY] Recovery URL detected at boot — will skip PIN entry');
-                }
-            } catch (e) { }
-        })();
-
-        // v7.10.0 — ?action=smsPaste deep link (from PWA shortcut + share-target).
-        // Opens the manual SMS-paste modal once the app finishes booting.
-        (function detectSmsPasteAction() {
-            try {
-                const params = new URLSearchParams(window.location.search);
-                if (params.get('action') === 'smsPaste') {
-                    const tryOpen = () => {
-                        if (typeof window.wfOpenSmsPaste === 'function') {
-                            window.wfOpenSmsPaste();
-                            return true;
-                        }
-                        return false;
-                    };
-                    // Try a few times since the module is defer-loaded
-                    let tries = 0;
-                    const t = setInterval(() => {
-                        if (tryOpen() || ++tries > 25) clearInterval(t);
-                    }, 400);
                 }
             } catch (e) { }
         })();
@@ -11660,28 +11333,18 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                 }, 3000);
 
                                 try {
-                                    // v7.16.1 — CRITICAL: the Firestore get() had
-                                    // NO timeout, so a slow/unreachable server froze
-                                    // the app forever on "Syncing with cloud…" and the
-                                    // user could never get in. We now RACE every fetch
-                                    // against a timeout and always fall through to
-                                    // local data + launch, so boot can never hang.
-                                    const _withTimeout = (p, ms) => Promise.race([
-                                        p,
-                                        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout-' + ms)), ms))
-                                    ]);
                                     // Force server fetch to always get latest data
                                     let doc;
                                     try {
-                                        doc = await _withTimeout(userDocRef.get({ source: 'server' }), 6000);
+                                        doc = await userDocRef.get({ source: 'server' });
                                         console.log('[SYNC] ✅ Got data from SERVER');
                                     } catch (serverErr) {
-                                        console.warn('[SYNC] ⚠️ Server slow/unreachable, trying cache:', serverErr.message);
+                                        console.warn('[SYNC] ⚠️ Server unreachable, using cache:', serverErr.message);
                                         try {
-                                            doc = await _withTimeout(userDocRef.get(), 3000); // cache
+                                            doc = await userDocRef.get(); // Falls back to cache
                                         } catch (cacheErr) {
-                                            console.error('[SYNC] ❌ Cache also failed/slow:', cacheErr.message);
-                                            doc = null; // proceed with local data; never block entry
+                                            console.error('[SYNC] ❌ Cache also failed:', cacheErr.message);
+                                            doc = null;
                                         }
                                     }
 
@@ -11769,17 +11432,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                         // First time — create cloud document
                                         console.log('[SYNC] 📝 Creating new cloud profile');
                                         try {
-                                            // v7.16.1 — timeout-guarded so a slow write
-                                            // can't freeze a new user on the splash.
-                                            await Promise.race([
-                                                userDocRef.set(Object.assign({}, appData, {
-                                                    _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
-                                                    _lastModifiedBy: user.uid
-                                                })),
-                                                new Promise((_, rej) => setTimeout(() => rej(new Error('set-timeout')), 6000))
-                                            ]);
+                                            await userDocRef.set(Object.assign({}, appData, {
+                                                _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
+                                                _lastModifiedBy: user.uid
+                                            }));
                                         } catch (setErr) {
-                                            console.error('[SYNC] Failed/slow to create cloud profile (continuing):', setErr.message || setErr);
+                                            console.error('[SYNC] Failed to create cloud profile:', setErr);
                                         }
                                     } else {
                                         // doc is null — both server and cache failed, use localStorage
@@ -12178,21 +11836,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             return;
                         }
 
-                        // Re-read auth FRESH at decision time (not the snapshot
-                        // captured before splash). The cloud onSnapshot may have
-                        // populated appData.auth a moment after boot; using the
-                        // stale const here was making existing Google users see
-                        // "Create Passcode" by mistake.
-                        let _authNow = DB.getObj('auth') || {};
-                        try {
-                            const localAuthRaw = localStorage.getItem('wf2_auth');
-                            if ((!_authNow || !_authNow.pin) && localAuthRaw) {
-                                const la = JSON.parse(localAuthRaw);
-                                if (la && la.pin) { _authNow = Object.assign({}, la, _authNow); appData.auth = _authNow; }
-                            }
-                        } catch (_) {}
-
-                        if (!_authNow.pin) {
+                        if (!auth.pin) {
                             // v7.5.3 — last-line-of-defence cloud recheck. If we
                             // got here with no PIN but the user IS signed in, do
                             // one direct server fetch to make absolutely sure the
@@ -12203,55 +11847,26 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             // every time they reload on a flaky connection.
                             if (userDocRef && currentUser) {
                                 (async () => {
-                                    let recovered = false;
-                                    // Try SERVER first, then CACHE, then default — finding a
-                                    // PIN anywhere means this is an existing user, so never
-                                    // force setup if one can be found.
-                                    for (const src of ['server', 'cache', 'default']) {
-                                        if (recovered) break;
-                                        try {
-                                            const fresh = await userDocRef.get(src === 'default' ? undefined : { source: src });
-                                            const cAuth = fresh && fresh.exists ? (fresh.data() || {}).auth : null;
-                                            if (cAuth && cAuth.pin) {
-                                                appData.auth = Object.assign({}, appData.auth, cAuth);
-                                                try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch(_) {}
-                                                console.log('[BOOT] 🛡️ Cloud PIN recovered (' + src + ') — sending to login');
-                                                pinMode = 'login';
-                                                showAuthView('authLogin');
-                                                recovered = true;
-                                            }
-                                        } catch (e) {
-                                            console.warn('[BOOT] Cloud auth recheck (' + src + ') failed:', e && e.message);
+                                    try {
+                                        const fresh = await userDocRef.get({ source: 'server' });
+                                        const cAuth = fresh && fresh.exists ? (fresh.data() || {}).auth : null;
+                                        if (cAuth && cAuth.pin) {
+                                            appData.auth = Object.assign({}, appData.auth, cAuth);
+                                            try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch(_) {}
+                                            console.log('[BOOT] 🛡️ Cloud PIN recovered — sending to login');
+                                            pinMode = 'login';
+                                            showAuthView('authLogin');
+                                            return;
                                         }
+                                    } catch (e) {
+                                        console.warn('[BOOT] Cloud auth recheck failed:', e && e.message);
                                     }
-                                    if (!recovered) {
-                                        const late = DB.getObj('auth') || {};
-                                        if (late.pin) { pinMode = 'login'; showAuthView('authLogin'); return; }
-                                        pinMode = 'setup';
-                                        showAuthView('authSetup');
-                                    }
+                                    pinMode = 'setup';
+                                    showAuthView('authSetup');
                                 })();
                             } else {
-                                // No cloud ref yet (Google sign-in still settling).
-                                // Wait briefly for onSnapshot rather than forcing setup
-                                // immediately — the main cause of the false
-                                // "Create Passcode" right after a Google login.
-                                let waited = 0;
-                                const waitForAuth = setInterval(() => {
-                                    const a = DB.getObj('auth') || {};
-                                    let cached = null;
-                                    try { cached = JSON.parse(localStorage.getItem('wf2_auth') || 'null'); } catch (_) {}
-                                    if (a.pin || (cached && cached.pin)) {
-                                        clearInterval(waitForAuth);
-                                        if (cached && cached.pin && !a.pin) appData.auth = Object.assign({}, cached, a);
-                                        pinMode = 'login';
-                                        showAuthView('authLogin');
-                                    } else if (++waited >= 12) {  // ~3s max
-                                        clearInterval(waitForAuth);
-                                        pinMode = 'setup';
-                                        showAuthView('authSetup');
-                                    }
-                                }, 250);
+                                pinMode = 'setup';
+                                showAuthView('authSetup');
                             }
                         } else {
                             pinMode = 'login';
@@ -12287,10 +11902,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 $('authScreen').classList.remove('show');
                 $('app').classList.add('show');
                 try { renderPage('dashboard'); } catch (e) { console.error('[LAUNCH] renderPage error:', e); }
-                // Boot Guard: the dashboard has actually rendered — this is the
-                // strongest "boot succeeded" signal. Cancel the watchdog so it
-                // never purges/reloads a working app.
-                try { if (window.__wfBootCompleted) window.__wfBootCompleted(); } catch (_) {}
                 // Show floating AI button
                 try { const fab = $('fabAIBtn'); if (fab) fab.classList.add('show'); } catch (e) { }
                 // Schedule auto backup
@@ -12470,7 +12081,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         let _audioCtx = null;
         let _audioCtxUnlocked = false;
         let _iosTapticEl = null;
-        let _iosTapticInput = null;
         let _hapticPlatform = null; // 'ios' | 'android' | 'desktop' | null
 
         function _detectHapticPlatform() {
@@ -12498,44 +12108,41 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function _ensureIOSTapticEl() {
             if (_iosTapticEl) return _iosTapticEl;
             try {
-                // WebKit fires the Taptic Engine only when a <label> associated
-                // with an <input type=checkbox switch> is clicked — clicking the
-                // input directly does NOT work. So we keep a reference to the
-                // LABEL and click that. (This was the bug: we used to click the
-                // input.) The input needs a real id the label points at.
-                const id = 'wfTapticSwitch_' + Math.random().toString(36).slice(2, 8);
                 const wrap = document.createElement('label');
-                wrap.setAttribute('for', id);
                 wrap.setAttribute('aria-hidden', 'true');
                 wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
                 const inp = document.createElement('input');
                 inp.type = 'checkbox';
-                inp.id = id;
-                inp.setAttribute('switch', '');                    // iOS 17.4+ specific
+                inp.setAttribute('switch', '');                    // iOS-specific
                 inp.setAttribute('aria-hidden', 'true');
                 inp.tabIndex = -1;
                 wrap.appendChild(inp);
                 document.body.appendChild(wrap);
-                _iosTapticEl = wrap;        // store the LABEL, not the input
-                _iosTapticInput = inp;
+                _iosTapticEl = inp;
             } catch (_) {}
             return _iosTapticEl;
         }
 
         function _iosTaptic(intensity /* 'light'|'medium'|'heavy' */) {
-            const label = _ensureIOSTapticEl();
-            if (!label) return false;
+            const inp = _ensureIOSTapticEl();
+            if (!inp) return false;
             try {
+                // v7.5.6 — honour the user's Haptic Intensity setting on iOS.
+                // Previously this function picked count purely from the event
+                // type so Gentle/Standard/Intense had no effect on iPhone.
+                // Now Intense (1.5×) gets an extra click and Gentle (0.5×)
+                // gets one fewer (minimum 1).
                 const mult = _getHapticMultiplier();   // 0.5 / 1 / 1.5
                 let baseCount = intensity === 'heavy' ? 3 : intensity === 'medium' ? 2 : 1;
                 let count = Math.max(1, Math.round(baseCount * mult));
+                // Cap at 5 so very loud events don't fire a 7-click burst.
                 if (count > 5) count = 5;
+                // Tighter gap on Intense so multi-click bursts feel like
+                // ONE strong tap rather than several weak ones.
                 const gap = mult >= 1.4 ? 22 : mult <= 0.6 ? 55 : 35;
                 let i = 0;
                 const tick = () => {
-                    // Click the LABEL — WebKit only fires the Taptic Engine this
-                    // way (clicking the input directly is a silent no-op).
-                    try { label.click(); } catch (_) {}
+                    try { inp.click(); } catch (_) {}
                     i++;
                     if (i < count) setTimeout(tick, gap);
                 };
@@ -12652,22 +12259,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             return false;
         }
 
-        // Test-button helper — fires a strong haptic from inside the click
-        // gesture (required on iOS) and tells the user honestly what to expect.
-        function _testHaptic() {
-            try { _ensureIOSTapticEl(); } catch (_) {}
-            triggerHaptic('success');
-            const plat = _detectHapticPlatform();
-            if (plat === 'ios') {
-                notify('Tapped! On iPhone, haptics need iOS 17.4+ and feel strongest in the installed app (Add to Home Screen).', 'info');
-            } else if (plat === 'android') {
-                notify('Feel that buzz? ✨', 'info');
-            } else {
-                notify('Haptics are a phone feature — on desktop you\'ll see a subtle visual pulse instead.', 'info');
-            }
-        }
-        window._testHaptic = _testHaptic;
-
         function triggerHaptic(type = 'light') {
             const settings = DB.getObj('settings', { haptics: true });
             if (settings.haptics === false) return;     // explicit OFF only
@@ -12764,6 +12355,442 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             ov.addEventListener('click', e => { if (e.target === ov) close(); });
             return { ov, close };
         }
+
+        function openCardRegistryModal() {
+            const reg = (window.wfCardRegistry && wfCardRegistry.get()) || {};
+            const entries = Object.values(reg).sort((a, b) => (a.last4 || '').localeCompare(b.last4 || ''));
+            const rowsHtml = entries.length ? entries.map(e => `
+                <div style="display:flex;gap:8px;align-items:center;padding:10px;background:var(--bg2);border-radius:8px;margin-bottom:6px;">
+                    <span style="font-family:var(--mono);font-weight:800;color:var(--accent);font-size:14px;">•••${e.last4}</span>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:600;font-size:13px;">${e.name || '(unnamed)'}</div>
+                        <div style="font-size:11px;color:var(--text3);">${e.bank || '?'} · ${e.type || '?'}</div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" onclick="_cardEdit('${e.last4}')">✏️</button>
+                    <button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="_cardDelete('${e.last4}')">🗑️</button>
+                </div>`).join('') : '<div style="padding:14px;color:var(--text3);text-align:center;">No cards mapped yet — add one below.</div>';
+
+            const { close } = _buildOverlay(`
+                <div class="md-title">💳 Card &amp; Account Registry</div>
+                <div style="font-size:12.5px;color:var(--text3);margin-bottom:14px;">
+                    The autonomous brain uses these mappings to know which module each statement transaction should route to.
+                    A debit on a credit card → CC One-Time. A debit on a regular account → Expenses.
+                    A credit on a credit card → triggers FIFO reconciliation.
+                </div>
+                <div id="_cardRegList" style="max-height:260px;overflow-y:auto;margin-bottom:14px;">${rowsHtml}</div>
+                <div style="border-top:1px solid var(--border);padding-top:14px;">
+                    <div style="font-weight:700;margin-bottom:10px;">➕ Add / Update Card</div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <input id="_cr_last4" class="fi" maxlength="4" placeholder="Last 4 digits" inputmode="numeric">
+                        <input id="_cr_name"  class="fi" placeholder='Card nickname (e.g. "Sampath Plat")'>
+                        <select id="_cr_bank" class="fi">
+                            <option value="">-- Bank --</option>
+                            <option value="ComBank">ComBank</option>
+                            <option value="HNB">HNB</option>
+                            <option value="Sampath">Sampath</option>
+                            <option value="NTB">NTB</option>
+                            <option value="Seylan">Seylan</option>
+                            <option value="DFCC">DFCC</option>
+                            <option value="NDB">NDB</option>
+                            <option value="BOC">BOC</option>
+                            <option value="Peoples">People's Bank</option>
+                            <option value="PanAsia">Pan Asia</option>
+                            <option value="Union">Union</option>
+                            <option value="StanChart">StanChart</option>
+                            <option value="AMEX">American Express</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <select id="_cr_type" class="fi">
+                            <option value="">-- Type --</option>
+                            <option value="credit_card">Credit Card</option>
+                            <option value="debit_card">Debit Card</option>
+                            <option value="bank_account">Bank Account</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px;">
+                        <button class="btn btn-primary" style="flex:1;" onclick="_cardSave()">💾 Save Card</button>
+                        <button class="btn btn-ghost" style="flex:1;" onclick="_cardCancel()">Cancel</button>
+                    </div>
+                </div>`, { maxWidth: 560 });
+            window._cardCancel = close;
+            window._cardEdit = (l4) => {
+                const e = wfCardRegistry.get()[l4];
+                if (!e) return;
+                $('_cr_last4').value = e.last4;
+                $('_cr_name').value  = e.name || '';
+                $('_cr_bank').value  = e.bank || '';
+                $('_cr_type').value  = e.type || '';
+            };
+            window._cardDelete = (l4) => {
+                showConfirm('🗑️', 'Remove card?', `•••${l4} will be unmapped.`, 'btn-danger', 'Remove', () => {
+                    wfCardRegistry.delete(l4);
+                    close();
+                    openCardRegistryModal();
+                });
+            };
+            window._cardSave = () => {
+                const last4 = $('_cr_last4').value.trim();
+                const name  = $('_cr_name').value.trim();
+                const bank  = $('_cr_bank').value;
+                const type  = $('_cr_type').value;
+                if (!/^\d{4}$/.test(last4)) { notify('Last 4 must be exactly 4 digits', 'error'); return; }
+                if (!bank || !type) { notify('Bank and type are required', 'error'); return; }
+                wfCardRegistry.upsert(last4, { name, bank, type });
+                close();
+                openCardRegistryModal();
+            };
+        }
+        window.openCardRegistryModal = openCardRegistryModal;
+
+        function openPredictionsModal() {
+            const { close } = _buildOverlay(`
+                <div class="md-title">🔮 Predictive Wealth Engine</div>
+                <div id="_pwBody" style="font-size:13px;line-height:1.6;">Loading…</div>
+                <div style="display:flex;gap:8px;margin-top:14px;">
+                    <button class="btn btn-secondary" onclick="_pwRefresh()">🔄 Refresh Now</button>
+                    <button class="btn btn-ghost" onclick="_pwClose()">Close</button>
+                </div>`, { maxWidth: 620 });
+            window._pwClose = close;
+            const render = (data) => {
+                if (!data || !data.ok) {
+                    $('_pwBody').innerHTML = `<div style="color:var(--text3);">${data && data.error || 'No data available yet. Add some expenses & income, then refresh.'}</div>`;
+                    return;
+                }
+                const f = data.forecast;
+                let html = '';
+                if (f && f.ok) {
+                    const last = f.future[f.future.length - 1];
+                    html += `<div style="background:var(--bg2);padding:12px;border-radius:8px;margin-bottom:12px;">
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">${f.horizon_months}-MONTH OUTLOOK</div>
+                        <div style="font-family:var(--mono);font-weight:800;color:${last.p50 >= 0 ? 'var(--green)' : 'var(--red)'};font-size:18px;">
+                            LKR ${last.p50.toLocaleString()}
+                        </div>
+                        <div style="font-size:11px;color:var(--text3);">Median cumulative net • P5 ${last.p5.toLocaleString()} … P95 ${last.p95.toLocaleString()}</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Probability of going negative within 12 months: <b>${Math.round(f.prob_negative_in_12mo*100)}%</b></div>
+                    </div>`;
+                }
+                if (data.insights && data.insights.length) {
+                    html += '<div style="font-weight:700;margin-bottom:8px;">🧠 Insights</div>';
+                    for (const i of data.insights) {
+                        const color = i.severity === 'high' ? 'rgba(239,68,68,0.4)'
+                                    : i.severity === 'medium' ? 'rgba(245,158,11,0.4)'
+                                    : 'rgba(16,185,129,0.4)';
+                        html += `<div style="padding:10px;background:var(--bg2);border-left:3px solid ${color};border-radius:6px;margin-bottom:8px;">
+                            <div style="font-weight:600;font-size:13px;">${i.icon} ${i.title}</div>
+                            <div style="font-size:12px;color:var(--text2);margin-top:3px;">${i.body}</div>
+                        </div>`;
+                    }
+                }
+                if (data.recurring && data.recurring.length) {
+                    html += `<div style="font-weight:700;margin-top:14px;margin-bottom:8px;">🔁 Detected Recurring Charges</div>`;
+                    for (const r of data.recurring.slice(0, 5)) {
+                        html += `<div style="padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:6px;display:flex;align-items:center;gap:10px;">
+                            <div style="flex:1;"><b>${r.name}</b><br><span style="font-size:11px;color:var(--text3);">${r.category} · every ${r.avg_days_between} days · ${r.occurrences}× seen</span></div>
+                            <div style="font-family:var(--mono);font-weight:700;">LKR ${r.amount.toLocaleString()}</div>
+                        </div>`;
+                    }
+                }
+                if (!html) html = '<div style="color:var(--text3);">No insights yet — add more transaction history.</div>';
+                $('_pwBody').innerHTML = html;
+            };
+            window._pwRefresh = async () => {
+                $('_pwBody').innerHTML = '<div style="color:var(--text3);">🤖 Crunching numbers…</div>';
+                const data = await wfRefreshPredictions(12);
+                render(data);
+            };
+            // Use cached if available
+            const s = DB.getObj('settings') || {};
+            if (s.lastPredictions) render(s.lastPredictions);
+            else _pwRefresh();
+        }
+        window.openPredictionsModal = openPredictionsModal;
+
+        function openFxModal() {
+            const { close } = _buildOverlay(`
+                <div class="md-title">💱 Live FX Converter</div>
+                <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;margin-bottom:12px;">
+                    <div>
+                        <label style="font-size:11px;color:var(--text3);">From</label>
+                        <select id="_fx_from" class="fi"><option>LKR</option><option>USD</option><option>EUR</option><option>GBP</option><option>INR</option><option>JPY</option><option>AUD</option><option>SGD</option></select>
+                    </div>
+                    <div style="font-size:22px;text-align:center;padding-top:18px;">→</div>
+                    <div>
+                        <label style="font-size:11px;color:var(--text3);">To</label>
+                        <select id="_fx_to" class="fi"><option>USD</option><option>LKR</option><option>EUR</option><option>GBP</option><option>INR</option><option>JPY</option><option>AUD</option><option>SGD</option></select>
+                    </div>
+                </div>
+                <input id="_fx_amount" class="fi money-input" placeholder="Amount" inputmode="decimal" style="font-size:18px;font-family:var(--mono);">
+                <div id="_fx_result" style="margin-top:12px;padding:14px;background:var(--bg2);border-radius:8px;text-align:center;">
+                    <div style="color:var(--text3);font-size:12px;">Enter an amount and tap Convert</div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="btn btn-primary" style="flex:1;" onclick="_fxGo()">💱 Convert</button>
+                    <button class="btn btn-ghost" onclick="_fxClose()">Close</button>
+                </div>`, { maxWidth: 460 });
+            window._fxClose = close;
+            window._fxGo = async () => {
+                const amt = parseFloat(($('_fx_amount').value || '0').replace(/,/g, ''));
+                const from = $('_fx_from').value;
+                const to   = $('_fx_to').value;
+                if (!amt) { notify('Enter an amount first', 'warn'); return; }
+                $('_fx_result').innerHTML = '<div style="color:var(--text3);">🌐 Fetching live rate…</div>';
+                const r = await wfFxConvert(amt, from, to);
+                if (r.ok) {
+                    $('_fx_result').innerHTML = `
+                        <div style="font-size:11px;color:var(--text3);margin-bottom:4px;">${from} → ${to}</div>
+                        <div style="font-family:var(--mono);font-weight:800;font-size:22px;color:var(--accent);">${r.amount_out.toLocaleString()} ${to}</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Rate: 1 ${from} = ${r.rate} ${to} · ${r.cached ? 'cached' : 'live'} · ${r.date || ''}</div>`;
+                } else {
+                    $('_fx_result').innerHTML = `<div style="color:var(--red);">${r.error || 'Conversion failed'}</div>`;
+                }
+            };
+            try { initMoneyInputs(); } catch (_) {}
+        }
+        window.openFxModal = openFxModal;
+
+        function forceDrainQueue() {
+            const promises = [];
+            if (window.wfQueue && wfQueue.drain) promises.push(wfQueue.drain());
+            Promise.all(promises).then(results => {
+                let total = 0;
+                for (const r of results) {
+                    if (r && typeof r.drained === 'number') total += r.drained;
+                }
+                if (total > 0) notify(`✅ Synced ${total} new transaction${total > 1 ? 's' : ''}`, 'success');
+                else notify('Already up to date', 'info');
+            });
+        }
+        window.forceDrainQueue = forceDrainQueue;
+
+        // ════════════════════════════════════════════════════════════════════
+        // v7.6.2 — AutoPilot Dashboard Tile
+        // Renders a live insights card on the Dashboard. No setup needed —
+        // if predictions or recurring data exist, the tile shows them.
+        // If they don't, the tile shows a "Run AutoPilot" call-to-action.
+        // ════════════════════════════════════════════════════════════════════
+        function renderAutoPilotTile() {
+            const host = document.getElementById('autopilotTile');
+            if (!host) return;
+            const s = (window.DB && DB.getObj && DB.getObj('settings')) || {};
+            const p = s.lastPredictions || null;
+            const reg = (window.wfCardRegistry && wfCardRegistry.get()) || {};
+            const cardCount = Object.keys(reg).length;
+
+            // Empty-state: user hasn't run AutoPilot yet
+            if (!p && cardCount === 0) {
+                host.innerHTML = `
+                    <div style="background:linear-gradient(135deg, rgba(16,185,129,0.10), rgba(212,175,55,0.05), var(--card)); border:1px solid rgba(16,185,129,0.4); border-radius:14px; padding:18px; position:relative; overflow:hidden;">
+                        <div style="position:absolute;top:-40px;right:-40px;width:160px;height:160px;background:radial-gradient(circle, rgba(16,185,129,0.20), transparent 70%);pointer-events:none;"></div>
+                        <div style="display:flex;align-items:center;gap:14px;position:relative;">
+                            <div style="font-size:38px;">🤖</div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-weight:800;font-size:15px;color:var(--green);">AutoPilot is ready</div>
+                                <div style="font-size:12px;color:var(--text3);margin-top:3px;">One tap and WealthFlow will auto-discover your cards, find hidden subscriptions, and set up your Security Vault for automatic PDF unlocking.</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" style="width:100%;margin-top:14px;font-weight:700;background:linear-gradient(135deg,var(--green),var(--accent));box-shadow:0 4px 16px rgba(16,185,129,0.25);" onclick="openAutoPilotWizard()">
+                            🚀 Launch AutoPilot
+                        </button>
+                    </div>`;
+                return;
+            }
+
+            // Live state: show forecast + insights
+            const f = p && p.forecast;
+            const insights = (p && p.insights) || [];
+            const recurring = (p && p.recurring) || [];
+
+            let forecastHtml = '';
+            if (f && f.ok && f.future && f.future.length) {
+                const last = f.future[f.future.length - 1];
+                const trend = last.p50 >= 0 ? 'green' : 'red';
+                const arrow = last.p50 >= 0 ? '📈' : '📉';
+                forecastHtml = `
+                    <div style="background:var(--bg2);border-radius:10px;padding:12px;margin-bottom:10px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <div style="font-size:22px;">${arrow}</div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">${f.horizon_months}-month wealth outlook</div>
+                                <div style="font-family:var(--mono);font-weight:800;color:var(--${trend});font-size:18px;line-height:1.1;margin-top:2px;">
+                                    LKR ${last.p50.toLocaleString()}
+                                </div>
+                                <div style="font-size:10.5px;color:var(--text3);margin-top:2px;">P5 ${last.p5.toLocaleString()} … P95 ${last.p95.toLocaleString()}</div>
+                            </div>
+                            <button class="btn btn-ghost btn-sm" onclick="openPredictionsModal()" style="font-size:11px;flex-shrink:0;">Details →</button>
+                        </div>
+                    </div>`;
+            }
+
+            // High/medium severity insights only — limit to 2 so tile stays compact
+            const topInsights = insights.filter(i => i.severity === 'high' || i.severity === 'medium').slice(0, 2);
+            let insightsHtml = '';
+            if (topInsights.length) {
+                insightsHtml = topInsights.map(i => `
+                    <div style="background:var(--bg2);border-left:3px solid ${i.severity === 'high' ? 'var(--red)' : 'var(--accent)'};border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px;">
+                        <div style="font-weight:700;">${i.icon} ${i.title}</div>
+                        <div style="color:var(--text3);margin-top:2px;font-size:11.5px;line-height:1.4;">${i.body}</div>
+                    </div>`).join('');
+            }
+
+            // Recurring-detection CTA
+            let recurringCta = '';
+            if (recurring.length > 0) {
+                recurringCta = `
+                    <div style="background:rgba(212,175,55,0.06);border:1px dashed rgba(212,175,55,0.4);border-radius:8px;padding:10px;margin-top:6px;display:flex;align-items:center;gap:10px;">
+                        <div style="font-size:18px;">🔁</div>
+                        <div style="flex:1;min-width:0;font-size:12px;">
+                            <b>${recurring.length} hidden subscription${recurring.length > 1 ? 's' : ''}</b> detected
+                            <div style="color:var(--text3);font-size:11px;margin-top:1px;">Charges that repeat monthly but aren't tracked.</div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" style="flex-shrink:0;" onclick="wfAutoAddRecurring().then(()=>renderAutoPilotTile())">Auto-Add</button>
+                    </div>`;
+            }
+
+            host.innerHTML = `
+                <div style="background:linear-gradient(135deg, rgba(16,185,129,0.06), var(--card)); border:1px solid var(--border2); border-radius:14px; padding:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                        <div style="font-size:20px;">🤖</div>
+                        <div style="flex:1;">
+                            <div style="font-weight:800;font-size:13px;">AutoPilot Live</div>
+                            <div style="font-size:10.5px;color:var(--text3);">${cardCount} card${cardCount === 1 ? '' : 's'} · ${recurring.length} recurring · last refresh ${p && p.refreshed_at ? _timeAgo(p.refreshed_at) : 'pending'}</div>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" onclick="wfRefreshPredictions(12).then(()=>renderAutoPilotTile())" title="Refresh forecast & insights" style="font-size:14px;">🔄</button>
+                    </div>
+                    ${forecastHtml}
+                    ${insightsHtml}
+                    ${recurringCta}
+                </div>`;
+        }
+        window.renderAutoPilotTile = renderAutoPilotTile;
+
+        function _timeAgo(ts) {
+            if (!ts) return 'never';
+            const d = Date.now() - ts;
+            if (d < 60000) return 'just now';
+            if (d < 3600000) return Math.round(d / 60000) + 'm ago';
+            if (d < 86400000) return Math.round(d / 3600000) + 'h ago';
+            return Math.round(d / 86400000) + 'd ago';
+        }
+        window._timeAgo = _timeAgo;
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // v7.6.2 — AutoPilot Wizard  (v7.8.0: SMS removed)
+        // Single-screen guided setup. Runs auto-discovery FIRST, then shows
+        // results + Vault setup + statement-import shortcut. The user never
+        // types, only confirms.
+        // ════════════════════════════════════════════════════════════════════
+        async function openAutoPilotWizard() {
+            const { ov, close } = _buildOverlay(`
+                <div class="md-title" style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:24px;">🚀</span>
+                    <span>AutoPilot Setup</span>
+                </div>
+                <div id="_apBody">
+                    <div style="text-align:center;padding:30px 0;">
+                        <div style="font-size:40px;margin-bottom:10px;">⚙️</div>
+                        <div style="font-weight:700;font-size:14px;">Running autonomous setup…</div>
+                        <div style="font-size:11px;color:var(--text3);margin-top:6px;">Scanning your transaction history</div>
+                    </div>
+                </div>`, { maxWidth: 580 });
+            window._apClose = close;
+
+            // ── Phase 1: Auto-discover cards from history ──
+            await new Promise(r => setTimeout(r, 400));
+            const disco = (window.wfAutoDiscoverCards && wfAutoDiscoverCards()) || { discovered: 0, total: 0 };
+
+            // ── Phase 2: Run predictions for hidden subs detection ──
+            $('_apBody').innerHTML = `
+                <div style="text-align:center;padding:30px 0;">
+                    <div style="font-size:40px;margin-bottom:10px;">🔮</div>
+                    <div style="font-weight:700;font-size:14px;">Analysing spending patterns…</div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:6px;">Detecting hidden subscriptions &amp; anomalies</div>
+                </div>`;
+            await new Promise(r => setTimeout(r, 400));
+            let predictions = { recurring: [], insights: [] };
+            try {
+                predictions = (window.wfRefreshPredictions && await wfRefreshPredictions(12)) || predictions;
+            } catch (_) {}
+            const recurringCount = (predictions.recurring || []).length;
+
+            // ── Phase 3: Detect currency ──
+            const primaryCur = (window.wfPrimaryCurrency && wfPrimaryCurrency()) || 'LKR';
+
+            // ── Phase 4: Render results ──
+            const cards = (window.wfCardRegistry && wfCardRegistry.get()) || {};
+            const cardList = Object.values(cards);
+            const totalCards = cardList.length;
+
+            const vaultReady = (window.wfVault && window.wfVault.exists && window.wfVault.exists());
+
+            $('_apBody').innerHTML = `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+                    <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:10px;padding:14px;text-align:center;">
+                        <div style="font-size:24px;">💳</div>
+                        <div style="font-size:22px;font-weight:800;color:var(--green);margin:4px 0;">${totalCards}</div>
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">cards mapped</div>
+                        ${disco.discovered > 0 ? `<div style="font-size:10px;color:var(--green);margin-top:4px;">+${disco.discovered} auto-discovered</div>` : ''}
+                    </div>
+                    <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.3);border-radius:10px;padding:14px;text-align:center;">
+                        <div style="font-size:24px;">🔁</div>
+                        <div style="font-size:22px;font-weight:800;color:var(--accent);margin:4px 0;">${recurringCount}</div>
+                        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;">recurring found</div>
+                    </div>
+                </div>
+
+                ${recurringCount > 0 ? `
+                    <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                        <div style="font-weight:700;font-size:13px;margin-bottom:8px;">🔁 Hidden subscriptions detected</div>
+                        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">These charges repeat monthly but aren't in your Subscriptions tab yet.</div>
+                        ${(predictions.recurring || []).slice(0, 4).map(r => `
+                            <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12.5px;">
+                                <span>•</span>
+                                <span style="flex:1;">${r.name}</span>
+                                <span style="font-family:var(--mono);font-weight:700;">${primaryCur} ${Math.round(r.amount).toLocaleString()}</span>
+                            </div>`).join('')}
+                        <button class="btn btn-primary btn-sm" style="width:100%;margin-top:10px;" onclick="wfAutoAddRecurring().then(()=>_apRefresh())">
+                            ✨ Auto-Add All as Subscriptions
+                        </button>
+                    </div>
+                ` : ''}
+
+                <div style="background:linear-gradient(145deg, rgba(99,102,241,0.08), var(--bg2));border:1px solid rgba(99,102,241,0.35);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span style="font-size:22px;">🔐</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">Auto-unlock bank PDFs</div>
+                            <div style="font-size:11px;color:var(--text3);">${vaultReady ? '✅ Vault is set — locked statements open automatically.' : 'Save your NIC / DOB once and locked statements open automatically.'}</div>
+                        </div>
+                    </div>
+                    <button class="btn ${vaultReady ? 'btn-ghost' : 'btn-primary'} btn-sm" style="width:100%;" onclick="_apClose();wfVault.openModal()">
+                        ${vaultReady ? '⚙️ Manage Security Vault' : '🔐 Set Up Security Vault'}
+                    </button>
+                </div>
+
+                <div style="background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span style="font-size:22px;">📄</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:700;font-size:13.5px;">Import a statement now</div>
+                            <div style="font-size:11px;color:var(--text3);">Upload a PDF or photo of a bank/card statement — the AI reads, categorises, and de-duplicates every line.</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm" style="width:100%;" onclick="_apClose();showPage('cconetime');">
+                        📄 Go to Statement Import
+                    </button>
+                </div>
+
+                <div style="background:rgba(16,185,129,0.05);border-left:3px solid var(--green);border-radius:6px;padding:10px 12px;font-size:12px;line-height:1.6;margin-bottom:14px;">
+                    <b style="color:var(--green);">✅ AutoPilot is active.</b> Your cards are mapped, recurring charges detected, and the Predictive Engine + Needs-Review zone run automatically in the background. Just import statements and WealthFlow does the rest.
+                </div>
+
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" style="flex:1;" onclick="_apClose()">✓ Done</button>
+                    <button class="btn btn-ghost btn-sm" onclick="openCardRegistryModal();_apClose();">Review Cards</button>
+                </div>`;
+            window._apRefresh = () => openAutoPilotWizard();
+        }
+        window.openAutoPilotWizard = openAutoPilotWizard;
 
         // Balance Tracker clear helpers (FIXES Issue 1)
         function clearBalFlowForm() {
@@ -12985,13 +13012,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 if (nb) nb.style.display = 'none';
             } else {
                 renderPage(name);
-            }
-
-            // Make sure the Software Update card is present every time Settings
-            // opens (guards against the card occasionally not being injected yet).
-            if (name === 'settings') {
-                try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {}
-                setTimeout(() => { try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {} }, 400);
             }
         }
 
@@ -17263,6 +17283,11 @@ table.amort tbody tr { page-break-inside: avoid; }
         // ==================== DASHBOARD AUTOMATION ====================
         let dashChartInst = null, dashPieInst = null;
         function renderDash() {
+            // v7.6.2 — render AutoPilot tile at the top of the dashboard.
+            // Defensive: if the tile renderer isn't loaded yet (script defer
+            // race), skip silently and let the next dashboard render pick it up.
+            try { if (typeof renderAutoPilotTile === 'function') renderAutoPilotTile(); } catch (_) {}
+            try { if (typeof renderQuarantineTile === 'function') renderQuarantineTile(); } catch (_) {}
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
             const incData = [], expData = [], netData = [];
@@ -17780,7 +17805,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('settingsContent').innerHTML = `
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--accent); position:relative; overflow:hidden;">
             <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">👤</div>
-            <div class="settings-title" style="color:var(--accent);">Account & Identity</div>
+            <div class="settings-title" style="color:var(--accent);">👤 Account & Identity</div>
             <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
                 ${userPhoto ? `<img src="${userPhoto}" style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);object-fit:cover;">` : '<div style="width:48px;height:48px;border-radius:50%;background:var(--card3);display:flex;align-items:center;justify-content:center;font-size:24px;">👤</div>'}
                 <div>
@@ -17809,7 +17834,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">Appearance & Experience</div>
+            <div class="settings-title" style="color:var(--accent);">🎨 Appearance & Experience</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dark Theme</div><div class="setting-desc">Switch between Light and Dark aesthetic modes.</div></div>
                 <div class="toggle ${s.theme === 'dark' ? 'on' : ''}" onclick="toggleTheme(); renderSettings();"></div>
@@ -17826,7 +17851,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <option value="standard" ${(s.hapticIntensity || 'standard') === 'standard' ? 'selected' : ''}>✨ Standard</option>
                         <option value="intense" ${(s.hapticIntensity || 'standard') === 'intense' ? 'selected' : ''}>💪 Intense</option>
                     </select>
-                    <button class="btn btn-ghost btn-sm" onclick="_testHaptic()" style="white-space:nowrap;">🔔 Test</button>
+                    <button class="btn btn-ghost btn-sm" onclick="triggerHaptic('success'); notify('Feel the luxury! ✨', 'info');" style="white-space:nowrap;">🔔 Test</button>
                 </div>
             </div>` : ''}
             <div class="setting-row">
@@ -17848,7 +17873,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- System Integration / Gemini API Key removed from UI per security best practice. Backend keys are managed via Vercel ENV. -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(66, 133, 244, 0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#4285F4;">AI Engine Status</div>
+            <div class="settings-title" style="color:#4285F4;">🔌 AI Engine Status</div>
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">Triple-Engine AI System</div>
@@ -17866,36 +17891,8 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <!-- ISSUE 3 FIX — AI Language & Voice settings -->
-        <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">AI Intelligence &amp; Language</div>
-            <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
-                 module auto-injects the "📲 Paste Bank SMS" banner here. -->
-            <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
-            <!-- v7.11.1 — Prominent Statement Upload entry. Triggers the existing
-                 #ccot_ai_scan input (wired to handleAIScan) so a PDF/photo of a
-                 bank or card statement is read, categorised, de-duplicated and
-                 routed to the right tabs by the same AI. -->
-            <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:linear-gradient(145deg,rgba(16,185,129,0.06),var(--card));">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-                    <span style="font-size:22px;">📄</span>
-                    <div style="font-weight:800;font-size:15px;color:var(--text);">Statement Upload</div>
-                </div>
-                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Upload a PDF or photo of a bank / card statement. The AI reads every line, finds the merchant, picks the right category &amp; tab, removes duplicates — then you can walk away while it files them.</div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload Statement</button>
-                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Photo</button>
-                </div>
-            </div>
-            <!-- v7.11.1 — Card & Account Registry entry. Maps a last-4 to credit-card
-                 vs bank-account so the brain routes service-charge debits correctly. -->
-            <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:var(--card);">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-                    <span style="font-size:20px;">💳</span>
-                    <div style="font-weight:800;font-size:15px;color:var(--text);">Card &amp; Account Registry</div>
-                </div>
-                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Tell the AI which last-4 is a credit card vs a bank account. A debit on a credit card routes to CC One-Time (service charge included); on a bank account it routes to Expenses.</div>
-                <button type="button" class="btn btn-secondary btn-sm" style="width:100%;" onclick="wfOpenCardRegistry()">Manage cards &amp; accounts</button>
-            </div>
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(245, 166, 35, 0.06), var(--card)); border: 1px solid var(--accent);">
+            <div class="settings-title" style="color:var(--accent);">🌐 AI Intelligence &amp; Language</div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
                     <div class="setting-label">AI Response Language</div>
@@ -17922,8 +17919,105 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
         </div>
 
-        <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:#818cf8;">Device Access &amp; Encryption</div>
+        <!-- ═══════════════════════════════════════════════════════════════════
+             v7.6.2 — AutoPilot: One-Tap Robotic Automation
+             ═══════════════════════════════════════════════════════════════════ -->
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(16,185,129,0.08), rgba(212,175,55,0.04), var(--card)); border: 1px solid rgba(16,185,129,0.5); position:relative; overflow:hidden;">
+            <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;background:radial-gradient(circle, rgba(16,185,129,0.25), transparent 70%);pointer-events:none;"></div>
+            <div class="settings-title" style="color:var(--green);">🤖 AutoPilot — Robotic Financial OS</div>
+            <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:14px;">
+                One tap and WealthFlow runs itself. AutoPilot scans your existing
+                transactions, auto-maps your cards, surfaces hidden subscriptions,
+                and sets up your Security Vault for automatic PDF unlocking — all
+                without you typing a single thing.
+            </div>
+
+            <!-- ONE TAP SETUP -->
+            <div style="background:var(--bg2);border:2px solid rgba(16,185,129,0.4);border-radius:12px;padding:16px;margin-bottom:14px;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="font-size:32px;">🚀</div>
+                    <div style="flex:1;">
+                        <div style="font-weight:800;font-size:15px;">Launch AutoPilot</div>
+                        <div style="font-size:12px;color:var(--text3);margin-top:2px;">Auto-discovers cards · scans for subscriptions · sets up Vault</div>
+                    </div>
+                </div>
+                <button class="btn btn-primary" style="width:100%;margin-top:12px;font-weight:700;background:linear-gradient(135deg,var(--green),var(--accent));box-shadow:0 4px 20px rgba(16,185,129,0.3);" onclick="openAutoPilotWizard()">
+                    ✨ Start AutoPilot Setup
+                </button>
+            </div>
+
+            <details style="margin-top:8px;">
+                <summary style="cursor:pointer;font-size:12px;color:var(--text3);user-select:none;padding:8px 4px;">⚙️ Advanced / Manual tools</summary>
+                <div style="padding:12px 0 0 0;">
+                    <div class="setting-row" style="border-top:1px solid var(--border);padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">💳 Card Registry</div>
+                            <div class="setting-desc">Manually edit auto-discovered cards or add new ones.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="openCardRegistryModal()">Manage</button>
+                    </div>
+                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">🔮 Predictions &amp; Insights</div>
+                            <div class="setting-desc">12-month forecast, anomaly detection, hidden charges.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="openPredictionsModal()">View</button>
+                    </div>
+                    <div class="setting-row" style="margin-top:10px; border-top:1px solid var(--border); padding-top:14px;">
+                        <div class="setting-info" style="flex:1;min-width:0;">
+                            <div class="setting-label" style="font-size:13px;">💱 Live FX Converter</div>
+                            <div class="setting-desc">LKR / USD / EUR / GBP / INR with live rates.</div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="openFxModal()">Open</button>
+                    </div>
+                </div>
+            </details>
+        </div>
+
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.08), rgba(212,175,55,0.04), var(--card)); border: 1px solid rgba(99,102,241,0.45); position:relative; overflow:hidden;">
+            <div style="position:absolute;top:-30px;right:-30px;width:140px;height:140px;background:radial-gradient(circle, rgba(99,102,241,0.22), transparent 70%);pointer-events:none;"></div>
+            <div class="settings-title" style="color:#818cf8;">🔐 Security Vault &amp; Smart Intelligence</div>
+            <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:14px;">
+                Save your card last-4, NIC and date of birth — encrypted on this
+                device — and WealthFlow will <b>automatically unlock locked bank
+                PDF statements</b>. Combined with Semantic Allocation (money you
+                send to "Land" auto-funds your Land goal) and the Needs-Review
+                zone (the AI never guesses below 95% confidence).
+            </div>
+
+            <div class="setting-row">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label" style="font-size:13px;">🔐 Security Vault</div>
+                    <div class="setting-desc">Encrypted NIC / DOB / card last-4 for automatic PDF unlocking.</div>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="wfVault.openModal()">Manage</button>
+            </div>
+
+            <div class="setting-row" style="margin-top:10px;border-top:1px solid var(--border);padding-top:14px;">
+                <div class="setting-info" style="flex:1;min-width:0;">
+                    <div class="setting-label" style="font-size:13px;">🛟 Needs-Review Inbox</div>
+                    <div class="setting-desc">Low-confidence transactions waiting for your one-tap decision (shown on the dashboard).</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="showPage('dashboard'); setTimeout(function(){ if(window.renderQuarantineTile) renderQuarantineTile(); window.scrollTo({top:0,behavior:'smooth'}); }, 100);">View</button>
+            </div>
+
+            <details style="margin-top:12px;background:rgba(255,255,255,0.02);border-radius:10px;padding:10px 12px;">
+                <summary style="cursor:pointer;font-size:12px;color:var(--text3);user-select:none;">How does each piece work?</summary>
+                <div style="font-size:12px;color:var(--text2);line-height:1.7;padding-top:8px;">
+                    <b>Security Vault</b> — AES-256-GCM encrypted, stored only on this
+                    device, never uploaded in plaintext. When you upload a locked bank
+                    PDF, the system silently tries your NIC / DOB in every common format
+                    until it opens.<br><br>
+                    <b>Semantic Allocation</b> — if an auto-logged transaction's
+                    description matches one of your Savings Goals or Loans by name, the
+                    money is filed straight to that goal/loan instead of the generic
+                    Expenses tab.<br><br>
+                    <b>Needs-Review (Quarantine)</b> — when the AI is less than 95%
+                    confident, it refuses to guess. The transaction appears at the top
+                    of your dashboard with one-tap buttons so you decide where it goes.
+                </div>
+            </details>
+        </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Lock Timer</div><div class="setting-desc">Secure the vault after inactivity to prevent unauthorized access.</div></div>
                 <select class="fi" style="width:140px; border-color:var(--border2);" onchange="updateAutoLock(this.value)">
@@ -17949,7 +18043,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">Infinity Cloud Sync</div>
+            <div class="settings-title" style="color:var(--blue);">☁️ Infinity Cloud Sync</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Real-time Connection</div><div class="setting-desc">Engine is monitoring connection to Google Firebase.</div></div>
                 <div><span id="settingsCloudStatus" class="badge ${navigator.onLine ? 'bg-g' : 'bg-r'}" style="padding: 6px 12px;">${navigator.onLine ? '● Securely Connected' : '○ Offline Mode'}</span></div>
@@ -17965,7 +18059,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, var(--card), var(--bg2)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--accent);">Data Management & Reports</div>
+            <div class="settings-title" style="color:var(--accent);">📈 Data Management & Reports</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Generate Elite Report</div><div class="setting-desc">Export a luxury PDF statement, Raw JSON, or Analytics CSV.</div></div>
                 <button class="btn btn-primary btn-sm" style="box-shadow: 0 4px 15px var(--ag);" onclick="openModal('mdExport')">✨ Export Data</button>
@@ -17990,7 +18084,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--purple);">AI Advisor Preferences</div>
+            <div class="settings-title" style="color:var(--purple);">🤖 AI Advisor Preferences</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Categorize Expenses</div><div class="setting-desc">AI automatically assigns categories to new expenses based on the title entered.</div></div>
                 <div class="toggle ${s.autoCategory !== false ? 'on' : ''}" onclick="toggleSetting('autoCategory', ${s.autoCategory === false})"></div>
@@ -18002,7 +18096,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(6,182,212,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--cyan);">Sound & Feedback</div>
+            <div class="settings-title" style="color:var(--cyan);">🔊 Sound & Feedback</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Dynamic Soundscapes</div><div class="setting-desc">Subtle luxury UI sounds for interactions (soft chimes, ticks, satisfying sounds).</div></div>
                 <div class="toggle ${s.sounds ? 'on' : ''}" onclick="toggleSetting('sounds', ${!s.sounds})"></div>
@@ -18018,7 +18112,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(239,68,68,0.03), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--red);">Advanced Security</div>
+            <div class="settings-title" style="color:var(--red);">🔒 Advanced Security</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Panic Mode / Decoy Vault</div><div class="setting-desc">Set a decoy PIN that opens a fake database with dummy numbers to protect you.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="setupDecoyPin()">🎭 ${DB.getObj('auth').decoyPin ? 'Configured ✓' : 'Setup Decoy'}</button>
@@ -18026,7 +18120,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">Advanced Backup & Data</div>
+            <div class="settings-title" style="color:var(--blue);">📦 Advanced Backup & Data</div>
             <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;">
                 <div style="width:42px;height:42px;border-radius:50%;background:rgba(59,130,246,0.12);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">${s.lastBackup ? '☁️' : '⚠️'}</div>
                 <div style="flex:1;min-width:0;">
@@ -18106,7 +18200,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" style="flex-shrink:0;color:var(--blue);border-color:var(--blue);" onclick="backupNow()">☁️ Backup Now</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Auto-Backup Schedule</div><div class="setting-desc">Backs up automatically at the scheduled time while the app is open, and catches up the moment you reopen it if one was missed. Daily 23:55 · Weekly Sun 23:55 · Monthly last day 23:55. (Phone browsers can't back up while the app is fully closed — it runs the instant you return.)</div></div>
+                <div class="setting-info"><div class="setting-label">Auto-Backup Schedule</div><div class="setting-desc">System automatically backs up at the scheduled time. Daily: 23:55, Weekly: Sunday 23:55, Monthly: Last day 23:55.</div></div>
                 <select class="fi" style="width:140px;" onchange="toggleSetting('autoBackupFreq', this.value); scheduleAutoBackup();">
                     <option value="off" ${(s.autoBackupFreq || 'off') === 'off' ? 'selected' : ''}>Off</option>
                     <option value="daily" ${(s.autoBackupFreq || 'off') === 'daily' ? 'selected' : ''}>Daily (23:55)</option>
@@ -18127,7 +18221,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== FINANCIAL PREFERENCES (per screenshot) ====== -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--blue);">Financial Preferences</div>
+            <div class="settings-title" style="color:var(--blue);">📊 Financial Preferences</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Default Dashboard Period</div><div class="setting-desc">The default time period shown in your dashboard overview.</div></div>
                 <select class="fi" style="width:160px;" onchange="toggleSetting('dashPeriod', this.value)">
@@ -18177,7 +18271,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         <!-- ====== SMART NOTIFICATION SETTINGS (per screenshot) ====== -->
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(16,185,129,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--green);">Smart Notification Settings</div>
+            <div class="settings-title" style="color:var(--green);">🔔 Smart Notification Settings</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">All Notifications</div><div class="setting-desc">Master switch for all WealthFlow notifications and reminders.</div></div>
                 <div class="toggle ${s.notifications !== false ? 'on' : ''}" onclick="toggleSetting('notifications', ${s.notifications === false});"></div>
@@ -18242,16 +18336,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
         </div>
 
-        <!-- ====== SOFTWARE UPDATE (filled by wealthflow-update-system.js) ======
-             This placeholder is PART of the settings template, so it survives
-             every renderSettings() rebuild. The update system fills #wfUpdateCard
-             on render + on each settings open, so clicking its buttons can never
-             make the section disappear. -->
-        <div class="settings-section" id="wfUpdateCard" style="border: 1px solid var(--border2);"></div>
-
         <!-- ====== PWA & APP SETTINGS (per screenshot) ====== -->
-        <div class="settings-section" id="wfPwaSection" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
-            <div class="settings-title" style="color:var(--purple);">PWA & App Settings</div>
+        <div class="settings-section" style="background: linear-gradient(145deg, rgba(139,92,246,0.05), var(--card)); border: 1px solid var(--border2);">
+            <div class="settings-title" style="color:var(--purple);">📱 PWA & App Settings</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Install as App</div><div class="setting-desc">Add WealthFlow to your home screen for a native app experience on any device.</div></div>
                 <button id="installAppBtn" class="btn btn-primary btn-sm" onclick="triggerInstallApp()">📲 Install App</button>
@@ -18283,7 +18370,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
 
         <div style="text-align:center;padding:20px 0;color:var(--text3);font-size:11px;">
-            <div style="margin-bottom:4px;" id="wfFooterVer">WealthFlow · Infinity Engine</div>
+            <div style="margin-bottom:4px;">WealthFlow v7.8.0 · Infinity Engine</div>
             <div>© ${new Date().getFullYear()} · Powered by Firebase & Triple-Engine AI</div>
             <div style="margin-top:8px;font-size:10px;color:var(--border2);">UID: ${currentUser ? currentUser.uid.substring(0, 12) + '...' : 'offline'}</div>
         </div>
@@ -18292,15 +18379,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             updatePWAStatusBadge();
             // ISSUE 3 FIX — Populate AI language pickers
             populateAILanguagePickers();
-            // Fill the Software Update card (it's a placeholder in this template,
-            // so it's rebuilt with the rest of settings and never disappears).
-            try { if (window.wfUpdate && window.wfUpdate.refresh) window.wfUpdate.refresh(); } catch (_) {}
-            // keep footer + sidebar version labels in sync with the real version
-            try {
-                const v = (window.wfUpdate && window.wfUpdate.version) || '';
-                const fv = document.getElementById('wfFooterVer');
-                if (fv && v) fv.textContent = 'WealthFlow v' + v + ' · Infinity Engine';
-            } catch (_) {}
         }
 
         // ISSUE 3 FIX — AI Language picker helpers
@@ -22638,43 +22716,16 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             <tbody id="_ccr_body">${renderRows()}</tbody>
                         </table>
                     </div>
-                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;">
-                        <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;min-width:90px;">Cancel</button>
-                        <button class="btn btn-secondary" id="_ccr_ai" type="button" style="flex:2;min-width:150px;">🤖 Let AI auto-sort</button>
-                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;min-width:150px;">💾 Save to CC One-Time</button>
+                    <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);">
+                        <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;">Cancel</button>
+                        <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;">💾 Save selected to CC One-Time</button>
                     </div>
-                    <div style="padding:0 16px 12px;font-size:11px;color:var(--text3);line-height:1.5;">🤖 <b>Auto-sort</b> sends the ticked rows to the background AI, which routes each to its correct tab (groceries → Expenses, salary → Income, etc.), learns merchants, and removes duplicates — you can close this and keep working.</div>
                 </div>`;
 
             const $ovl = (sel) => overlay.querySelector(sel);
             const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 180); };
             $ovl('#_ccrx').onclick = closeOvl;
             $ovl('#_ccr_cancel').onclick = closeOvl;
-
-            // 🤖 Let AI auto-sort — hand the ticked rows to the background queue
-            const aiBtn = $ovl('#_ccr_ai');
-            if (aiBtn) aiBtn.onclick = () => {
-                if (!window.wfQueue || typeof window.wfStatementToQueue !== 'function') {
-                    notify('Background AI engine still loading — try the save button, or retry in a moment.', 'warn');
-                    return;
-                }
-                const rows = overlay.querySelectorAll('#_ccr_body tr');
-                const picked = [];
-                rows.forEach((tr) => {
-                    if (!tr.querySelector('._ccr_keep').checked) return;
-                    const date = tr.querySelector('._ccr_date').value || today();
-                    const desc = (tr.querySelector('._ccr_desc').value || '').trim();
-                    const type = tr.querySelector('._ccr_type').value;
-                    const amount = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
-                    if (!desc || !amount) return;
-                    picked.push({ date, description: desc, amount, type: (type === 'cash_advance' || type === 'service_fee') ? 'debit' : 'debit' });
-                });
-                if (!picked.length) { notify('Tick at least one row first.', 'warn'); return; }
-                const last4 = (parsed && (parsed.card_last4 || parsed.last4)) || (typeof bank === 'string' && (bank.match(/\d{4}/) || [])[0]) || '';
-                window.wfStatementToQueue(picked, { currency: (parsed && parsed.currency) || 'LKR', card_last4: last4, source: 'statement' });
-                notify('🤖 Handed ' + picked.length + ' transaction' + (picked.length === 1 ? '' : 's') + ' to the AI — it\'ll sort them into the right tabs. You can keep working.', 'success');
-                closeOvl();
-            };
 
             $ovl('#_ccr_save').onclick = () => {
                 // Read every visible row, build CCOT records, save them.
