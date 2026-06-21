@@ -446,141 +446,6 @@
     }
 
     /* =========================================================================
-     * 6b. CLOUD VISION OCR + IMAGE ENHANCEMENT  (v7.23.0)
-     *   Fixes "only zoomed-in / high-quality images work". Two parts:
-     *   (1) _enhanceImageForOCR — client-side canvas pipeline that UPSCALES
-     *       small / zoomed-out captures, converts to grayscale, stretches
-     *       contrast and applies a light unsharp mask so faint or blurry text
-     *       becomes legible BEFORE it ever reaches an OCR engine. Hard mobile
-     *       caps keep iOS web-process memory safe (per prior crash learnings).
-     *   (2) cloudVisionOCR — talks to the CONFIRMED-ENABLED /api/vision
-     *       (Google Cloud Vision DOCUMENT_TEXT_DETECTION). Fully resilient:
-     *       any 405 / non-JSON / !ok response returns null instead of throwing,
-     *       so the caller can fall through to the next strategy and never
-     *       dead-ends the user with a scary error.
-     * ========================================================================= */
-    var _isMobileUA = (function () {
-        try { return /iphone|ipad|ipod|android/i.test(navigator.userAgent || ''); } catch (_) { return false; }
-    })();
-
-    function _loadImg(src) {
-        return new Promise(function (resolve, reject) {
-            var im = new Image();
-            im.onload = function () { resolve(im); };
-            im.onerror = function () { reject(new Error('image decode failed')); };
-            im.decoding = 'async';
-            im.src = src;
-        });
-    }
-
-    // Returns an enhanced data-URL (JPEG). On any failure returns the original.
-    async function _enhanceImageForOCR(dataUrl, opts) {
-        opts = opts || {};
-        try {
-            if (!dataUrl || typeof document === 'undefined') return dataUrl;
-            var img = await _loadImg(dataUrl);
-            var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-            if (!w || !h) return dataUrl;
-
-            // Target longest edge: upscale zoomed-out shots, cap for memory.
-            var MAX = _isMobileUA ? 2200 : 3000;   // hard ceiling (iOS-safe)
-            var MIN_TARGET = _isMobileUA ? 1700 : 2000; // upscale small captures up to here
-            var longest = Math.max(w, h);
-            var scale = 1;
-            if (longest < MIN_TARGET) scale = Math.min(MIN_TARGET / longest, _isMobileUA ? 2.0 : 2.5);
-            if (longest * scale > MAX) scale = MAX / longest;
-            var nw = Math.max(1, Math.round(w * scale)), nh = Math.max(1, Math.round(h * scale));
-
-            var c = document.createElement('canvas');
-            c.width = nw; c.height = nh;
-            var ctx = c.getContext('2d', { willReadFrequently: true });
-            if (!ctx) return dataUrl;
-            ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, nw, nh);
-
-            // Pixel pass: grayscale + contrast stretch (percentile based).
-            var imgData;
-            try { imgData = ctx.getImageData(0, 0, nw, nh); } catch (_) { return c.toDataURL('image/jpeg', 0.92); }
-            var d = imgData.data, i, n = d.length;
-            // luminance + histogram
-            var hist = new Uint32Array(256);
-            var lum = new Uint8ClampedArray(n / 4);
-            for (i = 0; i < n; i += 4) {
-                var g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
-                lum[i >> 2] = g; hist[g]++;
-            }
-            // 2nd–98th percentile clip points
-            var total = n / 4, lo = 0, hi = 255, acc = 0, loC = total * 0.02, hiC = total * 0.98;
-            for (i = 0; i < 256; i++) { acc += hist[i]; if (acc >= loC) { lo = i; break; } }
-            acc = 0;
-            for (i = 255; i >= 0; i--) { acc += hist[i]; if (acc >= (total - hiC)) { hi = i; break; } }
-            if (hi <= lo) { lo = 0; hi = 255; }
-            var range = (hi - lo) || 1;
-            var stretched = new Uint8ClampedArray(total);
-            for (i = 0; i < total; i++) {
-                var v = (lum[i] - lo) * 255 / range;
-                stretched[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
-            }
-            // Light unsharp mask (3x3) — sharpen edges of text.
-            var sharp = opts.sharpen === false ? stretched : (function () {
-                var out = new Uint8ClampedArray(total), amount = 0.6;
-                for (var y = 0; y < nh; y++) {
-                    for (var x = 0; x < nw; x++) {
-                        var idx = y * nw + x;
-                        if (x === 0 || y === 0 || x === nw - 1 || y === nh - 1) { out[idx] = stretched[idx]; continue; }
-                        var blur = (stretched[idx - nw - 1] + stretched[idx - nw] + stretched[idx - nw + 1] +
-                            stretched[idx - 1] + stretched[idx] + stretched[idx + 1] +
-                            stretched[idx + nw - 1] + stretched[idx + nw] + stretched[idx + nw + 1]) / 9;
-                        var s = stretched[idx] + amount * (stretched[idx] - blur);
-                        out[idx] = s < 0 ? 0 : (s > 255 ? 255 : s);
-                    }
-                }
-                return out;
-            })();
-            for (i = 0; i < total; i++) { var p = sharp[i]; var j = i << 2; d[j] = d[j + 1] = d[j + 2] = p; d[j + 3] = 255; }
-            ctx.putImageData(imgData, 0, 0);
-            var out = c.toDataURL('image/jpeg', 0.92);
-            // free
-            c.width = c.height = 0; imgData = null; d = null; lum = null; stretched = null; sharp = null;
-            return out || dataUrl;
-        } catch (e) {
-            console.warn('[' + V + '] image enhance skipped:', e && e.message);
-            return dataUrl;
-        }
-    }
-
-    // Cloud Vision OCR — resilient. Returns { text, words } or null.
-    async function cloudVisionOCR(image, languageHints, timeoutMs) {
-        if (!image) return null;
-        var controller = new AbortController();
-        var timer = setTimeout(function () { controller.abort(); }, timeoutMs || 40000);
-        try {
-            var r = await fetch(_apiBase() + '/vision', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: image, mode: 'document', languageHints: languageHints || ['en', 'si', 'ta'] }),
-                signal: controller.signal
-            });
-            var ct = (r.headers.get('content-type') || '').toLowerCase();
-            if (!ct.includes('application/json')) {            // 405 static fallthrough / HTML
-                console.warn('[' + V + '] /api/vision non-JSON (status ' + r.status + ') — Cloud Vision not deployed?');
-                return null;
-            }
-            var data = await r.json();
-            if (!r.ok || !data.ok || !data.text) {
-                console.warn('[' + V + '] /api/vision returned no text:', data && data.error);
-                return null;
-            }
-            return { text: String(data.text), words: data.words || 0, engine: 'cloud-vision' };
-        } catch (e) {
-            console.warn('[' + V + '] Cloud Vision OCR failed:', e && e.message);
-            return null;
-        } finally {
-            clearTimeout(timer);
-        }
-    }
-
-    /* =========================================================================
      * 7. RECEIPT PROMPT BUILDER (used for fallback path)
      * ========================================================================= */
     function buildReceiptPrompt(hints) {
@@ -614,45 +479,23 @@
             'with this exact schema (no markdown, no comments, no prose):\n\n' +
             '{"statement_period":"YYYY-MM","transactions":[' +
             '{"date":"YYYY-MM-DD","description":"merchant or vendor","amount":1500.50,' +
-            '"direction":"debit","type":"purchase","merchant_category":"","notes":""}' +
+            '"type":"purchase","merchant_category":"","notes":""}' +
             ']}\n\n' +
             'Rules:\n' +
-            '- "description" = the COMPLETE narration EXACTLY as printed — keep payee/merchant names, ' +
-            'and key phrases like "Inward Ceft Transfer <name>", "Outward Ceft Transfer <name>", ' +
-            '"POS Transaction - <merchant>", "CASH DEP", "ATM WTD", "MB BillPmt/<biller>". Do NOT shorten, ' +
-            'abbreviate or paraphrase it — the full text is what lets the system pick the right category.\n' +
             '- Include the FULL ORIGINAL amount printed. NEVER round or truncate.\n' +
-            '- "direction" must be EXACTLY "debit" or "credit" — THIS IS CRITICAL, get it right for every row:\n' +
-            '  • "debit"  = money OUT / a charge: purchases, cash advances, fees, interest, fuel, POS, withdrawals.\n' +
-            '  • "credit" = money IN / reduces what is owed: deposits, salary, "PAYMENT - THANK YOU",\n' +
-            '    refunds, reversals, cashback, rebates, statement credits, interest earned, money received.\n' +
-            '  • TWO-COLUMN BANK STATEMENTS (savings/current accounts) print SEPARATE "Debits/Withdrawal" and\n' +
-            '    "Credits/Deposit" columns — usually with 0.00 in the unused one. The direction is decided ONLY\n' +
-            '    by WHICH column holds the NON-ZERO amount: an amount in the CREDIT/DEPOSIT column → "credit";\n' +
-            '    an amount in the DEBIT/WITHDRAWAL column → "debit". Put that NON-ZERO figure in "amount".\n' +
-            '  • A money transfer ("CEFT", "CEFTS/6056/<NAME>", "Inward Transfer", "Outward Transfer",\n' +
-            '    "Fund Transfer", "FT") is NOT automatically a debit. "Inward"/received = credit; "Outward"/sent\n' +
-            '    = debit; and if neither word is shown, use the column the amount sits in. NEVER default a\n' +
-            '    transfer to debit.\n' +
-            '  • CROSS-CHECK with the running Balance column when present: if the balance went UP from the row\n' +
-            '    above, this row was a "credit"; if it went DOWN, it was a "debit". Use this to resolve any doubt.\n' +
-            '  • A "CR"/"DR" marker, or sitting in a credit/payment column, also means credit/debit respectively.\n' +
             '- "type" must be EXACTLY one of: purchase, cash_advance, service_fee, fuel\n' +
             '  • cash_advance = ATM withdrawals, cash advance entries, "MB"/"DE" cash w/d codes\n' +
-            '  • fuel = ONLY an actual fuel/petrol/diesel STATION PURCHASE (Ceypetco, IOC, Lanka IOC, '+
-            'Cargills Petroleum, Shell, names with "Filling Station"/"Fuel Station", or a station such '+
-            'as "Dunhinda Brothers"/"Morawaka Fuel Station"). A "FUEL SURCHARGE"/"FUEL LEVY" is NOT fuel.\n' +
-            '  • service_fee = ANY fee/charge/duty: cash-advance fees ("LOCAL CASH ADVANCE FEE (DB)"), '+
-            'interest, finance charges, late fees, FUEL SURCHARGE, stamp duty, service charge. '+
-            'A surcharge or "... FEE" is always service_fee — never type it as fuel or cash_advance.\n' +
+            '  • fuel = petrol/diesel stations (Ceypetco, IOC, Lanka IOC, Cargills Petroleum, ' +
+            '    Shell, fuel station names ending in "Filling Station"/"Fuel Station"/"Pvt Ltd")\n' +
+            '  • service_fee = cash-advance fees, interest charges, finance charges, late fees, ' +
+            '    fuel surcharges, fees that pair with another row\n' +
             '  • purchase = everything else (groceries, restaurants, online, retail)\n' +
             '- "date" in YYYY-MM-DD; if only day+month is printed, use ' + thisYear + ' as the year.\n' +
-            '- Skip ONLY the opening-balance and closing-balance summary rows. Do NOT skip payment rows —\n' +
-            '  include them with direction:"credit" so they reconcile correctly.\n' +
-            '- If a row is clearly a credit/refund, ALSO prefix description with "[CREDIT] ", keep amount positive.\n' +
-            '- Read top-to-bottom and return EVERY line, including faint, wrapped, or partially-cut rows. ' +
-            '  Count the rows; if the printed statement shows N transaction lines, your array MUST have N items. ' +
-            '  If you cannot read a column clearly, still include the row with a best-effort guess. NEVER omit a transaction.\n\n' +
+            '- Skip the closing balance row, opening balance row, and payment-received rows.\n' +
+            '- If a row is clearly a credit/refund, prefix description with "[CREDIT] " and keep ' +
+            '  amount positive.\n' +
+            '- If you cannot read a column clearly, still include the row with a best-effort guess. ' +
+            '  NEVER omit a transaction.\n\n' +
             'CRITICAL: Output ONLY the JSON object. No markdown fences, no explanations.';
     }
 
@@ -926,9 +769,8 @@
         if ($('ot_type')) {
             var hay = (String(result.vendor || '') + ' ' + String(result.category || '') + ' ' + String(result.rawText || '') + ' ' + String(result.description || '')).toLowerCase();
             var type = 'purchase';
-            if (/\b(cash[\s\-]*advance[\s\-]*fee|local cash advance fee|service[\s\-]*fee|finance[\s\-]*charge|interest[\s\-]*charge|late[\s\-]*fee|fuel[\s\-]*surcharge|surcharge|stamp duty|annual fee)\b/.test(hay)) type = 'service_fee';
-            else if (/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/.test(hay)) type = 'cash_advance';
-            else if (/\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel\s*station|dunhinda|morawaka fuel|petrol|diesel|fuel)\b/.test(hay)) type = 'fuel';
+            if (/\b(cash\s*advance|atm|withdrawal|cash\s*w\/?d)\b/.test(hay)) type = 'cash_advance';
+            else if (/\b(ceypetco|cargills\s*petroleum|lanka\s*ioc|\bioc\b|filling\s*station|fuel|petrol|diesel)\b/.test(hay)) type = 'fuel';
             $('ot_type').value = type;
             filled = true;
         }
@@ -1403,43 +1245,6 @@
                     if (mergedRows.length > 0) ccotTxns = mergedRows;
                 }
 
-                // ---- CLOUD VISION FALLBACK (v7.23.0) ----
-                // If the vision-LLM passes found nothing (often because the
-                // photo is blurry / zoomed-out, or /api/vision-scan & the image
-                // path are unreachable), enhance the image and run Google Cloud
-                // Vision DOCUMENT_TEXT_DETECTION, then extract rows from the
-                // OCR TEXT via a small, reliable text-only /api/ai call.
-                if (!ccotTxns || ccotTxns.length === 0) {
-                    if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('🔍 Cloud Vision OCR…', 'Reading faint / zoomed-out text', 78);
-                    try {
-                        var _cvMerged = [];
-                        for (var _ci = 0; _ci < imgBundle.images.length; _ci++) {
-                            var _enh = await _enhanceImageForOCR(imgBundle.images[_ci]);
-                            var _ocr = await cloudVisionOCR(_enh, ['en', 'si', 'ta'], 45000);
-                            if (!_ocr || !_ocr.text) continue;
-                            var _txtPrompt = buildCCStatementPrompt(ccotBank) +
-                                '\n\nThe statement has ALREADY been OCR-read for you. Parse EVERY transaction row from this extracted text (preserve order, do not invent rows):\n"""\n' +
-                                _ocr.text.slice(0, 14000) + '\n"""';
-                            var _txtResp = await legacyAICall(_txtPrompt, null, 40000); // text-only → small, reliable
-                            var _txtParsed = extractJSON(_txtResp.reply);
-                            if (_txtParsed && Array.isArray(_txtParsed.transactions)) {
-                                _txtParsed.transactions.forEach(function (t) {
-                                    var dup = _cvMerged.some(function (r) {
-                                        return r.date === t.date &&
-                                            String(r.description || '').toLowerCase() === String(t.description || '').toLowerCase() &&
-                                            normaliseAmount(r.amount) === normaliseAmount(t.amount);
-                                    });
-                                    if (!dup) _cvMerged.push(t);
-                                });
-                            }
-                        }
-                        if (_cvMerged.length > 0) { ccotTxns = _cvMerged; ccotLastErr = null; }
-                    } catch (eCV) {
-                        console.warn('[' + V + '] Cloud Vision CCOT fallback failed:', eCV && eCV.message);
-                    }
-                }
-
                 if (!ccotTxns || ccotTxns.length === 0) {
                     if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
                     var ccotFailMsg = '⚠️ AI could not find any transactions.';
@@ -1634,50 +1439,6 @@
                     }
                 } catch (eT) {
                     console.warn('[' + V + '] Tesseract fallback failed:', eT.message);
-                }
-            }
-
-            // ---- STEP F.5: CLOUD VISION OCR fallback (v7.23.0) ----
-            // Last-resort, high-accuracy OCR for blurry / zoomed-out receipts
-            // and when vision-scan / the image path are unreachable. Enhance →
-            // Cloud Vision DOCUMENT_TEXT_DETECTION → extract via small text-only
-            // /api/ai call.
-            if (!scanData || !scanData.result || !scanData.result.amount) {
-                if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('🔍 Cloud Vision OCR…', 'Reading faint / low-quality text', 80);
-                try {
-                    var _renh = await _enhanceImageForOCR(firstImage);
-                    var _rocr = await cloudVisionOCR(_renh, ['en', 'si', 'ta'], 45000);
-                    if (_rocr && _rocr.text) {
-                        var _rPrompt = buildReceiptPrompt(hints) +
-                            '\n\nThe receipt has ALREADY been OCR-read. Extract the fields from this text:\n"""\n' +
-                            _rocr.text.slice(0, 8000) + '\n"""';
-                        var _rResp = await legacyAICall(_rPrompt, null, 35000); // text-only
-                        var _rParsed = extractJSON(_rResp.reply);
-                        if (_rParsed && normaliseAmount(_rParsed.amount)) {
-                            scanData = {
-                                result: {
-                                    vendor: _rParsed.vendor || null,
-                                    amount: normaliseAmount(_rParsed.amount),
-                                    date: _rParsed.date || hints.today,
-                                    category: _rParsed.category || 'Other',
-                                    items: Array.isArray(_rParsed.items) ? _rParsed.items : [],
-                                    currency: _rParsed.currency || hints.currency,
-                                    tax: normaliseAmount(_rParsed.tax),
-                                    payment_method: _rParsed.payment_method || null,
-                                    receipt_number: _rParsed.receipt_number || null,
-                                    time: _rParsed.time || null,
-                                    raw_text: _rocr.text.slice(0, 4000)
-                                },
-                                confidence: { overall: 0.7 },
-                                engines: [{ name: 'cloud-vision+ai', success: true }],
-                                mode: 'cloud-vision'
-                            };
-                            lastErr = null;
-                        }
-                    }
-                } catch (eCVr) {
-                    console.warn('[' + V + '] Cloud Vision receipt fallback failed:', eCVr && eCVr.message);
                 }
             }
 
@@ -2247,8 +2008,6 @@
             isEndpointAvailable: isEndpointAvailable,
             visionScanCall: visionScanCall,
             legacyAICall: legacyAICall,
-            cloudVisionOCR: cloudVisionOCR,
-            enhanceImageForOCR: _enhanceImageForOCR,
             findMatchingPriorExpense: findMatchingPriorExpense,
             buildSmartNote: buildSmartNote,
             extractJSON: extractJSON,
