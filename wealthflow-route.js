@@ -239,6 +239,14 @@
                     out.category = expenseCategory(desc);
                     out.reason = 'credit-card charge';
                 }
+                
+                // 🚨 CRITICAL FIREWALL FIX: Strict Liability Enforcement 🚨
+                // Explicitly lock all card purchases as UNPAID debt.
+                // This blocks the parser/UI from defaulting them to settled.
+                out.paid = false;
+                out.isPaid = false;
+                out.status = 'unpaid';
+
                 if (lowConf) { out.needsReview = true; out.reason += ' (direction inferred — confirm)'; }
             } else { // credit on a credit card = payment/refund toward the card
                 out.tab = 'cc_payment';
