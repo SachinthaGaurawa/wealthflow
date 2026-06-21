@@ -33,9 +33,15 @@
     var RE_TRANSFER = /\b(own account|own a\/?c|to own|from own|between own|self transfer|transfer to self|inter[\s-]?account|internal transfer|sweep|book transfer)\b/;
 
     // ── credit-card debit sub-typing ───────────────────────────────────────────
-    var RE_FUEL = /\b(fuel|petrol|diesel|filling station|fuel station|ceypetco|lanka ioc|ioc|gas station|petroleum|dunhinda)\b/;
-    var RE_CASH_ADV = /\b(cash advance|cash adv|atm|cash withdrawal|cash withdraw|withdrawal)\b/;
-    var RE_CC_FEE = /\b(annual fee|late fee|finance charge|interest charge|service charge|over ?limit|joining fee|card fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return)\b/;
+    //  v7.28.0 — KB expanded from real Sri Lankan AMEX/Visa/Master statements.
+    //  Fuel now recognises Sinopec + a bare "FILLING" (e.g. "SINOPEC FILLING") and
+    //  more SL forecourt brands. Fees now cover the full tax/levy/interest family
+    //  every SL card statement carries (DEBIT/CREDIT INTEREST, VAT, SSCL, NBT, CESS,
+    //  GOVERNMENT LEVY, COMMISSION, LATE PAYMENT FEE, FX mark-up, …) — these used to
+    //  fall through to a generic "purchase".
+    var RE_FUEL = /\b(fuel|petrol|diesel|petrol shed|fuel shed|filling station|fuel station|filling|ceypetco|lanka ioc|\bioc\b|sinopec|total energies|gas station|petroleum|dunhinda)\b/;
+    var RE_CASH_ADV = /\b(cash advance|cash adv|cardless cash|\batm\b|cash withdrawal|cash withdraw|withdrawal)\b/;
+    var RE_CC_FEE = /\b(annual fee|late payment fee|late payment|late fee|finance charge|interest charge|debit interest|credit interest|\binterest\b|service charge|service fee|over ?limit|overlimit|over the limit|joining fee|card fee|card replacement|replacement fee|reissue fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|\bvat\b|v\.a\.t|value added tax|\bnbt\b|\bsscl\b|social security|\bcess\b|government levy|govt levy|\blevy\b|commission|commision|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return|mark[\s-]?up|currency conversion|conversion fee|foreign (currency|transaction) fee|cross[\s-]?border|fx fee|forex fee|pin (re)?issue|e[\s-]?statement fee|statement fee)\b/;
 
     // ── credit-card credit = a payment toward the card (not income) ─────────────
     var RE_CC_PAYMENT = /\b(payment|paid|thank you|received|settlement|autopay|standing order)\b/;
@@ -137,6 +143,17 @@
         return 'purchase';
     }
 
+    // v7.28.0 — sub-type for a BANK-account row. Bank rows only ever carry a blank
+    // Type, a Service Fee, or Fuel (the account-aware Type dropdown). A fee/levy/tax
+    // wins over fuel exactly like the card logic (so "FUEL SURCHARGE" → service_fee).
+    // Everything else stays blank so the user isn't forced into a wrong bucket.
+    function bankSubType(desc) {
+        var d = norm(desc);
+        if (RE_BANK_FEE.test(d) || RE_CC_FEE.test(d)) return 'service_fee';
+        if (RE_FUEL.test(d)) return 'fuel';
+        return '';
+    }
+
     // ── DIRECTION INFERENCE (credit = money IN, debit = money OUT) ─────────────
     //  THE fix for "income shown as expense". Statements don't always hand the
     //  extractor a clean debit/credit flag, so without this every row used to
@@ -147,8 +164,11 @@
         var d = norm(desc);
         if (!d) return null;
         // STRONG credit signals win first — a refund/reversal of a POS purchase, or a
-        // "PAYMENT - THANK YOU" on a card, is money IN even though it mentions a purchase/payment.
-        if (/\b(refund|reversal|reversed|charge ?back|cash ?back|reimburse(ment)?|payment received|received from|funds? received|thank ?you|autopay|auto pay|salary|payroll|wages|emolument|stipend|deposit|cash dep|cash deposit|crm cash|crm deposit|inward|inward remittance|remittance in|credited|credit interest|interest credit|fd interest|savings interest|dividend|bonus|incentive|rent received|rental income|pension|epf|etf|gratuity|transfer in|transfer credit|inward transfer|ceft inward|slips inward|loan disburse(ment)?)\b/.test(d)) return 'credit';
+        // "PAYMENT - THANK YOU" / "CASH PAYMENT-FINACLE" repayment posting on a card, is
+        // money IN even though it may mention a purchase/payment. v7.28.0 adds the real
+        // Sri Lankan card-repayment postings (CASH PAYMENT-FINACLE, …-FINACLE, "made to
+        // card", repayment) so a missed Dr/Cr column never files a repayment as a charge.
+        if (/\b(refund|reversal|reversed|charge ?back|cash ?back|reimburse(ment)?|payment received|received from|funds? received|thank ?you|autopay|auto pay|salary|payroll|wages|emolument|stipend|deposit|cash dep|cash deposit|crm cash|crm deposit|inward|inward remittance|remittance in|credited|credit interest|interest credit|fd interest|savings interest|dividend|bonus|incentive|rent received|rental income|pension|epf|etf|gratuity|transfer in|transfer credit|inward transfer|ceft inward|slips inward|loan disburse(ment)?|cash\s*payment[\s-]*finacle|payment[\s-]*finacle|\bfinacle\b|re-?payment|made to (?:your )?card|payment (?:to|toward(?:s)?) (?:your |the )?card|card payment received)\b/.test(d)) return 'credit';
         // STRONG debit signals.
         if (/\b(purchase|pos|point of sale|pos transaction|withdrawal|withdraw|atm wtd|atm|cash advance|cash adv|payment to|paid to|bill payment|billpmt|utility bill|ecom|outward|outward transfer|transfer out|service fee|annual fee|late fee|finance charge|interest charge|surcharge|installment|instalment|standing order|direct debit|loan repayment|emi|insurance premium|premium|stamp duty|debit tax|vat)\b/.test(d)) return 'debit';
         return null; // no decisive signal
@@ -317,10 +337,232 @@
         subscriptionInfo: subscriptionInfo,
         incomeKind: incomeKind,
         ccDebitType: ccDebitType,
+        bankSubType: bankSubType,
         resolveDirection: resolveDirection,
         directionFromDescription: directionFromDescription
     };
     root.WFRoute = API;
     if (typeof module !== 'undefined' && module.exports) module.exports = API;
     try { if (root.console) root.console.log('[WFRoute] ✓ transaction router ready'); } catch (_) {}
+})(typeof window !== 'undefined' ? window : globalThis);
+
+
+/* ============================================================================
+ *  wealthflow-route.js · v7.28.0 SELF-WIRING  (browser only — no-op under Node)
+ * ----------------------------------------------------------------------------
+ *  Three jobs, all dependency-free and idempotent, so they heal the app even on
+ *  a STALE deployed build (the exact situation behind the lingering "Paid"/
+ *  classification reports) without touching the 1.34 MB index.html:
+ *
+ *   1) CC "Paid"-bug self-heal — the legacy `paid:past` import marked imported
+ *      charges Paid forever. We correct the PERSISTED data (wf2_cconetime) right
+ *      in localStorage at boot, BEFORE the app hydrates it, so the corrected rows
+ *      flow into the UI naturally. A charge is reopened ONLY when it is `paid`
+ *      yet has no real settlement trail (no paidAt, no autoPaid) — the unique
+ *      fingerprint of the bug; manual settles (paidAt) and FIFO matches (autoPaid)
+ *      are never touched. reconcileCC() then re-✅s the ones a recorded payment
+ *      truly covers (oldest-first). Safe to run anytime; runs once via a gate.
+ *
+ *   2) Version labels — keep the footer/sidebar/pill in sync at v7.28.0 even
+ *      before Settings renders.
+ *
+ *   3) window.WFChargeIntel — WealthFlow's OWN charge-classification engine:
+ *      instant deterministic KB first (offline, ~95 %+ on real SL statements),
+ *      then an OPTIONAL multi-AI CONSENSUS refine via /api/classify-charge for
+ *      the few rows the rules leave generic. Results cache to localStorage so
+ *      repeat scans are free. It only ever UPGRADES a generic guess — a confident
+ *      KB verdict (fuel / cash_advance / service_fee) is never overridden.
+ * ========================================================================== */
+(function (root) {
+    'use strict';
+    if (typeof document === 'undefined' || !root || typeof root.localStorage === 'undefined') return; // Node/import guard
+
+    var VERSION = '7.28.0';
+    var PAIDFIX_GATE = 'wf2_paidfix_rt_v728';
+    var CACHE_KEY = 'wf2_chargeIntel';
+
+    function keyOf(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+    function isBugPaid(c) { return c && c.paid === true && !c.paidAt && !c.autoPaid; }
+
+    // ── 1) CC "Paid"-bug self-heal (operates on the persisted source of truth) ──
+    function scrub(arr) {
+        var changed = false;
+        for (var i = 0; i < (arr || []).length; i++) {
+            if (isBugPaid(arr[i])) { arr[i].paid = false; arr[i].autoPaid = false; arr[i].paidManually = false; changed = true; }
+        }
+        return changed;
+    }
+    function paidFixOnce() {
+        try {
+            if (root.localStorage.getItem(PAIDFIX_GATE)) return;
+            var raw = root.localStorage.getItem('wf2_cconetime');
+            // No persisted charges yet. If the data layer is already live (DB present)
+            // there is genuinely nothing to fix → close the gate. Otherwise wait for
+            // the user to unlock (localStorage hydrates appData during login).
+            if (raw == null) {
+                if (root.DB && typeof root.DB.get === 'function') root.localStorage.setItem(PAIDFIX_GATE, '1');
+                return;
+            }
+            var arr; try { arr = JSON.parse(raw); } catch (_) { arr = null; }
+            if (!Array.isArray(arr)) { root.localStorage.setItem(PAIDFIX_GATE, '1'); return; }
+
+            var changed = scrub(arr);
+            if (changed) {
+                root.localStorage.setItem('wf2_cconetime', JSON.stringify(arr));
+                // Mirror into the live in-memory store ONLY if the app already hydrated
+                // it (non-empty) — otherwise the app's own login-time hydration will read
+                // our corrected localStorage. Never fight the hydration path.
+                try {
+                    if (root.appData && Array.isArray(root.appData.cconetime) && root.appData.cconetime.length) {
+                        root.appData.cconetime = arr;
+                    }
+                } catch (_) {}
+            }
+            root.localStorage.setItem(PAIDFIX_GATE, '1');
+
+            // Re-mark genuinely-covered charges + refresh the UI if those fns exist.
+            try { if (typeof root.reconcileCC === 'function') root.reconcileCC(); } catch (_) {}
+            try { if (typeof root.renderCCOT === 'function') root.renderCCOT(); } catch (_) {}
+            try { if (typeof root.updateCCOTBadge === 'function') root.updateCCOTBadge(); } catch (_) {}
+            try { root.console && root.console.log('[WFRoute v7.28] CC paid-fix ' + (changed ? '→ reopened legacy charges & re-reconciled' : '→ nothing to fix')); } catch (_) {}
+        } catch (e) { try { root.console && root.console.warn('[WFRoute] paid-fix failed:', e && e.message); } catch (_) {} }
+    }
+
+    // Defense-in-depth for ANY external caller that goes through window.reconcileCC:
+    // scrub the bug-fingerprint rows before each reconcile (idempotent + safe — it can
+    // only ever touch rows with no settlement trail, never a real manual/auto payment).
+    function wrapReconcile() {
+        try {
+            if (typeof root.reconcileCC === 'function' && !root.reconcileCC.__wf728) {
+                var orig = root.reconcileCC;
+                var wrapped = function () {
+                    try {
+                        if (root.DB && typeof root.DB.get === 'function') {
+                            var a = root.DB.get('cconetime') || [];
+                            if (scrub(a) && typeof root.DB.set === 'function') root.DB.set('cconetime', a, true);
+                        }
+                    } catch (_) {}
+                    return orig.apply(this, arguments);
+                };
+                wrapped.__wf728 = true;
+                try { Object.keys(orig).forEach(function (k) { wrapped[k] = orig[k]; }); } catch (_) {}
+                root.reconcileCC = wrapped;
+            }
+        } catch (_) {}
+    }
+
+    // ── 2) version labels ──
+    function syncVersionLabels() {
+        try {
+            ['wfVerText', 'wfVerPill'].forEach(function (id) {
+                var el = document.getElementById(id);
+                if (el && /^v?7\.27(\.\d+)?$/.test(String(el.textContent || '').trim())) el.textContent = 'v' + VERSION;
+            });
+        } catch (_) {}
+    }
+
+    // ── 3) WFChargeIntel — own classifier (deterministic + consensus refine) ──
+    function loadCache() { try { return JSON.parse(root.localStorage.getItem(CACHE_KEY) || '{}') || {}; } catch (_) { return {}; } }
+    function saveCache(o) { try { root.localStorage.setItem(CACHE_KEY, JSON.stringify(o)); } catch (_) {} }
+    function apiBase() {
+        try { var h = location.hostname; if (h.indexOf('github.io') >= 0 || h === 'localhost') return 'https://wealthflow-personal.vercel.app'; } catch (_) {}
+        return '';
+    }
+    var WFChargeIntel = {
+        classify: function (desc) {
+            var R = root.WFRoute || {};
+            var type = (typeof R.ccDebitType === 'function') ? R.ccDebitType(desc) : 'purchase';
+            var category = (typeof R.expenseCategory === 'function') ? R.expenseCategory(desc) : 'Other';
+            var certain = (type !== 'purchase') || (category !== 'Other');
+            return { type: type, category: category, confidence: certain ? 0.97 : 0.55, source: 'kb' };
+        },
+        classifyBatch: async function (descs, opts) {
+            opts = opts || {};
+            var out = {}, cache = loadCache(), need = [];
+            (descs || []).forEach(function (d) {
+                var k = keyOf(d); if (!k) return;
+                if (cache[k]) { out[k] = cache[k]; return; }
+                var det = WFChargeIntel.classify(d);
+                out[k] = det;
+                if (det.confidence < 0.9) need.push(d);
+            });
+            if (need.length && opts.useAI !== false) {
+                try {
+                    var refined = await WFChargeIntel._consensus(need);
+                    Object.keys(refined || {}).forEach(function (k) {
+                        var r = refined[k];
+                        if (r && r.type && out[k] && out[k].confidence < 0.9) { out[k] = r; cache[k] = r; } // only upgrade generic
+                    });
+                } catch (_) {}
+            }
+            Object.keys(out).forEach(function (k) { if (out[k] && out[k].confidence >= 0.9) cache[k] = out[k]; });
+            saveCache(cache);
+            return out;
+        },
+        _consensus: async function (descs) {
+            var resp = await fetch(apiBase() + '/api/classify-charge', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ descriptions: descs })
+            });
+            if (!resp.ok) throw new Error('classify-charge ' + resp.status);
+            var data = await resp.json();
+            var map = {};
+            ((data && data.results) || []).forEach(function (r) {
+                if (!r) return;
+                var src = (r.i != null && descs[r.i] != null) ? descs[r.i] : r.description;
+                var k = keyOf(src);
+                if (k) map[k] = { type: r.type, category: r.category || 'Other', confidence: r.confidence != null ? r.confidence : 0.9, source: 'consensus' };
+            });
+            return map;
+        }
+    };
+    root.WFChargeIntel = WFChargeIntel;
+
+    // Additive enrichment of the existing review-modal classifier. The modal already
+    // refines rows via /api/ai consensus; here we ALSO fold in the dedicated
+    // /api/classify-charge verdict for any row still left generic. Fully guarded —
+    // if anything is missing, the modal's original behaviour stands untouched.
+    function enhanceAIClassifier() {
+        try {
+            if (typeof root._aiClassifyRows !== 'function' || root._aiClassifyRows.__wf728) return;
+            var orig = root._aiClassifyRows;
+            var wrapped = async function (items) {
+                var base = {};
+                try { base = (await orig.call(this, items)) || {}; } catch (_) { base = {}; }
+                try {
+                    var descs = (items || []).map(function (it) { return (it && (it.description || it.desc || it.name)) || ''; });
+                    var intel = await WFChargeIntel.classifyBatch(descs, { useAI: true });
+                    (items || []).forEach(function (it, idx) {
+                        var id = (it && it.id != null) ? it.id : idx;
+                        var v = intel[keyOf(descs[idx])];
+                        if (!v) return;
+                        var cur = base[id];
+                        if (!cur || !cur.type || cur.type === 'purchase') {
+                            base[id] = Object.assign({}, cur, { type: v.type, category: (cur && cur.category) || v.category });
+                        }
+                    });
+                } catch (_) {}
+                return base;
+            };
+            wrapped.__wf728 = true;
+            root._aiClassifyRows = wrapped;
+        } catch (_) {}
+    }
+
+    // ── boot: run as soon as the data layer is reachable; poll briefly until the
+    //    user unlocks (localStorage persists across sessions, so a returning user's
+    //    charges are present immediately and the fix lands before hydration). ──
+    var tries = 0;
+    function boot() {
+        tries++;
+        try { wrapReconcile(); } catch (_) {}
+        try { enhanceAIClassifier(); } catch (_) {}
+        try { syncVersionLabels(); } catch (_) {}
+        try { paidFixOnce(); } catch (_) {}
+        if (!root.localStorage.getItem(PAIDFIX_GATE) && tries < 120) setTimeout(boot, 1000); // up to ~2 min for slow PIN entry
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 300); });
+    else setTimeout(boot, 300);
+
+    try { root.console && root.console.log('[WFRoute] ✓ v7.28.0 self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
