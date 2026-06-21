@@ -7060,16 +7060,23 @@
         // Gated by a flag so it runs exactly once and never re-opens a charge later paid.
         function _migrateCCOTPaidFix() {
             try {
-                if (localStorage.getItem('wf2_ccot_paidfix_v727')) return;
+                if (localStorage.getItem('wf2_ccot_paidfix_v728')) return;
                 const arr = DB.get('cconetime') || [];
-                let changed = false;
+                let changed = 0;
                 arr.forEach(c => {
-                    if (c && c.paid === true && !c.paidManually && !c.paidAt && !c.autoPaid &&
-                        c.feeMeta && c.feeMeta.source === 'statement') {
-                        c.paid = false; changed = true;
+                    // Re-open ONLY charges flagged paid with NO settlement trail of any
+                    // kind (no paidAt, no paidManually, no autoPaid) — the unique
+                    // fingerprint of the legacy `paid:past` import bug. Genuine manual
+                    // settlements (paidAt + paidManually) and FIFO auto-matches (autoPaid)
+                    // are never touched. Broadened from the v7.27 feeMeta.source==='statement'
+                    // guard so it ALSO repairs charges imported by older builds (e.g. v7.24)
+                    // that did not tag the statement source.
+                    if (c && c.paid === true && !c.paidManually && !c.paidAt && !c.autoPaid) {
+                        c.paid = false; c.autoPaid = false; changed++;
                     }
                 });
-                if (changed) { DB.set('cconetime', arr); if (typeof setDirty === 'function') setDirty(true); console.log('[Migrate] CCOT paid-fix: un-paid wrongly-Paid imported charges'); }
+                if (changed) { DB.set('cconetime', arr); if (typeof setDirty === 'function') setDirty(true); console.log('[Migrate] CCOT paid-fix v7.28: re-opened ' + changed + ' wrongly-Paid charge(s)'); }
+                localStorage.setItem('wf2_ccot_paidfix_v728', '1');
                 localStorage.setItem('wf2_ccot_paidfix_v727', '1');
             } catch (e) { console.warn('[Migrate] CCOT paid-fix failed:', e && e.message); }
         }
@@ -19256,8 +19263,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.27.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.27.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.28.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.28.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
