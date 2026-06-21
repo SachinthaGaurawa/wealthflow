@@ -108,10 +108,28 @@
             var direction = '', valid = false, delta = null;
             if (prevBal !== null) {
                 delta = Math.round((balance - prevBal) * 100) / 100;
-                direction = delta >= 0 ? 'credit' : 'debit';
+                
+                // 🚨 CRITICAL FIX: Credit Card Liability Math Inversion 🚨
+                // Auto-detect if this statement belongs to a Credit Card
+                var isCC = /credit\s?card|amex|mastercard|visa|card\s?no|minimum\s?due|statement\s?balance/i.test(text || '');
+                
+                if (isCC) {
+                    // Credit Card: Balance is DEBT. 
+                    // Balance UP (+ delta) = Borrowed more (DEBIT / Purchase)
+                    // Balance DOWN (- delta) = Paid it off (CREDIT / Repayment)
+                    direction = delta >= 0 ? 'debit' : 'credit';
+                } else {
+                    // Normal Bank Account: Balance is ASSET.
+                    // Balance UP (+ delta) = Received money (CREDIT / Income)
+                    // Balance DOWN (- delta) = Spent money (DEBIT / Expense)
+                    direction = delta >= 0 ? 'credit' : 'debit';
+                }
+                
                 valid = Math.abs(Math.abs(delta) - amount) < 0.02;
                 if (!valid && Math.abs(delta) > 0) { amount = Math.abs(delta); valid = true; } // trust the balance
             }
+
+            
             // when prevBal is null (no opening balance), leave direction EMPTY so the
             // caller resolves it from the description instead of guessing "debit".
 
