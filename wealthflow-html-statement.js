@@ -58,26 +58,14 @@
     // ── CryptoJS loader (CDN, cached) ──────────────────────────────────────────
     var _cryptoPromise = null;
     function ensureCryptoJS() {
-        if (window.CryptoJS && window.CryptoJS.AES && window.CryptoJS.algo && window.CryptoJS.algo.SHA1) return Promise.resolve(window.CryptoJS);
+        if (window.CryptoJS && window.CryptoJS.AES) return Promise.resolve(window.CryptoJS);
         if (_cryptoPromise) return _cryptoPromise;
         _cryptoPromise = new Promise(function (resolve, reject) {
-            var done = false;
-            var to = setTimeout(function () {
-                if (done) return; done = true; _cryptoPromise = null;   // allow retry
-                reject(new Error('Decryption library timed out loading (slow or offline network).'));
-            }, 12000);
             var s = document.createElement('script');
             s.src = CRYPTOJS_CDN;
             s.async = true;
-            s.onload = function () {
-                if (done) return; done = true; clearTimeout(to);
-                (window.CryptoJS && window.CryptoJS.AES) ? resolve(window.CryptoJS)
-                    : (function () { _cryptoPromise = null; reject(new Error('CryptoJS missing after load')); })();
-            };
-            s.onerror = function () {
-                if (done) return; done = true; clearTimeout(to); _cryptoPromise = null;
-                reject(new Error('Could not load decryption library (offline?)'));
-            };
+            s.onload = function () { window.CryptoJS ? resolve(window.CryptoJS) : reject(new Error('CryptoJS missing after load')); };
+            s.onerror = function () { reject(new Error('Could not load decryption library (offline?)')); };
             (document.head || document.documentElement).appendChild(s);
         });
         return _cryptoPromise;
@@ -128,44 +116,18 @@
         return ensureCryptoJS().then(function (CryptoJS) {
             var p = _params(fileText);
             if (!p.embedded || !p.salt || !p.iv) throw new Error('This file is not a recognised encrypted statement.');
-
-            // ── CRITICAL ROOT-CAUSE FIX (v7.23.0) ────────────────────────────
-            // Nations Trust (and most Sri Lankan bank) e-statement generators
-            // bundle an OLDER CryptoJS whose PBKDF2 *default hasher is SHA1*.
-            // The CDN crypto-js 4.x this module loads defaults PBKDF2 to SHA256
-            // — which derives a COMPLETELY DIFFERENT key. So the previous code
-            // always produced garbage and threw "Malformed UTF-8 data", which
-            // looked like a wrong password on EVERY device even when the DOB was
-            // correct. Proven by deriving the key with the file's own bundled
-            // CryptoJS (SHA1) vs the CDN default (SHA256) — they differ, and the
-            // SHA1 key round-trips the real ciphertext perfectly.
-            //
-            // We therefore force SHA1 first, then fall back to SHA256 and the
-            // library default so the module also handles banks whose generator
-            // uses a newer CryptoJS.
-            var hashers = [];
-            if (CryptoJS.algo && CryptoJS.algo.SHA1) hashers.push(CryptoJS.algo.SHA1);
-            if (CryptoJS.algo && CryptoJS.algo.SHA256) hashers.push(CryptoJS.algo.SHA256);
-            hashers.push(null); // library default — last resort
-
+            var key = CryptoJS.PBKDF2(password, CryptoJS.enc.Hex.parse(p.salt), { keySize: p.keySize, iterations: p.iterations });
             var cipherParams = CryptoJS.lib.CipherParams.create({ ciphertext: CryptoJS.enc.Base64.parse(p.embedded) });
-            var saltWA = CryptoJS.enc.Hex.parse(p.salt);
-            var ivWA = CryptoJS.enc.Hex.parse(p.iv);
+            var decrypted = CryptoJS.AES.decrypt(cipherParams, key, { iv: CryptoJS.enc.Hex.parse(p.iv) });
             var plain = '';
-            for (var i = 0; i < hashers.length && !plain; i++) {
-                try {
-                    var opts = { keySize: p.keySize, iterations: p.iterations };
-                    if (hashers[i]) opts.hasher = hashers[i];
-                    var key = CryptoJS.PBKDF2(password, saltWA, opts);
-                    var decrypted = CryptoJS.AES.decrypt(cipherParams, key, { iv: ivWA });
-                    try { plain = decrypted.toString(CryptoJS.enc.Utf8); }  // throws "Malformed UTF-8" on wrong key
-                    catch (e) { plain = ''; }
-                    key = null; decrypted = null;
-                } catch (_) { plain = ''; }
+            try {
+                plain = decrypted.toString(CryptoJS.enc.Utf8);  // throws "Malformed UTF-8" on wrong pw
+            } catch (e) {
+                return '';   // wrong password
             }
             // free big refs
-            cipherParams = null; saltWA = null; ivWA = null;
-            if (!plain) return '';   // genuinely wrong password (all hashers failed)
+            cipherParams = null; decrypted = null; key = null;
+            if (!plain) return '';
             return _maybeUnwrap(plain);
         });
     }
