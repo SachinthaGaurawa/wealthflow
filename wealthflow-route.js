@@ -41,7 +41,7 @@
     //  fall through to a generic "purchase".
     var RE_FUEL = /\b(fuel|petrol|diesel|petrol shed|fuel shed|filling station|fuel station|filling|ceypetco|lanka ioc|\bioc\b|sinopec|total energies|gas station|petroleum|dunhinda)\b/;
     var RE_CASH_ADV = /\b(cash advance|cash adv|cardless cash|\batm\b|cash withdrawal|cash withdraw|withdrawal)\b/;
-    var RE_CC_FEE = /\b(annual fee|late payment fee|late payment|late fee|finance charge|interest charge|debit interest|credit interest|\binterest\b|service charge|service fee|over ?limit|overlimit|over the limit|joining fee|card fee|card replacement|replacement fee|reissue fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|\bvat\b|v\.a\.t|value added tax|\bnbt\b|\bsscl\b|social security|\bcess\b|government levy|govt levy|\blevy\b|commission|commision|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return|mark[\s-]?up|currency conversion|conversion fee|foreign (currency|transaction) fee|cross[\s-]?border|fx fee|forex fee|pin (re)?issue|e[\s-]?statement fee|statement fee)\b/;
+    var RE_CC_FEE = /\b(annual fee|late payment fee|late payment|late fee|finance charge|interest charge|debit interest|credit interest|\binterest\b|service charge|service fee|over ?limit|overlimit|over the limit|joining fee|card fee|card replacement|replacement fee|reissue fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|\bvat\b|v\.a\.t|value added tax|\bnbt\b|\bsscl\b|social security|\bcess\b|government levy|govt levy|\blevy\b|commission|commision|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return|mark[\s-]?up|currency conversion|conversion fee|foreign (currency|transaction) fee|cross[\s-]?border|fx fee|forex fee|pin (re)?issue|e[\s-]?statement fee|statement fee|annual membership|membership fee|membership|late settlement|cash advance interest|over limit fee|\bfee\b|\bcharge\b)\b/;
 
     // ── credit-card credit = a payment toward the card (not income) ─────────────
     var RE_CC_PAYMENT = /\b(payment|paid|thank you|received|settlement|autopay|standing order)\b/;
@@ -173,6 +173,14 @@
         if (/\b(purchase|pos|point of sale|pos transaction|withdrawal|withdraw|atm wtd|atm|cash advance|cash adv|payment to|paid to|bill payment|billpmt|utility bill|ecom|outward|outward transfer|transfer out|service fee|annual fee|late fee|finance charge|interest charge|surcharge|installment|instalment|standing order|direct debit|loan repayment|emi|insurance premium|premium|stamp duty|debit tax|vat)\b/.test(d)) return 'debit';
         return null; // no decisive signal
     }
+
+    // ── v7.29.0 — is this card line a REPAYMENT / refund (money IN, a credit)? ────
+    //   A credit on a credit card reduces what you owe — "Credit = Re-payment/Refund".
+    //   Reuses the trained credit signals (CASH PAYMENT-FINACLE, PAYMENT - THANK YOU,
+    //   payment received, refund, reversal, cashback, settlement, autopay, "made to
+    //   card" postings). The import review modal uses this to file the row as a card
+    //   payment (credit, type "re_payment") instead of a charge.
+    function isRepayment(desc) { return directionFromDescription(desc) === 'credit'; }
 
     // → { dir:'credit'|'debit', confident:bool }. confident=false ONLY when nothing
     //   identifies the row at all — those get flagged for the user's Needs-Review.
@@ -339,7 +347,8 @@
         ccDebitType: ccDebitType,
         bankSubType: bankSubType,
         resolveDirection: resolveDirection,
-        directionFromDescription: directionFromDescription
+        directionFromDescription: directionFromDescription,
+        isRepayment: isRepayment
     };
     root.WFRoute = API;
     if (typeof module !== 'undefined' && module.exports) module.exports = API;
@@ -348,7 +357,7 @@
 
 
 /* ============================================================================
- *  wealthflow-route.js · v7.28.0 SELF-WIRING  (browser only — no-op under Node)
+ *  wealthflow-route.js · v7.29.0 SELF-WIRING  (browser only — no-op under Node)
  * ----------------------------------------------------------------------------
  *  Three jobs, all dependency-free and idempotent, so they heal the app even on
  *  a STALE deployed build (the exact situation behind the lingering "Paid"/
@@ -363,7 +372,7 @@
  *      are never touched. reconcileCC() then re-✅s the ones a recorded payment
  *      truly covers (oldest-first). Safe to run anytime; runs once via a gate.
  *
- *   2) Version labels — keep the footer/sidebar/pill in sync at v7.28.0 even
+ *   2) Version labels — keep the footer/sidebar/pill in sync at v7.29.0 even
  *      before Settings renders.
  *
  *   3) window.WFChargeIntel — WealthFlow's OWN charge-classification engine:
@@ -377,7 +386,7 @@
     'use strict';
     if (typeof document === 'undefined' || !root || typeof root.localStorage === 'undefined') return; // Node/import guard
 
-    var VERSION = '7.28.0';
+    var VERSION = '7.29.0';
     var PAIDFIX_GATE = 'wf2_paidfix_rt_v728';
     var CACHE_KEY = 'wf2_chargeIntel';
 
@@ -564,5 +573,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 300); });
     else setTimeout(boot, 300);
 
-    try { root.console && root.console.log('[WFRoute] ✓ v7.28.0 self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
+    try { root.console && root.console.log('[WFRoute] ✓ v7.29.0 self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

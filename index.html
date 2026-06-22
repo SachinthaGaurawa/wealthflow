@@ -5282,7 +5282,8 @@
                         <div class="sh-title">CC One-Time Payments</div>
                         <div class="sh-actions">
                             <div class="sort-bar"><span class="sb-lbl">Sort:</span>
-                                <span class="sb-btn active" onclick="sortList('ccot','days',this)">Days Left</span>
+                                <span class="sb-btn active" onclick="sortList('ccot','date',this)">🆕 Newest</span>
+                                <span class="sb-btn" onclick="sortList('ccot','days',this)">Days Left</span>
                                 <span class="sb-btn" onclick="sortList('ccot','amount',this)">Amount</span>
                             </div>
                             <button class="btn btn-primary btn-sm" onclick="clearCCOTForm(); openModal('mdCCOT')">+ Add
@@ -6270,7 +6271,9 @@
                 <div class="fg"><label class="fl">Type</label><select class="fs" id="ot_type" onchange="_recalcCashAdvancePreview()">
                         <option value="purchase">Purchase</option>
                         <option value="cash_advance">Cash Advance</option>
+                        <option value="service_fee">🧾 Service Fee</option>
                         <option value="fuel">⛽ Fuel</option>
+                        <option value="re_payment">💚 Re-payment (credit)</option>
                     </select></div>
                 <div class="fg"><label class="fl">Amount (LKR) *</label><input class="fi money-input" id="ot_amount"
                         placeholder="15,000" oninput="_recalcCashAdvancePreview()"></div>
@@ -7501,9 +7504,11 @@
         //                  cursor position is preserved by counting digits-before-caret.
         // - blur handler:  finalizes formatting to the canonical "1,234.00" form.
         // - focus handler: shows the raw number for easy editing.
-        function _attachMoneyHandlers(inp) {
+        function _attachMoneyHandlers(inp, opts) {
             if (!inp || inp._wfMoneyAttached) return;
             inp._wfMoneyAttached = true;
+            opts = (opts && typeof opts === 'object') ? opts : {};
+            const _wantCents = !!(opts.cents || (inp.classList && inp.classList.contains('money-cents')));
             inp.addEventListener('input', function () {
                 const oldVal = this.value;
                 const oldCaret = this.selectionStart || 0;
@@ -7532,7 +7537,7 @@
                 this.value = newVal;
                 try { this.setSelectionRange(newCaret, newCaret); } catch (e) { /* not all input types support selection */ }
             });
-            inp.addEventListener('blur', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = fmtN(raw); });
+            inp.addEventListener('blur', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = _wantCents ? raw.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : fmtN(raw); });
             inp.addEventListener('focus', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = String(raw); });
         }
 
@@ -16973,6 +16978,16 @@ table.amort tbody tr { page-break-inside: avoid; }
             const desc = $('ot_desc').value.trim(), bank = $('ot_bank').value, amount = parseMoney($('ot_amount').value), date = $('ot_date').value;
             const type = $('ot_type').value;
             if (!desc || !bank || !amount || !date) { notify('Please fill required fields', 'error'); return; }
+            // v7.29.0 — a Re-payment is money INTO the card (a credit), NOT a charge. Save
+            // it as a card payment so it auto-matches outstanding charges (oldest first),
+            // exactly like an imported/SMS repayment or a manually recorded payment.
+            if (type === 're_payment') {
+                if (editMode) { DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== editMode)); }
+                addCCPayment({ bank, amount, date, desc: desc || 'Re-payment', source: 'manual' });
+                closeModal('mdCCOT'); clearCCOTForm(); renderCCOT(); updateCCOTBadge();
+                notify('💚 Re-payment recorded — charges auto-matched (oldest first)', 'success');
+                return;
+            }
             const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
             const existing = editMode ? DB.get('cconetime').find(x => x.id === editMode) : null;
 
@@ -17080,7 +17095,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         function deleteCCOT(id) {
             showConfirm('🗑️', 'Delete?', '', 'btn-danger', '🗑️ Delete', () => {
-                DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== id)); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify('Deleted', 'info');
+                DB.set('cconetime', DB.get('cconetime').filter(x => x.id !== id)); const _rm = _pruneOrphanPayments(); reconcileCC(); renderCCOT(); updateCCOTBadge(); notify(_rm > 0 ? ('Deleted · ' + _rm + ' orphaned payment' + (_rm > 1 ? 's' : '') + ' cleared') : 'Deleted', 'info');
             });
         }
         function dLeft(deadline) {
@@ -17151,6 +17166,25 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.addCCPayment = addCCPayment;
 
+        // v7.29.0 — when a card/bank has NO remaining charges, its recorded payments have
+        // nothing left to settle, so they are cleared too. Keeps the "delete all my CC
+        // statements" flow clean (no orphaned credit surplus left behind). Scoped per-bank
+        // and ONLY ever called from explicit delete/undo actions — never from reconcile —
+        // so a legitimate pre-payment made before importing is never touched until the user
+        // actually deletes that card's charges.
+        function _pruneOrphanPayments() {
+            try {
+                const charges = DB.get('cconetime') || [];
+                const banksWithCharges = new Set(charges.map(c => c.bank).filter(Boolean));
+                const pays = DB.get('ccPayments') || [];
+                const kept = pays.filter(p => banksWithCharges.has(p.bank));
+                const removed = pays.length - kept.length;
+                if (removed > 0) { DB.set('ccPayments', kept); try { setDirty(true); } catch (_) {} }
+                return removed;
+            } catch (e) { try { console.warn('[pruneOrphanPayments]', e); } catch (_) {} return 0; }
+        }
+        window._pruneOrphanPayments = _pruneOrphanPayments;
+
         // v7.27.0 — ingest a single bank card SMS (debit OR credit) using the dual
         // parser in WFReconcile, store it like any other charge/payment, then auto-✅.
         //   debit : "Transaction Approved on your Card 376657*****0276 for LKR 24000.00 at Cash advance from MB ..."
@@ -17190,18 +17224,27 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.deleteCCPayment = deleteCCPayment;
 
         // Manual "Record a card payment" modal (same overlay pattern as the importer).
-        function openCCPaymentModal() {
+        function openCCPaymentModal(presetBank) {
             const banks = [...new Set((DB.get('cconetime') || []).map(x => x.bank).filter(Boolean))];
-            const bankOpts = banks.map(b => `<option value="${String(b).replace(/"/g, '&quot;')}">${b}</option>`).join('');
+            const _escB = v => String(v == null ? '' : v).replace(/"/g, '&quot;');
+            // v7.29.0 — lock Card/Bank to the card in context (active filter chip / preset /
+            // the only card). The user shouldn't type or change it. If several cards exist
+            // and none is in context, offer a clean dropdown (never free-text).
+            const _ctx = (presetBank && presetBank !== 'all') ? presetBank
+                : ((typeof _ccotBankFilter !== 'undefined' && _ccotBankFilter && _ccotBankFilter !== 'all') ? _ccotBankFilter
+                : (banks.length === 1 ? banks[0] : ''));
+            const bankField = _ctx
+                ? `<input id="_ccpay_bank" class="fi" value="${_escB(_ctx)}" readonly title="Payment for ${_escB(_ctx)}" style="opacity:.92;cursor:not-allowed;background:var(--bg2);"><div style="font-size:10.5px;color:var(--text3);margin-top:5px;">🔒 Locked to this card — use the filter chips to switch cards.</div>`
+                : (banks.length
+                    ? `<select id="_ccpay_bank" class="fs">${banks.map(b => `<option value="${_escB(b)}">${b}</option>`).join('')}</select>`
+                    : `<input id="_ccpay_bank" class="fi" placeholder="e.g. NTB AMEX">`);
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             overlay.innerHTML = `
                 <div class="md" style="max-width:440px;">
                     <div class="md-hdr"><div class="md-title">💳 Record a card payment</div><button class="md-x" id="_ccpx"><i data-wfi="x"></i></button></div>
                     <div class="md-body">
-                        <div class="fg"><label class="fl">Card / Bank</label>
-                            <input list="_ccpay_banks" id="_ccpay_bank" class="fi" placeholder="e.g. NTB AMEX" value="${banks[0] ? String(banks[0]).replace(/"/g, '&quot;') : ''}">
-                            <datalist id="_ccpay_banks">${bankOpts}</datalist></div>
+                        <div class="fg"><label class="fl">Card / Bank</label>${bankField}</div>
                         <div class="fg"><label class="fl">Amount paid (LKR) *</label>
                             <input id="_ccpay_amt" class="fi money-input" inputmode="decimal" placeholder="20,000"></div>
                         <div class="fg"><label class="fl">Date *</label>
@@ -17217,6 +17260,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>`;
             document.body.appendChild(overlay);
             requestAnimationFrame(() => overlay.classList.add('open'));
+            try { _attachMoneyHandlers(overlay.querySelector('#_ccpay_amt'), { cents: true }); } catch (_) {}
             const close = () => { try { overlay.classList.remove('open'); } catch (_) {} setTimeout(() => overlay.remove(), 180); };
             overlay.querySelector('#_ccpx').onclick = close;
             overlay.querySelector('#_ccp_cancel').onclick = close;
@@ -17288,16 +17332,23 @@ table.amort tbody tr { page-break-inside: avoid; }
                         .reduce((s, x) => s + (x.combinedTotal || x.amount || 0), 0);
                     const count = (b) => arr.filter(x => b === 'all' || x.bank === b).length;
                     if (_ccotBankFilter !== 'all' && !banks.includes(_ccotBankFilter)) _ccotBankFilter = 'all';
+                    const _bankHue = (str) => { let h = 0; const t = String(str || ''); for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0; return h % 360; };
                     const chip = (key, label) => {
                         const active = _ccotBankFilter === key;
                         const due = outstanding(key);
+                        const isAll = key === 'all';
+                        const hue = isAll ? 45 : _bankHue(key);
+                        const accent = isAll ? 'var(--accent)' : `hsl(${hue} 72% 62%)`;
+                        const bg = active ? (isAll ? 'rgba(212,175,55,.16)' : `hsla(${hue},72%,55%,.16)`) : (isAll ? 'var(--card)' : `hsla(${hue},60%,50%,.07)`);
+                        const fg = active ? (isAll ? 'var(--accent)' : `hsl(${hue} 85% 74%)`) : 'var(--text2)';
+                        const dot = isAll ? '' : `<span style="width:9px;height:9px;border-radius:50%;background:${accent};display:inline-block;flex:0 0 auto;"></span>`;
                         return `<button onclick="setCCOTBankFilter('${String(key).replace(/'/g, "\\'")}')"
-                            style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 14px;border-radius:var(--r2);cursor:pointer;
-                            border:1px solid ${active ? 'var(--accent)' : 'var(--border2)'};
-                            background:${active ? 'rgba(212,175,55,.14)' : 'var(--card)'};
-                            color:${active ? 'var(--accent)' : 'var(--text2)'};transition:all .15s;">
-                            <span style="font-weight:700;font-size:12px;">${label} <span style="opacity:.7;font-weight:600;">· ${count(key)}</span></span>
-                            <span style="font-size:10px;font-family:var(--mono);color:${due > 0 ? 'var(--red)' : 'var(--text3)'};">Due: LKR ${fmt(due)}</span>
+                            style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 14px 8px 13px;border-radius:var(--r2);cursor:pointer;
+                            border:1px solid ${active ? accent : 'var(--border2)'};border-left:4px solid ${accent};
+                            background:${bg};box-shadow:${active ? `0 0 0 1px ${accent}` : 'none'};
+                            color:${fg};transition:all .15s;">
+                            <span style="font-weight:700;font-size:12px;display:flex;align-items:center;gap:7px;">${dot}<span>${label} <span style="opacity:.7;font-weight:600;">· ${count(key)}</span></span></span>
+                            <span style="font-size:10px;font-family:var(--mono);color:${due > 0 ? 'var(--red)' : 'var(--text3)'};">Due: ${fmt(due)}</span>
                         </button>`;
                     };
                     fbar.innerHTML = chip('all', '🗂️ All cards') + banks.map(b => chip(b, b)).join('');
@@ -17311,11 +17362,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (_ccotBankFilter !== 'all') arr = arr.filter(x => x.bank === _ccotBankFilter);
 
             const s = sortState['ccot'];
-            if (s?.field) arr.sort((a, b) => {
-                if (s.field === 'days') return s.dir * (dLeft(a.deadline) - dLeft(b.deadline));
-                if (s.field === 'amount') return s.dir * ((b.combinedTotal || b.amount) - (a.combinedTotal || a.amount));
-                return 0;
-            });
+            // v7.29.0 — DEFAULT order = newest statement/charge date on top, so importing the
+            // latest statement first then older ones keeps the most recent at the top (matches
+            // every other tab). Days Left / Amount remain one tap away.
+            const _cmpNewest = (a, b) => {
+                const da = a.date || '', db = b.date || '';
+                if (da !== db) return da < db ? 1 : -1;
+                return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+            };
+            if (s && s.field === 'days') arr.sort((a, b) => s.dir * (dLeft(a.deadline) - dLeft(b.deadline)));
+            else if (s && s.field === 'amount') arr.sort((a, b) => s.dir * ((b.combinedTotal || b.amount) - (a.combinedTotal || a.amount)));
+            else if (s && s.field === 'date') arr.sort((a, b) => (s.dir === -1 ? 1 : -1) * _cmpNewest(a, b));
+            else arr.sort(_cmpNewest);
             const tbody = $('ccotBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('⏱️', _ccotBankFilter === 'all' ? 'No one-time payments' : 'No payments for ' + _ccotBankFilter, 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
             tbody.innerHTML = arr.map(item => {
@@ -17325,7 +17383,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 else if (dl < 0) { cdCls = 'cd-danger'; cdTxt = '⚠️ Overdue ' + Math.abs(dl) + 'd'; }
                 else if (dl <= 10) { cdCls = 'cd-danger'; cdTxt = '🔴 ' + dl + ' days'; }
                 else if (dl <= 20) { cdCls = 'cd-warn'; cdTxt = dl + ' days'; }
-                const typeL = { purchase: 'Purchase', cash_advance: 'Cash Advance', fuel: 'Fuel', service_fee: 'Service Fee' }[item.type] || item.type;
+                const typeL = { purchase: 'Purchase', cash_advance: 'Cash Advance', fuel: 'Fuel', service_fee: 'Service Fee', re_payment: 'Re-payment' }[item.type] || item.type;
                 const hasFee = (item.type === 'cash_advance' || item.type === 'fuel') && item.serviceFee > 0;
                 const combined = item.combinedTotal || (item.amount + (item.serviceFee || 0));
                 // Show COMBINED total as primary (what the user has to repay)
@@ -17343,7 +17401,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ? `<span class="badge" style="background:rgba(239,68,68,.16);color:#ef4444;">${typeL}</span>`
                     : item.type === 'fuel'
                         ? `<span class="badge" style="background:rgba(245,158,11,.18);color:#f59e0b;">${typeL}</span>`
-                        : `<span class="badge bg-gr">${typeL}</span>`;
+                        : item.type === 're_payment'
+                            ? `<span class="badge" style="background:rgba(16,185,129,.18);color:#10b981;">💚 ${typeL}</span>`
+                            : item.type === 'service_fee'
+                                ? `<span class="badge" style="background:rgba(59,130,246,.16);color:#3b82f6;">${typeL}</span>`
+                                : `<span class="badge bg-gr">${typeL}</span>`;
                 return `<tr class="${item.paid ? 'done-row' : ''}">
             <td><div style="font-weight:600;">${item.desc}</div>${item.notes ? `<div class="td-m">${item.notes}</div>` : ''}</td>
             <td><span class="badge bg-b">${item.bank}</span></td>
@@ -19263,8 +19325,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.28.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.28.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.29.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.29.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -19327,6 +19389,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             showConfirm('🗑️', 'Undo this statement import?', 'This removes all ' + total + ' payment' + (total === 1 ? '' : 's') + ' this import added — across Expenses, Income, CC One-Time and Subscriptions. This cannot be redone.', 'btn-danger', '↺ Undo import', () => {
                 let res = null; try { res = WFBatch.undo(batchId); } catch (e) { console.warn('[WFBatch] undo failed:', e); }
                 if (!res) { notify('Undo failed', 'error'); return; }
+                try { _pruneOrphanPayments(); } catch (_) {}   // v7.29.0 — clear payments left orphaned by removing a statement's charges
                 // refresh every affected tab + dashboard
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
                 try { renderExpenses(); } catch (_) {}
@@ -23655,9 +23718,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const dateRe = /^(\d{1,2}[\/\-\s]\d{1,2}(?:[\/\-\s]\d{2,4})?|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+\d{2,4})?)\b/i;
                 // Amounts: 1,500.00 | 1500.00 | LKR 1,500
                 const amtRe = /(?:LKR\s*|Rs\.?\s*)?([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:CR|DR)?$/;
-                const fuelTerms = /\b(ceypetco|cargills\s+petroleum|ioc|lanka\s+ioc|filling\s+station|fuel|petrol|diesel)\b/i;
-                const advanceTerms = /\b(cash\s+advance|atm|withdrawal|cash\s+w\/d)\b/i;
-                const feeTerms = /\b(fee|charge|interest|finance\s+charge|service)\b/i;
+                const fuelTerms = /\b(ceypetco|lanka\s+ioc|\bioc\b|sinopec|total\s+energies|cargills\s+petroleum|filling\s+station|fuel\s+station|petrol\s+shed|filling|fuel|petrol|diesel)\b/i;
+                const advanceTerms = /\b(cash\s+advance|cash\s+adv|cardless\s+cash|\batm\b|cash\s+withdrawal|cash\s+w\/d|withdrawal)\b/i;
+                const feeTerms = /\b(annual\s+fee|late\s+payment\s+fee|late\s+fee|finance\s+charge|interest\s+charge|debit\s+interest|credit\s+interest|interest|fuel\s+surcharge|surcharge|stamp\s+duty|stamp|advance\s+fee|cash\s+advance\s+fee|service\s+charge|service\s+fee|processing\s+fee|over[\s-]*limit|joining\s+fee|ledger\s+fee|commission|vat|nbt|sscl|cess|government\s+levy|levy|ceft|cefts|slips|markup|reissue|e-?statement|fee|charge)\b/i;
+                const repaymentTerms = /\b(payment\s*-?\s*thank\s*you|thank\s*you|cash\s+payment\s*-?\s*finacle|finacle|payment\s+received|received\s+from|made\s+to\s+card|repayment|settlement|autopay|auto\s*pay|standing\s+order|refund|reversal|charge\s*back|cash\s*back|cashback)\b/i;
                 lines.forEach(line => {
                     const dateMatch = line.match(dateRe);
                     const amtMatch = line.match(amtRe);
@@ -23668,9 +23732,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     desc = desc.replace(/\s{2,}/g, ' ').replace(/^[-|]+\s*/, '').trim();
                     if (!desc || desc.length < 2) desc = '(unreadable vendor)';
                     let type = 'purchase';
-                    if (advanceTerms.test(line)) type = 'cash_advance';
-                    else if (fuelTerms.test(line)) type = 'fuel';
+                    if (repaymentTerms.test(line)) type = 're_payment';
                     else if (feeTerms.test(line)) type = 'service_fee';
+                    else if (advanceTerms.test(line)) type = 'cash_advance';
+                    else if (fuelTerms.test(line)) type = 'fuel';
                     // Normalise date — store best-effort YYYY-MM-DD using current year
                     const dt = (function (d) {
                         try {
@@ -23746,11 +23811,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const prompt =
                 'You are the classification engine of a personal-finance app. The lines below may come from a CREDIT-CARD statement, a BANK-ACCOUNT statement, OR a pasted bank SMS, from ANY bank and in ANY format — classify by MEANING, never by a fixed template. ' +
                 'For EACH transaction decide two fields:\n' +
-                '1) "type" — EXACTLY one of: "purchase", "cash_advance", "service_fee", "fuel".\n' +
+                '1) "type" — EXACTLY one of: "purchase", "cash_advance", "service_fee", "fuel", "re_payment".\n' +
+                '   • re_payment = a CREDIT to a credit card: money INTO the card that REDUCES the balance — "PAYMENT - THANK YOU", "CASH PAYMENT-FINACLE", any …-FINACLE posting, "payment received", "made to card", a refund/reversal/cashback/settlement. On a credit-card statement these are NOT charges.\n' +
                 '   • cash_advance = ATM cash withdrawal, "cash advance", "cash advance from MB".\n' +
-                '   • service_fee = ANY bank or government charge: stamp duty, debit tax, VAT, government levy, fuel SURCHARGE, cash-advance fee, processing/service/annual/late/over-limit fee, CEFT/CEFTS/SLIPS charge, commission, ledger fee.\n' +
+                '   • service_fee = ANY bank/government charge or levy: stamp duty, debit/credit tax, VAT, NBT, SSCL, CESS, government levy, fuel SURCHARGE, cash-advance fee, ADVANCE FEE, processing/service/annual/late/over-limit/joining fee, CEFT/CEFTS/SLIPS charge, commission, ledger fee, markup, reissue, e-statement fee. A FEE always WINS over fuel & cash-advance.\n' +
                 '   • fuel = buying fuel AT a filling/petrol/gas station (e.g. Ceypetco, Lanka IOC, Sinopec, a named fuel station). IMPORTANT: a "fuel surcharge" is a FEE → service_fee, NOT fuel.\n' +
-                '   • purchase = any normal goods/services purchase, or a transfer/deposit/salary line (the Type column is only used for card fees & fuel — for everything else just use "purchase").\n' +
+                '   • purchase = any normal goods/services purchase, or a transfer/deposit/salary line (Type is only used for card fees, fuel & repayments — for everything else use "purchase").\n' +
                 '2) "category" — a short human expense/income category (Groceries, Dining, Fuel, Utilities, Telecom, Health, Shopping, Travel, Transport, Bank Charges, Government, Entertainment, Salary, Transfer, Other).\n' +
                 'Return ONLY a JSON array, SAME length & order as the input, each element {"i":<index>,"type":"...","category":"..."}. No prose, no markdown.\n\nTransactions:\n' +
                 JSON.stringify(items.map((it, i) => ({ i: i, desc: it.desc, amount: it.amount })));
@@ -23816,6 +23882,25 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     } else if (routed.ccType && (!t.type || t._dest === 'cconetime')) {
                         t.type = routed.ccType;
                     }
+                    // ── v7.29.0 — CREDIT-CARD rows: classify authoritatively from the
+                    //    description so a wrong AI guess can never mislabel a charge.
+                    //    (1) A repayment/refund is money INTO the card → file it as a Card
+                    //        Payment (credit) with type "re_payment".
+                    //    (2) Otherwise the trained KB decides the sub-type, where a
+                    //        FEE/levy/duty WINS over fuel & cash-advance — so FUEL SURCHARGE,
+                    //        ADVANCE FEE, STAMP DUTY and ANNUAL FEE all resolve to Service Fee.
+                    if (_acctType === 'credit_card') {
+                        try {
+                            const W = window.WFRoute || {};
+                            const repay = (W.isRepayment && W.isRepayment(t.description || '')) || t._dest === 'cc_payment' || String(t.direction || '').toLowerCase() === 'credit';
+                            if (repay) {
+                                t.type = 're_payment'; t._dest = 'cc_payment';
+                            } else if (W.ccDebitType) {
+                                const d = W.ccDebitType(t.description || '');
+                                if (d) t.type = d;
+                            }
+                        } catch (_) {}
+                    }
                 });
             };
             _routeAll();
@@ -23848,8 +23933,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             : `<select class="fs _ccr_type" style="font-size:11px;">
                             <option value="purchase" ${t.type === 'purchase' ? 'selected' : ''}>Purchase</option>
                             <option value="cash_advance" ${t.type === 'cash_advance' ? 'selected' : ''}>Cash Advance</option>
-                            <option value="service_fee" ${t.type === 'service_fee' ? 'selected' : ''}>Service Fee</option>
+                            <option value="service_fee" ${t.type === 'service_fee' ? 'selected' : ''}>🧾 Service Fee</option>
                             <option value="fuel" ${t.type === 'fuel' ? 'selected' : ''}>⛽ Fuel</option>
+                            <option value="re_payment" ${t.type === 're_payment' ? 'selected' : ''}>💚 Re-payment</option>
                         </select>`}
                     </td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_amount money-input" value="${fmtN(t.amount||0)}" inputmode="decimal" style="width:110px;font-size:12px;text-align:right;font-family:var(--mono);"></td>

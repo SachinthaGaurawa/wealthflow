@@ -1,6 +1,6 @@
 {
   "name": "wealthflow",
-  "version": "7.28.0",
+  "version": "7.29.0",
   "description": "WealthFlow Elite Financial System v7.10 \u2014 Sri Lankan personal finance with manual bank-SMS paste classifier (zero setup, works for any bank worldwide), 250+ merchant intelligence DB, time-bucketed allocation (each tx lands in its correct month/year tab), AES-256-GCM credential vault, 18-engine AI vision consensus for receipts/statements, multi-lingual advisor, FIFO credit-card reconciliation, and predictive wealth forecasting.",
   "type": "module",
   "private": true,

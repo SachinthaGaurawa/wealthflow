@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.28.0';
+    const CURRENT_VERSION = '7.29.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,38 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.29.0': {
+            date: '2026-06-22',
+            headline: 'Sharper credit-card brain & a smoother CC workspace',
+            sections: [
+                { title: 'New', items: [
+                    'Re-payment type — repayments and refunds on a card statement are detected automatically and filed as a credit that pays down your charges (oldest first). You can also pick "Re-payment" manually.',
+                    'Service Fee is now a one-tap type everywhere (manual add + statement review).',
+                    'CC One-Time sorts newest statement date first by default — import the latest statement first, then older ones, and the most recent stays on top.',
+                    'Card filter chips are colour-coded per card so you can tell them apart at a glance.',
+                ]},
+                { title: 'Improved', items: [
+                    'Far more accurate fee detection — FUEL SURCHARGE, ADVANCE FEE, STAMP DUTY, annual & membership fees, finance/interest charges and taxes/levies (VAT, NBT, SSCL, CESS) all resolve to Service Fee, and a fee always wins over fuel & cash-advance.',
+                    'Record-a-payment is locked to the card in context (no more typing the wrong name); the amount auto-formats with thousands separators and .00 cents.',
+                    'The trained classifier is now the single source of truth in the import review, so a wrong AI guess can no longer mislabel a charge.',
+                ]},
+                { title: 'Fixed', items: [
+                    'Deleting a card\'s statements now also clears its left-over payments (no more orphaned credit surplus).',
+                    'Removed the duplicated "LKR LKR" on the card filter chips.',
+                    'What\'s New now always shows the release notes.',
+                ]},
+            ]
+        },
+        '7.28.0': {
+            date: '2026-06-21',
+            headline: 'Imported card charges no longer show as paid',
+            sections: [
+                { title: 'Fixed', items: [
+                    'Charges imported from a credit-card statement are correctly marked unpaid until a payment actually covers them (previously every imported charge could show as Paid).',
+                    'A one-time self-healing pass re-opens any charge wrongly auto-marked paid by the old import, while keeping your real manual and auto-matched payments intact.',
+                ]},
+            ]
+        },
         '7.12.0': {
             date: '2026-06-01',
             headline: 'Smarter, safer, and now self-updating',
@@ -131,7 +163,14 @@
 
     function _notesFor(v) {
         if (_manifest && _manifest.notes && _manifest.notes[v]) return _manifest.notes[v];
-        return BUILTIN_NOTES[v] || null;
+        if (BUILTIN_NOTES[v]) return BUILTIN_NOTES[v];
+        // v7.29.0 — never show an empty What's New: fall back to the newest notes we have.
+        try {
+            const all = Object.assign({}, BUILTIN_NOTES, (_manifest && _manifest.notes) || {});
+            const vk = x => String(x).split('.').map(Number);
+            const keys = Object.keys(all).sort((a, b) => { const A = vk(a), B = vk(b); for (let i = 0; i < 3; i++) { if ((B[i] || 0) !== (A[i] || 0)) return (B[i] || 0) - (A[i] || 0); } return 0; });
+            return keys.length ? all[keys[0]] : null;
+        } catch (_) { return null; }
     }
     function _isMandatory(v) {
         if (_manifest && _manifest.mandatory && _manifest.mandatory.indexOf(v) >= 0) return true;
