@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.30.0';
+    const CURRENT_VERSION = '7.31.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,19 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.31.0': {
+            date: '2026-06-24',
+            headline: 'Open the installed app straight to your dashboard',
+            sections: [
+                { title: 'New', items: [
+                    'Passcode-free entry for the installed app — when WealthFlow runs as the installed app (added to your home screen / APK), you can open straight to your dashboard with no passcode or biometric. Turn it on in Settings → Device Access & Encryption. For your security it NEVER applies in a normal browser tab — only the private installed app — and it is off by default.',
+                    'While passcode-free entry is on, the installed app also stops auto-locking on inactivity (a browser tab still auto-locks normally).',
+                ]},
+                { title: 'Note', items: [
+                    'Your PIN and biometrics are untouched and still protect a browser tab and every other device. Turn the option off anytime to require your passcode again.',
+                ]},
+            ]
+        },
         '7.30.0': {
             date: '2026-06-22',
             headline: 'Loans that reconcile themselves & a sharper, faster classifier',

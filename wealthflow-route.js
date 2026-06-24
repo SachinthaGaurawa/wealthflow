@@ -421,7 +421,7 @@
     'use strict';
     if (typeof document === 'undefined' || !root || typeof root.localStorage === 'undefined') return; // Node/import guard
 
-    var VERSION = '7.30.0';
+    var VERSION = '7.31.0';
     var PAIDFIX_GATE = 'wf2_paidfix_rt_v728';
     var CACHE_KEY = 'wf2_chargeIntel';
 
