@@ -392,7 +392,7 @@
 
 
 /* ============================================================================
- *  wealthflow-route.js · v7.29.0 SELF-WIRING  (browser only — no-op under Node)
+ *  wealthflow-route.js · SELF-WIRING  (browser only — no-op under Node)
  * ----------------------------------------------------------------------------
  *  Three jobs, all dependency-free and idempotent, so they heal the app even on
  *  a STALE deployed build (the exact situation behind the lingering "Paid"/
@@ -407,7 +407,7 @@
  *      are never touched. reconcileCC() then re-✅s the ones a recorded payment
  *      truly covers (oldest-first). Safe to run anytime; runs once via a gate.
  *
- *   2) Version labels — keep the footer/sidebar/pill in sync at v7.29.0 even
+ *   2) Version labels — keep the footer/sidebar/pill in sync with the live VERSION even
  *      before Settings renders.
  *
  *   3) window.WFChargeIntel — WealthFlow's OWN charge-classification engine:
@@ -608,5 +608,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 300); });
     else setTimeout(boot, 300);
 
-    try { root.console && root.console.log('[WFRoute] ✓ v7.30.0 self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
+    try { root.console && root.console.log('[WFRoute] ✓ v' + VERSION + ' self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
