@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.29.0';
+    const CURRENT_VERSION = '7.30.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,25 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.30.0': {
+            date: '2026-06-22',
+            headline: 'Loans that reconcile themselves & a sharper, faster classifier',
+            sections: [
+                { title: 'New', items: [
+                    'Loan auto-allocation — when a bank statement contains a loan repayment (EMI / instalment / standing order), WealthFlow now matches it to the right loan and files it against that month automatically, exactly like every other tab\'s allocated-months view. If you had already marked that month paid, the statement amount takes over (it\'s the authoritative figure). It is conservative on purpose: a payment must clearly look like a loan (loan wording plus a matching bank, name or installment amount) so ordinary purchases are never mistaken for a loan payment.',
+                    'Correct loan among several — with multiple loans (e.g. two housing loans and a vehicle lease) the right one is chosen by amount, bank and name, and decisively by the loan/account number when the bank prints it — so even two near-identical loans are told apart.',
+                    'Cheque auto-routing — cheque lines on a bank statement now file straight into the Cheque tab: a deposit/inward cheque as Received (money in), a cheque payment/outward as Issued (money out), with the cheque number read from the narration. Cheque-book and return fees correctly stay as bank charges.',
+                    'CC One-Time now sorts with two clean buttons — ↓ Newest and ↑ Oldest (default ↓ Newest) — so the controls never wrap and the "+ Add Payment" button stays put on smaller screens.',
+                ]},
+                { title: 'Improved', items: [
+                    'Much smarter auto-classification — the trained engine now recognises far more Sri Lankan merchants and services (supermarkets, restaurants, ride apps, e-commerce, pharmacies & hospitals, schools & courses, insurers, and streaming/SaaS subscriptions), so "Goes to" and "Type" are pre-selected correctly for many more rows without waiting on the AI.',
+                    'More fuel forecourts and income types (freelance/commission/royalty) are detected out of the box.',
+                ]},
+                { title: 'Fixed', items: [
+                    'Statement balance lines written as "B/F" or "C/F" are now correctly skipped instead of leaking in as an expense.',
+                ]},
+            ]
+        },
         '7.29.0': {
             date: '2026-06-22',
             headline: 'Sharper credit-card brain & a smoother CC workspace',

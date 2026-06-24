@@ -5282,9 +5282,9 @@
                         <div class="sh-title">CC One-Time Payments</div>
                         <div class="sh-actions">
                             <div class="sort-bar"><span class="sb-lbl">Sort:</span>
-                                <span class="sb-btn active" onclick="sortList('ccot','date',this)">🆕 Newest</span>
-                                <span class="sb-btn" onclick="sortList('ccot','days',this)">Days Left</span>
-                                <span class="sb-btn" onclick="sortList('ccot','amount',this)">Amount</span>
+                                <span class="sb-btn active" onclick="ccotSortOrder('newest',this)">↓ Newest</span>
+                                <span class="sb-btn" onclick="ccotSortOrder('oldest',this)">↑ Oldest</span>
+
                             </div>
                             <button class="btn btn-primary btn-sm" onclick="clearCCOTForm(); openModal('mdCCOT')">+ Add
                                 Payment</button>
@@ -13510,6 +13510,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         const sortState = {};
+        // v7.30.0 — CC One-Time uses a simple two-way date sort (↓ Newest / ↑ Oldest) so the
+        // controls never wrap on small screens (the "+ Add Payment" button stays put). Default ↓ Newest.
+        function ccotSortOrder(order, btn) {
+            sortState['ccot'] = { field: (order === 'oldest' ? 'oldest' : 'date'), dir: -1 };
+            if (btn) { const p = btn.closest('.sort-bar'); if (p) p.querySelectorAll('.sb-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+            try { renderCCOT(); } catch (_) {}
+        }
         function sortList(key, field, btn) {
             if (!sortState[key]) sortState[key] = { field: '', dir: -1 };
             if (sortState[key].field === field) sortState[key].dir *= -1;
@@ -17370,10 +17377,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (da !== db) return da < db ? 1 : -1;
                 return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
             };
-            if (s && s.field === 'days') arr.sort((a, b) => s.dir * (dLeft(a.deadline) - dLeft(b.deadline)));
-            else if (s && s.field === 'amount') arr.sort((a, b) => s.dir * ((b.combinedTotal || b.amount) - (a.combinedTotal || a.amount)));
-            else if (s && s.field === 'date') arr.sort((a, b) => (s.dir === -1 ? 1 : -1) * _cmpNewest(a, b));
-            else arr.sort(_cmpNewest);
+            if (s && s.field === 'oldest') arr.sort((a, b) => _cmpNewest(b, a)); // ↑ Oldest
+            else arr.sort(_cmpNewest); // ↓ Newest (default)
             const tbody = $('ccotBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('⏱️', _ccotBankFilter === 'all' ? 'No one-time payments' : 'No payments for ' + _ccotBankFilter, 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
             tbody.innerHTML = arr.map(item => {
@@ -19325,8 +19330,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.29.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.29.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.30.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.30.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -23845,6 +23850,56 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
         window._aiClassifyRows = _aiClassifyRows;
 
+        // v7.30.0 — LOAN AUTO-ALLOCATION: match a bank-statement debit line to one of the user's
+        // ACTIVE loans so the paid amount can be filed against that loan's month (the same
+        // "allocated months" model the Loan tab already uses). Conservative scoring: it needs a
+        // real signal (loan/bank/name match and/or amount ≈ the monthly installment) before it
+        // claims a row, so ordinary purchases are never mistaken for a loan payment.
+        function _matchLoanForPayment(desc, amount, direction) {
+            try {
+                if (direction && String(direction).toLowerCase() === 'credit') return null; // money IN is not a repayment
+                const all = DB.get('loans') || [];
+                const loans = all.filter(l => { try { return loanEndDate(l) > new Date(); } catch (_) { return true; } });
+                if (!loans.length) return null;
+                const d = String(desc || '').toLowerCase();
+                const amt = Number(amount) || 0;
+                const dDigits = d.replace(/\D/g, '');
+                // A loan's account / reference number is the bank's OWN discriminator. Pull every
+                // 5+ digit run from the loan's reference fields (and its name) and test it against
+                // the narration (raw and digits-only). A hit is decisive — this is exactly how 3
+                // similar loans (e.g. 2 housing + 1 vehicle, or two identical housing loans) are
+                // told apart with 100% certainty when the bank prints the loan/account number.
+                const _refNums = (l) => (String(l.ref||'')+' '+String(l.refNo||'')+' '+String(l.accountNo||'')+' '+String(l.accountNumber||'')+' '+String(l.acct||'')+' '+String(l.account||'')+' '+String(l.name||'')).match(/\d{5,}/g) || [];
+                const _refHit = (l) => _refNums(l).some(rn => d.indexOf(rn) >= 0 || (dDigits && dDigits.indexOf(rn) >= 0));
+                const hasLoanWord = /\b(loan|emi|instal?ments?|instal?lments?|repayment|housing loan|home loan|personal loan|vehicle loan|leasing|lease rental|hire purchase|mortgage)\b/.test(d);
+                let best = null, bestScore = 0;
+                for (const l of loans) {
+                    let score = 0;
+                    const bank = String(l.bank || '').toLowerCase().trim();
+                    const name = String(l.name || '').toLowerCase().trim();
+                    if (_refHit(l)) score += 5;   // account / reference number match — decisive
+                    if (name && d.includes(name)) score += 4;
+                    else if (name) { const _stop = new Set(['loan','loans','lease','leasing','emi','facility','payment','payments','installment','instalment','installments','instalments','repayment','mortgage','rental','rentals','hire','purchase','finance','financing','credit','monthly','annual','account','number']); name.split(/\s+/).filter(w => w.length >= 4 && !_stop.has(w)).forEach(w => { if (d.includes(w)) score += 2; }); }
+                    if (bank && d.includes(bank)) score += 3;
+                    else if (bank) { const tok = bank.split(/\s+/)[0]; if (tok.length >= 3 && d.includes(tok)) score += 2; }
+                    if (hasLoanWord) score += 1;
+                    if (l.monthly && amt) { const r = Math.abs(amt - l.monthly) / l.monthly; if (r < 0.02) score += 3; else if (r < 0.1) score += 1; }
+                    if (score > bestScore) { bestScore = score; best = l; }
+                }
+                if (!hasLoanWord) {
+                    // No loan wording → accept ONLY a strong identifier: the loan's NAME in the
+                    // narration, or an explicit account / reference-number match. A bare bank or
+                    // amount coincidence must NEVER be treated as a loan payment.
+                    const _nh = loans.find(l => { const n = String(l.name || '').toLowerCase().trim(); return n && n.length >= 4 && d.includes(n); });
+                    if (_nh) return _nh;
+                    const _rh = loans.find(l => _refHit(l));
+                    return _rh || null;
+                }
+                if (loans.length === 1) return loans[0];   // single active loan + clear loan wording
+                if (best && bestScore >= 2) return best;    // loan wording + a disambiguator (ref / bank / name / amount)
+                return null;
+            } catch (_) { return null; }
+        }
         function _showCCReviewModal(parsed, bank) {
             const txns = parsed.transactions.map((t, i) => ({
                 ...t,
@@ -23871,6 +23926,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     t._subName = routed.subName || '';
                     t._subPhone = routed.subPhone || '';
                     t._review = !!routed.needsReview;     // AI is unsure → ask the user
+                    t._chequeType = routed.chequeType || '';
+                    t._chequeNo = routed.chequeNo || '';
                     if (_acctType === 'bank_account') {
                         // For a bank account the "Type" column is only meaningful for
                         // fees and fuel — everything else is blank (the "Goes to"
@@ -23901,6 +23958,17 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             }
                         } catch (_) {}
                     }
+                    // v7.30.0 — auto-allocate a bank-statement loan repayment to the matching loan + month.
+                    if (_acctType !== 'credit_card' && String(t.direction || '').toLowerCase() !== 'credit') {
+                        try {
+                            const _lm = _matchLoanForPayment(t.description || '', t.amount, t.direction);
+                            if (_lm) {
+                                t._dest = 'loan'; t._loanId = _lm.id; t._loanName = _lm.name;
+                                t._loanMonth = (String(t.date || '').slice(0, 7)) || new Date().toISOString().slice(0, 7);
+                                t._review = true; // surface it so the user SEES the allocation before commit
+                            }
+                        } catch (_) {}
+                    }
                 });
             };
             _routeAll();
@@ -23915,6 +23983,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 ['subscription', 'Subscription'],
                 ['income', 'Income'],
                 ['cc_payment', 'Card Payment'],
+                ['loan', 'Loan Payment'],
+                ['cheque', 'Cheque'],
                 ['skip', 'Skip']
             ].map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
             const renderRows = () => txns.map((t, idx) => `
@@ -24058,7 +24128,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const ccPayArr = DB.get('ccPayments') || [];
                 const expArr = DB.get('expenses');
                 const incRecvArr = DB.get('incomeRecv');
-                let cc = 0, ccPay = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0;
+                const loanArr = DB.get('loans') || [];
+                const chequeArr = DB.get('cheques') || [];
+                let cc = 0, ccPay = 0, exp = 0, inc = 0, sub = 0, subCreated = 0, skipped = 0, dup = 0, loanCnt = 0, loanRepl = 0, chq = 0;
+                let _loansDirty = false;
+                let _chequesDirty = false;
                 // A statement row dated in the past is already settled → auto-tick it.
                 const _isPast = (d) => { try { const dt = new Date(d + 'T23:59:59'); return dt < new Date(); } catch (_) { return false; } };
                 const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -24161,6 +24235,34 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         if (_batch) { WFBatch.tag(_batch, _pay); WFBatch.record(_batch, 'ccPayments', _pay.id); }
                         ccPayArr.push(_pay);
                         ccPay++;
+                    } else if (dest === 'loan') {
+                        // v7.30.0 — file this bank-statement loan repayment against the matching loan's month
+                        // (replace that month's entry if one already exists — the statement is authoritative).
+                        const _ti = +(tr.dataset.idx); const _t = (typeof txns !== 'undefined' && txns[_ti]) || {};
+                        let _ln = null;
+                        if (_t._loanId) _ln = loanArr.find(x => x.id === _t._loanId);
+                        if (!_ln) { const _m = _matchLoanForPayment(desc, amount, 'debit'); if (_m) _ln = loanArr.find(x => x.id === _m.id); }
+                        const _mo = _t._loanMonth || month;
+                        if (_ln && _mo) {
+                            if (!_ln.payments) _ln.payments = [];
+                            const _pi = _ln.payments.findIndex(p => p.month === _mo);
+                            const _prec = { month: _mo, paid: true, amount, paidAt: Date.now(), notes: 'Auto-allocated from ' + (bank || 'bank') + ' statement', source: 'statement' };
+                            if (_pi > -1) { _ln.payments[_pi] = _prec; loanRepl++; } else { _ln.payments.push(_prec); }
+                            loanCnt++; _loansDirty = true;
+                        } else { skipped++; }
+                    } else if (dest === 'cheque') {
+                        // v7.30.0 — file a statement cheque into the Cheque tab. received = money IN
+                        // (deposit/inward/credit), issued = money OUT (payment/outward/debit). It is
+                        // already on the statement, so it has CLEARED. De-dupe by cheque number.
+                        const _ti = +(tr.dataset.idx); const _t = (typeof txns !== 'undefined' && txns[_ti]) || {};
+                        const _no = String(_t._chequeNo || '').trim();
+                        const _seen = chequeArr.some(c => (_no && String(c.no || '').trim() === _no) || (c.issue === date && Math.abs((c.amount || 0) - amount) < 0.01 && _nz(c.party) === _nz(desc)));
+                        if (_seen) { dup++; return; }
+                        const _ctype = (_t._chequeType === 'issued' || _t._chequeType === 'received') ? _t._chequeType : (String(_t.direction || '').toLowerCase() === 'debit' ? 'issued' : 'received');
+                        const _crec = { id: uid(), no: _no || ('IMP-' + String(Date.now()).slice(-6)), party: desc.slice(0, 60) || 'Statement import', bank: bank || '', type: _ctype, amount, issue: date, release: date, notes: _noteFor(date, desc, amount) || ('Auto-imported from ' + (bank || 'bank') + ' statement'), status: 'cleared', source: 'statement', createdAt: new Date().toISOString() };
+                        if (_batch) { try { WFBatch.tag(_batch, _crec); WFBatch.record(_batch, 'cheques', _crec.id); } catch (_) {} }
+                        chequeArr.push(_crec);
+                        chq++; _chequesDirty = true;
                     } else {
                         skipped++; // skip — not saved as a ledger entry
                     }
@@ -24169,12 +24271,17 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (ccPay) DB.set('ccPayments', ccPayArr);
                 if (exp) DB.set('expenses', expArr);
                 if (inc) DB.set('incomeRecv', incRecvArr);
+                if (_loansDirty) DB.set('loans', loanArr);
+                if (_chequesDirty) DB.set('cheques', chequeArr);
                 if (_batch) { try { WFBatch.commit(_batch); } catch (_) {} }
                 // Auto-✅ match the new payments against outstanding charges (oldest first).
                 try { if (cc || ccPay) reconcileCC(); } catch (_) {}
                 try { renderCCOT(); updateCCOTBadge(); } catch (_) {}
                 try { if (exp && typeof renderExpenses === 'function') renderExpenses(); } catch (_) {}
                 try { if (inc && typeof renderIncRecv === 'function') renderIncRecv(); } catch (_) {}
+                try { if (_loansDirty && typeof renderLoans === 'function') renderLoans(); } catch (_) {}
+                try { if (_chequesDirty && typeof renderCheques === 'function') renderCheques(); } catch (_) {}
+                try { if (_chequesDirty && typeof updateChequeBadge === 'function') updateChequeBadge(); } catch (_) {}
                 try { if (sub && typeof renderSubscriptions === 'function') renderSubscriptions(); } catch (_) {}
                 try { if (typeof renderDash === 'function') renderDash(); } catch (_) {}
                 closeOvl();
@@ -24184,6 +24291,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (ccPay) parts.push(ccPay + ' Card Payment' + (ccPay > 1 ? 's' : ''));
                 if (exp) parts.push(exp + ' Expense' + (exp > 1 ? 's' : ''));
                 if (inc) parts.push(inc + ' Income');
+                if (loanCnt) parts.push(loanCnt + ' Loan Payment' + (loanCnt > 1 ? 's' : '') + (loanRepl ? (' · ' + loanRepl + ' updated') : ''));
+                if (chq) parts.push(chq + ' Cheque' + (chq > 1 ? 's' : ''));
                 if (sub) parts.push(sub + ' Subscription' + (sub > 1 ? 's' : '') + (subCreated ? (' · ' + subCreated + ' new') : ''));
                 const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '');
                 if (parts.length) { notify('✅ Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }

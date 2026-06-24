@@ -39,7 +39,7 @@
     //  every SL card statement carries (DEBIT/CREDIT INTEREST, VAT, SSCL, NBT, CESS,
     //  GOVERNMENT LEVY, COMMISSION, LATE PAYMENT FEE, FX mark-up, …) — these used to
     //  fall through to a generic "purchase".
-    var RE_FUEL = /\b(fuel|petrol|diesel|petrol shed|fuel shed|filling station|fuel station|filling|ceypetco|lanka ioc|\bioc\b|sinopec|total energies|gas station|petroleum|dunhinda)\b/;
+    var RE_FUEL = /\b(fuel|petrol|diesel|petrol shed|fuel shed|filling station|fuel station|filling|ceypetco|lanka ioc|\bioc\b|sinopec|total energies|gas station|petroleum|dunhinda|rm parks|united petroleum)\b/;
     var RE_CASH_ADV = /\b(cash advance|cash adv|cardless cash|\batm\b|cash withdrawal|cash withdraw|withdrawal)\b/;
     var RE_CC_FEE = /\b(annual fee|late payment fee|late payment|late fee|finance charge|interest charge|debit interest|credit interest|\binterest\b|service charge|service fee|over ?limit|overlimit|over the limit|joining fee|card fee|card replacement|replacement fee|reissue fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|\bvat\b|v\.a\.t|value added tax|\bnbt\b|\bsscl\b|social security|\bcess\b|government levy|govt levy|\blevy\b|commission|commision|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return|mark[\s-]?up|currency conversion|conversion fee|foreign (currency|transaction) fee|cross[\s-]?border|fx fee|forex fee|pin (re)?issue|e[\s-]?statement fee|statement fee|annual membership|membership fee|membership|late settlement|cash advance interest|over limit fee|\bfee\b|\bcharge\b)\b/;
 
@@ -49,11 +49,11 @@
     // ── income classification (bank-account credits) ────────────────────────────
     //  IMPORTANT: 'investment' is NOT a default. Only mark income types we can see.
     var INCOME_TYPES = [
-        ['salary',   /\b(salary|payroll|wages|sal cr|monthly sal|emolument|stipend)\b/],
+        ['salary',   /\b(salary|payroll|wages|sal cr|monthly sal|emolument|stipend|net pay|pay ?slip|monthly salary|salary credit)\b/],
         ['interest', /\b(interest|int cr|int\.|fd interest|savings interest|credit interest)\b/],
         ['dividend', /\b(dividend|div cr|div\.)\b/],
         ['rent',     /\b(rent|rental|lease income)\b/],
-        ['business', /\b(invoice|sales|business|merchant settlement|pos settlement|sett)\b/],
+        ['business', /\b(invoice|sales|business|merchant settlement|pos settlement|sett|freelance|upwork|fiverr|commission|consultancy|professional fee|royalty)\b/],
         ['pension',  /\b(pension|epf|etf|gratuity)\b/],
         ['gift',     /\b(gift|donation|present)\b/],
         ['deposit',  /\b(cash deposit|cash dep|crm cash|crm deposit|cash credit|deposit)\b/],
@@ -64,16 +64,16 @@
     var EXPENSE_CATS = [
         ['Gold',          /\b(gold|jewell?er[sy]?|pawn(ing)?|gem stones?|vogue jewell|swarna mahal)\b/],
         ['Gift',          /\b(wedding gift|birthday gift|present shop|hallmark)\b/],
-        ['Groceries',     /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa|super ?city|lanka sathosa)\b/],
-        ['Dining',        /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos)\b/],
+        ['Groceries',     /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa|super ?city|lanka sathosa|sunup|healthy living|jaya super|maharaja super)\b/],
+        ['Dining',        /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos|subway|dunkin|sushi|ramen|noodles|hela bojun|chinese dragon|cool spot|sponge|nuga gama|ministry of crab|raja bojun|green cabin|bismillah|chooti|cinnabon|chatime|pizza hut|burger king)\b/],
         ['Fuel',          RE_FUEL],
-        ['Transport',     /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway|interchange|\brda\b|\betc\b|highway|wiper|tyre|tire|vehicle|auto ?parts?|spare ?parts?|service station|garage|leyland|car wash)\b/],
-        ['Utilities',     /\b(ceb|ceylon electricity|electricity|leco|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment|gas)\b/],
-        ['Shopping',      /\b(odel|nolimit|no limit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress|koko|mintpay|mint pay|ecom|showroom|singer|abans|softlogic)\b/],
-        ['Health',        /\b(pharmacy|hospital|medical|clinic|channel|lab|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri)\b/],
-        ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube|game|scope|pvr)\b/],
-        ['Education',     /\b(school|tuition|university|campus|course|institute|exam|books)\b/],
-        ['Insurance',     /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|premium)\b/],
+        ['Transport',     /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway|interchange|\brda\b|\betc\b|highway|wiper|tyre|tire|vehicle|auto ?parts?|spare ?parts?|service station|garage|leyland|car wash|pick me|kangaroo|three wheel|\bsltb\b|\bctb\b|\byego\b|emission test)\b/],
+        ['Utilities',     /\b(ceb|ceylon electricity|electricity|leco|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment|gas|litro|laugfs gas|telecom)\b/],
+        ['Shopping',      /\b(odel|nolimit|no limit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress|koko|mintpay|mint pay|ecom|showroom|singer|abans|softlogic|damro|\bdsi\b|\bbata\b|hameedia|house of fashion|cool planet|takas|wow lk|ikman|clicknshop|uniqlo|shein|\btemu\b|alibaba)\b/],
+        ['Health',        /\b(pharmacy|hospital|medical|clinic|channel|lab|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri|ninewells|lanka hospital|browns hospital|union chemist|state pharmaceutical|dental|optic)\b/],
+        ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube|game|scope|pvr|savoy|majestic cine|playstation|\bxbox\b|nintendo|steam games|twitch|disney|hotstar|iflix)\b/],
+        ['Education',     /\b(school|tuition|university|campus|course|institute|exam|books|royal college|british council|ielts|toefl|coursera|udemy|stafford|\bapiit\b|\bnsbm\b|\bsliit\b|\bcima\b|\bacca\b)\b/],
+        ['Insurance',     /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|janashakthi|hnb assurance|softlogic life|amana takaful|fairfirst|cooplife|arpico insur|premium)\b/],
         ['Cash Withdrawal', /\b(atm wtd|atm withdrawal|cash withdrawal|cash wd|atm cash|cash withdraw)\b/],
         ['Transfer',      /\b(outward ceft|outward transfer|transfer out|fund transfer|outward)\b/]
     ];
@@ -87,7 +87,7 @@
     //  Detected on bank debits so they land in the Subscriptions tab and record a
     //  payment, instead of a generic expense. Accuracy first: only strong signals.
     var SUB_PATTERNS = [
-        ['streaming', 'Entertainment', /\b(netflix|spotify|youtube premium|yt premium|disney\+?|hbo|hulu|amazon prime|prime video|apple music|apple\.com\/bill|itunes|icloud|google one|hotstar|deezer|crunchyroll)\b/],
+        ['streaming', 'Entertainment', /\b(netflix|spotify|youtube premium|yt premium|disney\+?|hbo|hulu|amazon prime|prime video|apple music|apple\.com\/bill|itunes|icloud|google one|hotstar|deezer|crunchyroll|hbo max|paramount|peacock|audible|patreon|openai|chatgpt|anthropic|notion|canva|adobe|dropbox|microsoft 365|office 365|google workspace|linkedin premium|apple tv)\b/],
         ['mobile',    'Telecom',       /\b(dialog|mobitel|hutch|airtel|etisalat|slt mobitel|prepaid|postpaid|airtime|mobile bill|phone bill)\b/],
         ['isp',       'Internet',      /\b(broadband|fibre|fiber|\bisp\b|internet bill|lanka bell|slt fibre|slt-fibre|peo ?tv|home internet)\b/],
         ['utility',   'Utilities',     /\b(ceb|leco|electricity bill|water board|nwsdb|wasa|gas bill|litro|laugfs gas)\b/],
@@ -212,12 +212,37 @@
      *   → { tab, category, incomeType, ccType, isTransfer, needsReview, reason }
      *      tab ∈ 'cconetime' | 'expenses' | 'income' | 'cc_payment' | 'skip'
      */
+    // ── cheque transactions (bank statements) → Cheque tab ──────────────────────
+    //   A cheque on a statement is real money moving. A DEPOSIT / INWARD cheque is
+    //   money IN (type 'received'); a cheque PAYMENT / ISSUED / OUTWARD is money OUT
+    //   (type 'issued'). It belongs in the dedicated Cheque tab — not generic
+    //   income/expense. Cheque-BOOK / leaf / return FEES are NOT cheque movements;
+    //   they are bank charges, so they are excluded and fall through to the fee logic.
+    //   The cheque NUMBER is read from the narration when present ("...Cheque No: 070283").
+    //   Direction comes from the wording first, then the statement's debit/credit flag.
+    var RE_CHEQUE = /\b(cheques?|chq|cheque no|chq no|deposit cheque|cheque deposit|cheque payment|cheque returned?|returned cheque|inward cheque|outward cheque|cheque clearing|clearing cheque|transfer cheque|check no|chq dep)\b/;
+    var RE_CHEQUE_FEE = /\b(cheque book|cheque leaf|cheque leaves|cheque stationery|cheque return (fee|charge)|cheque book (fee|charge)|chq book|cheque issue (fee|charge))\b/;
+    function chequeInfo(desc, dir) {
+        var d = norm(desc);
+        if (RE_CHEQUE_FEE.test(d)) return { isCheque: false };   // a fee, not a cheque movement
+        if (!RE_CHEQUE.test(d)) return { isCheque: false };
+        var src = String(desc || '');
+        var noM = src.match(/(?:che?que|chq|check)\s*(?:no\.?|number|#)?\s*[:\-]?\s*(\d{3,})/i) || src.match(/\bno\.?\s*[:\-]?\s*(\d{4,})\b/i);
+        var no = noM ? noM[1] : '';
+        var type = '';
+        if (/\b(deposit|inward|credited|received|incoming|in clearing|realis)\b/.test(d)) type = 'received';
+        else if (/\b(payment|issued|outward|debited|paid|withdrawal|outgoing|honou?red|presented)\b/.test(d)) type = 'issued';
+        else if (dir === 'credit') type = 'received';
+        else if (dir === 'debit') type = 'issued';
+        return { isCheque: true, no: no, type: type };
+    }
+
     function routeTransaction(tx, accountType) {
         tx = tx || {};
         // HARD GUARD: statement balance lines (opening/closing/brought-forward/
         // available/ledger balance) are NOT transactions. Even if the extractor
         // leaks one, it must never become phantom income or an expense.
-        var RE_BALANCE = /\b(b\/?f balance|c\/?f balance|opening balance|closing balance|balance (b\/?f|c\/?f|forward|brought forward|carried forward)|brought forward|carried forward|available balance|ledger balance|book balance|previous balance|balance as (at|on))\b/;
+        var RE_BALANCE = /\b(b\/?f balance|c\/?f balance|opening balance|closing balance|balance b f|balance c f|b f balance|c f balance|balance (b\/?f|c\/?f|forward|brought forward|carried forward)|brought forward|carried forward|available balance|ledger balance|book balance|previous balance|balance as (at|on))\b/;
         if (RE_BALANCE.test(norm(tx.description || ''))) {
             return { tab: 'skip', category: null, incomeType: null, ccType: null, isTransfer: false, needsReview: false, reason: 'statement balance line — not a transaction' };
         }
@@ -263,6 +288,16 @@
                 out.tab = 'skip';
                 out.needsReview = false;
                 out.reason = 'own-account / internal movement — not income or expense';
+                return out;
+            }
+            // cheque transactions (deposit / issued / inward / outward) → Cheque tab
+            var chq = chequeInfo(desc, dir);
+            if (chq.isCheque) {
+                out.tab = 'cheque';
+                out.chequeType = chq.type || (dir === 'credit' ? 'received' : 'issued');
+                out.chequeNo = chq.no || '';
+                out.reason = 'cheque (' + out.chequeType + ') → Cheque tab';
+                if (!chq.type && lowConf) out.needsReview = true;
                 return out;
             }
             if (dir === 'debit') {
@@ -386,7 +421,7 @@
     'use strict';
     if (typeof document === 'undefined' || !root || typeof root.localStorage === 'undefined') return; // Node/import guard
 
-    var VERSION = '7.29.0';
+    var VERSION = '7.30.0';
     var PAIDFIX_GATE = 'wf2_paidfix_rt_v728';
     var CACHE_KEY = 'wf2_chargeIntel';
 
@@ -573,5 +608,5 @@
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 300); });
     else setTimeout(boot, 300);
 
-    try { root.console && root.console.log('[WFRoute] ✓ v7.29.0 self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
+    try { root.console && root.console.log('[WFRoute] ✓ v7.30.0 self-wiring armed (CC paid-fix · WFChargeIntel · version sync)'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
