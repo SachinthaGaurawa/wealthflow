@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.31.0';
+    const CURRENT_VERSION = '7.32.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,20 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.32.0': {
+            date: '2026-06-25',
+            headline: 'Even more AI engines — all voting in parallel for sharper classification',
+            sections: [
+                { title: 'New', items: [
+                    'WealthFlow\'s classification brain now consults up to 18 AI engines at once — xAI Grok, Anthropic Claude, DeepInfra, Hyperbolic, Novita, OpenAI and Cohere now join the existing line-up (Gemini, Groq, DeepSeek, Mistral, Together, Fireworks, OpenRouter, Cerebras, SambaNova, NVIDIA, GitHub Models). Every engine runs IN PARALLEL and decides each ambiguous charge by majority vote, so "Goes to" and "Type" land correctly even more often. Engines you have configured contribute; the ones you have not simply sit out.',
+                ]},
+                { title: 'Improved', items: [
+                    'The built-in knowledge base is now in lock-step with the import classifier — many more Sri Lankan merchants, fees, taxes, levies and fuel stations are recognised instantly and offline, so fewer charges ever need the AI at all.',
+                    'The AI still only ever UPGRADES a generic guess — locked fuel, cash-advance and fee verdicts are never overridden, so the classifier can only get better.',
+                    'App modules now always refresh on a new release (no lingering old code), and the server now gives the multi-engine vote its full time budget so even slower engines still get to weigh in.',
+                ]},
+            ]
+        },
         '7.31.0': {
             date: '2026-06-24',
             headline: 'Open the installed app straight to your dashboard',

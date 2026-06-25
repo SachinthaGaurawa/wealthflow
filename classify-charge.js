@@ -1,5 +1,5 @@
 // ============================================================================
-//  WealthFlow · /api/classify-charge        v7.28.0
+//  WealthFlow · /api/classify-charge        v7.32.0
 // ----------------------------------------------------------------------------
 //  WealthFlow's OWN, purpose-built charge-classification engine. Given a list of
 //  raw statement descriptions it returns, for EACH one, the credit-card charge
@@ -7,58 +7,69 @@
 //  expense category — with a confidence score.
 //
 //  HOW IT REACHES ~100 % USABLE ACCURACY (honest framing):
-//    1) A deterministic knowledge base (the same rules the front-end uses) settles
-//       the overwhelming majority of real Sri Lankan statement lines INSTANTLY and
-//       OFFLINE — fuel forecourts, ATM/cash-advance, and the whole tax/levy/
-//       interest/fee family. These come back at confidence ≥ 0.95 with no AI call.
+//    1) A deterministic knowledge base — kept in LOCK-STEP with wealthflow-route.js
+//       (v7.30.0 merchant set) — settles the overwhelming majority of real Sri
+//       Lankan statement lines INSTANTLY and OFFLINE: fuel forecourts, ATM/cash-
+//       advance, the whole tax/levy/interest/fee family, and a wide catalogue of
+//       SL merchants (supermarkets, restaurants, ride apps, e-commerce, pharmacies
+//       & hospitals, schools & courses, insurers, streaming/SaaS). These come back
+//       at confidence >= 0.95 with NO AI call.
 //    2) ONLY the genuinely ambiguous remainder (a bare "purchase") is sent to a
-//       MULTI-ENGINE AI CONSENSUS: every provider the owner has configured in
-//       Vercel votes, and the majority verdict wins. More voters → more robust.
+//       MULTI-ENGINE AI CONSENSUS where EVERY provider the owner has configured in
+//       Vercel votes IN PARALLEL (Promise.allSettled) and the majority verdict
+//       wins. More voters -> more robust. Engines with a missing key simply skip.
 //    3) The AI may only UPGRADE a generic guess — it can never override a verdict
 //       the deterministic KB is already certain about (so fuel/cash-advance/fees
 //       stay locked and the classifier only ever improves).
 //
-//  Contract:
+//  PARALLELISM: all ~18 engines are dispatched simultaneously; the request is
+//  bounded by the router's 60s maxDuration and each engine by an 18s fetch timeout,
+//  so one slow provider can never stall the consensus.
+//
+//  Contract (UNCHANGED — safe for every existing client consumer):
 //    POST { descriptions: ["MORAWAKA FUEL STATION", "DEBIT INTEREST", ...] }
 //      (also accepts { items:[{description}] } or a single { description })
-//    →   { ok, mode, engines:[...], results:[ { i, description, type, category,
+//    ->  { ok, mode, engines:[...], results:[ { i, description, type, category,
 //          confidence, source, engineVotes } ] }
 //
-//  ALWAYS returns JSON, NEVER throws past the handler, and every provider call is
-//  bounded by a timeout so one slow engine can't stall the request.
+//  ALWAYS returns JSON, NEVER throws past the handler.
 // ============================================================================
 
-export const config = { maxDuration: 45 };
+export const config = { maxDuration: 60 }; // Hobby max — covers the full parallel multi-engine vote
 
-const OLLAMA_FALLBACK_KEY = 'f2e8db440e7e4028a40a0aefbf8dbec5.7efl7SycTPjEwR645yJmxTs1';
+const PER_ENGINE_TIMEOUT_MS = 18000; // generous so slow providers still contribute, well under the 60s budget
+const MAX_OUTPUT_TOKENS = 4096;      // headroom so a large ambiguous batch (or a reasoning model) is never truncated
 
-async function fetchWithTimeout(url, options, timeoutMs = 14000) {
+async function fetchWithTimeout(url, options, timeoutMs = PER_ENGINE_TIMEOUT_MS) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try { return await fetch(url, { ...options, signal: controller.signal }); }
     finally { clearTimeout(timer); }
 }
 
+// First defined env var among several likely names (lets the owner name keys freely).
+function envAny(...names) { for (const n of names) { const v = process.env[n]; if (v) return v; } return ''; }
+
 /* ---------------------------------------------------------------------------
- *  DETERMINISTIC KNOWLEDGE BASE  (kept in lock-step with wealthflow-route.js)
+ *  DETERMINISTIC KNOWLEDGE BASE  (in LOCK-STEP with wealthflow-route.js v7.30.0)
  *  Order matters: a fee/levy/tax/interest WINS over fuel and cash-advance, so
- *  "FUEL SURCHARGE" → service_fee and "LOCAL CASH ADVANCE FEE" → service_fee.
+ *  "FUEL SURCHARGE" -> service_fee and "LOCAL CASH ADVANCE FEE" -> service_fee.
  * ------------------------------------------------------------------------- */
-const RE_FUEL = /\b(fuel|petrol|diesel|petrol shed|fuel shed|filling station|fuel station|filling|ceypetco|lanka ioc|\bioc\b|sinopec|total energies|gas station|petroleum|dunhinda)\b/;
+const RE_FUEL = /\b(fuel|petrol|diesel|petrol shed|fuel shed|filling station|fuel station|filling|ceypetco|lanka ioc|\bioc\b|sinopec|total energies|gas station|petroleum|dunhinda|rm parks|united petroleum)\b/;
 const RE_CASH_ADV = /\b(cash advance|cash adv|cardless cash|\batm\b|cash withdrawal|cash withdraw|withdrawal)\b/;
-const RE_CC_FEE = /\b(annual fee|late payment fee|late payment|late fee|finance charge|interest charge|debit interest|credit interest|\binterest\b|service charge|service fee|over ?limit|overlimit|over the limit|joining fee|card fee|card replacement|replacement fee|reissue fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|\bvat\b|v\.a\.t|value added tax|\bnbt\b|\bsscl\b|social security|\bcess\b|government levy|govt levy|\blevy\b|commission|commision|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return|mark[\s-]?up|currency conversion|conversion fee|foreign (currency|transaction) fee|cross[\s-]?border|fx fee|forex fee|pin (re)?issue|e[\s-]?statement fee|statement fee)\b/;
+const RE_CC_FEE = /\b(annual fee|late payment fee|late payment|late fee|finance charge|interest charge|debit interest|credit interest|\binterest\b|service charge|service fee|over ?limit|overlimit|over the limit|joining fee|card fee|card replacement|replacement fee|reissue fee|cash advance fee|local cash advance fee|advance fee|fuel surcharge|surcharge|stamp duty|debit tax|\bvat\b|v\.a\.t|value added tax|\bnbt\b|\bsscl\b|social security|\bcess\b|government levy|govt levy|\blevy\b|commission|commision|processing fee|admin(istration)? fee|handling fee|svc charge|return fee|cheque return|mark[\s-]?up|currency conversion|conversion fee|foreign (currency|transaction) fee|cross[\s-]?border|fx fee|forex fee|pin (re)?issue|e[\s-]?statement fee|statement fee|annual membership|membership fee|membership|late settlement|cash advance interest|over limit fee|cefts? charges?|slips? charges?|bank charges?|maintenance fee|ledger fee|sms (alert|charge)|alert charges?|cheque book (fee|charge)|fallback fee|\bfee\b|\bfees\b|\bcharge\b|\bcharges\b)\b/;
 
 const EXPENSE_CATS = [
     ['Fuel', RE_FUEL],
-    ['Groceries', /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa|super ?city|lanka sathosa)\b/],
-    ['Dining', /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos)\b/],
-    ['Transport', /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway|interchange|highway|tyre|tire|vehicle|auto ?parts?|spare ?parts?|service station|garage|car wash)\b/],
-    ['Utilities', /\b(ceb|ceylon electricity|electricity|leco|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment|gas)\b/],
-    ['Shopping', /\b(odel|nolimit|no limit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress|koko|mintpay|mint pay|showroom|singer|abans|softlogic)\b/],
-    ['Health', /\b(pharmacy|hospital|medical|clinic|channel|\blab\b|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri)\b/],
-    ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube|game|scope|pvr)\b/],
-    ['Education', /\b(school|tuition|university|campus|course|institute|exam|books)\b/],
-    ['Insurance', /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|premium)\b/]
+    ['Groceries', /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa|super ?city|lanka sathosa|sunup|healthy living|jaya super|maharaja super)\b/],
+    ['Dining', /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos|subway|dunkin|sushi|ramen|noodles|hela bojun|chinese dragon|cool spot|sponge|nuga gama|ministry of crab|raja bojun|green cabin|bismillah|chooti|cinnabon|chatime|pizza hut|burger king)\b/],
+    ['Transport', /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway|interchange|\brda\b|\betc\b|highway|wiper|tyre|tire|vehicle|auto ?parts?|spare ?parts?|service station|garage|leyland|car wash|pick me|kangaroo|three wheel|\bsltb\b|\bctb\b|\byego\b|emission test)\b/],
+    ['Utilities', /\b(ceb|ceylon electricity|electricity|leco|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment|gas|litro|laugfs gas|telecom)\b/],
+    ['Shopping', /\b(odel|nolimit|no limit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress|koko|mintpay|mint pay|ecom|showroom|singer|abans|softlogic|damro|\bdsi\b|\bbata\b|hameedia|house of fashion|cool planet|takas|wow lk|ikman|clicknshop|uniqlo|shein|\btemu\b|alibaba)\b/],
+    ['Health', /\b(pharmacy|hospital|medical|clinic|channel|\blab\b|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri|ninewells|lanka hospital|browns hospital|union chemist|state pharmaceutical|dental|optic)\b/],
+    ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube|game|scope|pvr|savoy|majestic cine|playstation|\bxbox\b|nintendo|steam games|twitch|disney|hotstar|iflix)\b/],
+    ['Education', /\b(school|tuition|university|campus|course|institute|exam|books|royal college|british council|ielts|toefl|coursera|udemy|stafford|\bapiit\b|\bnsbm\b|\bsliit\b|\bcima\b|\bacca\b)\b/],
+    ['Insurance', /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|janashakthi|hnb assurance|softlogic life|amana takaful|fairfirst|cooplife|arpico insur|premium)\b/]
 ];
 
 const VALID_TYPES = { purchase: 1, cash_advance: 1, service_fee: 1, fuel: 1 };
@@ -86,20 +97,23 @@ function deterministic(desc) {
 
 /* ---------------------------------------------------------------------------
  *  MULTI-ENGINE CONSENSUS for the ambiguous remainder.
- *  Most providers are OpenAI-compatible (/chat/completions) → one helper covers
- *  them; Gemini has its own shape. Every configured engine casts one ballot per
- *  description and the majority TYPE wins.
+ *  Most providers are OpenAI-compatible (/chat/completions) -> one helper covers
+ *  them; xAI (reasoning) needs max_completion_tokens; Gemini and Anthropic have
+ *  their own shapes. Every configured engine casts one ballot per description and
+ *  the majority TYPE wins.
  * ------------------------------------------------------------------------- */
 function buildPrompt(list) {
     return (
-        'You classify Sri Lankan credit-card statement line descriptions.\n' +
+        'You are WealthFlow\'s Sri Lankan credit-card statement classifier.\n' +
         'For EACH item return the charge TYPE — one of exactly: purchase, cash_advance, service_fee, fuel.\n' +
-        'Rules: fuel = a fuel/petrol/diesel station purchase. cash_advance = cash drawn on the card / ATM. ' +
-        'service_fee = any bank fee, surcharge, tax, levy, interest, commission, stamp duty, annual/late fee, FX mark-up. ' +
-        'purchase = an ordinary goods/services purchase. A FEE always beats fuel/cash_advance ' +
-        '(e.g. "FUEL SURCHARGE" is service_fee, "CASH ADVANCE FEE" is service_fee).\n' +
-        'Also give a short category (Fuel, Groceries, Dining, Transport, Utilities, Shopping, Health, ' +
-        'Entertainment, Education, Insurance, Fees, or Other).\n' +
+        'Definitions:\n' +
+        '  fuel        = a fuel/petrol/diesel forecourt purchase (Ceypetco, Lanka IOC, Sinopec, Total, RM Parks, United Petroleum, any "... FILLING").\n' +
+        '  cash_advance= cash drawn on the card / ATM withdrawal / cardless cash.\n' +
+        '  service_fee = ANY bank fee, surcharge, tax, levy, interest, commission, stamp duty, annual/late/membership fee, FX mark-up or conversion fee, or government levy (VAT, NBT, SSCL, CESS).\n' +
+        '  purchase    = an ordinary goods/services purchase at a merchant.\n' +
+        'CRITICAL RULE: a FEE always beats fuel/cash_advance — "FUEL SURCHARGE" is service_fee (not fuel) and "CASH ADVANCE FEE" / "LOCAL CASH ADVANCE FEE" is service_fee (not cash_advance).\n' +
+        'Also give a short category — one of: Fuel, Groceries, Dining, Transport, Utilities, Shopping, Health, Entertainment, Education, Insurance, Fees, Other.\n' +
+        'Use Sri Lankan merchant knowledge: Cargills/Keells/Food City/Arpico/Glomark=Groceries; KFC/Pizza Hut/Dinemore/Perera & Sons=Dining; Uber/PickMe/expressway toll=Transport; Dialog/Mobitel/SLT/CEB/LECO=Utilities; Daraz/Kapruka/Odel/Singer/Abans=Shopping; Asiri/Nawaloka/Hemas/Durdans=Health; Netflix/Spotify/Disney=Entertainment.\n' +
         'Respond with ONLY a JSON array, no prose, no markdown. Each element: ' +
         '{"i": <index>, "type": "<type>", "category": "<category>"}.\n\n' +
         'ITEMS:\n' + list.map((d, i) => `${i}. ${String(d).slice(0, 120)}`).join('\n')
@@ -114,23 +128,25 @@ function parseJsonArray(text) {
     try { const arr = JSON.parse(t.slice(a, b + 1)); return Array.isArray(arr) ? arr : null; } catch (_) { return null; }
 }
 
-// One OpenAI-compatible chat call → array of {i,type,category} (or null on failure)
-function makeOAI(name, url, key, model, extraHeaders) {
+// One OpenAI-compatible chat call -> array of {i,type,category} (or null on failure).
+// opts.tokenParam lets reasoning models (xAI) use max_completion_tokens instead of max_tokens.
+function makeOAI(name, url, key, model, opts) {
+    opts = opts || {};
+    const tokenParam = opts.tokenParam || 'max_tokens';
+    const extraHeaders = opts.extraHeaders || null;
     return async function (list) {
         if (!key) return null;
         const headers = Object.assign({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key }, extraHeaders || {});
-        const resp = await fetchWithTimeout(url, {
-            method: 'POST', headers,
-            body: JSON.stringify({
-                model,
-                temperature: 0,
-                max_tokens: 1200,
-                messages: [
-                    { role: 'system', content: 'You are a precise financial transaction classifier. Output only JSON.' },
-                    { role: 'user', content: buildPrompt(list) }
-                ]
-            })
-        });
+        const payload = {
+            model,
+            temperature: 0,
+            messages: [
+                { role: 'system', content: 'You are a precise financial transaction classifier. Output only JSON.' },
+                { role: 'user', content: buildPrompt(list) }
+            ]
+        };
+        payload[tokenParam] = MAX_OUTPUT_TOKENS;
+        const resp = await fetchWithTimeout(url, { method: 'POST', headers, body: JSON.stringify(payload) });
         if (!resp.ok) throw new Error(name + ' ' + resp.status);
         const data = await resp.json();
         const txt = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
@@ -138,6 +154,7 @@ function makeOAI(name, url, key, model, extraHeaders) {
     };
 }
 
+// Google Gemini (generateContent shape).
 function makeGemini(key) {
     return async function (list) {
         if (!key) return null;
@@ -146,13 +163,35 @@ function makeGemini(key) {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: buildPrompt(list) }] }],
-                generationConfig: { temperature: 0, maxOutputTokens: 1200 }
+                generationConfig: { temperature: 0, maxOutputTokens: MAX_OUTPUT_TOKENS }
             })
         });
         if (!resp.ok) throw new Error('gemini ' + resp.status);
         const data = await resp.json();
         const txt = data && data.candidates && data.candidates[0] && data.candidates[0].content &&
             data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
+        return parseJsonArray(txt);
+    };
+}
+
+// Anthropic Claude (Messages API shape — different from OpenAI).
+function makeAnthropic(key, model) {
+    return async function (list) {
+        if (!key) return null;
+        const resp = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+            body: JSON.stringify({
+                model,
+                max_tokens: MAX_OUTPUT_TOKENS,
+                temperature: 0,
+                system: 'You are a precise financial transaction classifier. Output only JSON.',
+                messages: [{ role: 'user', content: buildPrompt(list) }]
+            })
+        });
+        if (!resp.ok) throw new Error('anthropic ' + resp.status);
+        const data = await resp.json();
+        const txt = data && data.content && data.content[0] && data.content[0].text;
         return parseJsonArray(txt);
     };
 }
@@ -186,22 +225,31 @@ export default async function handler(req, res) {
     if (ambiguousIdx.length) {
         const list = ambiguousIdx.map(i => descriptions[i]);
 
-        const geminiKey = process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY;
+        // ── Every engine the owner has configured (missing key -> skipped). All fire IN PARALLEL. ──
         const engines = [
-            ['groq', makeOAI('groq', 'https://api.groq.com/openai/v1/chat/completions', process.env.GROQ_API_KEY, 'llama-3.3-70b-versatile')],
-            ['deepseek', makeOAI('deepseek', 'https://api.deepseek.com/chat/completions', process.env.DEEPSEEK_API_KEY, 'deepseek-chat')],
-            ['mistral', makeOAI('mistral', 'https://api.mistral.ai/v1/chat/completions', process.env.MISTRAL_API_KEY, 'mistral-small-latest')],
-            ['together', makeOAI('together', 'https://api.together.xyz/v1/chat/completions', process.env.TOGETHER_API_KEY, 'meta-llama/Llama-3.3-70B-Instruct-Turbo')],
-            ['fireworks', makeOAI('fireworks', 'https://api.fireworks.ai/inference/v1/chat/completions', process.env.FIREWORKS_API_KEY, 'accounts/fireworks/models/llama-v3p3-70b-instruct')],
-            ['openrouter', makeOAI('openrouter', 'https://openrouter.ai/api/v1/chat/completions', process.env.OPENROUTER_API_KEY, 'meta-llama/llama-3.3-70b-instruct')],
-            ['cerebras', makeOAI('cerebras', 'https://api.cerebras.ai/v1/chat/completions', process.env.CEREBRAS_API_KEY, 'llama-3.3-70b')],
-            ['sambanova', makeOAI('sambanova', 'https://api.sambanova.ai/v1/chat/completions', process.env.SAMBANOVA_API_KEY, 'Meta-Llama-3.3-70B-Instruct')],
-            ['nvidia', makeOAI('nvidia', 'https://integrate.api.nvidia.com/v1/chat/completions', process.env.NVIDIA_API_KEY, 'meta/llama-3.3-70b-instruct')],
-            ['github', makeOAI('github', 'https://models.inference.ai.azure.com/chat/completions', process.env.GITHUB_MODELS_TOKEN, 'gpt-4o-mini')],
-            ['gemini', makeGemini(geminiKey)]
+            ['groq',       makeOAI('groq',       'https://api.groq.com/openai/v1/chat/completions',          envAny('GROQ_API_KEY'),                       'llama-3.3-70b-versatile')],
+            ['deepseek',   makeOAI('deepseek',   'https://api.deepseek.com/chat/completions',                envAny('DEEPSEEK_API_KEY'),                   'deepseek-chat')],
+            ['mistral',    makeOAI('mistral',    'https://api.mistral.ai/v1/chat/completions',               envAny('MISTRAL_API_KEY'),                    'mistral-small-latest')],
+            ['together',   makeOAI('together',   'https://api.together.xyz/v1/chat/completions',             envAny('TOGETHER_API_KEY','TOGETHERAI_API_KEY'), 'meta-llama/Llama-3.3-70B-Instruct-Turbo')],
+            ['fireworks',  makeOAI('fireworks',  'https://api.fireworks.ai/inference/v1/chat/completions',   envAny('FIREWORKS_API_KEY'),                  'accounts/fireworks/models/llama-v3p3-70b-instruct')],
+            ['openrouter', makeOAI('openrouter', 'https://openrouter.ai/api/v1/chat/completions',            envAny('OPENROUTER_API_KEY','OPEN_ROUTER_API_KEY'), 'meta-llama/llama-3.3-70b-instruct')],
+            ['cerebras',   makeOAI('cerebras',   'https://api.cerebras.ai/v1/chat/completions',              envAny('CEREBRAS_API_KEY'),                   'llama-3.3-70b')],
+            ['sambanova',  makeOAI('sambanova',  'https://api.sambanova.ai/v1/chat/completions',             envAny('SAMBANOVA_API_KEY'),                  'Meta-Llama-3.3-70B-Instruct')],
+            ['nvidia',     makeOAI('nvidia',     'https://integrate.api.nvidia.com/v1/chat/completions',     envAny('NVIDIA_API_KEY'),                     'meta/llama-3.3-70b-instruct')],
+            ['github',     makeOAI('github',     'https://models.inference.ai.azure.com/chat/completions',   envAny('GITHUB_MODELS_TOKEN','GITHUB_TOKEN'), 'gpt-4o-mini')],
+            ['deepinfra',  makeOAI('deepinfra',  'https://api.deepinfra.com/v1/openai/chat/completions',     envAny('DEEPINFRA_API_KEY','DEEPINFRA_TOKEN'),'meta-llama/Llama-3.3-70B-Instruct')],
+            ['hyperbolic', makeOAI('hyperbolic', 'https://api.hyperbolic.xyz/v1/chat/completions',           envAny('HYPERBOLIC_API_KEY'),                 'meta-llama/Llama-3.3-70B-Instruct')],
+            ['novita',     makeOAI('novita',     'https://api.novita.ai/v3/openai/chat/completions',         envAny('NOVITA_API_KEY'),                     'meta-llama/llama-3.3-70b-instruct')],
+            ['openai',     makeOAI('openai',     'https://api.openai.com/v1/chat/completions',               envAny('OPENAI_API_KEY','OPENAI_KEY'),        'gpt-4o-mini')],
+            ['cohere',     makeOAI('cohere',     'https://api.cohere.ai/compatibility/v1/chat/completions',  envAny('COHERE_API_KEY'),                     'command-r-08-2024')],
+            // xAI Grok is a reasoning model -> it uses max_completion_tokens, NOT max_tokens.
+            ['xai',        makeOAI('xai',        'https://api.x.ai/v1/chat/completions',                     envAny('XAI_API_KEY','GROK_API_KEY'),         'grok-4.3', { tokenParam: 'max_completion_tokens' })],
+            // Gemini & Anthropic use their own request/response shapes.
+            ['gemini',     makeGemini(envAny('WealthFlow_API_Key','GEMINI_API_KEY','GOOGLE_API_KEY'))],
+            ['anthropic',  makeAnthropic(envAny('ANTHROPIC_API_KEY','CLAUDE_API_KEY'), 'claude-3-5-haiku-latest')]
         ];
 
-        // Fire every configured engine in parallel; ignore the ones that fail/time out.
+        // Fire every configured engine in parallel; ignore the ones that fail/time out/lack a key.
         const settled = await Promise.allSettled(engines.map(async ([name, fn]) => {
             const arr = await fn(list);
             if (!arr) throw new Error(name + ' empty');
@@ -233,7 +281,7 @@ export default async function handler(req, res) {
         ambiguousIdx.forEach((origIdx, pos) => {
             const votes = tally[pos];
             const total = Object.values(votes).reduce((s, n) => s + n, 0);
-            if (!total) return; // no engine voted → keep deterministic
+            if (!total) return; // no engine voted -> keep deterministic
             let bestType = 'purchase', bestN = -1;
             Object.keys(votes).forEach(t => { if (votes[t] > bestN) { bestN = votes[t]; bestType = t; } });
             let bestCat = '', bestCN = -1;
