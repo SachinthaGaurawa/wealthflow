@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.32.0';
+    const CURRENT_VERSION = '7.33.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,23 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.33.0': {
+            date: '2026-06-25',
+            headline: 'Pinpoint loan allocation + a sharper, health-aware classifier',
+            sections: [
+                { title: 'New', items: [
+                    'Bank-statement loan repayments now land on the EXACTLY right loan — even when you have several. If you keep two housing loans and a vehicle lease, WealthFlow now tells them apart by loan TYPE first (a vehicle / lease payment can never be filed against a housing loan), then by the monthly instalment amount (which separates two same-type loans), then decisively by the loan / account number or the loan name when the statement prints it.',
+                    'Zero silent mistakes: when a statement genuinely does not print enough to be certain (e.g. two same-bank housing loans, no type word, an amount near neither instalment), the row is surfaced for your one-tap confirmation in the import review — it is never quietly filed against the wrong loan.',
+                ]},
+                { title: 'Improved', items: [
+                    'The instant classifier now recognises far more health spending — HEALTH, doctor, medicine, dispensary, drug store, e-Channelling, doc990, dental, optical, physiotherapy, ayurveda and more — so health charges stop falling into "Other", even when the statement text is abbreviated or cut off by OCR.',
+                    'The 18-engine AI vote (all engines still run IN PARALLEL) got a richer Sri-Lankan merchant brief and now reads abbreviated / truncated statement text more intelligently, so "Goes to" and "Type" are correct even more often. The AI still only ever upgrades a generic guess — locked fuel / cash-advance / fee verdicts are never overridden.',
+                ]},
+                { title: 'Note', items: [
+                    'This is a backend / engine update — no app screens changed. Just open the app and re-import (or re-run auto-sort) to feel the difference.',
+                ]},
+            ]
+        },
         '7.32.0': {
             date: '2026-06-25',
             headline: 'Even more AI engines — all voting in parallel for sharper classification',

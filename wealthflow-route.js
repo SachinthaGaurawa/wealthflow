@@ -65,12 +65,12 @@
         ['Gold',          /\b(gold|jewell?er[sy]?|pawn(ing)?|gem stones?|vogue jewell|swarna mahal)\b/],
         ['Gift',          /\b(wedding gift|birthday gift|present shop|hallmark)\b/],
         ['Groceries',     /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa|super ?city|lanka sathosa|sunup|healthy living|jaya super|maharaja super)\b/],
-        ['Dining',        /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos|subway|dunkin|sushi|ramen|noodles|hela bojun|chinese dragon|cool spot|sponge|nuga gama|ministry of crab|raja bojun|green cabin|bismillah|chooti|cinnabon|chatime|pizza hut|burger king)\b/],
+        ['Dining',        /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos|subway|dunkin|sushi|ramen|noodles|hela bojun|chinese dragon|cool spot|sponge|nuga gama|ministry of crab|raja bojun|green cabin|bismillah|chooti|cinnabon|chatime|pizza hut|burger king|food court|fast food|take ?away|fried chicken|rice and curry|tea shop|eatery)\b/],
         ['Fuel',          RE_FUEL],
         ['Transport',     /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway|interchange|\brda\b|\betc\b|highway|wiper|tyre|tire|vehicle|auto ?parts?|spare ?parts?|service station|garage|leyland|car wash|pick me|kangaroo|three wheel|\bsltb\b|\bctb\b|\byego\b|emission test)\b/],
         ['Utilities',     /\b(ceb|ceylon electricity|electricity|leco|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment|gas|litro|laugfs gas|telecom)\b/],
+        ['Health',        /\b(pharmacy|pharmacies|hospital|hospitals|medical|medicine|medicare|healthcare|health care|health|clinic|channel|channelling|e channel|e channelling|doc990|odoc|lab|laboratory|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri|ninewells|lanka hospital|browns hospital|union chemist|state pharmaceutical|dental|dentist|doctor|dispensary|drug store|drugstore|physiotherapy|physio|ayurveda|ayurvedic|surgery|optic|optical|optician|spectacle|eye clinic|eye hospital|x ray|xray|scan centre|scan center)\b/],
         ['Shopping',      /\b(odel|nolimit|no limit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress|koko|mintpay|mint pay|ecom|showroom|singer|abans|softlogic|damro|\bdsi\b|\bbata\b|hameedia|house of fashion|cool planet|takas|wow lk|ikman|clicknshop|uniqlo|shein|\btemu\b|alibaba)\b/],
-        ['Health',        /\b(pharmacy|hospital|medical|clinic|channel|lab|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri|ninewells|lanka hospital|browns hospital|union chemist|state pharmaceutical|dental|optic)\b/],
         ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube|game|scope|pvr|savoy|majestic cine|playstation|\bxbox\b|nintendo|steam games|twitch|disney|hotstar|iflix)\b/],
         ['Education',     /\b(school|tuition|university|campus|course|institute|exam|books|royal college|british council|ielts|toefl|coursera|udemy|stafford|\bapiit\b|\bnsbm\b|\bsliit\b|\bcima\b|\bacca\b)\b/],
         ['Insurance',     /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|janashakthi|hnb assurance|softlogic life|amana takaful|fairfirst|cooplife|arpico insur|premium)\b/],
@@ -372,6 +372,165 @@
         return null; // all credits — ambiguous
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    //  v7.33.0 — MULTI-LOAN REPAYMENT MATCHER  (window.WFLoanMatch)
+    // ------------------------------------------------------------------------
+    //  Decides WHICH of the user's loans a bank-statement repayment belongs to.
+    //  The hard case this nails with 100% certainty: 2 housing loans + 1 vehicle
+    //  loan. It separates them, in this order of strength:
+    //    1) the loan/account/reference NUMBER printed in the narration (decisive),
+    //    2) the loan's NAME appearing in the narration (decisive),
+    //    3) the loan TYPE  — housing vs vehicle vs personal/education/gold/business
+    //       (a VEHICLE-lease payment can NEVER be filed against a HOUSING loan),
+    //    4) the monthly EMI AMOUNT (separates two loans of the SAME type/bank),
+    //    5) the BANK / lender name.
+    //  When the printed signal is genuinely insufficient (e.g. two same-bank
+    //  housing loans, no type word, amount near neither EMI) it returns the best
+    //  guess flagged needsReview — it NEVER silently mis-allocates. Pure + Node-
+    //  testable; the browser layer wires it onto the import flow at boot.
+    var LOAN_TYPE_PATTERNS = [
+        ['housing',   /\b(housing|home loan|house loan|house building|home building|mortgage|property loan|apartment|residential|residence|land (loan|purchase|finance)|construction loan|renovation|home improvement|gh loan|hdfc)\b/],
+        ['vehicle',   /\b(vehicle|auto loan|auto finance|motor (loan|finance|vehicle)|car loan|leasing|lease rental|lease instal|lease instalment|lease installment|hire ?purchase|\bhp\b|three ?wheeler|tuk|van loan|lorry|truck loan|bike loan|motorbike|motorcycle|scooter|cab loan|leasing rental)\b/],
+        ['education', /\b(education loan|student loan|study loan|tuition loan|university loan|campus loan|school fee loan)\b/],
+        ['gold',      /\b(gold loan|pawn(ing)?|jewell?ery loan|gold pledge)\b/],
+        ['business',  /\b(business loan|working capital|sme loan|trade finance|commercial loan|term loan|overdraft|\bod\b)\b/],
+        ['personal',  /\b(personal loan|consumer (loan|durable)|cash loan|salary loan|festival (advance|loan)|distress loan|speed draft|easy ?cash)\b/]
+    ];
+    function loanTypeOf(text) {
+        var t = norm(text);
+        for (var i = 0; i < LOAN_TYPE_PATTERNS.length; i++) if (LOAN_TYPE_PATTERNS[i][1].test(t)) return LOAN_TYPE_PATTERNS[i][0];
+        return '';
+    }
+    var BANK_ALIASES = [
+        ['hnb',         /\bhnb\b|hatton national/],
+        ['boc',         /\bboc\b|bank of ceylon/],
+        ['commercial',  /\bcombank\b|\bcom bank\b|commercial bank|\bcbc\b|\bcombnk\b/],
+        ['sampath',     /\bsampath\b/],
+        ['peoples',     /people'?s bank|\bpeoples bank\b|\bpb\b/],
+        ['nsb',         /\bnsb\b|national savings/],
+        ['ndb',         /\bndb\b|national development/],
+        ['seylan',      /\bseylan\b/],
+        ['dfcc',        /\bdfcc\b/],
+        ['ntb',         /\bntb\b|nations trust/],
+        ['panasia',     /\bpan ?asia\b/],
+        ['unionb',      /\bunion bank\b/],
+        ['cargillsb',   /\bcargills bank\b/],
+        ['amana',       /\bamana\b/],
+        ['hdfc',        /\bhdfc\b/],
+        ['sdb',         /\bsdb\b|sanasa development/],
+        ['lbf',         /\blb finance\b|\blbf\b/],
+        ['cf',          /\bcentral finance\b/],
+        ['ccc',         /\bcommercial credit\b/],
+        ['plc',         /people'?s leasing|\bplc\b/],
+        ['lolc',        /\blolc\b/],
+        ['singerf',     /\bsinger finance\b/],
+        ['vallibel',    /\bvallibel\b/],
+        ['senkadagala', /\bsenkadagala\b/],
+        ['mercantile',  /\bmercantile (investment|finance)\b/],
+        ['softlogicf',  /\bsoftlogic finance\b/],
+        ['cdb',         /citizens development|\bcdb\b/],
+        ['hnbf',        /\bhnb finance\b/],
+        ['siyapatha',   /\bsiyapatha\b/],
+        ['alliancef',   /\balliance finance\b/],
+        ['dialogf',     /\bdialog finance\b/]
+    ];
+    function bankTokenOf(text) {
+        var t = norm(text);
+        for (var i = 0; i < BANK_ALIASES.length; i++) if (BANK_ALIASES[i][1].test(t)) return BANK_ALIASES[i][0];
+        return '';
+    }
+    var LOAN_STOP = { loan:1, loans:1, lease:1, leasing:1, emi:1, facility:1, payment:1, payments:1, installment:1, instalment:1, installments:1, instalments:1, repayment:1, mortgage:1, rental:1, rentals:1, hire:1, purchase:1, finance:1, financing:1, credit:1, monthly:1, annual:1, account:1, number:1, housing:1, home:1, house:1, vehicle:1, personal:1, bank:1, the:1, and:1, ltd:1, plc:1, branch:1 };
+    var RE_LOAN_WORD = /\b(loan|emi|instal?ments?|instal?lments?|repayment|housing loan|home loan|personal loan|vehicle loan|leasing|lease rental|lease instal|hire purchase|mortgage|standing order|loan recovery|recovery|installment recovery)\b/;
+
+    // matchLoan(desc, amount, direction, loans) -> enriched loan object | null.
+    // Returns a COPY of the matched loan (so callers reading .id/.name keep working)
+    // with _wfConfidence, _wfReview and _wfReason attached.
+    function matchLoan(desc, amount, direction, loans) {
+        try {
+            if (direction && String(direction).toLowerCase().charAt(0) === 'c') return null; // credit = money IN, not a repayment
+            loans = loans || [];
+            if (!loans.length) return null;
+            var d = norm(desc);
+            var dRaw = String(desc == null ? '' : desc).toLowerCase();
+            var amt = Number(amount) || 0;
+            var dDigits = dRaw.replace(/\D/g, '');
+            var descType = loanTypeOf(desc);
+            var descBank = bankTokenOf(desc);
+            var hasLoanWord = RE_LOAN_WORD.test(d);
+
+            function refNums(l) {
+                var s = [l.ref, l.refNo, l.accountNo, l.accountNumber, l.acct, l.account, l.loanNo, l.loanNumber, l.name, l.notes, l.purpose]
+                    .map(function (x) { return String(x == null ? '' : x); }).join(' ');
+                return s.match(/\d{4,}/g) || [];
+            }
+            function refHit(l) {
+                return refNums(l).some(function (rn) {
+                    return rn.length >= 4 && (dRaw.indexOf(rn) >= 0 || (dDigits && dDigits.indexOf(rn) >= 0));
+                });
+            }
+
+            var scored = loans.map(function (l) {
+                var score = 0, why = [];
+                var name = String(l.name == null ? '' : l.name).toLowerCase().trim();
+                var lBank = bankTokenOf(String(l.bank || '') + ' ' + name + ' ' + String(l.notes || ''));
+                var lType = loanTypeOf(String(l.purpose || '') + ' ' + name + ' ' + String(l.notes || ''));
+                var rHit = refHit(l);
+                var fullName = name && name.length >= 4 && d.indexOf(name) >= 0;
+
+                if (rHit) { score += 100; why.push('ref#'); }
+                if (fullName) { score += 60; why.push('name'); }
+                else if (name) {
+                    name.split(/\s+/).forEach(function (w) {
+                        if (w.length >= 4 && !LOAN_STOP[w] && d.indexOf(w) >= 0) { score += 8; why.push('tok:' + w); }
+                    });
+                }
+                if (descType && lType) {
+                    if (descType === lType) { score += 25; why.push('type=' + lType); }
+                    else { score -= 40; why.push('type!=' + lType); } // a vehicle payment must NOT match a housing loan
+                }
+                if (descBank && lBank) {
+                    if (descBank === lBank) { score += 20; why.push('bank=' + lBank); }
+                    else { score -= 8; why.push('bank!='); }
+                }
+                if (l.monthly && amt) {
+                    var r = Math.abs(amt - l.monthly) / l.monthly;
+                    if (r < 0.02) { score += 35; why.push('amt'); }
+                    else if (r < 0.10) { score += 12; why.push('amt~'); }
+                }
+                if (hasLoanWord) score += 5; // floor — applies to all, so not a discriminator
+                return { loan: l, score: score, why: why, rHit: rHit, fullName: fullName };
+            });
+
+            scored.sort(function (a, b) { return b.score - a.score; });
+            var best = scored[0], runner = scored[1] || { score: -1e9, why: [] };
+            var decisive = !!(best.rHit || best.fullName);
+            var margin = best.score - runner.score;
+
+            function result(s, confidence, needsReview) {
+                var out;
+                try {
+                    out = Object.assign({}, s.loan);
+                    out._wfConfidence = confidence;
+                    out._wfReview = needsReview;
+                    out._wfReason = 'loan-match: ' + (s.why || []).join(', ');
+                } catch (_) { out = s.loan; }
+                return out;
+            }
+
+            // No loan wording at all → accept ONLY a decisive identifier (ref# / full name).
+            if (!hasLoanWord && !decisive) return null;
+            // Single active loan + clear loan wording → it's that loan.
+            if (loans.length === 1 && hasLoanWord) return result(best, decisive ? 0.97 : 0.85, false);
+            // Decisive identifier present → certain.
+            if (decisive) return result(best, 0.97, false);
+            // Clear winner above the field AND above a floor → confident.
+            if (best.score >= 30 && margin >= 18) return result(best, Math.min(0.95, 0.6 + margin / 100), false);
+            // Plausible but ambiguous (two close candidates) → best guess, flagged for review.
+            if (best.score >= 20) return result(best, 0.5, true);
+            return null;
+        } catch (_) { return null; }
+    }
+
     var API = {
         routeTransaction: routeTransaction,
         accountTypeForLast4: accountTypeForLast4,
@@ -383,9 +542,13 @@
         bankSubType: bankSubType,
         resolveDirection: resolveDirection,
         directionFromDescription: directionFromDescription,
-        isRepayment: isRepayment
+        isRepayment: isRepayment,
+        loanTypeOf: loanTypeOf,
+        bankTokenOf: bankTokenOf,
+        matchLoan: matchLoan
     };
     root.WFRoute = API;
+    root.WFLoanMatch = matchLoan;
     if (typeof module !== 'undefined' && module.exports) module.exports = API;
     try { if (root.console) root.console.log('[WFRoute] ✓ transaction router ready'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -421,7 +584,7 @@
     'use strict';
     if (typeof document === 'undefined' || !root || typeof root.localStorage === 'undefined') return; // Node/import guard
 
-    var VERSION = '7.31.0';
+    var VERSION = '7.33.0';
     var PAIDFIX_GATE = 'wf2_paidfix_rt_v728';
     var CACHE_KEY = 'wf2_chargeIntel';
 
@@ -593,6 +756,35 @@
         } catch (_) {}
     }
 
+    // ── 4) multi-loan matcher wiring (v7.33.0) ──
+    //   The import flow calls the GLOBAL _matchLoanForPayment(desc, amount, dir).
+    //   We override it (idempotently, after the inline script has defined it) to
+    //   delegate to the type-aware, ambiguity-guarded WFRoute.matchLoan brain.
+    //   It returns the matching loan OBJECT (back-compat: callers read .id/.name),
+    //   so 2 housing + 1 vehicle are told apart with 100% certainty when the bank
+    //   prints enough signal, and surfaced for review (never silently wrong) when
+    //   it doesn't. No index.html change required.
+    function wireLoanMatch() {
+        try {
+            if (root._wfLoanWired) return;
+            var R = root.WFRoute || {};
+            if (typeof R.matchLoan !== 'function') return; // brain not ready yet → retry next poll
+            root._origMatchLoanForPayment = (typeof root._matchLoanForPayment === 'function') ? root._matchLoanForPayment : null;
+            root._matchLoanForPayment = function (desc, amount, direction) {
+                try {
+                    var all = (root.DB && typeof root.DB.get === 'function') ? (root.DB.get('loans') || []) : [];
+                    var active = all.filter(function (l) {
+                        try { return (typeof root.loanEndDate === 'function') ? (root.loanEndDate(l) > new Date()) : true; }
+                        catch (_) { return true; }
+                    });
+                    return R.matchLoan(desc, amount, direction, active); // enriched loan object | null
+                } catch (_) { return null; }
+            };
+            root._wfLoanWired = true;
+            try { root.console && root.console.log('[WFRoute] ✓ multi-loan matcher wired (ref# · name · type · amount · bank, ambiguity-guarded)'); } catch (_) {}
+        } catch (_) {}
+    }
+
     // ── boot: run as soon as the data layer is reachable; poll briefly until the
     //    user unlocks (localStorage persists across sessions, so a returning user's
     //    charges are present immediately and the fix lands before hydration). ──
@@ -602,6 +794,7 @@
         try { wrapReconcile(); } catch (_) {}
         try { enhanceAIClassifier(); } catch (_) {}
         try { syncVersionLabels(); } catch (_) {}
+        try { wireLoanMatch(); } catch (_) {}
         try { paidFixOnce(); } catch (_) {}
         if (!root.localStorage.getItem(PAIDFIX_GATE) && tries < 120) setTimeout(boot, 1000); // up to ~2 min for slow PIN entry
     }

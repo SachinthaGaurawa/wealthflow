@@ -1,5 +1,5 @@
 // ============================================================================
-//  WealthFlow · /api/classify-charge        v7.32.0
+//  WealthFlow · /api/classify-charge        v7.33.0
 // ----------------------------------------------------------------------------
 //  WealthFlow's OWN, purpose-built charge-classification engine. Given a list of
 //  raw statement descriptions it returns, for EACH one, the credit-card charge
@@ -51,7 +51,7 @@ async function fetchWithTimeout(url, options, timeoutMs = PER_ENGINE_TIMEOUT_MS)
 function envAny(...names) { for (const n of names) { const v = process.env[n]; if (v) return v; } return ''; }
 
 /* ---------------------------------------------------------------------------
- *  DETERMINISTIC KNOWLEDGE BASE  (in LOCK-STEP with wealthflow-route.js v7.30.0)
+ *  DETERMINISTIC KNOWLEDGE BASE  (in LOCK-STEP with wealthflow-route.js v7.33.0)
  *  Order matters: a fee/levy/tax/interest WINS over fuel and cash-advance, so
  *  "FUEL SURCHARGE" -> service_fee and "LOCAL CASH ADVANCE FEE" -> service_fee.
  * ------------------------------------------------------------------------- */
@@ -62,11 +62,11 @@ const RE_CC_FEE = /\b(annual fee|late payment fee|late payment|late fee|finance 
 const EXPENSE_CATS = [
     ['Fuel', RE_FUEL],
     ['Groceries', /\b(food city|cargills|keells|arpico|glomark|laughs|supermarket|grocery|spar|sathosa|super ?city|lanka sathosa|sunup|healthy living|jaya super|maharaja super)\b/],
-    ['Dining', /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos|subway|dunkin|sushi|ramen|noodles|hela bojun|chinese dragon|cool spot|sponge|nuga gama|ministry of crab|raja bojun|green cabin|bismillah|chooti|cinnabon|chatime|pizza hut|burger king)\b/],
+    ['Dining', /\b(restaurant|cafe|coffee|kfc|pizza|mcdonald|burger|hotel|bakery|dominos|barista|java|chai|karak|oishi|kottu|biryani|dinemore|perera and sons|pilawoos|subway|dunkin|sushi|ramen|noodles|hela bojun|chinese dragon|cool spot|sponge|nuga gama|ministry of crab|raja bojun|green cabin|bismillah|chooti|cinnabon|chatime|pizza hut|burger king|food court|fast food|take ?away|fried chicken|rice and curry|tea shop|eatery)\b/],
     ['Transport', /\b(uber|pickme|taxi|bus|train|railway|parking|toll|expressway|interchange|\brda\b|\betc\b|highway|wiper|tyre|tire|vehicle|auto ?parts?|spare ?parts?|service station|garage|leyland|car wash|pick me|kangaroo|three wheel|\bsltb\b|\bctb\b|\byego\b|emission test)\b/],
     ['Utilities', /\b(ceb|ceylon electricity|electricity|leco|water board|nwsdb|dialog|mobitel|slt|hutch|airtel|internet|broadband|recharge|reload|bill payment|gas|litro|laugfs gas|telecom)\b/],
+    ['Health', /\b(pharmacy|pharmacies|hospital|hospitals|medical|medicine|medicare|healthcare|health care|health|clinic|channel|channelling|e channel|e channelling|doc990|odoc|lab|laboratory|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri|ninewells|lanka hospital|browns hospital|union chemist|state pharmaceutical|dental|dentist|doctor|dispensary|drug store|drugstore|physiotherapy|physio|ayurveda|ayurvedic|surgery|optic|optical|optician|spectacle|eye clinic|eye hospital|x ray|xray|scan centre|scan center)\b/],
     ['Shopping', /\b(odel|nolimit|no limit|fashion|clothing|store|mall|cotton|kapruka|daraz|amazon|aliexpress|koko|mintpay|mint pay|ecom|showroom|singer|abans|softlogic|damro|\bdsi\b|\bbata\b|hameedia|house of fashion|cool planet|takas|wow lk|ikman|clicknshop|uniqlo|shein|\btemu\b|alibaba)\b/],
-    ['Health', /\b(pharmacy|hospital|medical|clinic|channel|\blab\b|nawaloka|asiri|hemas|durdans|osu ?sala|healthguard|laksiri|ninewells|lanka hospital|browns hospital|union chemist|state pharmaceutical|dental|optic)\b/],
     ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube|game|scope|pvr|savoy|majestic cine|playstation|\bxbox\b|nintendo|steam games|twitch|disney|hotstar|iflix)\b/],
     ['Education', /\b(school|tuition|university|campus|course|institute|exam|books|royal college|british council|ielts|toefl|coursera|udemy|stafford|\bapiit\b|\bnsbm\b|\bsliit\b|\bcima\b|\bacca\b)\b/],
     ['Insurance', /\b(insurance|aia|ceylinco|allianz|union assurance|sri lanka insurance|janashakthi|hnb assurance|softlogic life|amana takaful|fairfirst|cooplife|arpico insur|premium)\b/]
@@ -104,19 +104,29 @@ function deterministic(desc) {
  * ------------------------------------------------------------------------- */
 function buildPrompt(list) {
     return (
-        'You are WealthFlow\'s Sri Lankan credit-card statement classifier.\n' +
-        'For EACH item return the charge TYPE — one of exactly: purchase, cash_advance, service_fee, fuel.\n' +
+        'You are WealthFlow\'s Sri Lankan bank & credit-card statement classifier. Accuracy is critical — these are real money records.\n' +
+        'For EACH item return the charge TYPE — one of EXACTLY: purchase, cash_advance, service_fee, fuel. Never invent a value outside this set.\n' +
         'Definitions:\n' +
-        '  fuel        = a fuel/petrol/diesel forecourt purchase (Ceypetco, Lanka IOC, Sinopec, Total, RM Parks, United Petroleum, any "... FILLING").\n' +
-        '  cash_advance= cash drawn on the card / ATM withdrawal / cardless cash.\n' +
-        '  service_fee = ANY bank fee, surcharge, tax, levy, interest, commission, stamp duty, annual/late/membership fee, FX mark-up or conversion fee, or government levy (VAT, NBT, SSCL, CESS).\n' +
-        '  purchase    = an ordinary goods/services purchase at a merchant.\n' +
-        'CRITICAL RULE: a FEE always beats fuel/cash_advance — "FUEL SURCHARGE" is service_fee (not fuel) and "CASH ADVANCE FEE" / "LOCAL CASH ADVANCE FEE" is service_fee (not cash_advance).\n' +
-        'Also give a short category — one of: Fuel, Groceries, Dining, Transport, Utilities, Shopping, Health, Entertainment, Education, Insurance, Fees, Other.\n' +
-        'Use Sri Lankan merchant knowledge: Cargills/Keells/Food City/Arpico/Glomark=Groceries; KFC/Pizza Hut/Dinemore/Perera & Sons=Dining; Uber/PickMe/expressway toll=Transport; Dialog/Mobitel/SLT/CEB/LECO=Utilities; Daraz/Kapruka/Odel/Singer/Abans=Shopping; Asiri/Nawaloka/Hemas/Durdans=Health; Netflix/Spotify/Disney=Entertainment.\n' +
-        'Respond with ONLY a JSON array, no prose, no markdown. Each element: ' +
+        '  fuel         = a fuel/petrol/diesel forecourt purchase (Ceypetco, Lanka IOC / IOC, Sinopec, Total Energies, RM Parks, United Petroleum, Dunhinda, any "... FILLING STATION" / "FUEL").\n' +
+        '  cash_advance = cash drawn on the card / ATM withdrawal / cardless cash / "CASH ADV".\n' +
+        '  service_fee  = ANY bank fee, surcharge, tax, levy, interest, commission, stamp duty, debit tax, annual/late/joining/membership/over-limit/processing/handling fee, card replacement/reissue fee, FX mark-up or currency-conversion/cross-border fee, or government levy (VAT, NBT, SSCL, CESS).\n' +
+        '  purchase     = an ordinary goods/services purchase at a merchant (the default when it is clearly a normal spend).\n' +
+        'CRITICAL RULE: a FEE always beats fuel/cash_advance — "FUEL SURCHARGE" is service_fee (not fuel); "CASH ADVANCE FEE" / "LOCAL CASH ADVANCE FEE" is service_fee (not cash_advance).\n' +
+        'Also give the best-fit category — one of EXACTLY: Fuel, Groceries, Dining, Transport, Utilities, Shopping, Health, Entertainment, Education, Insurance, Fees, Other. Pick the SINGLE most-likely one; use Fees for any service_fee/levy/tax.\n' +
+        'Sri Lankan merchant knowledge — apply it actively:\n' +
+        '  Groceries: Cargills/Food City, Keells, Arpico, Glomark, Laugfs/LAUGHS, Spar, Sathosa, Lanka Sathosa, Jaya/Maharaja super.\n' +
+        '  Dining:    KFC, Pizza Hut, Dominos, McDonald\'s, Burger King, Dinemore, Perera & Sons, Pilawoos, Barista, Java, Cinnabon, Chatime, any restaurant/cafe/bakery/hotel meal/"FAST FOOD"/"FOOD COURT".\n' +
+        '  Transport: Uber, PickMe, taxi, three-wheeler, expressway/RDA toll, parking, tyres, spare/auto parts, vehicle service/garage, railway/bus.\n' +
+        '  Utilities: Dialog, Mobitel, SLT, Hutch, Airtel (telecom/airtime/reload), CEB, LECO (electricity), NWSDB (water), Litro/Laugfs (gas), broadband/internet bills.\n' +
+        '  Shopping:  Daraz, Kapruka, Odel, NoLimit, Singer, Abans, Softlogic, Damro, DSI, Bata, Hameedia, Amazon/AliExpress/Temu/SHEIN, electronics/clothing/footwear/cosmetics.\n' +
+        '  Health:    Asiri, Nawaloka, Hemas, Durdans, Ninewells, Lanka Hospitals, Osu Sala, HealthGuard, Union Chemists, any pharmacy/hospital/clinic/medical/medicine/dental/optical/e-Channelling/doc990/"... HEALTH".\n' +
+        '  Entertainment: Netflix, Spotify, Disney+, YouTube, Scope/Savoy/Majestic cinemas, PlayStation/Xbox/Steam, tickets/events.\n' +
+        '  Education: schools, tuition, university/campus, British Council, IELTS/TOEFL, Coursera/Udemy, books/stationery.\n' +
+        '  Insurance: AIA, Ceylinco, Allianz, Union Assurance, SLIC, Janashakthi, HNB Assurance, Softlogic Life, premiums.\n' +
+        'OCR NOTE: descriptions may be ABBREVIATED or TRUNCATED (e.g. "AL HEALTH", "...RE GATEWAY", "COMMUN"). Infer the most likely real merchant/category from the visible fragment; do not default everything to purchase/Other when a fragment clearly points to a category.\n' +
+        'Respond with ONLY a JSON array — no prose, no markdown, no code fences. Each element exactly: ' +
         '{"i": <index>, "type": "<type>", "category": "<category>"}.\n\n' +
-        'ITEMS:\n' + list.map((d, i) => `${i}. ${String(d).slice(0, 120)}`).join('\n')
+        'ITEMS:\n' + list.map((d, i) => `${i}. ${String(d).slice(0, 160)}`).join('\n')
     );
 }
 
