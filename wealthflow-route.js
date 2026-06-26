@@ -220,18 +220,28 @@
     //   they are bank charges, so they are excluded and fall through to the fee logic.
     //   The cheque NUMBER is read from the narration when present ("...Cheque No: 070283").
     //   Direction comes from the wording first, then the statement's debit/credit flag.
-    var RE_CHEQUE = /\b(cheques?|chq|cheque no|chq no|deposit cheque|cheque deposit|cheque payment|cheque returned?|returned cheque|inward cheque|outward cheque|cheque clearing|clearing cheque|transfer cheque|check no|chq dep)\b/;
-    var RE_CHEQUE_FEE = /\b(cheque book|cheque leaf|cheque leaves|cheque stationery|cheque return (fee|charge)|cheque book (fee|charge)|chq book|cheque issue (fee|charge))\b/;
+    var RE_CHEQUE = /\b(cheques?|chq|chque|cheque no|chq no|check no|cq no|cheque number|deposit cheque|cheque deposit|cheque dep|deposit chq|chq dep|chq dpst|cheque payment|cheque pmt|cheque issued?|cheque issue|inward cheque|outward cheque|cheque clearing|clearing cheque|cheque clear|chq clearing|chq clg|clg cheque|transfer cheque|cheque transfer|cheque returned?|returned cheque|cheque realis(?:e|ed|ation)?|cheque realiz(?:e|ed|ation)?|cheque credit|cheque debit|cheque honou?red|cheque presented|cheque lodg(?:e|ed|ement)?|cheque collection|local cheque|upcountry cheque|outstation cheque|electronic cheque)\b/;
+    var RE_CHEQUE_FEE = /\b(cheque book|cheque leaf|cheque leaves|cheque stationery|cheque return (?:fee|charge|charges)|cheque book (?:fee|charge|charges)|chq book|cheque issue (?:fee|charge|charges)|cheque (?:processing|handling) (?:fee|charge)|cheque dishonou?r (?:fee|charge)|returned cheque (?:fee|charge)|cheque return charges?)\b/;
     function chequeInfo(desc, dir) {
         var d = norm(desc);
         if (RE_CHEQUE_FEE.test(d)) return { isCheque: false };   // a fee, not a cheque movement
         if (!RE_CHEQUE.test(d)) return { isCheque: false };
         var src = String(desc || '');
-        var noM = src.match(/(?:che?que|chq|check)\s*(?:no\.?|number|#)?\s*[:\-]?\s*(\d{3,})/i) || src.match(/\bno\.?\s*[:\-]?\s*(\d{4,})\b/i);
+        // Cheque number — read after a cheque keyword (optionally with a connector
+        // word like dep/clg/payment between), after a bare "No.", after "#", or as a
+        // last-resort 6+ digit serial. Leading zeros preserved; the amount is never
+        // grabbed because extraction is anchored to a cheque/no/# token.
+        var noM = src.match(/(?:che?ques?|chq|chque|check|cq)\s*(?:no\.?|number|num|#|dep(?:osit|t)?|dpst|clg|clearing|payment|credit|debit|collection|lodg(?:e?ment)?|realis\w*|honou?red|presented)?\s*[:\-#.]?\s*(\d{3,})/i)
+            || src.match(/\bno\.?\s*[:\-#]?\s*(\d{4,})\b/i)
+            || src.match(/#\s*(\d{3,})/)
+            || src.match(/\b(\d{6,})\b/);
         var no = noM ? noM[1] : '';
+        // Direction: the wording wins; the statement's debit/credit flag is the fallback.
+        // Stems use \w* so every inflection is caught (realis→realised/realisation,
+        // lodg→lodgement/lodged, collect→collection/collected, honou?r→honoured…).
         var type = '';
-        if (/\b(deposit|inward|credited|received|incoming|in clearing|realis)\b/.test(d)) type = 'received';
-        else if (/\b(payment|issued|outward|debited|paid|withdrawal|outgoing|honou?red|presented)\b/.test(d)) type = 'issued';
+        if (/\b(?:deposit\w*|inward\w*|credit\w*|receiv\w*|incoming|in\s+clearing|realis\w*|realiz\w*|lodg\w*|collect\w*)\b/.test(d)) type = 'received';
+        else if (/\b(?:payment\w*|pmt|issu\w*|outward\w*|debit\w*|paid|withdraw\w*|withdrew|outgoing|honou?r\w*|present\w*|encash\w*|drawn)\b/.test(d)) type = 'issued';
         else if (dir === 'credit') type = 'received';
         else if (dir === 'debit') type = 'issued';
         return { isCheque: true, no: no, type: type };
@@ -281,16 +291,11 @@
         }
 
         if (accountType === 'bank_account') {
-            // GENUINE own-account / internal movements are neither income nor an
-            // expense. They are confidently identified (narrow pattern), so they
-            // are skipped WITHOUT nagging the user for Review.
-            if (isTransfer) {
-                out.tab = 'skip';
-                out.needsReview = false;
-                out.reason = 'own-account / internal movement — not income or expense';
-                return out;
-            }
-            // cheque transactions (deposit / issued / inward / outward) → Cheque tab
+            // CHEQUE FIRST — a cheque on a statement is real money moving and belongs
+            // in the dedicated Cheque tab, even when the narration ALSO carries
+            // "transfer"/"internal"/"clearing" wording (e.g. DFCC's "Transfer Cheque
+            // Deposit Cheque No: 070283"). Checking cheque before the own-account
+            // transfer-skip guarantees such rows are never silently dropped.
             var chq = chequeInfo(desc, dir);
             if (chq.isCheque) {
                 out.tab = 'cheque';
@@ -298,6 +303,15 @@
                 out.chequeNo = chq.no || '';
                 out.reason = 'cheque (' + out.chequeType + ') → Cheque tab';
                 if (!chq.type && lowConf) out.needsReview = true;
+                return out;
+            }
+            // GENUINE own-account / internal movements are neither income nor an
+            // expense. They are confidently identified (narrow pattern), so they
+            // are skipped WITHOUT nagging the user for Review.
+            if (isTransfer) {
+                out.tab = 'skip';
+                out.needsReview = false;
+                out.reason = 'own-account / internal movement — not income or expense';
                 return out;
             }
             if (dir === 'debit') {
@@ -584,7 +598,7 @@
     'use strict';
     if (typeof document === 'undefined' || !root || typeof root.localStorage === 'undefined') return; // Node/import guard
 
-    var VERSION = '7.33.0';
+    var VERSION = '7.34.0';
     var PAIDFIX_GATE = 'wf2_paidfix_rt_v728';
     var CACHE_KEY = 'wf2_chargeIntel';
 

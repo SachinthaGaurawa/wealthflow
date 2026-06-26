@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.33.0';
+    const CURRENT_VERSION = '7.34.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,24 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.34.0': {
+            date: '2026-06-26',
+            headline: 'Bank-statement cheques now file into the Cheque tab — accurately, for every bank',
+            sections: [
+                { title: 'New', items: [
+                    'When you import a bank statement, every cheque is now detected and filed straight into your Cheque tab — a deposited / inward / realised cheque is booked as RECEIVED (money in), and a cheque payment / outward / honoured cheque is booked as ISSUED (money out). The cheque number is read automatically from the narration, with leading zeros preserved (e.g. “Transfer Cheque Deposit Cheque No: 070283” → Received, #070283).',
+                    'Works across banks and wordings: deposit / inward / outward / clearing / realised / lodgement / collection / local / upcountry / outstation / electronic cheque, plus shorthand like “chq dep”, “cq no”, “chque” and “#070283”.',
+                ]},
+                { title: 'Improved', items: [
+                    'A cheque can no longer be swallowed by the “internal transfer” skip. Rows such as “Internal Transfer – Cheque Deposit” are now recognised as cheques first, so they always reach the Cheque tab instead of being dropped.',
+                    'Cheque-book / leaf / return / dishonour FEES are still correctly treated as bank charges (an expense), never mistaken for a cheque movement.',
+                    'Credit-vs-debit (received vs issued) is decided by the statement wording first, then by the credit/debit column — so the direction is right even when the narration is terse.',
+                ]},
+                { title: 'Note', items: [
+                    'This is a detection upgrade in the import engine — your existing cheques are untouched. Newly imported statement cheques arrive already marked “cleared” (they have already moved on the statement) and de-duplicate by cheque number, so re-importing the same statement never creates duplicates.',
+                ]},
+            ],
+        },
         '7.33.0': {
             date: '2026-06-25',
             headline: 'Pinpoint loan allocation + a sharper, health-aware classifier',
