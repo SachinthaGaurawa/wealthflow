@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.34.0';
+    const CURRENT_VERSION = '7.35.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,24 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.35.0': {
+            date: '2026-06-26',
+            headline: 'Release-notes “View” now opens, a cleaner Add Saving, and tidier sort controls',
+            sections: [
+                { title: 'Fixed', items: [
+                    'Settings → Software Update → “View” / “What’s new” now opens the release-notes sheet correctly. It was silently doing nothing whenever the notes were stored as plain text — the sheet now renders every note format reliably.',
+                ]},
+                { title: 'Changed', items: [
+                    'Removed the “Reduce my Balance Tracker” checkbox from “+ Add Saving” — it had no effect (your saving is recorded against the target, and your balance is moved separately from “Log Balance Flow → Saving for Target”), so it was only adding confusion.',
+                ]},
+                { title: 'Improved', items: [
+                    'On small phone screens the CC One-Time sort controls (↓ Newest / ↑ Oldest, default ↓ Newest) now stay compact so the “+ Add Payment” button no longer drops onto a second line.',
+                ]},
+                { title: 'Reminder', items: [
+                    'Passcode-free entry for the installed app/APK already lives in Settings → Device Access & Encryption → “Passcode-free entry (installed app only)”. It’s off by default for safety and only ever applies to the installed app (never a browser tab) — turn it ON once and the installed app opens straight to your dashboard.',
+                ]},
+            ],
+        },
         '7.34.0': {
             date: '2026-06-26',
             headline: 'Bank-statement cheques now file into the Cheque tab — accurately, for every bank',
@@ -242,7 +260,28 @@
         return CURRENT_VERSION;
     }
 
-    function _notesFor(v) {
+    // v7.35.0 — release notes come in TWO shapes: a rich object
+    // { headline, date, sections:[{title, items:[...]}] } (BUILTIN_NOTES) OR a plain
+    // string (the version.json manifest, e.g. "7.34.0": "…"). The What's-New sheet and
+    // the post-update welcome both read notes.sections — a string has none, so they
+    // used to throw (undefined.map / undefined.forEach) and the "View" button did
+    // nothing. _normNotes guarantees the object shape for every caller.
+    function _normNotes(n) {
+        if (!n) return null;
+        if (typeof n === 'string') {
+            const txt = n.trim();
+            return txt ? { headline: "What's New", sections: [{ title: 'Highlights', items: [txt] }] } : null;
+        }
+        if (Array.isArray(n.sections)) return n;            // already structured
+        const items = [];
+        ['body', 'note', 'text', 'desc', 'description', 'summary'].forEach(k => { if (n[k]) items.push(String(n[k])); });
+        const out = { headline: n.headline || "What's New", sections: items.length ? [{ title: 'Highlights', items }] : [] };
+        if (n.date) out.date = n.date;
+        if (n.mandatory) out.mandatory = n.mandatory;
+        if (n.security) out.security = n.security;
+        return out;
+    }
+    function _rawNotesFor(v) {
         if (_manifest && _manifest.notes && _manifest.notes[v]) return _manifest.notes[v];
         if (BUILTIN_NOTES[v]) return BUILTIN_NOTES[v];
         // v7.29.0 — never show an empty What's New: fall back to the newest notes we have.
@@ -253,6 +292,7 @@
             return keys.length ? all[keys[0]] : null;
         } catch (_) { return null; }
     }
+    function _notesFor(v) { return _normNotes(_rawNotesFor(v)); }
     function _isMandatory(v) {
         if (_manifest && _manifest.mandatory && _manifest.mandatory.indexOf(v) >= 0) return true;
         const n = _notesFor(v);

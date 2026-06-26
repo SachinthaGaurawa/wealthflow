@@ -2916,6 +2916,16 @@
             color: var(--text3);
         }
 
+        /* v7.35.0 — on narrow phones keep the Sort controls (↓ Newest / ↑ Oldest)
+           compact so the "+ Add Payment" button stays on the same row instead of
+           being pushed onto a new line. */
+        @media (max-width: 560px) {
+            .sh-actions { gap: 6px; }
+            .sort-bar { gap: 4px; }
+            .sort-bar .sb-lbl { display: none; }
+            .sort-bar .sb-btn { min-width: 0; padding: 6px 10px; font-size: 11.5px; }
+        }
+
         /* ================== MONTH HERO ================== */
         .mhero {
             background: linear-gradient(135deg, var(--bg3), #0d1d3c);
@@ -6443,14 +6453,6 @@
             </div>
             <div class="fg"><label class="fl">Note</label><input class="fi" id="sav_note"
                     placeholder="Monthly saving, bonus..."></div>
-            <label
-                style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text2);margin-top:6px;cursor:pointer;padding:10px;background:var(--bg2);border-radius:10px;border:1px dashed var(--border2);">
-                <input type="checkbox" id="sav_reduce_balance" checked
-                    style="width:18px;height:18px;accent-color:var(--accent);">
-                <span><b>Reduce my Balance Tracker</b> by this amount<br><span
-                        style="font-size:11px;color:var(--text3);">Keeps the balance accurate when money moves to
-                        savings.</span></span>
-            </label>
             <div class="md-ftr"><button class="btn btn-ghost" onclick="closeModal('mdSaving')">Cancel</button><button
                     class="btn btn-success" onclick="saveSaving()">💚 Add Saving</button></div>
         </div>
