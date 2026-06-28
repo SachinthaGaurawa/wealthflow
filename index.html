@@ -18221,11 +18221,23 @@ table.amort tbody tr { page-break-inside: avoid; }
         function getMonthlyData(year, month) {
             const dt = new Date(year, month, 1);
             const monthEnd = new Date(year, month + 1, 0); // last day of the month
+            // v7.36.0 — INCOME = the ACTUAL money received in this month, taken from the
+            // Income page (incomeRecv = bank-statement imports + manually-added income).
+            // The Investments tab (the `income` store) is DELIBERATELY EXCLUDED here:
+            // recurring investment income tracked on that page ALSO arrives in the bank
+            // and is imported as received income, so summing BOTH stores would
+            // DOUBLE-COUNT the very same money (e.g. a 100,000 monthly investment yield
+            // counted once as an investment source AND again as the bank credit). The
+            // Investments page stays fully intact for tracking — it simply no longer
+            // inflates Year Income / Net Savings / Savings Rate / the dashboard chart /
+            // Monthly Plan / the CSV+PDF reports / the 3D cash-flow view, all of which
+            // read this single value.
+            const _incYM = year + '-' + p2(month + 1);
             let income = 0;
-            DB.get('income').forEach(s => {
-                const start = new Date(s.start + 'T00:00:00');
-                const end = s.end ? new Date(s.end + 'T00:00:00') : null;
-                if (start <= dt && (!end || end >= dt)) income += s.monthly;
+            (DB.get('incomeRecv') || []).forEach(r => {
+                if (!r) return;
+                const rm = r.month || (r.date ? String(r.date).slice(0, 7) : '');
+                if (rm === _incYM) income += (+r.amount || 0);
             });
             let loanTotal = 0, loanItems = [];
             DB.get('loans').forEach(l => {
@@ -22278,7 +22290,24 @@ Be concrete and reference actual LKR figures. No generic advice.`;
                 });
             });
 
-            DB.get('income').forEach(s => incomeSources.push({ name: s.name, amount: s.monthly * months }));
+            // v7.36.0 — the income breakdown now mirrors the Income total above: it
+            // aggregates ACTUAL received income (incomeRecv) over the SAME month window,
+            // grouped by type, so the breakdown always sums to groups.Income. The
+            // Investments store is intentionally not used here (it would no longer match
+            // the total and would re-introduce the double-count this release removes).
+            const _cf3dIncByType = {};
+            (DB.get('incomeRecv') || []).forEach(r => {
+                if (!r) return;
+                const rm = r.month || (r.date ? String(r.date).slice(0, 7) : '');
+                const parts = rm.split('-');
+                const ry = +parts[0], rmo = +parts[1];
+                if (!ry || !rmo) return;
+                const monthsAgo = (now.getFullYear() - ry) * 12 + (now.getMonth() - (rmo - 1));
+                if (monthsAgo < 0 || monthsAgo >= months) return;
+                const t = r.type || 'Other';
+                _cf3dIncByType[t] = (_cf3dIncByType[t] || 0) + (+r.amount || 0);
+            });
+            Object.keys(_cf3dIncByType).forEach(t => incomeSources.push({ name: t, amount: _cf3dIncByType[t] }));
 
             return { groups, expByCat, incomeSources, loanItems, months, period };
         }

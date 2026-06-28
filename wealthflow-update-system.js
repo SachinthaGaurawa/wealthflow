@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.35.0';
+    const CURRENT_VERSION = '7.36.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,20 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.36.0': {
+            date: '2026-06-29',
+            headline: 'Year Income now counts real received money — no more investment double-counting',
+            sections: [
+                { title: 'Fixed', items: [
+                    'Year Income (and everything derived from it) now reflects the ACTUAL money you received — the bank-statement imports and manual entries on your Income page — instead of the Investments tab.',
+                    'This removes a double-count: a recurring investment yield (say 100,000/month) was tracked on the Investments page AND, when that same money landed in your bank and the statement was imported, captured again as received income. Year Income now reads only the received-income side, so the same money can never be counted twice.',
+                    'The fix flows consistently through every place that shows income: the dashboard Year Income card, Net Savings, Savings Rate, the monthly income chart, the Monthly Plan, the CSV and PDF reports, and the 3D Cash Flow view (its income breakdown now matches its income total exactly).',
+                ]},
+                { title: 'Unchanged', items: [
+                    'Your Investments page is fully intact — every source, amount and history stays exactly as it was. It simply no longer inflates Year Income, because that income is already captured when it reaches your bank.',
+                ]},
+            ],
+        },
         '7.35.0': {
             date: '2026-06-26',
             headline: 'Release-notes “View” now opens, a cleaner Add Saving, and tidier sort controls',
