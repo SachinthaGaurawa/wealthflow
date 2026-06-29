@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.36.0';
+    const CURRENT_VERSION = '7.37.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,23 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.37.0': {
+            date: '2026-06-29',
+            headline: 'New: a Notifications centre in the topbar — never miss a payment or cheque',
+            sections: [
+                { title: 'New', items: [
+                    'A notifications bell now sits in the top bar with a red badge showing how many urgent + warning items you haven\u2019t seen yet.',
+                    'It watches your real data and surfaces what needs attention: overdue or due-today cheques, unpaid card payments near or past their deadline, loan instalments due this month or overdue, and bills/subscriptions due soon or overdue. Active card-instalment plans show as gentle info.',
+                    'Most urgent first, newest at the top. Tap any notification and it takes you straight to the right page. Opening the bell clears the unseen count; opening or tapping an item marks it seen.',
+                ]},
+                { title: 'Settings → Notifications', items: [
+                    'A master on/off switch plus individual toggles for urgent alerts, due-soon warnings, cheques, card payments, loan instalments, bills, and card instalments — so you decide exactly what you\u2019re notified about.',
+                ]},
+                { title: 'Built carefully', items: [
+                    'The bell reads your data and never changes it. Severities are computed from real dates (cheque release dates, card deadlines, loan months, subscription due-days) and were simulated across overdue / due-today / due-soon cases before release, so the counts are accurate.',
+                ]},
+            ],
+        },
         '7.36.0': {
             date: '2026-06-29',
             headline: 'Year Income now counts real received money — no more investment double-counting',

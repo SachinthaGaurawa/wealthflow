@@ -329,6 +329,7 @@
     <script src="wealthflow-crib.js" defer></script>
     <!-- Subscription auto-routing: recurring bills → Subscriptions tab, auto-create + remember -->
     <script src="wealthflow-subscriptions.js" defer></script>
+    <script src="wealthflow-notifications.js" defer></script>
     <!-- Statement import batches + Undo (last 6) -->
     <script src="wealthflow-batches.js" defer></script>
 
@@ -5113,6 +5114,13 @@
                         <div class="online-badge on" id="onlineBadge"><span class="online-dot"
                                 id="onlineDot"></span><span id="onlineText">Online</span></div>
                         <div id="syncIndicator" class="sync-indicator">Syncing...</div>
+                    </div>
+                    <div class="wfntf-wrap">
+                        <button class="tb-action-icon wfntf-btn" id="wfNotifBtn" onclick="if(window.WFNotif)WFNotif.togglePanel()" title="Notifications" aria-label="Notifications" aria-haspopup="dialog">
+                            <i data-wfi="bell"></i>
+                            <span class="wfntf-badge" id="wfNotifBadge" style="display:none;">0</span>
+                        </button>
+                        <div class="wfntf-panel" id="wfNotifPanel" role="dialog" aria-label="Notifications"></div>
                     </div>
                     <button class="tb-action-icon" id="topRefreshBtn" onclick="refreshApp(this)" title="Sync System">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -19036,6 +19044,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" style="color:var(--red); border-color:var(--red);" onclick="confirmResetAIMemory()">Reset</button>
             </div>
         </div>
+
+        <div class="settings-section" id="wfntfSettingsCard" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--border2);"></div>
 
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:#818cf8;">Device Access &amp; Encryption</div>
