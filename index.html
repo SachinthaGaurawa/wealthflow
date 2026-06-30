@@ -17603,9 +17603,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             const desc = $('e_desc').value.trim(), cat = $('e_cat').value, amount = parseMoney($('e_amount').value), month = $('e_month').value;
             if (!desc || !amount || !month) { notify('Please fill required fields', 'error'); return; }
             const recurringVal = $('e_recurring').value;
-            const rec = { id: editMode || uid(), desc, cat, amount, month, recurring: recurringVal === '1', recurringType: recurringVal, notes: $('e_notes').value, completed: false };
+            const rec = { id: editMode || uid(), desc, cat, amount, month, recurring: recurringVal === '1', recurringType: recurringVal, notes: $('e_notes').value, completed: false, source: 'manual' };
             const arr = DB.get('expenses');
-            if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { rec.completed = arr[i].completed; arr[i] = rec; } } else arr.push(rec);
+            if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) { rec.completed = arr[i].completed; rec.source = arr[i].source || 'manual'; rec.autoPaid = arr[i].autoPaid; arr[i] = rec; } } else arr.push(rec);
             DB.set('expenses', arr);
             acSave('exp_desc', desc);
             closeModal('mdExpense'); renderExpenses(); renderDash();
@@ -17648,6 +17648,25 @@ table.amort tbody tr { page-break-inside: avoid; }
             renderExpenses();
         }
 
+        // v7.39.0 — auto-mark PAST manually-added expenses as paid. Once a month
+        // is over you can't pay it anymore, so the scheduled checkmark resolves
+        // itself. Statement imports (source:'statement') are records of money
+        // already spent and are NEVER auto-touched here. Idempotent; persists
+        // only when something actually changed, and returns the array.
+        function _normalizeExpensePaid(arr) {
+            try {
+                arr = arr || DB.get('expenses') || [];
+                const ymNow = `${new Date().getFullYear()}-${p2(new Date().getMonth() + 1)}`;
+                let changed = 0;
+                arr.forEach(x => {
+                    if (!x || x.source === 'statement' || x.completed) return;
+                    if ((x.month || '') && x.month < ymNow) { x.completed = true; x.autoPaid = true; changed++; }
+                });
+                if (changed) DB.set('expenses', arr);
+            } catch (_) {}
+            return arr;
+        }
+
         function renderExpenses() {
             // ── Default sort: newest month first ─ Issue (v7.4.7) ──────────
             // Initialise sortState['expenses'] to { field:'date', dir:-1 }
@@ -17676,7 +17695,23 @@ table.amort tbody tr { page-break-inside: avoid; }
                 } catch (_) {}
             }
             let arr = DB.get('expenses');
-            const allMonths = [...new Set(arr.map(x => x.month))].sort().reverse();
+            // ── v7.39.0 — checkmark semantics ──────────────────────────────
+            // The "mark paid" checkmark is ONLY for MANUALLY-added expenses that
+            // are due in the CURRENT or an UPCOMING month. Bank-statement imports
+            // (source:'statement') are records of money already spent — they get
+            // NO checkmark. And once a month has passed, manual expenses for that
+            // month are auto-marked paid (you can't pay the past), so the check
+            // disappears for them too. _normalizeExpensePaid() applies the
+            // auto-mark; _expCanCheck() decides whether to show the button.
+            const _ymNow = `${new Date().getFullYear()}-${p2(new Date().getMonth() + 1)}`;
+            if (typeof _normalizeExpensePaid === 'function') { try { arr = _normalizeExpensePaid(arr); } catch (_) {} }
+            const _isStatementExp = (x) => (x && x.source === 'statement');
+            const _expCanCheck = (x) => (!!x && !x.completed && !_isStatementExp(x) && (x.month || '') >= _ymNow);
+            const _expActBtns = (x) => `<div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">`
+                + (_expCanCheck(x) ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : '')
+                + `<button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>`
+                + `<button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>`
+                + `</div>`;
             const sel = $('expMonth'); const cur = sel.value;
             sel.innerHTML = '<option value="">All Months</option>' + allMonths.map(m => `<option value="${m}" ${m === cur ? 'selected' : ''}>${monthStrFmt(m + '-01')}</option>`).join('');
             let filtered = cur ? arr.filter(x => x.month === cur) : arr;
@@ -17827,11 +17862,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 ${x.notes ? `<div style="font-size:11px;color:var(--text3);word-wrap:break-word;overflow-wrap:break-word;margin-top:2px;">${x.notes}</div>` : ''}
                             </div>
                             <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
-                            <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
-                                ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
-                                <button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
-                                <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
-                            </div>
+                            ${_expActBtns(x)}
                         </div>`;
                     const _catGroups = {};
                     items.forEach(x => { (_catGroups[x.cat || 'Other'] = _catGroups[x.cat || 'Other'] || []).push(x); });
@@ -17845,30 +17876,30 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const history = catItems
                             .slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
                             .map(x => `
-                                <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:8px 12px 8px 22px;border-radius:8px;background:var(--bg);margin-bottom:5px;${x.completed ? 'opacity:.6;' : ''}">
+                                <div class="exp-sub-row${x.completed ? ' is-paid' : ''}" style="display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:8px;background:var(--bg);margin-bottom:5px;position:relative;${x.completed ? 'opacity:.62;' : ''}">
+                                    <span style="flex:0 0 auto;width:14px;text-align:center;color:var(--text3);font-size:13px;opacity:.5;">&#8627;</span>
                                     <div style="flex:1 1 0;min-width:0;overflow:hidden;">
                                         <div style="font-weight:600;font-size:12.5px;overflow-wrap:break-word;line-height:1.35;">${x.desc}</div>
                                         <div style="font-size:11px;color:var(--text3);margin-top:1px;">${x.date ? fmtDatePretty(x.date) : (x.month || '')}${x.notes ? ' · ' + x.notes : ''}</div>
                                     </div>
                                     <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
-                                    <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
-                                        ${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
-                                        <button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
-                                        <button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
-                                    </div>
+                                    ${_expActBtns(x)}
                                 </div>`).join('');
                         return `
-                            <div style="margin-bottom:6px;">
-                                <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);cursor:pointer;" onclick="_toggleExpCat('${gid}')">
+                            <div class="exp-cat-group" style="margin-bottom:8px;">
+                                <div class="exp-item-row exp-cat-head" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:8px;background:var(--bg2);cursor:pointer;border-left:3px solid var(--accent);" onclick="_toggleExpCat('${gid}')">
                                     <span class="badge exp-badge ${catBadge[cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${cat}</span>
                                     <div style="flex:1 1 0;min-width:0;overflow:hidden;">
                                         <div style="font-weight:700;font-size:13px;line-height:1.35;">${cat} <span style="font-weight:600;color:var(--text3);font-size:11.5px;">· ${catItems.length} transactions</span></div>
                                         <div style="font-size:11px;color:var(--accent);margin-top:1px;"><i data-wfi="history"></i> Tap to view history (${catPaid}/${catItems.length} paid)</div>
                                     </div>
                                     <div class="exp-amt" style="font-family:var(--mono);font-weight:800;color:var(--red);flex-shrink:0;white-space:nowrap;font-size:13px;">${fmt(catTotal)}</div>
-                                    <span id="${gid}_caret" style="flex-shrink:0;color:var(--text3);font-size:13px;transition:transform .2s;">▾</span>
+                                    <span id="${gid}_caret" style="flex-shrink:0;color:var(--text3);font-size:13px;transition:transform .2s;">&#9662;</span>
                                 </div>
-                                <div id="${gid}" style="display:none;margin-top:5px;">${history}</div>
+                                <div id="${gid}" class="exp-hist-thread" style="display:none;margin:6px 0 2px 6px;padding-left:14px;border-left:2px solid var(--border2);">
+                                    <div style="font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text3);margin:0 0 6px 2px;">Transactions in ${cat}</div>
+                                    ${history}
+                                </div>
                             </div>`;
                     }).join('');
                     return `
@@ -17901,10 +17932,8 @@ table.amort tbody tr { page-break-inside: avoid; }
         <td class="td-m">${monthStrFmt(x.month + '-01')}</td>
         <td class="td-r">${fmt(x.amount)}</td>
         <td>${x.recurring ? '<span class="badge bg-b">🔄 Monthly</span>' : '<span class="badge bg-gr">Once</span>'}</td>
-        <td>${x.completed ? '<span class="badge bg-g">✅ Paid</span>' : '<span class="badge bg-a">Pending</span>'}</td>
-        <td><div class="act-btns">${!x.completed ? `<button class="ib c" onclick="markExpDone('${x.id}')"><i data-wfi="check"></i></button>` : ''}
-            <button class="ib e" onclick="editExpense('${x.id}')"><i data-wfi="edit"></i></button>
-            <button class="ib d" onclick="deleteExpense('${x.id}')"><i data-wfi="trash"></i></button></div></td>
+        <td>${x.completed ? '<span class="badge bg-g">✅ Paid</span>' : (_isStatementExp(x) ? '<span class="badge bg-b">📄 Recorded</span>' : '<span class="badge bg-a">Pending</span>')}</td>
+        <td>${_expActBtns(x)}</td>
     </tr>`).join('');
         }
 
@@ -19292,11 +19321,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Round Display Amounts</div><div class="setting-desc">Hide trailing decimals in the dashboard for cleaner reading.</div></div>
-                <div class="toggle ${s.roundAmounts ? 'on' : ''}" onclick="toggleSetting('roundAmounts', ${!s.roundAmounts})"></div>
+                <div id="setTgl_roundAmounts" class="toggle ${s.roundAmounts ? 'on' : ''}" onclick="toggleSetting('roundAmounts', ${!s.roundAmounts})"></div>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Hide Sensitive Numbers</div><div class="setting-desc">Privacy mode — replaces amounts with • • • • until tapped.</div></div>
-                <div class="toggle ${s.privacyMode ? 'on' : ''}" onclick="toggleSetting('privacyMode', ${!s.privacyMode}); renderDash();"></div>
+                <div id="setTgl_privacyMode" class="toggle ${s.privacyMode ? 'on' : ''}" onclick="toggleSetting('privacyMode', ${!s.privacyMode}); renderDash();"></div>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Week Starts On</div><div class="setting-desc">Affects monthly plan and recurring schedules.</div></div>
@@ -19569,6 +19598,26 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         function toggleSetting(key, val) {
             const s = DB.getObj('settings', {});
+            // ── v7.39.0 — fix the "dancing"/scroll-jump bug ────────────────
+            // The old code called renderSettings() on every toggle, which
+            // rebuilt the whole settings panel and reset the WINDOW scroll
+            // (the page scrolls on <body>, not .sb-nav — so the old scroll
+            // preservation targeted the wrong element and the page jumped to
+            // the top, then back: the "dance"). We now flip the clicked
+            // toggle IN PLACE and never re-render the panel. The new value is
+            // read from the toggle's LIVE on/off state, so repeated taps work
+            // even though the inline onclick passes a value baked at render time.
+            let _el = null;
+            try {
+                const _ev = window.event;
+                if (_ev) {
+                    const _t = _ev.currentTarget || _ev.target;
+                    _el = (_t && _t.classList && _t.classList.contains('toggle')) ? _t : (_t && _t.closest ? _t.closest('.toggle') : null);
+                }
+            } catch (_) {}
+            // Boolean toggles: derive the new value from what's shown right now.
+            // Selects (currency/weekStart/dashPeriod) pass a string → use it directly.
+            if (typeof val === 'boolean' && _el && _el.classList) val = !_el.classList.contains('on');
             s[key] = val;
             // Round Display Amounts and Hide Sensitive Numbers are mutually
             // exclusive — turning one ON forces the other OFF. (Both can be OFF.)
@@ -19582,11 +19631,25 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             }
             DB.set('settings', s);
-            const scrollContainer = document.querySelector('.sb-nav') || document.body;
-            const scrollPos = scrollContainer.scrollTop || window.scrollY;
-            renderSettings();
-            if (scrollContainer !== document.body) scrollContainer.scrollTop = scrollPos;
-            else window.scrollTo(0, scrollPos);
+            // Flip the clicked toggle in place — NO settings re-render, so the
+            // page never scrolls/jumps. If we couldn't find the element (very
+            // old browser without window.event), fall back to a re-render that
+            // preserves the WINDOW scroll position so it still can't jump.
+            if (_el && _el.classList) {
+                _el.classList.toggle('on', val === true);
+                // Keep the mutually-exclusive display toggles visually in sync.
+                try {
+                    const _sync = (k, on) => { const t = document.getElementById('setTgl_' + k); if (t) t.classList.toggle('on', !!on); };
+                    if (key === 'roundAmounts' && val === true) { _sync('privacyMode', false); }
+                    if ((key === 'privacyMode' || key === 'hideSensitive') && val === true) { _sync('roundAmounts', false); }
+                } catch (_) {}
+            } else if (typeof val === 'boolean') {
+                const _wy = window.scrollY || document.documentElement.scrollTop || 0;
+                const _m = document.querySelector('.main'); const _mt = _m ? _m.scrollTop : 0;
+                renderSettings();
+                if (_m) _m.scrollTop = _mt;
+                window.scrollTo(0, _wy);
+            }
 
             triggerHaptic('toggle');
 

@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.38.0';
+    const CURRENT_VERSION = '7.39.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,26 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.39.0': {
+            date: '2026-06-30',
+            headline: 'Expenses that read like a thread, a smarter paid-tick, colour-coded notifications, and no more settings "dance"',
+            sections: [
+                { title: 'Expenses — clearer history', items: [
+                    'When you tap a category to view its history, those transactions now appear as a clearly nested thread \\u2014 indented under the category with a connecting rail and a \\u201cTransactions in \\u2026\\u201d label \\u2014 so you can instantly tell the category header (parent) from the individual charges (children), like a comment and its replies.',
+                ]},
+                { title: 'Expenses — smarter paid tick', items: [
+                    'The \\u201cmark paid\\u201d tick now appears only where it makes sense: on expenses you added manually, and only for the current month and upcoming months.',
+                    'Bank-statement expenses no longer show a tick \\u2014 they\\u2019re records of money already spent, not something you need to mark. In the table view they read as \\u201cRecorded\\u201d.',
+                    'When a new month begins, last month\\u2019s manual expenses are automatically marked paid (you can\\u2019t pay the past), so the tick tidies itself up.',
+                ]},
+                { title: 'Notifications — colour-coded', items: [
+                    'Each notification is now colour-coded by reason so you can read the bell at a glance: overdue is red, due-today/imminent is orange, due-soon is gold, and system/info is blue.',
+                ]},
+                { title: 'Settings — fixed', items: [
+                    'Turning an option on or off no longer makes the page jump or \\u201cdance\\u201d. Toggles now flip instantly in place, leaving your scroll position exactly where it was.',
+                ]},
+            ],
+        },
         '7.38.0': {
             date: '2026-06-30',
             headline: 'Notifications, perfected — seen-state that sticks, a fix for the mobile cut-off, a smarter panel, and device reminders',

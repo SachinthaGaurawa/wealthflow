@@ -167,7 +167,14 @@
         }
 
         var rank = { urgent: 0, warning: 1, info: 2 };
-        out.forEach(function (n) { n.sortTs = n.date ? new Date(n.date + 'T00:00:00').getTime() : 0; });
+        out.forEach(function (n) {
+            n.sortTs = n.date ? new Date(n.date + 'T00:00:00').getTime() : 0;
+            // tone = precise colour cue: overdue (red) / due-imminent (orange)
+            // / upcoming (gold) / system (blue) — finer than severity alone.
+            n.tone = (n.sev === 'info') ? 'info'
+                : (n.sev === 'warning') ? 'upcoming'
+                    : (/over/i.test(n.when || '') ? 'overdue' : 'duesoon');
+        });
         out.sort(function (a, b) {
             if (rank[a.sev] !== rank[b.sev]) return rank[a.sev] - rank[b.sev];
             if (b.sortTs !== a.sortTs) return b.sortTs - a.sortTs;
@@ -308,7 +315,7 @@
 
     /* -------------------------------------------------------------- panel   */
     function rowHtml(n) {
-        return '<button type="button" class="wfntf-item sev-' + n.sev + (((n.sev === 'urgent' || n.sev === 'warning') && !_seenSnapshot[n.id]) ? ' is-new' : '') + '" onclick="WFNotif._click(' + n._i + ')">' +
+        return '<button type="button" class="wfntf-item sev-' + n.sev + ' tone-' + (n.tone || 'info') + (((n.sev === 'urgent' || n.sev === 'warning') && !_seenSnapshot[n.id]) ? ' is-new' : '') + '" onclick="WFNotif._click(' + n._i + ')">' +
             '<span class="wfntf-ic">' + (SVG[n.icon] || SVG.bill) + '</span>' +
             '<span class="wfntf-body">' +
             '<span class="wfntf-title">' + n.title + '</span>' +
@@ -491,6 +498,19 @@
             '.wfntf-when{font-size:9.5px;font-weight:800;letter-spacing:.2px;white-space:nowrap;padding:2px 7px;border-radius:7px;color:var(--text2,#b8b8c4);background:rgba(255,255,255,.06)}' +
             '.wfntf-item.sev-urgent .wfntf-when{color:#fff;background:var(--red,#ef4444)}' +
             '.wfntf-item.sev-warning .wfntf-when{color:#1a1205;background:var(--gold,#f5a623)}' +
+            // tone overrides — precise colour per reason (overdue/imminent/upcoming/system)
+            '.wfntf-item.tone-overdue::before{background:#ef4444}' +
+            '.wfntf-item.tone-duesoon::before{background:#ff7a18}' +
+            '.wfntf-item.tone-upcoming::before{background:var(--gold,#f5a623)}' +
+            '.wfntf-item.tone-info::before{background:var(--blue,#579bfc)}' +
+            '.wfntf-item.tone-overdue .wfntf-ic{color:#ef4444;background:rgba(239,68,68,.12)}' +
+            '.wfntf-item.tone-duesoon .wfntf-ic{color:#ff7a18;background:rgba(255,122,24,.13)}' +
+            '.wfntf-item.tone-upcoming .wfntf-ic{color:var(--gold,#f5a623);background:rgba(245,166,35,.12)}' +
+            '.wfntf-item.tone-info .wfntf-ic{color:var(--blue,#579bfc);background:rgba(87,155,252,.12)}' +
+            '.wfntf-item.tone-overdue .wfntf-when{color:#fff;background:#ef4444}' +
+            '.wfntf-item.tone-duesoon .wfntf-when{color:#fff;background:#ff7a18}' +
+            '.wfntf-item.tone-upcoming .wfntf-when{color:#1a1205;background:var(--gold,#f5a623)}' +
+            '.wfntf-item.tone-info .wfntf-when{color:#fff;background:var(--blue,#579bfc)}' +
             '.wfntf-go{font-size:18px;color:var(--text3,#8a8a99);line-height:1}' +
             '.wfntf-item.is-new::after{content:"";position:absolute;top:10px;right:10px;width:7px;height:7px;border-radius:50%;background:var(--red,#ef4444);box-shadow:0 0 0 3px var(--bg2,#101018)}' +
             '.wfntf-empty{padding:40px 22px;text-align:center;color:var(--text2,#b8b8c4)}' +
