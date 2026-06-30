@@ -6,7 +6,7 @@
 // new in-app modal (wealthflow-sms-paste.js). Service Worker stays simple:
 // notifications, caching, and the original auto-backup logic.
 
-const CACHE_NAME = 'wealthflow-v7.37.0';
+const CACHE_NAME = 'wealthflow-v7.38.0';
 
 // Install event — cache core assets
 self.addEventListener('install', (event) => {
@@ -77,6 +77,9 @@ self.addEventListener('notificationclick', (event) => {
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
             for (const client of clientList) {
                 if (client.url.includes(self.location.origin)) {
+                    if (data.page) {
+                        client.postMessage({ type: 'wf-notif-open', page: data.page });
+                    }
                     if (action && data.actionableId) {
                         client.postMessage({
                             type: 'WF_NOTIFICATION_ACTION',
@@ -88,6 +91,11 @@ self.addEventListener('notificationclick', (event) => {
                 }
             }
             return clients.openWindow(urlToOpen).then((newClient) => {
+                if (newClient && data.page) {
+                    setTimeout(() => {
+                        newClient.postMessage({ type: 'wf-notif-open', page: data.page });
+                    }, 1500);
+                }
                 if (newClient && action && data.actionableId) {
                     setTimeout(() => {
                         newClient.postMessage({

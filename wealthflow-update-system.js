@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.37.0';
+    const CURRENT_VERSION = '7.38.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,27 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.38.0': {
+            date: '2026-06-30',
+            headline: 'Notifications, perfected — seen-state that sticks, a fix for the mobile cut-off, a smarter panel, and device reminders',
+            sections: [
+                { title: 'Fixed', items: [
+                    'Seen notifications now stay seen. Previously, opening the app could silently reset the count, so items you\\u2019d already read came back as unseen after you closed and reopened the app. The unseen badge now persists correctly across reloads and restarts.',
+                    'On phones in portrait, the notifications panel was running off the left edge (the title showed as \\u201cifications\\u201d and the left icons were clipped). The panel is now anchored to the screen with safe side margins and notch-safe insets, so it always fits \\u2014 no matter how narrow the screen.',
+                ]},
+                { title: 'Improved', items: [
+                    'The panel is cleaner and easier to scan: a summary line tells you how many items need attention, and notifications are grouped into \\u201cNeeds attention\\u201d, \\u201cComing up\\u201d and \\u201cGood to know\\u201d, each with a count.',
+                    'Every item now shows a clear due chip \\u2014 \\u201c4d over\\u201d, \\u201cToday\\u201d, \\u201cin 3d\\u201d, \\u201cThis mo\\u201d \\u2014 so you can see urgency at a glance, with refined premium styling throughout.',
+                ]},
+                { title: 'New \\u2014 device reminders', items: [
+                    'You can now have WealthFlow remind you in your phone or computer\\u2019s own notification centre when a payment or cheque needs attention. Turn it on under Settings \\u2192 Notifications \\u2192 Device push notifications (your device will ask permission once).',
+                    'Reminders are deduplicated so the same item never nags you twice, and several at once are bundled into a single tidy alert. Tapping a reminder opens WealthFlow on the right page.',
+                ]},
+                { title: 'Note', items: [
+                    'The bell still only reads your data \\u2014 it never changes it. Hard-refresh once after updating.',
+                ]},
+            ],
+        },
         '7.37.0': {
             date: '2026-06-29',
             headline: 'New: a Notifications centre in the topbar — never miss a payment or cheque',
