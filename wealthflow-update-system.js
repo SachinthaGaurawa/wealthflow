@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.39.0';
+    const CURRENT_VERSION = '7.40.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,27 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.40.0': {
+            date: '2026-07-01',
+            headline: 'Undo a confirmed investment month by pressing and holding, plus a fixed Restore history list and a Drive connection that stays on',
+            sections: [
+                { title: 'Investments — press & hold to undo a month', items: [
+                    'Confirmed a month by mistake? Press and hold the green "Received & Confirmed" button on an investment card for 3 seconds. A fill sweeps across it, and when it completes that month is set back to Pending.',
+                    'It also works inside "Past months": press and hold any confirmed month row (e.g. "May 2026") for 3 seconds to undo just that month. Each confirmed row now shows a small "hold to undo" hint.',
+                    'It is deliberately hard to trigger by accident — a quick tap does nothing, and sliding your finger (scrolling) cancels the hold, so it never fires while you scroll.'
+                ]},
+                { title: 'Restore Data Protocol — your backup history now shows', items: [
+                    'Fixed: after backing up to Google Drive, the previous-backup list in Settings > Restore Data Protocol was often empty. The list now reliably shows every backup this account has made, newest first, with the date/time and size.',
+                    'Root cause: the list was only looking inside one specific Drive folder, so any backup that landed elsewhere was invisible. It now finds your backups wherever they are, and the backup you just made appears immediately (even before Drive finishes indexing it).'
+                ]},
+                { title: 'Google Drive stays connected', items: [
+                    'Once you have allowed Google Drive, WealthFlow keeps that connection on stand-by for the whole session and silently refreshes it in the background — so Restore Data Protocol and Instant Cloud Backup keep working without asking you to sign in again, right up until you sign out of your Google account.'
+                ]},
+                { title: 'Note', items: [
+                    'Hard-refresh once after updating so the new version loads.'
+                ]}
+            ]
+        },
         '7.39.0': {
             date: '2026-06-30',
             headline: 'Expenses that read like a thread, a smarter paid-tick, colour-coded notifications, and no more settings "dance"',

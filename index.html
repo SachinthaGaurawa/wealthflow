@@ -6915,6 +6915,7 @@
                         // Google OAuth tokens last ~1 hour
                         const expiry = Date.now() + 55 * 60 * 1000;
                         localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
+                        try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
                         console.log('[Auth] Drive token captured at sign-in — no second login needed');
                     }
                 } catch (e) { console.warn('[Auth] could not capture Drive token:', e && e.message); }
@@ -10347,6 +10348,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         gapiToken = tokenResponse.access_token;
                         const expiry = Date.now() + ((tokenResponse.expires_in - 10) * 1000);
                         localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
+                        try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
                         if (window.pendingDriveAction === 'backup') executeDriveBackup();
                         if (window.pendingDriveAction === 'restore') fetchDriveBackups();
                     }
@@ -10364,6 +10366,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     }
                 } catch (e) { }
             }
+            // Keep Drive on stand-by: if the user granted Drive before and the
+            // cached token has lapsed, silently re-mint one (no chooser/consent)
+            // once auth has settled, so backup/restore stay connected.
+            try { setTimeout(_wfDriveStandby, 1200); } catch (_) {}
         }
 
         window.addEventListener('load', () => {
@@ -10887,52 +10893,128 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             }
         }
 
-        async function fetchDriveBackups() {
-            if (!gapiToken) return;
-            const sel = $('restoreSelect');
-            sel.innerHTML = '<option>Searching Drive...</option>';
+        // ── v7.40.0 — keep Google Drive connected until the user signs OUT ──
+        // GIS access tokens live ~1 hour. Rather than forcing a re-consent when
+        // one expires (the old "click restore again to re-authenticate" prompt),
+        // we silently re-mint a token with prompt:'' + login_hint whenever the
+        // user has already granted Drive at least once. This keeps "Restore Data
+        // Protocol" and "Instant Cloud Backup" on stand-by for the whole session.
+        let _wfDriveRefreshTs = 0;
+        function _ensureDriveTokenSilent() {
+            return new Promise((resolve) => {
+                try {
+                    if (gapiToken) return resolve(true);
+                    const cached = localStorage.getItem('wf_drive_token');
+                    if (cached) {
+                        const p = JSON.parse(cached);
+                        if (p && p.token && Date.now() < p.expiry) { gapiToken = p.token; return resolve(true); }
+                    }
+                } catch (_) {}
+                if (typeof tokenClient === 'undefined' || !tokenClient) return resolve(false);
+                // Never hammer the token endpoint — at most one silent refresh / 8s.
+                if (Date.now() - _wfDriveRefreshTs < 8000 && !gapiToken) return resolve(false);
+                _wfDriveRefreshTs = Date.now();
+                try {
+                    const hint = (window.currentUser && window.currentUser.email) || undefined;
+                    tokenClient.requestAccessToken({ prompt: '', login_hint: hint });
+                } catch (_) { return resolve(false); }
+                let tries = 0;
+                const iv = setInterval(() => {
+                    tries++;
+                    if (gapiToken) { clearInterval(iv); resolve(true); }
+                    else if (tries > 40) { clearInterval(iv); resolve(false); } // ~8s
+                }, 200);
+            });
+        }
+        window._ensureDriveTokenSilent = _ensureDriveTokenSilent;
 
+        // Proactively reconnect Drive on load for users who used it before, so
+        // the very first backup/restore of a session is instant (no re-consent).
+        function _wfDriveStandby() {
             try {
-                // First check this user's dedicated subfolder. If we can't
-                // find one yet, search the master folder for files this user
-                // uploaded (drive.file scope only returns files THIS user
-                // created via the app — automatic per-user isolation).
-                const uid = (window.currentUser && window.currentUser.uid) || '';
-                const uidPart = uid ? uid.slice(0, 6) : '';
-                const cached = uid ? localStorage.getItem('wf_drive_subfolder_' + uid) : '';
-                const parentToSearch = cached || WF_MASTER_BACKUP_FOLDER;
+                if (localStorage.getItem('wf_drive_ever_granted') !== '1') return;
+                if (gapiToken) return;
+                const cached = localStorage.getItem('wf_drive_token');
+                if (cached) { const p = JSON.parse(cached); if (p && p.token && Date.now() < p.expiry) { gapiToken = p.token; return; } }
+                _ensureDriveTokenSilent();
+            } catch (_) {}
+        }
+        window._wfDriveStandby = _wfDriveStandby;
 
-                // Match new uid-tagged format OR legacy WealthFlow_Backup_*
-                // so users who backed up before this version still see their
-                // history.
-                const namePred = uidPart
-                    ? `(name contains 'WealthFlow_' and (name contains '${uidPart}' or name contains 'WealthFlow_Backup'))`
-                    : `name contains 'WealthFlow_'`;
-                const q = encodeURIComponent(
-                    `${namePred} and '${parentToSearch}' in parents and trashed = false`
-                );
-                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=20&fields=files(id,name,createdTime)`, {
+        async function fetchDriveBackups() {
+            const sel = $('restoreSelect');
+            if (!sel) return;
+
+            // Make sure we hold a valid Drive token. If not, silently refresh —
+            // the GIS callback re-invokes this function once the token lands.
+            if (!gapiToken) {
+                sel.innerHTML = '<option value="">Connecting to Google Drive…</option>';
+                _ensureDriveTokenSilent();
+                return;
+            }
+            sel.innerHTML = '<option>Searching Drive…</option>';
+
+            // IMPORTANT — we intentionally do NOT constrain by parent folder.
+            // Under the drive.file scope the app can ONLY see files IT created,
+            // so a filename query already isolates THIS user's backups — and it
+            // finds them regardless of which folder they physically landed in
+            // (per-user subfolder, the shared master folder, or a My-Drive
+            // fallback when the master folder isn't writable under drive.file).
+            // The previous code required "'<folder>' in parents", which silently
+            // hid every backup that didn't land in exactly that folder — the
+            // reported "history list is empty" bug.
+            const uid = (window.currentUser && window.currentUser.uid) || '';
+            const uid6 = uid ? uid.slice(0, 6) : '';
+            const namePred = uid6
+                ? `name contains 'WealthFlow_' and (name contains '${uid6}' or name contains 'WealthFlow_Backup')`
+                : `name contains 'WealthFlow_'`;
+            const q = encodeURIComponent(`(${namePred}) and mimeType = 'application/json' and trashed = false`);
+
+            let files = [];
+            try {
+                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=createdTime desc&pageSize=25&fields=files(id,name,createdTime,size)&spaces=drive`, {
                     headers: { 'Authorization': 'Bearer ' + gapiToken }
                 });
-
-                if (!res.ok) {
-                    localStorage.removeItem('wf_drive_token');
+                if (res.status === 401 || res.status === 403) {
+                    // Expired/invalid → silent refresh; GIS callback re-runs this.
                     gapiToken = null;
-                    throw new Error('Token Expired');
+                    try { localStorage.removeItem('wf_drive_token'); } catch (_) {}
+                    sel.innerHTML = '<option value="">Reconnecting to Google Drive…</option>';
+                    _ensureDriveTokenSilent();
+                    return;
                 }
-
-                const data = await res.json();
-                if (data.files && data.files.length > 0) {
-                    sel.innerHTML = data.files.map(f => `<option value="${f.id}">${new Date(f.createdTime).toLocaleString()}</option>`).join('');
-                    $('restoreBtn').disabled = false;
-                } else {
-                    sel.innerHTML = '<option value="">No backups found in folder</option>';
+                if (res.ok) {
+                    const data = await res.json().catch(() => null);
+                    files = (data && data.files) || [];
                 }
             } catch (e) {
-                sel.innerHTML = '<option value="">Failed to fetch backups</option>';
-                if (e.message === 'Token Expired') {
-                    notify('Session expired. Please click restore again to re-authenticate.', 'warn');
+                console.warn('[Drive] backup list fetch failed:', e && e.message);
+            }
+
+            // Merge in the most-recent verified backup we recorded locally — a
+            // just-created file can take a few seconds to appear in Drive's
+            // search index, so this guarantees it shows immediately after a backup.
+            try {
+                const s = DB.getObj('settings', {});
+                const last = s && s.lastDriveBackup;
+                if (last && last.fileId && !files.some(f => f.id === last.fileId)) {
+                    files.unshift({ id: last.fileId, name: last.fileName || 'Latest backup', createdTime: last.at || new Date().toISOString(), size: last.size });
                 }
+            } catch (_) {}
+
+            if (files.length) {
+                const seen = new Set();
+                files = files.filter(f => f && f.id && !seen.has(f.id) && seen.add(f.id));
+                files.sort((a, b) => new Date(b.createdTime || 0) - new Date(a.createdTime || 0));
+                sel.innerHTML = files.map(f => {
+                    const when = f.createdTime ? new Date(f.createdTime).toLocaleString() : 'Backup';
+                    const kb = f.size ? ' · ' + (Math.round(parseInt(f.size, 10) / 102.4) / 10) + ' KB' : '';
+                    return `<option value="${f.id}">${when}${kb}</option>`;
+                }).join('');
+                const rb = $('restoreBtn'); if (rb) rb.disabled = false;
+            } else {
+                sel.innerHTML = '<option value="">No backups found</option>';
+                const rb = $('restoreBtn'); if (rb) rb.disabled = true;
             }
         }
 
@@ -14095,9 +14177,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             ${!isArchived && active ? `<div style="margin-top:12px;display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);gap:8px;flex-wrap:wrap;">
                 <div style="font-size:12px;color:var(--text3);">This month (${curMonthStr}):</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                    <button class="income-received-btn${isConfirmed ? ' confirmed' : ''}" onclick="${isConfirmed ? '' : `confirmIncomeReceived('${source.id}')`}" ${isConfirmed ? 'disabled' : ''}>
-                        ${isConfirmed ? '<i data-wfi="checkCircle"></i> Received & Confirmed' : 'Confirm Received'}
-                    </button>
+                    ${isConfirmed
+                        ? `<button type="button" class="income-received-btn confirmed wf-holdable" title="Press and hold 3 seconds to undo this month" onpointerdown="_wfHoldStart(this,function(){_undoInvestMonth('${source.id}','${curMonthStr}')},event)" onpointerup="_wfHoldCancel()" onpointerleave="_wfHoldCancel()" onpointercancel="_wfHoldCancel()" oncontextmenu="return false;"><i data-wfi="checkCircle"></i> Received &amp; Confirmed</button><span class="wf-hold-hint">↩ hold to undo</span>`
+                        : `<button type="button" class="income-received-btn" onclick="confirmIncomeReceived('${source.id}')">Confirm Received</button>`}
                     <button class="income-past-btn" onclick="openPastMonthConfirm('${source.id}')" title="Confirm a previous month you missed (e.g. you were offline for a while, or this income started before you joined WealthFlow)">
                         📅 Past months
                     </button>
@@ -14160,6 +14242,93 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         //   • The user couldn't log in for some months, and now needs to
         //     retroactively tick those missed months.
         // =================================================================
+        // ── v7.40.0 — press-and-hold (3s) to UNDO a confirmed income month ──
+        // The user asked for a safe, deliberate way to reverse a confirmation:
+        // press and hold anywhere on the confirmed control; a fill sweeps across
+        // it over 3 seconds, and only when it completes does the undo fire.
+        // Moving the finger/pointer more than a few px (i.e. scrolling) cancels
+        // it, so it never fights the scroll or fires by accident.
+        const _WF_HOLD_MS = 3000;
+        let _wfHold = { t: null, raf: null, el: null, fill: null, start: 0, cb: null, sx: 0, sy: 0 };
+        function _wfHoldInjectCss() {
+            if (document.getElementById('wf-hold-css')) return;
+            const st = document.createElement('style'); st.id = 'wf-hold-css';
+            st.textContent =
+                '.wf-holdable{position:relative;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-y;}' +
+                '.wf-hold-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,rgba(239,68,68,.30),rgba(239,68,68,.48));pointer-events:none;z-index:0;border-radius:inherit;}' +
+                '.wf-holdable.wf-holding{outline:1px solid rgba(239,68,68,.55);outline-offset:-1px;}' +
+                '.wf-holdable > *{position:relative;z-index:1;}' +
+                '.wf-hold-hint{font-size:9.5px;color:var(--text3);opacity:.75;white-space:nowrap;}';
+            document.head.appendChild(st);
+        }
+        function _wfHoldMove(e) {
+            if (!_wfHold.el) return;
+            const dx = Math.abs((e.clientX || 0) - _wfHold.sx), dy = Math.abs((e.clientY || 0) - _wfHold.sy);
+            if (dx > 12 || dy > 12) _wfHoldCancel();
+        }
+        function _wfHoldCancel() {
+            if (_wfHold.t) { clearTimeout(_wfHold.t); _wfHold.t = null; }
+            if (_wfHold.raf) { cancelAnimationFrame(_wfHold.raf); _wfHold.raf = null; }
+            if (_wfHold.fill) { _wfHold.fill.style.width = '0%'; }
+            if (_wfHold.el) { _wfHold.el.classList.remove('wf-holding'); }
+            try { document.removeEventListener('pointermove', _wfHoldMove); } catch (_) {}
+            _wfHold.el = null; _wfHold.fill = null; _wfHold.cb = null;
+        }
+        function _wfHoldTick() {
+            if (!_wfHold.el) return;
+            const p = Math.min(1, (Date.now() - _wfHold.start) / _WF_HOLD_MS);
+            if (_wfHold.fill) _wfHold.fill.style.width = (p * 100) + '%';
+            if (p < 1) _wfHold.raf = requestAnimationFrame(_wfHoldTick);
+        }
+        function _wfHoldStart(el, cb, ev) {
+            if (!el) return;
+            if (ev && ev.preventDefault) { try { ev.preventDefault(); } catch (_) {} }
+            _wfHoldCancel();
+            _wfHoldInjectCss();
+            el.classList.add('wf-holdable');
+            let fill = el.querySelector(':scope > .wf-hold-fill');
+            if (!fill) { fill = document.createElement('span'); fill.className = 'wf-hold-fill'; el.insertBefore(fill, el.firstChild); }
+            el.classList.add('wf-holding');
+            _wfHold.el = el; _wfHold.fill = fill; _wfHold.cb = cb; _wfHold.start = Date.now();
+            _wfHold.sx = (ev && ev.clientX) || 0; _wfHold.sy = (ev && ev.clientY) || 0;
+            try { document.addEventListener('pointermove', _wfHoldMove, { passive: true }); } catch (_) {}
+            _wfHold.raf = requestAnimationFrame(_wfHoldTick);
+            _wfHold.t = setTimeout(function () {
+                const cb2 = _wfHold.cb;
+                _wfHoldCancel();
+                try { if (navigator.vibrate) navigator.vibrate([25, 40, 25]); } catch (_) {}
+                if (cb2) cb2();
+            }, _WF_HOLD_MS);
+        }
+        function _wfHoldAttach(el, cb) {
+            if (!el || el._wfHoldBound) return; el._wfHoldBound = true;
+            _wfHoldInjectCss(); el.classList.add('wf-holdable');
+            el.addEventListener('pointerdown', function (e) { _wfHoldStart(el, cb, e); });
+            el.addEventListener('pointerup', _wfHoldCancel);
+            el.addEventListener('pointerleave', _wfHoldCancel);
+            el.addEventListener('pointercancel', _wfHoldCancel);
+            el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+        }
+        window._wfHoldStart = _wfHoldStart;
+        window._wfHoldCancel = _wfHoldCancel;
+        window._wfHoldAttach = _wfHoldAttach;
+
+        // Undo a single confirmed income month, then refresh the UI.
+        function _undoInvestMonth(id, ym, reRenderModal) {
+            const received = DB.getObj('incomeReceived', {});
+            const key = id + '_' + ym;
+            if (!received[key]) { notify('That month is already pending.', 'info'); return; }
+            delete received[key];
+            DB.set('incomeReceived', received);
+            triggerHaptic('success');
+            let lbl = ym; try { lbl = monthStrFmt(ym + '-01'); } catch (_) {}
+            notify('↩️ ' + lbl + ' set back to pending', 'info');
+            try { renderIncome(); } catch (_) {}
+            try { renderDash(); } catch (_) {}
+            if (reRenderModal) { try { document.querySelectorAll('.mo').forEach(o => o.remove()); openPastMonthConfirm(id); } catch (_) {} }
+        }
+        window._undoInvestMonth = _undoInvestMonth;
+
         function openPastMonthConfirm(id) {
             const arr = DB.get('income');
             const source = arr.find(x => x.id === id);
@@ -14326,6 +14495,21 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 try { renderIncome(); } catch (_) {}
                 try { renderDash(); } catch (_) {}
             };
+
+            // v7.40.0 — attach press-and-hold-to-undo to each already-confirmed
+            // month row, so the user can reverse a month right here in the list.
+            overlay.querySelectorAll('.pm-row.pm-confirmed').forEach(function (row) {
+                const ym = row.getAttribute('data-ym');
+                if (!ym) return;
+                row.title = 'Press and hold 3 seconds to undo this month';
+                if (!row.querySelector('.wf-hold-hint')) {
+                    const h = document.createElement('span');
+                    h.className = 'wf-hold-hint'; h.textContent = '↩ hold to undo';
+                    h.style.cssText = 'margin-left:8px;flex:0 0 auto;';
+                    row.appendChild(h);
+                }
+                _wfHoldAttach(row, function () { _undoInvestMonth(id, ym, true); });
+            });
         }
         window.openPastMonthConfirm = openPastMonthConfirm;
 
