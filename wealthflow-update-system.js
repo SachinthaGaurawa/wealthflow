@@ -45,7 +45,7 @@
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.40.0';
+    const CURRENT_VERSION = '7.41.0';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
@@ -58,6 +58,24 @@
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
     const BUILTIN_NOTES = {
+        '7.41.0': {
+            date: '2026-07-01',
+            headline: 'Import statements straight from Google Drive, a better hold-to-undo that now sticks after refresh, and a cleaner undo hint',
+            sections: [
+                { title: 'Import from Google Drive — every upload section', items: [
+                    'New "From Drive" button in Statement Upload (Settings), Expenses, CC One-Time and Subscriptions. Pick a bank/card statement or document you saved in Google Drive and it imports straight into WealthFlow — no need to download it to your device first.',
+                    'It reuses the Google access you already granted (nothing new to sign into) and runs the picked file through the exact same AI reader, categoriser and duplicate-remover as a normal upload. Google Docs/Sheets are auto-exported to PDF first.'
+                ]},
+                { title: 'Hold-to-undo now survives a refresh', items: [
+                    'Fixed the main bug: undoing a confirmed investment month worked on screen but came back after a refresh or re-open. The undo is now written to the cloud correctly, so a reverted month stays reverted everywhere.',
+                    'The 3-second hold has a richer fill animation — a smooth red sweep with a glowing edge and a gentle press-in — so it is obvious how far along the hold is.',
+                    'The "hold to undo" hint is now a small, clean icon (no emoji) and stays the correct small size from the first moment — it no longer appears oversized until you touch it.'
+                ]},
+                { title: 'Note', items: [
+                    'Hard-refresh once after updating. (If "From Drive" ever says the picker could not load, the Google Picker API just needs to be enabled once in the Cloud project.)'
+                ]}
+            ]
+        },
         '7.40.0': {
             date: '2026-07-01',
             headline: 'Undo a confirmed investment month by pressing and holding, plus a fixed Restore history list and a Drive connection that stays on',
