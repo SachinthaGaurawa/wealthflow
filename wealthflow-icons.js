@@ -56,7 +56,10 @@
         download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
         refresh:'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
         alert:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
-        info:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>'
+        info:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+        undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H9"/>',
+        cloud:'<path d="M17.5 19H7A5 5 0 0 1 7 9a6 6 0 0 1 11.3 1.7A4.5 4.5 0 0 1 17.5 19Z"/>',
+        cloudDownload:'<path d="M12 13v8"/><path d="m8 17 4 4 4-4"/><path d="M20.5 15.5A5 5 0 0 0 18 6.5a6 6 0 0 0-11.3 1.7A4.5 4.5 0 0 0 6 17"/>'
     };
     function svg(name, attrs) {
         var d = P[name]; if (!d) return '';
@@ -118,7 +121,8 @@
         '💾':'download','💬':'info','📁':'receipt','👤':'bot','📸':'scan','📥':'download','📤':'upload','🔊':'bell',
         '🔗':'globe','📐':'ruler','🏆':'trophy','💣':'bomb','🔮':'crystal','⚙️':'settings','⛽':'coins','💸':'coins',
         '👍':'thumbsUp','👎':'thumbsDown','👁️':'eye','👁':'eye','💎':'gem','🎁':'gift','⬇️':'download','⬆️':'upload',
-        '📦':'receipt','💵':'wallet','💴':'wallet','💶':'wallet','💷':'wallet','🟢':'checkCircle','🔴':'alert','🟡':'alert'
+        '📦':'receipt','💵':'wallet','💴':'wallet','💶':'wallet','💷':'wallet','🟢':'checkCircle','🔴':'alert','🟡':'alert',
+        '↩️':'undo','↩':'undo','🏛️':'bank','🏛':'bank','📜':'fileText','📷':'scan'
     };
     // Build one regex of all emoji keys (longest first to match VS16 variants)
     var keys = Object.keys(MAP).sort(function (a, b) { return b.length - a.length; });

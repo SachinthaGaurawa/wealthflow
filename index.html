@@ -6277,7 +6277,7 @@
                 <div class="ai-vision-card__btns">
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Capture Photo</button>
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload File</button>
-                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" style="display:inline-flex;align-items:center;justify-content:center;" onclick="_wfDrivePick('ccot')"><svg viewBox="0 0 87.3 78" width="14" height="14" style="margin-right:6px;flex:0 0 auto;"><path fill="#0066da" d="M6.6 66.85 10.45 73.5c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z"/><path fill="#00ac47" d="M43.65 25 29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3L1.2 48.5c-.8 1.4-1.2 2.95-1.2 4.5h27.5z"/><path fill="#ea4335" d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.798l5.852 11.5z"/><path fill="#00832d" d="M43.65 25 57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z"/><path fill="#2684fc" d="M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z"/><path fill="#ffba00" d="M73.4 26.5 60.7 4.5c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z"/></svg>From Drive</button>
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_wfDriveImport('ccot_ai_scan')"><i data-wfi="cloud"></i> From Drive</button>
                     <input type="file" accept="application/pdf,text/html,.pdf,.PDF,.html,.htm,image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif" id="ccot_ai_scan" style="display:none;" onchange="handleAIScan(event, 'ccot')">
                 </div>
             </div>
@@ -6373,7 +6373,7 @@
                 <div class="ai-vision-card__btns">
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionCapture('e_ai_scan')">📷 Capture Photo</button>
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionUpload('e_ai_scan')">📁 Upload File</button>
-                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" style="display:inline-flex;align-items:center;justify-content:center;" onclick="_wfDrivePick('expense')"><svg viewBox="0 0 87.3 78" width="14" height="14" style="margin-right:6px;flex:0 0 auto;"><path fill="#0066da" d="M6.6 66.85 10.45 73.5c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z"/><path fill="#00ac47" d="M43.65 25 29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3L1.2 48.5c-.8 1.4-1.2 2.95-1.2 4.5h27.5z"/><path fill="#ea4335" d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.798l5.852 11.5z"/><path fill="#00832d" d="M43.65 25 57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z"/><path fill="#2684fc" d="M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z"/><path fill="#ffba00" d="M73.4 26.5 60.7 4.5c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z"/></svg>From Drive</button>
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_wfDriveImport('e_ai_scan')"><i data-wfi="cloud"></i> From Drive</button>
                     <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="e_ai_scan" style="display:none;" onchange="handleAIScan(event, 'expense')">
                 </div>
             </div>
@@ -6592,7 +6592,7 @@
                 <div class="ai-vision-card__btns">
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionCapture('sub_ai_scan')">📷 Capture Photo</button>
                     <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_triggerAIVisionUpload('sub_ai_scan')">📁 Upload File</button>
-                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" style="display:inline-flex;align-items:center;justify-content:center;" onclick="_wfDrivePick('subscription')"><svg viewBox="0 0 87.3 78" width="14" height="14" style="margin-right:6px;flex:0 0 auto;"><path fill="#0066da" d="M6.6 66.85 10.45 73.5c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z"/><path fill="#00ac47" d="M43.65 25 29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3L1.2 48.5c-.8 1.4-1.2 2.95-1.2 4.5h27.5z"/><path fill="#ea4335" d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.798l5.852 11.5z"/><path fill="#00832d" d="M43.65 25 57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z"/><path fill="#2684fc" d="M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z"/><path fill="#ffba00" d="M73.4 26.5 60.7 4.5c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z"/></svg>From Drive</button>
+                    <button type="button" class="btn btn-secondary btn-sm ai-vision-card__btn" onclick="_wfDriveImport('sub_ai_scan')"><i data-wfi="cloud"></i> From Drive</button>
                     <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="sub_ai_scan" style="display:none;" onchange="handleAIScan(event, 'subscription')">
                 </div>
             </div>
@@ -6999,6 +6999,28 @@
         let lastSyncTime = 0;
         let _lastLocalWriteTs = 0;  // Timestamp of last local DB.set() — used to suppress onSnapshot echo
 
+        // ── Cloud map-key deletions (v7.41.0) ──────────────────────────────────
+        // Firestore set(..., {merge:true}) deep-merges maps and can NEVER remove a
+        // map key. So when we delete a key from a synced map (e.g. an undone
+        // investment month in `incomeReceived`), the CLOUD copy keeps it and the key
+        // re-hydrates on refresh — the exact "undo doesn't stick" bug. We record such
+        // deletions and replay them to Firestore as explicit FieldValue.delete()
+        // field-path updates. The queue is persisted so an OFFLINE delete still
+        // converges once the device reconnects.
+        let _pendingCloudDeletes = [];
+        try { _pendingCloudDeletes = JSON.parse(localStorage.getItem('wf2_pendingCloudDeletes') || '[]') || []; } catch (_) { _pendingCloudDeletes = []; }
+        if (!Array.isArray(_pendingCloudDeletes)) _pendingCloudDeletes = [];
+        let _deleteFlushInFlight = false;
+        function _persistPendingDeletes() {
+            try { localStorage.setItem('wf2_pendingCloudDeletes', JSON.stringify(_pendingCloudDeletes)); } catch (_) {}
+        }
+        function _queueCloudDelete(field, key) {
+            if (!_pendingCloudDeletes.some(d => d[0] === field && d[1] === key)) {
+                _pendingCloudDeletes.push([field, key]);
+                _persistPendingDeletes();
+            }
+        }
+
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
             getObj(k, def = {}) { return appData[k] !== undefined ? appData[k] : def; },
@@ -7020,6 +7042,34 @@
                     setDirty(true);
                     debouncedSync();
                 }
+            },
+            // Delete ONE key from a synced MAP field — locally, in localStorage, AND
+            // on the server. Use this instead of `delete obj[key]; DB.set(field,obj)`
+            // for maps whose keys can be removed, because merge-sync cannot delete map
+            // keys (it would silently re-hydrate on refresh).
+            delKey(field, key, silent = false) {
+                if (window._isDecoyMode === true) {
+                    const o0 = appData[field];
+                    if (o0 && typeof o0 === 'object') delete o0[key];
+                    console.log('[DECOY] delKey blocked from disk/cloud:', field, key);
+                    return;
+                }
+                const obj = appData[field];
+                if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                    if (key in obj) delete obj[key];
+                    appData[field] = obj;
+                    localStorage.setItem('wf2_' + field, JSON.stringify(obj));
+                }
+                _queueCloudDelete(field, key);
+                if (!silent) _lastLocalWriteTs = Date.now();
+                try { if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(field, appData[field]); } catch (_) { }
+                // Fast path: try to remove it on the server immediately (common online
+                // case). The persisted queue + syncToCloud flush is the offline backstop.
+                try { _flushCloudDeletes(); } catch (_) { }
+                if (!isSyncingFromCloud && !silent) {
+                    setDirty(true);
+                    debouncedSync();
+                }
             }
         };
 
@@ -7035,6 +7085,76 @@
                 if (isDirty) syncToCloud();
             }, 300);
         }
+
+        // Replay queued map-key deletions to Firestore as explicit field deletes.
+        // A merge-sync can't remove keys, so this is the only correct way to delete
+        // them server-side. Entries clear only AFTER the server confirms, so a
+        // transient failure just retries on the next sync. The delete carries our
+        // device write-stamp so the snapshot listener treats it as our own echo
+        // (not a foreign edit) and doesn't bounce it back.
+        function _flushCloudDeletes() {
+            if (!_pendingCloudDeletes.length) return;
+            if (window._isDecoyMode === true) return;
+            if (_deleteFlushInFlight) return;
+            if (!userDocRef || !navigator.onLine) return;
+            if (!(window.firebase && firebase.firestore && firebase.firestore.FieldPath && firebase.firestore.FieldValue)) return;
+            const batch = _pendingCloudDeletes.slice();
+            const args = [];
+            try {
+                batch.forEach(([f, k]) => {
+                    args.push(new firebase.firestore.FieldPath(f, k), firebase.firestore.FieldValue.delete());
+                });
+            } catch (e) { console.warn('[SYNC] delete-path build failed:', e && e.message); return; }
+            // Stamp the write like a normal sync so our own snapshot echo is suppressed.
+            try {
+                args.push('_writeDeviceId', _getDeviceId());
+                args.push('_writeTs', Date.now());
+                args.push('_lastModified', firebase.firestore.FieldValue.serverTimestamp());
+            } catch (_) { }
+            let p;
+            try { p = userDocRef.update.apply(userDocRef, args); }
+            catch (e) { console.warn('[SYNC] field-delete update threw:', e && e.message); return; }
+            _deleteFlushInFlight = true;
+            _lastLocalWriteTs = Date.now();
+            p.then(() => {
+                // Remove exactly the entries we flushed (queue may have grown meanwhile).
+                _pendingCloudDeletes = _pendingCloudDeletes.filter(d => !batch.some(b => b[0] === d[0] && b[1] === d[1]));
+                _persistPendingDeletes();
+                console.log('[SYNC] 🗑️ Field deletes flushed:', batch.length);
+            }).catch(err => {
+                // "not-found" → the doc doesn't exist yet, so the upcoming merge-set will
+                // create it WITHOUT these keys; the deletion is already satisfied — drop them.
+                const code = err && err.code;
+                if (code === 'not-found' || /No document to update/i.test((err && err.message) || '')) {
+                    _pendingCloudDeletes = _pendingCloudDeletes.filter(d => !batch.some(b => b[0] === d[0] && b[1] === d[1]));
+                    _persistPendingDeletes();
+                } else {
+                    console.warn('[SYNC] field-delete flush failed (will retry):', code);
+                }
+            }).finally(() => {
+                _deleteFlushInFlight = false;
+            });
+        }
+        window._flushCloudDeletes = _flushCloudDeletes;
+
+        // Re-apply queued deletions to the in-memory + local state. Called right after
+        // a cloud pull so a key the cloud still had (e.g. from an offline delete not
+        // yet flushed to the server) doesn't visibly resurrect before the flush lands.
+        // Returns true if it actually removed something (so the caller can re-render).
+        function _wfApplyPendingDeletesLocally() {
+            if (!_pendingCloudDeletes.length) return false;
+            let changed = false;
+            _pendingCloudDeletes.forEach(([f, k]) => {
+                const obj = appData[f];
+                if (obj && typeof obj === 'object' && !Array.isArray(obj) && (k in obj)) {
+                    delete obj[k];
+                    try { localStorage.setItem('wf2_' + f, JSON.stringify(obj)); } catch (_) { }
+                    changed = true;
+                }
+            });
+            return changed;
+        }
+        window._wfApplyPendingDeletesLocally = _wfApplyPendingDeletesLocally;
 
         // Migrate legacy bank names ("AMEX" → "American Express (AMEX)") on
         // load. Runs once per page load and silently rewrites any record
@@ -7105,6 +7225,11 @@
 
             setSyncStatus('syncing');
 
+            // Replay any queued map-key deletions FIRST. merge:true (below) can only
+            // add/update keys — it can never remove one — so deletions must go through
+            // explicit field deletes or they silently come back on the next load.
+            try { _flushCloudDeletes(); } catch (_) { }
+
             // Add sync metadata — include a device-level write stamp to identify our own echoes
             const syncPayload = Object.assign({}, appData, {
                 _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
@@ -7162,6 +7287,10 @@
                     });
                     isSyncingFromCloud = false;
                     lastSyncTime = Date.now();
+
+                    // v7.41.0 — re-strip any keys the user already deleted that a stale
+                    // cloud copy still carried, then flush the deletes to the server.
+                    try { _wfApplyPendingDeletesLocally(); _flushCloudDeletes(); } catch (_) { }
 
                     if (isDirty) {
                         debouncedSync(); // Ensure preserved local items are pushed!
@@ -10931,6 +11060,195 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
         window._ensureDriveTokenSilent = _ensureDriveTokenSilent;
 
+        // ─────────────────────────────────────────────────────────────────────
+        //  GOOGLE DRIVE IMPORT (v7.41.0)  ── "From Drive" in every upload section
+        // ─────────────────────────────────────────────────────────────────────
+        //  Lets the user pull a statement / receipt straight out of their Google
+        //  Drive into any upload area (Settings statement, Expenses, CC one-time,
+        //  Subscriptions). It reuses the SAME drive.file OAuth the backup flow uses.
+        //  Because drive.file only exposes app-created files, we use the Google
+        //  Picker: selecting a file in the Picker grants this app per-file access —
+        //  so even a bank statement that arrived by email and was saved to Drive is
+        //  importable. The chosen file is downloaded and then routed through the
+        //  identical handleAIScan pipeline as a normal local file pick (so PDF /
+        //  encrypted-HTML statement / image handling, dedup, review and CC-reconcile
+        //  all behave exactly the same).
+        const _WF_DRIVE_PICKER_KEY = 'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4'; // browser key (Picker API)
+        const _WF_DRIVE_APP_ID = '1020193373377'; // Cloud project number (owns the OAuth client)
+        const _WF_DRIVE_TYPE_MAP = { ccot_ai_scan: 'ccot', e_ai_scan: 'expense', sub_ai_scan: 'subscription' };
+        const _WF_DRIVE_MIME = 'application/pdf,text/html,image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif,image/gif,image/bmp';
+        let _wfPickerLoad = null;
+
+        function _wfLoadScript(src) {
+            return new Promise((resolve, reject) => {
+                if (document.querySelector('script[data-wfsrc="' + src + '"]')) return resolve();
+                const s = document.createElement('script');
+                s.src = src; s.async = true; s.defer = true;
+                s.setAttribute('data-wfsrc', src);
+                s.onload = () => resolve();
+                s.onerror = () => reject(new Error('Failed to load ' + src));
+                (document.head || document.documentElement).appendChild(s);
+            });
+        }
+
+        // Lazy-load gapi + the Picker module exactly once.
+        function _wfEnsurePicker() {
+            if (window.google && window.google.picker) return Promise.resolve();
+            if (_wfPickerLoad) return _wfPickerLoad;
+            _wfPickerLoad = _wfLoadScript('https://apis.google.com/js/api.js')
+                .then(() => new Promise((resolve, reject) => {
+                    if (!window.gapi || !gapi.load) return reject(new Error('gapi unavailable'));
+                    gapi.load('picker', {
+                        callback: () => (window.google && window.google.picker) ? resolve() : reject(new Error('picker missing')),
+                        onerror: () => reject(new Error('picker load error')),
+                        timeout: 15000,
+                        ontimeout: () => reject(new Error('picker load timeout'))
+                    });
+                }))
+                .catch(err => { _wfPickerLoad = null; throw err; }); // allow retry on failure
+            return _wfPickerLoad;
+        }
+
+        // Acquire a drive.file access token: cached → silent (if granted before) →
+        // interactive consent. Neutralises pendingDriveAction so the shared token
+        // callback doesn't kick off a backup/restore while we're just picking a file.
+        function _wfDriveToken(interactive) {
+            return new Promise(async (resolve) => {
+                if (gapiToken) return resolve(gapiToken);
+                let everGranted = false;
+                try { everGranted = localStorage.getItem('wf_drive_ever_granted') === '1'; } catch (_) {}
+                if (everGranted) {
+                    try { if (await _ensureDriveTokenSilent() && gapiToken) return resolve(gapiToken); } catch (_) {}
+                }
+                if (!interactive) return resolve(gapiToken || null);
+                if (typeof tokenClient === 'undefined' || !tokenClient) return resolve(null);
+                window.pendingDriveAction = 'picker'; // prevent auto backup/restore in the shared callback
+                try {
+                    tokenClient.requestAccessToken({
+                        prompt: everGranted ? '' : 'consent',
+                        login_hint: (window.currentUser && window.currentUser.email) || undefined
+                    });
+                } catch (e) { window.pendingDriveAction = null; return resolve(null); }
+                let tries = 0;
+                const iv = setInterval(() => {
+                    tries++;
+                    if (gapiToken) { clearInterval(iv); window.pendingDriveAction = null; resolve(gapiToken); }
+                    else if (tries > 300) { clearInterval(iv); window.pendingDriveAction = null; resolve(null); } // ~60s (allow consent screen)
+                }, 200);
+            });
+        }
+
+        // Entry point wired to every "From Drive" button.
+        async function _wfDriveImport(inputId) {
+            const type = _WF_DRIVE_TYPE_MAP[inputId] || 'ccot';
+            try {
+                if (typeof google === 'undefined' || !tokenClient) {
+                    notify('Google Drive isn\'t ready yet — please try again in a moment.', 'warning'); return;
+                }
+                notify('Connecting to Google Drive…', 'info');
+                const token = await _wfDriveToken(true);
+                if (!token) { notify('Couldn\'t connect to Google Drive. Please try again.', 'error'); return; }
+                await _wfEnsurePicker();
+                _wfShowDrivePicker(token, inputId, type);
+            } catch (e) {
+                console.error('[Drive import]', e);
+                notify('Google Drive import is unavailable right now — please use Upload File instead.', 'error');
+            }
+        }
+
+        function _wfShowDrivePicker(token, inputId, type) {
+            try {
+                const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+                    .setIncludeFolders(true)
+                    .setSelectFolderEnabled(false)
+                    .setMode(google.picker.DocsViewMode.LIST)
+                    .setMimeTypes(_WF_DRIVE_MIME);
+                const picker = new google.picker.PickerBuilder()
+                    .setAppId(_WF_DRIVE_APP_ID)
+                    .setOAuthToken(token)
+                    .setDeveloperKey(_WF_DRIVE_PICKER_KEY)
+                    .addView(view)
+                    .setTitle('Select a statement or document from Google Drive')
+                    .setCallback((data) => _wfDrivePicked(data, token, inputId, type))
+                    .build();
+                picker.setVisible(true);
+                // Float the Picker above the app's own modals/overlays.
+                let n = 0;
+                const zt = setInterval(() => {
+                    const dlg = document.querySelector('.picker-dialog');
+                    if (dlg) { dlg.style.zIndex = '100001'; const bg = document.querySelector('.picker-dialog-bg'); if (bg) bg.style.zIndex = '100000'; clearInterval(zt); }
+                    else if (++n > 60) clearInterval(zt);
+                }, 50);
+            } catch (e) {
+                console.error('[Drive picker]', e);
+                notify('Couldn\'t open the Google Drive picker. Please use Upload File instead.', 'error');
+            }
+        }
+
+        async function _wfDrivePicked(data, token, inputId, type) {
+            if (!data || !window.google || !google.picker) return;
+            if (data.action !== google.picker.Action.PICKED) return; // ignore cancel/loaded
+            const doc = data.docs && data.docs[0];
+            if (!doc) return;
+            const fileId = doc.id;
+            let name = doc.name || 'drive-file';
+            let mime = doc.mimeType || '';
+            try {
+                notify('Downloading “' + name + '” from Drive…', 'info');
+                const resp = await fetch(
+                    'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media&supportsAllDrives=true',
+                    { headers: { Authorization: 'Bearer ' + token } }
+                );
+                if (!resp.ok) throw new Error('download HTTP ' + resp.status);
+                const blob = await resp.blob();
+                if (!mime) mime = blob.type || 'application/octet-stream';
+                // v4's routing sniffs by BOTH mime type and filename extension, so make
+                // sure the File carries a correct name + extension.
+                if (!/\.[a-z0-9]{2,6}$/i.test(name)) {
+                    const ext = /pdf/i.test(mime) ? '.pdf'
+                        : /html/i.test(mime) ? '.html'
+                        : /png/i.test(mime) ? '.png'
+                        : /webp/i.test(mime) ? '.webp'
+                        : /hei[cf]/i.test(mime) ? '.heic'
+                        : /gif/i.test(mime) ? '.gif'
+                        : /bmp/i.test(mime) ? '.bmp'
+                        : /(jpe?g)/i.test(mime) ? '.jpg' : '';
+                    name += ext;
+                }
+                const file = new File([blob], name, { type: mime || 'application/octet-stream' });
+                _wfRouteFileToInput(file, inputId, type);
+            } catch (e) {
+                console.error('[Drive download]', e);
+                notify('Couldn\'t download that file from Drive. Please try again.', 'error');
+            }
+        }
+
+        // Route a downloaded File into the exact same pipeline a local pick uses.
+        function _wfRouteFileToInput(file, inputId, type) {
+            const input = document.getElementById(inputId);
+            // Preferred: set the hidden input's files and fire a real change event, so
+            // whatever handler the input is wired to (currently the inline onchange →
+            // window.handleAIScan) runs identically to a manual pick.
+            try {
+                if (input && typeof DataTransfer !== 'undefined') {
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    input.files = dt.files;
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    return;
+                }
+            } catch (_) { /* fall through to direct call */ }
+            // Fallback for engines without DataTransfer file assignment.
+            try {
+                if (typeof window.handleAIScan === 'function') {
+                    window.handleAIScan({ target: { files: [file], value: '' } }, type);
+                } else {
+                    notify('Couldn\'t hand the file to the scanner. Please use Upload File.', 'error');
+                }
+            } catch (e) { console.error('[Drive route]', e); notify('Couldn\'t process the Drive file.', 'error'); }
+        }
+        window._wfDriveImport = _wfDriveImport;
+
         // Proactively reconnect Drive on load for users who used it before, so
         // the very first backup/restore of a session is instant (no re-consent).
         function _wfDriveStandby() {
@@ -10943,135 +11261,6 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             } catch (_) {}
         }
         window._wfDriveStandby = _wfDriveStandby;
-
-        // ══════════════════════════════════════════════════════════════════
-        // v7.41.0 — IMPORT A STATEMENT / DOCUMENT FROM THE USER'S GOOGLE DRIVE
-        // ══════════════════════════════════════════════════════════════════
-        // Many banks email statements that users save to Google Drive. This lets
-        // them pick that file straight from Drive in any upload section instead of
-        // re-downloading it to the device first. It uses the SAME drive.file scope
-        // the app already holds: a file the user explicitly selects in the Google
-        // Picker is granted to the app for that file (Picker IS the consent), so
-        // NO broader scope and NO re-login are required. The picked file is
-        // downloaded and fed into the exact same handleAIScan() pipeline as a
-        // local upload — identical parsing, categorisation and de-duplication.
-        //
-        // Requires (one-time, in the Google Cloud project that owns the OAuth
-        // client): the "Google Picker API" must be ENABLED, and the browser API
-        // key below must be allowed to call it.
-        const _WF_DRIVE_API_KEY = 'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4';
-        const _WF_DRIVE_APP_ID = '1020193373377';
-        const _WF_PICKER = { loadingScript: false };
-
-        function _wfLoadGapiPicker() {
-            return new Promise((resolve, reject) => {
-                if (window.google && window.google.picker) return resolve(true);
-                const afterGapi = () => {
-                    try { gapi.load('picker', { callback: () => resolve(true), onerror: () => reject(new Error('picker lib failed')) }); }
-                    catch (e) { reject(e); }
-                };
-                if (window.gapi && window.gapi.load) return afterGapi();
-                if (_WF_PICKER.loadingScript) {
-                    let tries = 0;
-                    const iv = setInterval(() => {
-                        tries++;
-                        if (window.gapi && window.gapi.load) { clearInterval(iv); afterGapi(); }
-                        else if (tries > 80) { clearInterval(iv); reject(new Error('gapi load timeout')); }
-                    }, 100);
-                    return;
-                }
-                _WF_PICKER.loadingScript = true;
-                const s = document.createElement('script');
-                s.src = 'https://apis.google.com/js/api.js';
-                s.async = true; s.defer = true;
-                s.onload = afterGapi;
-                s.onerror = () => { _WF_PICKER.loadingScript = false; reject(new Error('gapi script failed')); };
-                document.head.appendChild(s);
-            });
-        }
-
-        async function _wfDrivePick(type) {
-            // 1) Ensure a Drive token (silent refresh; interactive only if never granted).
-            if (!gapiToken) {
-                notify('Connecting to Google Drive…', 'info');
-                try { await _ensureDriveTokenSilent(); } catch (_) {}
-            }
-            if (!gapiToken) {
-                try {
-                    if (typeof tokenClient !== 'undefined' && tokenClient) {
-                        window.pendingDriveAction = 'pick';
-                        tokenClient.requestAccessToken({ prompt: '', login_hint: (window.currentUser && window.currentUser.email) || undefined });
-                        notify('Authorizing Google Drive — tap “From Drive” again in a moment.', 'info');
-                    } else { notify('Google Drive is still loading. Please try again shortly.', 'warn'); }
-                } catch (_) { notify('Could not connect to Google Drive.', 'error'); }
-                return;
-            }
-            // 2) Load the Picker library.
-            try { await _wfLoadGapiPicker(); }
-            catch (e) {
-                console.warn('[Drive Picker] load failed', e && e.message);
-                notify('Google Drive picker could not load. Check your connection (and that the Picker API is enabled).', 'error');
-                return;
-            }
-            // 3) Build + show the Picker (PDFs, images, HTML statements + Google Docs/Sheets).
-            try {
-                const mimes = 'application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif,text/html,application/vnd.google-apps.document,application/vnd.google-apps.spreadsheet';
-                // Single "My Drive" view showing all the user's accessible files of these
-                // types (not limited to owned-by-me, so statements shared with the user
-                // also appear). LIST mode because drive.file doesn't grant thumbnails.
-                const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
-                    .setMimeTypes(mimes)
-                    .setIncludeFolders(true)
-                    .setSelectFolderEnabled(false)
-                    .setMode(google.picker.DocsViewMode.LIST);
-                const builder = new google.picker.PickerBuilder()
-                    .setOAuthToken(gapiToken)
-                    .setAppId(_WF_DRIVE_APP_ID)
-                    .setTitle('Select a bank / card statement or document')
-                    .addView(view)
-                    .addView(new google.picker.DocsUploadView())
-                    .setCallback((data) => _wfPickerCallback(data, type));
-                if (_WF_DRIVE_API_KEY) builder.setDeveloperKey(_WF_DRIVE_API_KEY);
-                builder.build().setVisible(true);
-            } catch (e) {
-                console.warn('[Drive Picker] build failed', e && e.message);
-                notify('Could not open Google Drive. Please try again.', 'error');
-            }
-        }
-        window._wfDrivePick = _wfDrivePick;
-
-        async function _wfPickerCallback(data, type) {
-            try {
-                if (!data || data.action !== google.picker.Action.PICKED) return; // cancel/other
-                const doc = (data.docs && data.docs[0]) || null;
-                if (!doc) return;
-                const fileId = doc.id;
-                const fileName = doc.name || 'drive-document';
-                const mime = doc.mimeType || '';
-                notify('Downloading “' + fileName + '” from Google Drive…', 'info');
-                let blob, outName = fileName;
-                if (mime.indexOf('application/vnd.google-apps') === 0) {
-                    // Google-native doc → export to PDF so the AI can read it.
-                    const exp = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '/export?mimeType=application/pdf',
-                        { headers: { Authorization: 'Bearer ' + gapiToken } });
-                    if (!exp.ok) throw new Error('export ' + exp.status);
-                    blob = await exp.blob();
-                    if (!/\.pdf$/i.test(outName)) outName += '.pdf';
-                } else {
-                    const res = await fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media',
-                        { headers: { Authorization: 'Bearer ' + gapiToken } });
-                    if (!res.ok) throw new Error('download ' + res.status);
-                    blob = await res.blob();
-                }
-                const file = new File([blob], outName, { type: blob.type || mime || 'application/octet-stream' });
-                // Feed into the identical pipeline as a local file upload.
-                handleAIScan({ target: { files: [file] } }, type);
-            } catch (e) {
-                console.warn('[Drive Picker] import failed', e && e.message);
-                notify('Could not import that file from Google Drive. Please try again.', 'error');
-            }
-        }
-        window._wfPickerCallback = _wfPickerCallback;
 
         async function fetchDriveBackups() {
             const sel = $('restoreSelect');
@@ -12478,6 +12667,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                             localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
                                         });
                                         console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud (settings merged)');
+                                        // v7.41.0 — strip any keys the user already deleted (from the
+                                        // persisted delete queue) that the cloud copy still carried, then
+                                        // flush those deletes to the server so the cloud converges. Runs
+                                        // before the first render, so the corrected state shows immediately.
+                                        try { _wfApplyPendingDeletesLocally(); _flushCloudDeletes(); } catch (_) { }
                                         // If we preserved local-only items, queue a push so cloud catches up
                                         if (_localOnlyCount > 0) {
                                             setDirty(true);
@@ -12651,6 +12845,15 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                                     });
                                                     isSyncingFromCloud = false;
                                                     lastSyncTime = Date.now();
+
+                                                    // v7.41.0 — if this snapshot re-introduced a key the user already
+                                                    // deleted (an offline delete not yet flushed), strip it again
+                                                    // locally and flush the delete to the server. Mark a change so
+                                                    // the UI re-renders to the correct state.
+                                                    try {
+                                                        if (_wfApplyPendingDeletesLocally()) { nonSessionChanged = true; }
+                                                        _flushCloudDeletes();
+                                                    } catch (_) { }
 
                                                     if (nonSessionChanged) {
                                                         console.log('[SYNC] 🔄 Core data changed — re-rendering global UI');
@@ -14310,7 +14513,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 <div style="font-size:12px;color:var(--text3);">This month (${curMonthStr}):</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     ${isConfirmed
-                        ? `<button type="button" class="income-received-btn confirmed wf-holdable" title="Press and hold 3 seconds to undo this month" onpointerdown="_wfHoldStart(this,function(){_undoInvestMonth('${source.id}','${curMonthStr}')},event)" onpointerup="_wfHoldCancel()" onpointerleave="_wfHoldCancel()" onpointercancel="_wfHoldCancel()" oncontextmenu="return false;"><i data-wfi="checkCircle"></i> Received &amp; Confirmed</button><span class="wf-hold-hint">${_WF_UNDO_ICON} hold to undo</span>`
+                        ? `<button type="button" class="income-received-btn confirmed wf-holdable" title="Press and hold 3 seconds to undo this month" onpointerdown="_wfHoldStart(this,function(){_undoInvestMonth('${source.id}','${curMonthStr}')},event)" onpointerup="_wfHoldCancel()" onpointerleave="_wfHoldCancel()" onpointercancel="_wfHoldCancel()" oncontextmenu="return false;"><i data-wfi="checkCircle"></i> Received &amp; Confirmed</button><span class="wf-hold-hint"><i data-wfi="undo"></i> hold to undo</span>`
                         : `<button type="button" class="income-received-btn" onclick="confirmIncomeReceived('${source.id}')">Confirm Received</button>`}
                     <button class="income-past-btn" onclick="openPastMonthConfirm('${source.id}')" title="Confirm a previous month you missed (e.g. you were offline for a while, or this income started before you joined WealthFlow)">
                         📅 Past months
@@ -14386,14 +14589,20 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             if (document.getElementById('wf-hold-css')) return;
             const st = document.createElement('style'); st.id = 'wf-hold-css';
             st.textContent =
-                '.wf-holdable{position:relative;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-y;transition:transform .12s ease, box-shadow .2s ease;}' +
-                '.wf-hold-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,rgba(239,68,68,.18),rgba(239,68,68,.55));pointer-events:none;z-index:0;border-radius:inherit;box-shadow:0 0 14px 2px rgba(239,68,68,.40);will-change:width;}' +
-                '.wf-hold-fill::after{content:"";position:absolute;top:0;right:0;bottom:0;width:2px;background:rgba(255,140,140,.95);box-shadow:0 0 10px 2px rgba(239,68,68,.85);}' +
-                '.wf-holdable.wf-holding{transform:scale(.98);box-shadow:0 0 0 1px rgba(239,68,68,.55), 0 6px 20px rgba(239,68,68,.26);}' +
-                '.wf-holdable > *{position:relative;z-index:1;}' +
-                '.wf-hold-hint{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;line-height:1;color:var(--text3);opacity:.78;white-space:nowrap;vertical-align:middle;}' +
-                '.wf-hold-hint svg{width:11px;height:11px;flex:0 0 auto;stroke:currentColor;}';
-            document.head.appendChild(st);
+                // Holdable surface — the WHOLE box (green pill or month row) is pressable.
+                '.wf-holdable{position:relative;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-y;cursor:pointer;transition:transform .13s ease,box-shadow .2s ease,filter .2s ease;}' +
+                // Press-in feedback: subtle scale-down + red outer glow while holding.
+                '.wf-holdable.wf-holding{transform:scale(.972);box-shadow:0 0 0 1px rgba(239,68,68,.5),0 8px 26px -8px rgba(239,68,68,.6);filter:saturate(1.06);}' +
+                // The animated fill that sweeps left→right over 3 seconds.
+                '.wf-hold-fill{position:absolute;left:0;top:0;bottom:0;width:0;z-index:0;pointer-events:none;border-radius:inherit;background:linear-gradient(90deg,rgba(239,68,68,.08),rgba(239,68,68,.32) 55%,rgba(248,113,113,.5));box-shadow:inset -12px 0 20px -8px rgba(248,113,113,.7);}' +
+                // Bright glowing leading edge on the fill.
+                '.wf-hold-fill::after{content:"";position:absolute;top:0;bottom:0;right:0;width:2.5px;background:linear-gradient(180deg,rgba(255,255,255,.2),#f87171 42%,#ef4444 58%,rgba(255,255,255,.2));box-shadow:0 0 10px 2px rgba(248,113,113,.9),0 0 22px 5px rgba(239,68,68,.45);}' +
+                // Keep real content above the fill (but not the fill itself).
+                '.wf-holdable>*:not(.wf-hold-fill){position:relative;z-index:1;}' +
+                // The "hold to undo" hint — ONE consistent compact style, always.
+                '.wf-hold-hint{display:inline-flex;align-items:center;gap:3px;font-size:10px;line-height:1;color:var(--text3);opacity:.82;white-space:nowrap;font-weight:600;letter-spacing:.01em;-webkit-user-select:none;user-select:none;}' +
+                '.wf-hold-hint svg,.wf-hold-hint .wfi{width:11px;height:11px;flex:0 0 auto;opacity:.9;}';
+            (document.head || document.documentElement).appendChild(st);
         }
         function _wfHoldMove(e) {
             if (!_wfHold.el) return;
@@ -14446,44 +14655,25 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         window._wfHoldStart = _wfHoldStart;
         window._wfHoldCancel = _wfHoldCancel;
         window._wfHoldAttach = _wfHoldAttach;
-        // Inject the hold styles NOW (not lazily on first press) so the small
-        // "hold to undo" hint renders at the correct size from the very first
-        // paint — previously it appeared full-size until the first interaction.
+        // Inject the hold styles EAGERLY (not lazily on first press). Previously the
+        // CSS only landed after the first pointer-down, so the "hold to undo" hint
+        // rendered at the default font size until first touch, then shrank — the
+        // large→small inconsistency the user reported. Injecting now guarantees the
+        // one compact, professional hint style from the very first render.
         try { _wfHoldInjectCss(); } catch (_) {}
-
-        // Small inline undo icon (SVG, not an emoji) for the "hold to undo" hint.
-        const _WF_UNDO_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-2"/></svg>';
-        window._WF_UNDO_ICON = _WF_UNDO_ICON;
-
-        // Propagate a confirmation DELETION to Firestore. The normal sync uses
-        // set(...,{merge:true}), which deep-merges maps and therefore CANNOT
-        // remove a key that still exists in the cloud — so an undone month kept
-        // coming back on reload. We explicitly delete just that nested key.
-        function _persistIncomeReceivedDeletion(key) {
-            try {
-                if (typeof userDocRef === 'undefined' || !userDocRef || !window.firebase || !firebase.firestore) return;
-                const FP = firebase.firestore.FieldPath;
-                const del = firebase.firestore.FieldValue.delete();
-                userDocRef.update(new FP('incomeReceived', key), del).catch(() => {
-                    // Fallback: replace the whole map field (also drops the key).
-                    try { userDocRef.update({ incomeReceived: (window.appData && appData.incomeReceived) || {} }).catch(() => {}); } catch (_) {}
-                });
-            } catch (_) {
-                try { userDocRef.update({ incomeReceived: (window.appData && appData.incomeReceived) || {} }).catch(() => {}); } catch (__) {}
-            }
-        }
 
         // Undo a single confirmed income month, then refresh the UI.
         function _undoInvestMonth(id, ym, reRenderModal) {
             const received = DB.getObj('incomeReceived', {});
             const key = id + '_' + ym;
             if (!received[key]) { notify('That month is already pending.', 'info'); return; }
-            delete received[key];
-            DB.set('incomeReceived', received);       // local + debounced merge sync
-            _persistIncomeReceivedDeletion(key);       // hard-delete the key in the cloud
+            // Delete the key locally AND on the server. A merge-sync can NEVER remove
+            // a map key from Firestore, so without an explicit field delete the
+            // confirmed month re-hydrated from the cloud on refresh (the reported bug).
+            DB.delKey('incomeReceived', key);
             triggerHaptic('success');
             let lbl = ym; try { lbl = monthStrFmt(ym + '-01'); } catch (_) {}
-            notify('Undone \u2014 ' + lbl + ' set back to pending', 'info');
+            notify(lbl + ' set back to pending', 'info');
             try { renderIncome(); } catch (_) {}
             try { renderDash(); } catch (_) {}
             if (reRenderModal) { try { document.querySelectorAll('.mo').forEach(o => o.remove()); openPastMonthConfirm(id); } catch (_) {} }
@@ -14665,7 +14855,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 row.title = 'Press and hold 3 seconds to undo this month';
                 if (!row.querySelector('.wf-hold-hint')) {
                     const h = document.createElement('span');
-                    h.className = 'wf-hold-hint'; h.innerHTML = _WF_UNDO_ICON + ' hold to undo';
+                    h.className = 'wf-hold-hint';
+                    h.innerHTML = (window.WFIcon ? window.WFIcon('undo') : '<i data-wfi="undo"></i>') + ' hold to undo';
                     h.style.cssText = 'margin-left:8px;flex:0 0 auto;';
                     row.appendChild(h);
                 }
@@ -19377,8 +19568,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Upload a PDF or photo of a bank / card statement. The AI reads every line, finds the merchant, picks the right category &amp; tab, removes duplicates — then you can walk away while it files them.</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                     <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload Statement</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_wfDriveImport('ccot_ai_scan')"><i data-wfi="cloud"></i> From Drive</button>
                     <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Photo</button>
-                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:130px;display:inline-flex;align-items:center;justify-content:center;" onclick="_wfDrivePick('ccot')"><svg viewBox="0 0 87.3 78" width="14" height="14" style="margin-right:6px;flex:0 0 auto;"><path fill="#0066da" d="M6.6 66.85 10.45 73.5c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z"/><path fill="#00ac47" d="M43.65 25 29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3L1.2 48.5c-.8 1.4-1.2 2.95-1.2 4.5h27.5z"/><path fill="#ea4335" d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.798l5.852 11.5z"/><path fill="#00832d" d="M43.65 25 57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z"/><path fill="#2684fc" d="M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z"/><path fill="#ffba00" d="M73.4 26.5 60.7 4.5c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z"/></svg>From Drive</button>
                 </div>
                 <!-- Recent statement imports — each can be undone (removes every
                      payment that import created, across all tabs). Keeps last 6. -->
@@ -19780,8 +19971,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.31.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.31.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.41.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.41.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
