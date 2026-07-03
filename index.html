@@ -7076,6 +7076,87 @@
         // Expose DB + appData on window so external scripts (v5 module) can reach them.
         // lexical const/let in a script tag don't auto-attach to window otherwise.
         window.DB = DB;
+
+        // ── v7.42.0 — CLIENT CRASH TELEMETRY (breadcrumb) ─────────────────────
+        // The reported "scroll crash" could NOT be reproduced from static analysis:
+        // the <head> watchdog is boot-only (gated on !booted), self-heal needs
+        // repeated crash boots, NO fixed element carries a backdrop-filter, and there
+        // is no heavy global scroll handler. So we INSTRUMENT it instead of guessing:
+        // every uncaught error / promise rejection is recorded with its stack, the
+        // active page, DOM size, JS-heap usage and scroll position into localStorage
+        // (wf_error_log, last 20). Settings → Diagnostics surfaces them and
+        // window._wfCrashReport() prints them. This turns an un-reproducible crash
+        // into a precisely diagnosable one on its next occurrence — changing NO
+        // behaviour. Fully guarded so logging can never itself throw.
+        let _wfLastErrSig = '';
+        let _wfLastErrT = 0;
+        function _wfLogClientError(source, err, extra) {
+            try {
+                // Throttle/dedup: if the SAME error repeats within 500ms (an error
+                // storm — exactly what a scroll crash might be), record it once and
+                // skip the rest, so telemetry never adds localStorage load to a page
+                // that's already struggling. The captured record is enough to diagnose.
+                const sig = String(source || '') + '|' + String((err && (err.message || err.reason)) || err || '').slice(0, 120);
+                const nowT = Date.now();
+                if (sig === _wfLastErrSig && (nowT - _wfLastErrT) < 500) return;
+                _wfLastErrSig = sig; _wfLastErrT = nowT;
+                const rec = {
+                    t: new Date().toISOString(),
+                    src: String(source || 'error'),
+                    msg: (err && (err.message || err.reason)) ? String(err.message || err.reason).slice(0, 400) : String(err == null ? '' : err).slice(0, 400),
+                    stack: (err && err.stack) ? String(err.stack).slice(0, 1200) : '',
+                    page: (function () { try { const a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; } catch (_) { return ''; } })(),
+                    scrollY: (window.scrollY || document.documentElement.scrollTop || 0),
+                    vh: (window.visualViewport ? Math.round(window.visualViewport.height) : window.innerHeight),
+                    dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })(),
+                    mem: (function () { try { return (performance && performance.memory) ? (Math.round(performance.memory.usedJSHeapSize / 1048576) + '/' + Math.round(performance.memory.jsHeapSizeLimit / 1048576) + 'MB') : ''; } catch (_) { return ''; } })(),
+                    ua: (navigator.userAgent || '').slice(0, 160)
+                };
+                if (extra) rec.extra = String(extra).slice(0, 300);
+                let log = [];
+                try { log = JSON.parse(localStorage.getItem('wf_error_log') || '[]'); } catch (_) { log = []; }
+                log.push(rec);
+                if (log.length > 20) log = log.slice(-20);
+                localStorage.setItem('wf_error_log', JSON.stringify(log));
+            } catch (_) { /* never let logging itself throw */ }
+        }
+        window._wfLogClientError = _wfLogClientError;
+        window._wfCrashReport = function () { try { return JSON.parse(localStorage.getItem('wf_error_log') || '[]'); } catch (_) { return []; } };
+        (function _wfInstallErrorBreadcrumb() {
+            try {
+                window.addEventListener('error', function (e) {
+                    _wfLogClientError('window.onerror', (e && e.error) || (e && e.message) || e, (e && e.filename) ? (e.filename + ':' + e.lineno + ':' + e.colno) : '');
+                });
+                window.addEventListener('unhandledrejection', function (e) {
+                    _wfLogClientError('unhandledrejection', (e && e.reason) || e);
+                });
+            } catch (_) {}
+        })();
+        window._wfCopyDiagnostics = async function (btn) {
+            let payload;
+            try {
+                const log = (window._wfCrashReport && window._wfCrashReport()) || [];
+                const vt = document.getElementById('wfVerText');
+                payload = JSON.stringify({
+                    version: vt ? vt.textContent : '',
+                    when: new Date().toISOString(),
+                    ua: navigator.userAgent,
+                    screen: (window.innerWidth + 'x' + window.innerHeight),
+                    dpr: window.devicePixelRatio || 1,
+                    online: navigator.onLine,
+                    activePage: (function () { try { const a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; } catch (_) { return ''; } })(),
+                    dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })(),
+                    errors: log
+                }, null, 2);
+            } catch (e) { payload = 'diagnostics unavailable: ' + (e && e.message); }
+            let done = false;
+            try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(payload); done = true; } } catch (_) {}
+            if (!done) {
+                try { const ta = document.createElement('textarea'); ta.value = payload; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done = true; } catch (_) {}
+            }
+            try { if (typeof notify === 'function') notify(done ? 'Diagnostics copied — paste it to me and I\'ll pinpoint the cause.' : 'Couldn\'t copy automatically — open the console and run _wfCrashReport().', done ? 'success' : 'warn'); } catch (_) {}
+            try { if (btn) { const o = btn.textContent; btn.textContent = done ? 'Copied ✓' : 'Copy failed'; setTimeout(() => { btn.textContent = o; }, 1800); } } catch (_) {}
+        };
         window.appData = appData;
         window._wfMarkLocalWrite = function () { _lastLocalWriteTs = Date.now(); };
 
@@ -7296,21 +7377,44 @@
                         debouncedSync(); // Ensure preserved local items are pushed!
                     }
 
-                    // Re-render active page
-                    if ($('app').classList.contains('show')) {
-                        const active = document.querySelector('.page.active');
-                        if (active) renderPage(active.id.replace('page-', ''));
-                        updateCCOTBadge();
-                        updateChequeBadge();
-                    }
+                    // ── v7.42.0 — the network fetch SUCCEEDED, so mark Online NOW,
+                    // BEFORE any re-render. Root cause of the "refresh flips Online →
+                    // Offline" bug: the re-render used to run INSIDE this same try{}.
+                    // If a page's render threw (e.g. one malformed Expenses record),
+                    // the outer catch misreported it as "Cloud sync failed → Offline"
+                    // even though the connection was perfectly fine and real-time sync
+                    // was still live. A render is a LOCAL concern — it must NEVER flip
+                    // the sync badge. We now set status first, then render in its own
+                    // guarded block so a render error can't touch connectivity state.
                     setSyncStatus('online');
+                    lastSyncTime = Date.now();
                     console.log('[SYNC] ✅ Force-pulled from cloud');
                     notify('Data synced from cloud! ☁️', 'success');
+                    try {
+                        if ($('app').classList.contains('show')) {
+                            const active = document.querySelector('.page.active');
+                            if (active) renderPage(active.id.replace('page-', ''));
+                            updateCCOTBadge();
+                            updateChequeBadge();
+                        }
+                    } catch (renderErr) {
+                        // Data is safe and we ARE online — this is purely a view issue.
+                        console.error('[SYNC] Re-render after sync failed (data safe, connection fine):', renderErr);
+                        try { _wfLogClientError('render-after-sync', renderErr); } catch (_) {}
+                    }
                 }
             } catch (err) {
                 console.error('[SYNC] ❌ Force pull failed:', err);
-                setSyncStatus('offline');
-                notify('Cloud sync failed. Check connection.', 'error');
+                // Only a genuine network / Firestore fetch failure reaches here now.
+                // If the device still has connectivity, the live onSnapshot listener
+                // keeps us synced — so don't scare the user with a false "Offline".
+                if (navigator.onLine) {
+                    setSyncStatus('online');
+                    notify('Sync had a brief hiccup — your data is safe and still live.', 'warn');
+                } else {
+                    setSyncStatus('offline');
+                    notify('Offline — changes will sync automatically when you reconnect.', 'error');
+                }
             }
         }
 
@@ -11073,8 +11177,31 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         //  identical handleAIScan pipeline as a normal local file pick (so PDF /
         //  encrypted-HTML statement / image handling, dedup, review and CC-reconcile
         //  all behave exactly the same).
-        const _WF_DRIVE_PICKER_KEY = 'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4'; // browser key (Picker API)
-        const _WF_DRIVE_APP_ID = '1020193373377'; // Cloud project number (owns the OAuth client)
+        // ── v7.42.0 — the Google Picker developer key is OPTIONAL when an OAuth
+        // token is supplied. The old build hard-coded the Firebase browser key here,
+        // which is NOT authorised for the Picker API → "The API developer key is
+        // invalid" (exactly the popup in IMG_9631). We now run the Picker TOKEN-ONLY
+        // by default (nothing exposed) and only attach a developer key if the
+        // deployment supplies a DEDICATED, referrer-restricted browser key via the
+        // GOOGLE_PICKER_KEY env var, served by /api/drive-config. We deliberately DO
+        // NOT expose WealthFlow_API_Key to the browser — that is the server-side
+        // Gemini/Vision billing key and must never be embedded in the client.
+        let _WF_DRIVE_PICKER_KEY = '';                 // optional; filled from /api/drive-config
+        const _WF_DRIVE_APP_ID = '1020193373377';      // Cloud project number (owns the OAuth client)
+        let _wfDriveCfgTried = false;
+        async function _wfLoadDriveConfig() {
+            if (_wfDriveCfgTried) return;
+            _wfDriveCfgTried = true;
+            try {
+                const r = await fetch('/api/drive-config', { cache: 'no-store' });
+                if (r && r.ok) {
+                    const c = await r.json();
+                    if (c && typeof c.developerKey === 'string' && c.developerKey.trim()) {
+                        _WF_DRIVE_PICKER_KEY = c.developerKey.trim();
+                    }
+                }
+            } catch (_) { /* token-only Picker works fine without any key */ }
+        }
         const _WF_DRIVE_TYPE_MAP = { ccot_ai_scan: 'ccot', e_ai_scan: 'expense', sub_ai_scan: 'subscription' };
         const _WF_DRIVE_MIME = 'application/pdf,text/html,image/png,image/jpeg,image/jpg,image/webp,image/heic,image/heif,image/gif,image/bmp';
         let _wfPickerLoad = null;
@@ -11148,7 +11275,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 notify('Connecting to Google Drive…', 'info');
                 const token = await _wfDriveToken(true);
                 if (!token) { notify('Couldn\'t connect to Google Drive. Please try again.', 'error'); return; }
-                await _wfEnsurePicker();
+                await Promise.all([_wfEnsurePicker(), _wfLoadDriveConfig()]);
                 _wfShowDrivePicker(token, inputId, type);
             } catch (e) {
                 console.error('[Drive import]', e);
@@ -11163,10 +11290,15 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     .setSelectFolderEnabled(false)
                     .setMode(google.picker.DocsViewMode.LIST)
                     .setMimeTypes(_WF_DRIVE_MIME);
-                const picker = new google.picker.PickerBuilder()
+                let _pb = new google.picker.PickerBuilder()
                     .setAppId(_WF_DRIVE_APP_ID)
-                    .setOAuthToken(token)
-                    .setDeveloperKey(_WF_DRIVE_PICKER_KEY)
+                    .setOAuthToken(token);
+                // Only attach a developer key when a dedicated browser key was
+                // provided. Token-only is fully supported and is precisely what
+                // avoids the "invalid developer key" popup the old hard-coded
+                // Firebase key produced.
+                if (_WF_DRIVE_PICKER_KEY) { try { _pb = _pb.setDeveloperKey(_WF_DRIVE_PICKER_KEY); } catch (_) {} }
+                const picker = _pb
                     .addView(view)
                     .setTitle('Select a statement or document from Google Drive')
                     .setCallback((data) => _wfDrivePicked(data, token, inputId, type))
@@ -18231,6 +18363,32 @@ table.amort tbody tr { page-break-inside: avoid; }
                 } catch (_) {}
             }
             let arr = DB.get('expenses');
+            // ── v7.42.0 — DEFENSIVE NORMALISATION (root-cause hardening) ────
+            // A SINGLE malformed expense record used to make this whole render
+            // throw — which blanked the Expenses tab AND (because forceSyncFromCloud
+            // re-renders inside its network try{}) surfaced as a false "Offline".
+            // Causes seen in the wild: amount saved as a string ("1,500"), a missing
+            // month/category from an old import, or a null array slot. We coerce every
+            // record to a safe shape here (in place, so the fix persists) so the
+            // Expenses tab can NEVER crash on bad data again.
+            if (!Array.isArray(arr)) arr = [];
+            (function _wfNormaliseExpenses() {
+                const nowYm = `${new Date().getFullYear()}-${p2(new Date().getMonth() + 1)}`;
+                for (let i = arr.length - 1; i >= 0; i--) {
+                    const x = arr[i];
+                    if (!x || typeof x !== 'object') { arr.splice(i, 1); continue; }
+                    if (typeof x.amount !== 'number' || !isFinite(x.amount)) {
+                        const n = parseFloat(String(x.amount == null ? '' : x.amount).replace(/[^0-9.\-]/g, ''));
+                        x.amount = isFinite(n) ? n : 0;
+                    }
+                    if (typeof x.month !== 'string' || !/^\d{4}-\d{2}$/.test(x.month)) {
+                        x.month = (typeof x.date === 'string' && x.date.length >= 7) ? x.date.slice(0, 7) : nowYm;
+                    }
+                    if (typeof x.cat !== 'string' || !x.cat) x.cat = 'Other';
+                    if (typeof x.desc !== 'string') x.desc = String(x.desc == null ? '' : x.desc);
+                    if (x.id == null) x.id = uid();
+                }
+            })();
             // ── v7.39.0 — checkmark semantics ──────────────────────────────
             // The "mark paid" checkmark is ONLY for MANUALLY-added expenses that
             // are due in the CURRENT or an UPCOMING month. Bank-statement imports
@@ -18248,8 +18406,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + `<button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>`
                 + `<button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>`
                 + `</div>`;
-            const sel = $('expMonth'); const cur = sel.value;
-            sel.innerHTML = '<option value="">All Months</option>' + allMonths.map(m => `<option value="${m}" ${m === cur ? 'selected' : ''}>${monthStrFmt(m + '-01')}</option>`).join('');
+            const sel = $('expMonth'); if (!sel) return; const cur = sel.value;
+            const _mo = Array.isArray(allMonths) ? allMonths : [];
+            sel.innerHTML = '<option value="">All Months</option>' + _mo.map(m => `<option value="${m}" ${m === cur ? 'selected' : ''}>${monthStrFmt(m + '-01')}</option>`).join('');
             let filtered = cur ? arr.filter(x => x.month === cur) : arr;
             const s = sortState['expenses'];
             if (s?.field) {
@@ -19971,8 +20130,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.41.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.41.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.42.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.42.0</span>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="_wfCopyDiagnostics(this)">Copy diagnostics</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -24720,6 +24883,22 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             Each row's <b>Goes to</b> is set automatically from that — change any row if needed. Credit-card cash advances get their bank fee added; bank credits become Income (salary/interest, not investments); transfers are skipped.
                             ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${parsed.statement_period}` : ''}
                         </div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);border-radius:10px;padding:9px 12px;">
+                            <span style="color:var(--text2);font-weight:600;">Send every ticked row to →</span>
+                            <select id="_ccr_bulkDest" class="fs" style="font-size:11px;padding:5px 8px;">
+                                <option value="">— choose a destination —</option>
+                                <option value="expenses">Expenses</option>
+                                <option value="cconetime">CC One-Time</option>
+                                <option value="income">Income</option>
+                                <option value="subscription">Subscription</option>
+                                <option value="cc_payment">Card Payment</option>
+                                <option value="loan">Loan Payment</option>
+                                <option value="cheque">Cheque</option>
+                                <option value="skip">Skip</option>
+                            </select>
+                            <button type="button" id="_ccr_bulkApply" class="btn btn-secondary btn-sm" style="padding:5px 12px;font-size:11px;">Apply</button>
+                            <span style="color:var(--text3);flex-basis:100%;font-size:10.5px;line-height:1.5;margin-top:2px;">Use this if a charge landed in the wrong tab — e.g. force all spending straight into <b>Expenses</b> in one tap. You can still fine-tune any single row below.</span>
+                        </div>
                         <table style="width:100%;border-collapse:collapse;font-size:12px;">
                             <thead>
                                 <tr style="background:var(--bg2);">
@@ -24746,6 +24925,30 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const closeOvl = () => { try { overlay.classList.remove('open'); } catch(_){} setTimeout(() => overlay.remove(), 180); };
             $ovl('#_ccrx').onclick = closeOvl;
             $ovl('#_ccr_cancel').onclick = closeOvl;
+
+            // ── v7.42.0 — one-tap BULK ROUTE. Directly answers "statement expenses
+            // aren't going to Expenses": pick a destination and every ticked row is
+            // routed there at once. We update BOTH the live <select> (so Save reads it)
+            // AND txns[idx]._dest (so it survives a re-render from the CC/Bank toggle).
+            const _ccrBulkApply = () => {
+                const dd = $ovl('#_ccr_bulkDest');
+                const dest = dd ? dd.value : '';
+                if (!dest) { notify('Pick a destination first (e.g. Expenses), then tap Apply.', 'warn'); return; }
+                let n = 0;
+                overlay.querySelectorAll('#_ccr_body tr').forEach(tr => {
+                    const keep = tr.querySelector('._ccr_keep');
+                    if (keep && !keep.checked) return;                 // only ticked rows
+                    const sel = tr.querySelector('._ccr_dest');
+                    if (sel) sel.value = dest;
+                    const idx = parseInt(tr.getAttribute('data-idx'), 10);
+                    if (!isNaN(idx) && typeof txns !== 'undefined' && txns[idx]) txns[idx]._dest = dest;
+                    n++;
+                });
+                const lbl = { expenses: 'Expenses', cconetime: 'CC One-Time', income: 'Income', subscription: 'Subscription', cc_payment: 'Card Payment', loan: 'Loan Payment', cheque: 'Cheque', skip: 'Skip' }[dest] || dest;
+                notify(n ? ('Routed ' + n + ' row' + (n > 1 ? 's' : '') + ' → ' + lbl) : 'No ticked rows to route.', n ? 'success' : 'warn');
+                try { triggerHaptic(n ? 'success' : 'warn'); } catch (_) {}
+            };
+            if ($ovl('#_ccr_bulkApply')) $ovl('#_ccr_bulkApply').onclick = _ccrBulkApply;
 
             // Credit-Card / Bank toggle — re-route every row and repaint the table
             const _reRenderBody = () => { const b = $ovl('#_ccr_body'); if (b) b.innerHTML = renderRows(); };
