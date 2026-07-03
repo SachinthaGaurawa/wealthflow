@@ -7121,7 +7121,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.45.0';
+        var WF_APP_VERSION = '7.46.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -19807,14 +19807,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                      payment that import created, across all tabs). Keeps last 6. -->
                 <div id="wfBatchList" style="margin-top:14px;"></div>
             </div>
-            <!-- v7.11.1 — Card & Account Registry entry. Maps a last-4 to credit-card
-                 vs bank-account so the brain routes service-charge debits correctly. -->
+            <!-- v7.46.0 — Cards & Accounts. Rich per-card intelligence (outstanding,
+                 utilization, due dates) that ALSO powers routing: WFRoute reads each
+                 last-4's type so charges auto-file to the right tab. -->
             <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:var(--card);">
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-                    <span style="font-size:20px;">💳</span>
-                    <div style="font-weight:800;font-size:15px;color:var(--text);">Card &amp; Account Registry</div>
+                    <span style="color:#d4af37;display:inline-flex;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></span>
+                    <div style="font-weight:800;font-size:15px;color:var(--text);">Cards &amp; Accounts</div>
                 </div>
-                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Tell the AI which last-4 is a credit card vs a bank account. A debit on a credit card routes to CC One-Time (service charge included); on a bank account it routes to Expenses.</div>
+                <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Register each card &amp; account to see live <b>outstanding balances, credit-limit utilization, spend and next-due dates</b> — and let WealthFlow <b>auto-file every charge to the correct tab</b> by its last-4 (a debit on a credit card goes to CC One-Time with its service charge; on a bank account it goes to Expenses).</div>
                 <button type="button" class="btn btn-secondary btn-sm" style="width:100%;" onclick="wfOpenCardRegistry()">Manage cards &amp; accounts</button>
             </div>
             <div class="setting-row">
@@ -20203,8 +20204,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.45.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.45.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.46.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.46.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
