@@ -7109,6 +7109,23 @@
         // window._wfCrashReport() prints them. This turns an un-reproducible crash
         // into a precisely diagnosable one on its next occurrence — changing NO
         // behaviour. Fully guarded so logging can never itself throw.
+        // ── v7.44.0 — DIAGNOSTICS made version-aware ───────────────────────────
+        // Capture the running build ONCE. Every logged error is stamped with it, and
+        // when the build changes we wipe the old log so stale errors from a previous
+        // version can never look current (that exact confusion happened: errors at the
+        // old line numbers 18410/20629 survived in localStorage across a deploy and
+        // looked like live failures). This makes "is this error from THIS build?"
+        // unambiguous.
+        var _WF_BUILD = (function () {
+            try { var vt = document.getElementById('wfVerText'); var t = (vt && vt.textContent || '').trim(); return t || 'unknown'; } catch (_) { return 'unknown'; }
+        })();
+        try {
+            var _wfPrevDiagBuild = localStorage.getItem('wf_diag_build') || '';
+            if (_wfPrevDiagBuild !== _WF_BUILD) {
+                localStorage.setItem('wf_error_log', '[]');
+                localStorage.setItem('wf_diag_build', _WF_BUILD);
+            }
+        } catch (_) {}
         let _wfLastErrSig = '';
         let _wfLastErrT = 0;
         function _wfLogClientError(source, err, extra) {
@@ -7123,6 +7140,8 @@
                 _wfLastErrSig = sig; _wfLastErrT = nowT;
                 const rec = {
                     t: new Date().toISOString(),
+                    ver: _WF_BUILD,                                   // v7.44.0 — which build threw this
+                    tLocal: (function () { try { return new Date().toLocaleString(); } catch (_) { return ''; } })(),
                     src: String(source || 'error'),
                     msg: (err && (err.message || err.reason)) ? String(err.message || err.reason).slice(0, 400) : String(err == null ? '' : err).slice(0, 400),
                     stack: (err && err.stack) ? String(err.stack).slice(0, 1200) : '',
@@ -7157,16 +7176,22 @@
             let payload;
             try {
                 const log = (window._wfCrashReport && window._wfCrashReport()) || [];
-                const vt = document.getElementById('wfVerText');
+                // v7.44.0 — a summary makes the report instantly readable: how many
+                // errors are from THIS build vs stale ones left over from an older
+                // build, and the set of distinct messages.
+                const fromThis = log.filter(e => (e && e.ver) === _WF_BUILD).length;
+                const uniqueMsgs = [...new Set(log.map(e => (e && e.msg) || '').filter(Boolean))];
                 payload = JSON.stringify({
-                    version: vt ? vt.textContent : '',
+                    build: _WF_BUILD,
                     when: new Date().toISOString(),
                     ua: navigator.userAgent,
                     screen: (window.innerWidth + 'x' + window.innerHeight),
                     dpr: window.devicePixelRatio || 1,
                     online: navigator.onLine,
+                    standalone: (function () { try { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; } catch (_) { return false; } })(),
                     activePage: (function () { try { const a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; } catch (_) { return ''; } })(),
                     dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })(),
+                    summary: { totalErrors: log.length, fromThisBuild: fromThis, staleFromOlderBuilds: log.length - fromThis, uniqueMessages: uniqueMsgs },
                     errors: log
                 }, null, 2);
             } catch (e) { payload = 'diagnostics unavailable: ' + (e && e.message); }
@@ -7177,6 +7202,14 @@
             }
             try { if (typeof notify === 'function') notify(done ? 'Diagnostics copied — paste it to me and I\'ll pinpoint the cause.' : 'Couldn\'t copy automatically — open the console and run _wfCrashReport().', done ? 'success' : 'warn'); } catch (_) {}
             try { if (btn) { const o = btn.textContent; btn.textContent = done ? 'Copied ✓' : 'Copy failed'; setTimeout(() => { btn.textContent = o; }, 1800); } } catch (_) {}
+        };
+        // v7.44.0 — let the user wipe the diagnostics log (also runs automatically on
+        // a build change). Handy after a fix so only fresh errors remain.
+        window._wfClearDiagnostics = function (btn) {
+            try { localStorage.setItem('wf_error_log', '[]'); } catch (_) {}
+            try { _wfLastErrSig = ''; _wfLastErrT = 0; } catch (_) {}
+            try { if (typeof notify === 'function') notify('Diagnostics log cleared.', 'success'); } catch (_) {}
+            try { if (btn) { const o = btn.textContent; btn.textContent = 'Cleared ✓'; setTimeout(() => { btn.textContent = o; }, 1500); } } catch (_) {}
         };
         window.appData = appData;
         window._wfMarkLocalWrite = function () { _lastLocalWriteTs = Date.now(); };
@@ -11307,11 +11340,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function _wfShowDrivePicker(token, inputId, type) {
             try {
                 const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
-                    // ── v7.43.0 — the old view put FOLDERS first, so the newest
-                    // document was buried. A statement/receipt is always a FILE, so we
-                    // now show a FLAT list of files from EVERY folder, which Drive
-                    // returns most-recently-modified first. The user sees their latest
-                    // statement at the very top — no folder digging.
+                    // ── v7.44.0 — show ONLY the files YOU uploaded/own, newest first,
+                    // as a plain LIST. setOwnedByMe(true) drops files merely shared with
+                    // you and keeps Drive's most-recently-added-by-you order, so your
+                    // latest upload is at the very top. Folders are excluded (a statement
+                    // is always a file), so there is no folders-first grouping to dig past.
+                    .setOwnedByMe(true)
                     .setIncludeFolders(false)
                     .setSelectFolderEnabled(false)
                     .setMode(google.picker.DocsViewMode.LIST)
@@ -20164,12 +20198,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.43.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.43.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.44.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.44.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="_wfCopyDiagnostics(this)">Copy diagnostics</button>
+                <button class="btn btn-ghost btn-sm" onclick="_wfClearDiagnostics(this)" style="margin-left:8px;">Clear log</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
@@ -20831,8 +20866,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
 
             if (sent) {
+                // v7.44.0 — reset the per-day counter correctly. The previous code set
+                // _lastDate = todayStr BEFORE testing "is it still the same day?", so the
+                // test was always true and the count never reset at midnight — it grew
+                // forever and eventually blocked all smart notifications. Decide new-day
+                // FIRST, then stamp the date.
+                const _isNewDay = (history._lastDate !== todayStr);
+                history._todayCount = (_isNewDay ? 0 : (history._todayCount || 0)) + 1;
                 history._lastDate = todayStr;
-                history._todayCount = (history._lastDate === todayStr ? (history._todayCount || 0) : 0) + 1;
                 setSmartNotifHistory(history);
             }
         }
