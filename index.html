@@ -7077,6 +7077,27 @@
         // lexical const/let in a script tag don't auto-attach to window otherwise.
         window.DB = DB;
 
+        // ── v7.43.0 — NOTIFICATION SAFE-SHIM (root-cause fix for the iOS crash) ─
+        // Diagnostics captured a repeating unhandled rejection "Can't find variable:
+        // Notification" at the load handler — iOS Chrome / Safari browser tabs expose
+        // NO Notification Web API, so any BARE reference to `Notification` (e.g.
+        // Notification.permission) throws a ReferenceError, and inside async functions
+        // that becomes an unhandled-rejection storm. We install a harmless no-op stub
+        // ONLY when the API is genuinely absent, so every reference across the whole
+        // app resolves safely and no notification is ever attempted where the platform
+        // can't show one. Browsers that DO have the API are never touched. permission
+        // stays 'unsupported' so all `=== 'granted'` guards correctly no-op.
+        (function _wfNotificationSafeShim() {
+            try {
+                if (typeof window !== 'undefined' && !('Notification' in window)) {
+                    var _NStub = function () {};                 // no-op constructor
+                    _NStub.permission = 'unsupported';
+                    _NStub.requestPermission = function () { return Promise.resolve('unsupported'); };
+                    try { window.Notification = _NStub; } catch (_) {}
+                }
+            } catch (_) { /* never let the shim itself throw */ }
+        })();
+
         // ── v7.42.0 — CLIENT CRASH TELEMETRY (breadcrumb) ─────────────────────
         // The reported "scroll crash" could NOT be reproduced from static analysis:
         // the <head> watchdog is boot-only (gated on !booted), self-heal needs
@@ -11286,7 +11307,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function _wfShowDrivePicker(token, inputId, type) {
             try {
                 const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
-                    .setIncludeFolders(true)
+                    // ── v7.43.0 — the old view put FOLDERS first, so the newest
+                    // document was buried. A statement/receipt is always a FILE, so we
+                    // now show a FLAT list of files from EVERY folder, which Drive
+                    // returns most-recently-modified first. The user sees their latest
+                    // statement at the very top — no folder digging.
+                    .setIncludeFolders(false)
                     .setSelectFolderEnabled(false)
                     .setMode(google.picker.DocsViewMode.LIST)
                     .setMimeTypes(_WF_DRIVE_MIME);
@@ -18407,7 +18433,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + `<button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>`
                 + `</div>`;
             const sel = $('expMonth'); if (!sel) return; const cur = sel.value;
-            const _mo = Array.isArray(allMonths) ? allMonths : [];
+            // ── v7.43.0 — DEFINE allMonths. It was referenced here but NEVER declared
+            // anywhere, so the old code (`allMonths.map(...)`) threw "Can't find
+            // variable: allMonths" on EVERY render → renderExpenses aborted →
+            // the Expenses tab showed nothing. THAT is the real "expenses aren't added
+            // to the Expenses tab" bug. We build the month list from the (already
+            // normalised) expenses so the month filter is populated and every expense
+            // groups correctly. Newest month first.
+            const allMonths = [...new Set(arr.map(x => x && x.month).filter(m => typeof m === 'string' && /^\d{4}-\d{2}$/.test(m)))].sort().reverse();
+            const _mo = allMonths;
             sel.innerHTML = '<option value="">All Months</option>' + _mo.map(m => `<option value="${m}" ${m === cur ? 'selected' : ''}>${monthStrFmt(m + '-01')}</option>`).join('');
             let filtered = cur ? arr.filter(x => x.month === cur) : arr;
             const s = sortState['expenses'];
@@ -20130,8 +20164,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.42.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.42.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.43.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.43.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -25093,7 +25127,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     } else if (dest === 'expenses') {
                         if (_dupIn(expArr, date, amount, desc, 'amount')) { dup++; return; }
                         const cat = (window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other';
-                        const _rec = { id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'expenses', _rec.id); }
                         expArr.push(_rec);
                         exp++;
@@ -25141,8 +25175,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         if (_ln && _mo) {
                             if (!_ln.payments) _ln.payments = [];
                             const _pi = _ln.payments.findIndex(p => p.month === _mo);
-                            const _prec = { month: _mo, paid: true, amount, paidAt: Date.now(), notes: 'Auto-allocated from ' + (bank || 'bank') + ' statement', source: 'statement' };
+                            const _prevPay = (_pi > -1) ? _ln.payments[_pi] : null;   // v7.43.0 — capture for exact undo
+                            const _prec = { month: _mo, paid: true, amount, paidAt: Date.now(), notes: 'Auto-allocated from ' + (bank || 'bank') + ' statement', source: 'statement', _batch: (_batch ? _batch.id : undefined) };
                             if (_pi > -1) { _ln.payments[_pi] = _prec; loanRepl++; } else { _ln.payments.push(_prec); }
+                            // v7.43.0 — record the loan-payment op so Undo removes/restores it.
+                            if (_batch && WFBatch.recordLoan) { try { WFBatch.recordLoan(_batch, { loanId: _ln.id, month: _mo, prev: _prevPay }); } catch (_) {} }
                             loanCnt++; _loansDirty = true;
                         } else { skipped++; }
                     } else if (dest === 'cheque') {
