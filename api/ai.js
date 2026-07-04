@@ -441,17 +441,49 @@ export default async function handler(req, res) {
     if (wantsJSON) {
         const parsed = good.map(r => ({ r, j: tryParse(r.reply) })).filter(x => x.j);
         if (parsed.length) {
-            // Majority vote on the "amount"/"vendor" fields when present.
-            const tally = {};
-            parsed.forEach(({ j }) => {
-                const key = JSON.stringify([j.amount ?? null, (j.vendor || '').toLowerCase().trim()]);
-                tally[key] = (tally[key] || 0) + 1;
+            // v7.47.0 — MULTI-FIELD CONSENSUS. Each key field is voted on
+            // INDEPENDENTLY (its own majority), so the winning extraction reflects
+            // the majority on EVERY field — not just amount+vendor. Blank/missing
+            // values never win a field (they're skipped in the tally), so one
+            // engine returning "" can't dilute a real consensus. Fields are
+            // weighted: the financial core (amount, vendor) outweighs the
+            // classification fields (type, category, destination) on ties.
+            const CFIELDS = [
+                { k: 'amount',      w: 4, norm: v => (v === 0 || v) ? v : null },
+                { k: 'vendor',      w: 3, norm: v => (v || '').toString().toLowerCase().trim() || null },
+                { k: 'type',        w: 2, norm: v => (v || '').toString().toLowerCase().trim() || null },
+                { k: 'category',    w: 2, norm: v => (v || '').toString().toLowerCase().trim() || null },
+                { k: 'destination', w: 2, norm: v => (v || '').toString().toLowerCase().trim() || null }
+            ];
+            const majority = {};
+            CFIELDS.forEach(f => {
+                const t = {};
+                parsed.forEach(({ j }) => {
+                    const val = f.norm(j ? j[f.k] : null);
+                    if (val === null) return;              // skip blanks — they can't win a field
+                    const kk = JSON.stringify(val);
+                    t[kk] = (t[kk] || 0) + 1;
+                });
+                let bestVal, bestN = 0;
+                Object.entries(t).forEach(([kk, n]) => { if (n > bestN) { bestN = n; bestVal = kk; } });
+                if (bestVal !== undefined) majority[f.k] = JSON.parse(bestVal);
             });
-            let topKey = null, topN = 0;
-            Object.entries(tally).forEach(([k, n]) => { if (n > topN) { topN = n; topKey = k; } });
-            const consensusPick = parsed.find(({ j }) =>
-                JSON.stringify([j.amount ?? null, (j.vendor || '').toLowerCase().trim()]) === topKey);
-            best = (consensusPick || parsed[0]).r;
+            // Score every parsed reply by weighted agreement with the field-wise
+            // majority; the reply matching the most consensus fields wins. Falls
+            // back gracefully to the first parse if nothing scores.
+            let best2 = null, bestScore = -1;
+            parsed.forEach(({ j, r }) => {
+                let score = 0;
+                CFIELDS.forEach(f => {
+                    if (majority[f.k] === undefined) return;
+                    if (f.norm(j ? j[f.k] : null) === majority[f.k]) score += f.w;
+                });
+                if (score > bestScore) { bestScore = score; best2 = r; }
+            });
+            best = best2 || parsed[0].r;
+            // expose the fused field-wise majority so downstream can trust it even
+            // if no single engine matched every field.
+            try { best._consensusFields = majority; } catch (_) {}
         } else {
             best = good.sort((a, b) => b.reply.length - a.reply.length)[0];
         }
