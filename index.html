@@ -7121,7 +7121,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.46.0';
+        var WF_APP_VERSION = '7.47.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -7847,6 +7847,9 @@
             inp.addEventListener('focus', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = String(raw); });
         }
 
+        // v7.47.0 — expose so modal/dynamically-created money fields (e.g. the Card
+        // Registry credit limit) get the SAME live "350,000" → "350,000.00" formatting.
+        try { window._attachMoneyHandlers = _attachMoneyHandlers; } catch (_) {}
         function initMoneyInputs() {
             document.querySelectorAll('.money-input').forEach(inp => _attachMoneyHandlers(inp));
 
@@ -19045,7 +19048,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (rm === _incYM) income += (+r.amount || 0);
             });
             let loanTotal = 0, loanItems = [];
-            DB.get('loans').forEach(l => {
+            (DB.get('loans') || []).forEach(l => {
+                if (!l || !l.start) return;
                 const start = new Date(l.start + 'T00:00:00');
                 const end = loanEndDate(l);
                 if (start <= dt && end > dt) {
@@ -19054,7 +19058,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             });
             let ccTotal = 0, ccItems2 = [];
-            DB.get('ccinstall').filter(x => !x.completed).forEach(item => {
+            (DB.get('ccinstall') || []).filter(x => x && !x.completed).forEach(item => {
+                if (!item || !item.date) return;
                 const start = new Date(item.date + 'T00:00:00');
                 const end = new Date(item.date + 'T00:00:00'); end.setMonth(end.getMonth() + item.duration);
                 if (start <= dt && end > dt) {
@@ -19064,8 +19069,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             });
             const ym = `${year}-${p2(month + 1)}`;
             let expTotal = 0, expItems = [];
-            DB.get('expenses').forEach(e => {
-                if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += e.amount; expItems.push({ name: e.desc, cat: e.cat, amount: e.amount }); }
+            (DB.get('expenses') || []).forEach(e => {
+                if (!e) return;
+                if (e.month === ym || (e.recurring && e.month <= ym)) { expTotal += (e.amount || 0); expItems.push({ name: e.desc, cat: e.cat, amount: (e.amount || 0) }); }
             });
 
             // ── v7.4.0: include CC One-Time payments, Subscriptions and
@@ -20204,8 +20210,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.46.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.46.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.47.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.47.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -20269,8 +20275,8 @@ table.amort tbody tr { page-break-inside: avoid; }
         function undoBatch(batchId) {
             const b = (window.WFBatch ? WFBatch.list() : []).find(x => x.id === batchId);
             if (!b) { notify('That import is no longer available', 'warn'); return; }
-            const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.subscription || 0);
-            showConfirm('🗑️', 'Undo this statement import?', 'This removes all ' + total + ' payment' + (total === 1 ? '' : 's') + ' this import added — across Expenses, Income, CC One-Time and Subscriptions. This cannot be redone.', 'btn-danger', '↺ Undo import', () => {
+            const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.ccPayments || 0) + (c.cheques || 0) + (c.subscription || 0) + ((b.loans || []).length);
+            showConfirm('🗑️', 'Undo this statement import?', 'This removes all ' + total + ' entr' + (total === 1 ? 'y' : 'ies') + ' this import added — across Expenses, Income, CC One-Time, Card Payments, Cheques, Loans and Subscriptions — and recalculates your dashboard. This cannot be redone.', 'btn-danger', 'Undo import', () => {
                 let res = null; try { res = WFBatch.undo(batchId); } catch (e) { console.warn('[WFBatch] undo failed:', e); }
                 if (!res) { notify('Undo failed', 'error'); return; }
                 try { _pruneOrphanPayments(); } catch (_) {}   // v7.29.0 — clear payments left orphaned by removing a statement's charges
@@ -20279,8 +20285,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { renderExpenses(); } catch (_) {}
                 try { renderIncRecv(); } catch (_) {}
                 try { renderSubscriptions(); } catch (_) {}
-                try { renderDash(); } catch (_) {}
+                try { if (typeof renderLoans === 'function') renderLoans(); } catch (_) {}
+                try { if (typeof renderCheques === 'function') renderCheques(); } catch (_) {}
+                // v7.47.0 — renderDash MUST recompute Year Expenses / Net Savings after an
+                // undo. Log (don't swallow) any failure so a silent throw can never again
+                // leave the dashboard showing stale totals.
+                try { renderDash(); } catch (e) { try { if (window._wfLogClientError) _wfLogClientError('undo:renderDash', e); } catch (_) {} }
                 try { renderBatchList(); } catch (_) {}
+                // v7.47.0 — also re-render whichever page is currently visible so the figures
+                // update instantly regardless of the tab the undo was triggered from.
+                try { const _ap = document.querySelector('.page.active'); if (_ap && _ap.id) renderPage(_ap.id.replace('page-', '')); } catch (_) {}
                 const r = res.removed || {};
                 notify('Import undone — removed ' + ((r.cconetime || 0) + (r.expenses || 0) + (r.incomeRecv || 0) + (r.subscription || 0)) + ' payment(s)', 'success');
                 try { setDirty(true); } catch (_) {}

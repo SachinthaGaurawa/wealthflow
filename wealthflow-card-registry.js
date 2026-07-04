@@ -265,7 +265,7 @@
                 '<div>' + lbl('Bank / Issuer') + sel('wfCF_bank', [['', '— Bank —']].concat(BANKS.map(b => [b, b])), c.bank) + '</div>' +
                 '<div>' + lbl('Type') + sel('wfCF_type', [['', '— Type —']].concat(TYPES), c.type) + '</div>' +
                 '<div id="wfCF_netWrap">' + lbl('Network') + sel('wfCF_net', NETWORKS.map(n => [n, n || '— Network —']), c.network) + '</div>' +
-                '<div id="wfCF_limitWrap">' + lbl('Credit limit') + inp('wfCF_limit', 'e.g. 500000', c.creditLimit, 'inputmode="numeric"') + '</div>' +
+                '<div id="wfCF_limitWrap">' + lbl('Credit limit') + inp('wfCF_limit', 'e.g. 500,000', (c.creditLimit ? Number(c.creditLimit).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ''), 'inputmode="decimal" class="money-input money-cents"') + '</div>' +
                 '<div id="wfCF_stmtWrap">' + lbl('Statement day (1-31)') + inp('wfCF_stmt', 'e.g. 25', c.statementDay, 'inputmode="numeric" maxlength="2"') + '</div>' +
                 '<div id="wfCF_dueWrap">' + lbl('Payment due day (1-31)') + inp('wfCF_due', 'e.g. 15', c.dueDay, 'inputmode="numeric" maxlength="2"') + '</div>' +
               '</div>' +
@@ -283,6 +283,9 @@
         document.getElementById('wfCF_type').onchange = _syncType; _syncType();
         document.getElementById('wfCF_cancel').onclick = () => { host.style.display = 'none'; host.innerHTML = ''; };
         document.getElementById('wfCF_save').onclick = () => _save(editKey);
+        // v7.47.0 — live "350,000" → "350,000.00" formatting on the credit limit,
+        // reusing the app's proven money-input handler.
+        try { if (window._attachMoneyHandlers) window._attachMoneyHandlers(document.getElementById('wfCF_limit'), { cents: true }); } catch (_) {}
         try { host.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) {}
     }
 

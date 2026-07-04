@@ -31,7 +31,7 @@
     function setCardRegistry(reg) {
         const s = (window.DB && DB.getObj && DB.getObj('settings')) || {};
         s.cardRegistry = reg;
-        DB.setObj('settings', s);
+        DB.set('settings', s);
         if (typeof window.syncToCloud === 'function') {
             try { syncToCloud(); } catch (_) {}
         }
@@ -485,7 +485,7 @@
             if (data.ok) {
                 const s = DB.getObj('settings') || {};
                 s.lastPredictions = { ...data, refreshed_at: Date.now() };
-                DB.setObj('settings', s);
+                DB.set('settings', s);
             }
             return data;
         } catch (e) { return { ok: false, error: e.message }; }
