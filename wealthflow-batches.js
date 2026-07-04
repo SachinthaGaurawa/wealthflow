@@ -113,10 +113,16 @@
         var db = _db(); if (!db) return;
         var subs = db.get('subscriptions') || [];
         var map = db.get('subMerchantMap') || {};
+        var prevBySub = {};   // subId -> headline amount from BEFORE this batch (first recorded payment)
+        var touched = {};     // subId -> true
+
+        // Pass 1 — remove every payment this batch recorded: its history row AND the
+        // per-month override it wrote. Capture the pre-batch headline amount once per sub.
         (batch.subs || []).forEach(function (s) {
             var sub = subs.filter(function (x) { return x.id === s.subId; })[0];
             if (!sub) return;
-            // remove the payment this batch recorded (match date + amount once)
+            touched[s.subId] = true;
+            if (!(s.subId in prevBySub) && typeof s.prevAmount === 'number') prevBySub[s.subId] = s.prevAmount;
             if (sub.history && sub.history.length) {
                 var idx = sub.history.findIndex(function (h) { return h.date === s.paymentDate && Math.abs((h.amount || 0) - (s.amount || 0)) < 0.01; });
                 if (idx > -1) {
@@ -124,12 +130,33 @@
                     if (s.paymentDate) { var ym = String(s.paymentDate).slice(0, 7); if (sub.monthOverrides) delete sub.monthOverrides[ym]; }
                 }
             }
-            // if THIS batch created the subscription and nothing else remains, remove it + its memory
-            if (s.createdSub && (!sub.history || sub.history.length === 0)) {
-                subs = subs.filter(function (x) { return x.id !== s.subId; });
-                Object.keys(map).forEach(function (k) { if (map[k] === s.subId) delete map[k]; });
+        });
+
+        // Pass 2 — AFTER all of this batch's rows are gone, fix each touched sub's
+        // headline amount. v7.49.0 — the statement had overwritten sub.amount with its
+        // figure (WFSubs.recordPayment line 92), so WITHOUT this the removed month still
+        // shows the statement amount (getMonthlyData / the dashboard fall back to
+        // sub.amount when a month has no override) AND every other month is inflated too.
+        // This is the "subscription statement amount won't undo → dashboard Year Expenses
+        // & Net Savings don't revert" bug. Restore to the most recent REMAINING statement
+        // actual, or the captured pre-batch headline when no statement rows remain.
+        Object.keys(touched).forEach(function (subId) {
+            var sub = subs.filter(function (x) { return x.id === subId; })[0];
+            if (!sub) return;
+            if (sub.history && sub.history.length) {
+                var last = sub.history[sub.history.length - 1];
+                if (last && typeof last.amount === 'number') sub.amount = last.amount;
+            } else {
+                if (typeof prevBySub[subId] === 'number') sub.amount = prevBySub[subId];
+                // if THIS batch created the subscription and nothing else remains, remove it + its memory
+                var createdByBatch = (batch.subs || []).some(function (s) { return s.subId === subId && s.createdSub; });
+                if (createdByBatch) {
+                    subs = subs.filter(function (x) { return x.id !== subId; });
+                    Object.keys(map).forEach(function (k) { if (map[k] === subId) delete map[k]; });
+                }
             }
         });
+
         db.set('subscriptions', subs);
         db.set('subMerchantMap', map);
     }
@@ -166,5 +193,5 @@
     }
 
     window.WFBatch = { begin: begin, tag: tag, record: record, recordSub: recordSub, recordLoan: recordLoan, commit: commit, list: list, undo: undo, _key: KEY, MAX: MAX };
-    try { console.log('[WFBatch] ✓ statement import-batch + full undo ready (v7.43.0)'); } catch (_) {}
+    try { console.log('[WFBatch] ✓ statement import-batch + full undo ready (v7.49.0 — subscription headline restore on undo)'); } catch (_) {}
 })();

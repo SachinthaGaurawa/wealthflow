@@ -85,13 +85,14 @@
     function recordPayment(sub, txn) {
         sub.history = sub.history || []; sub.monthOverrides = sub.monthOverrides || {};
         var date = (txn && txn.date) || ''; var month = _monthOf(date); var amt = Math.abs(txn && txn.amount) || 0;
+        var prevAmount = sub.amount;   // headline amount BEFORE this statement changed it (for exact undo)
         var dup = sub.history.some(function (h) { return h.date === date && Math.abs((h.amount || 0) - amt) < 0.01; });
         if (!dup) {
             sub.history.push({ month: month, amount: amt, date: date, source: 'statement' });
             if (month) sub.monthOverrides[month] = amt; // variable-bill actual for that month
             if (amt) sub.amount = amt;                  // keep the headline amount current
         }
-        return { added: !dup, month: month, amount: amt };
+        return { added: !dup, month: month, amount: amt, prevAmount: prevAmount };
     }
 
     // Pure core (testable): mutate/return the arrays without touching storage.
@@ -104,7 +105,7 @@
         if (sub.merchantKeys.indexOf(found.key) < 0) sub.merchantKeys.push(found.key);
         var pay = recordPayment(sub, txn);
         map[found.key] = sub.id; // remember for next time
-        return { subscriptions: subs, map: map, subId: sub.id, name: sub.name, created: created, paymentAdded: pay.added, via: found.via };
+        return { subscriptions: subs, map: map, subId: sub.id, name: sub.name, created: created, paymentAdded: pay.added, prevAmount: pay.prevAmount, via: found.via };
     }
 
     // Live path: read from DB, apply, write back. Returns a small summary.
@@ -114,7 +115,7 @@
         var map = (DB && DB.get ? DB.get('subMerchantMap') : null) || {};
         var r = applyToArrays(txn, routeInfo, subs, map);
         if (DB && DB.set) { DB.set('subscriptions', r.subscriptions); DB.set('subMerchantMap', r.map); }
-        return { subId: r.subId, name: r.name, created: r.created, paymentAdded: r.paymentAdded, via: r.via, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
+        return { subId: r.subId, name: r.name, created: r.created, paymentAdded: r.paymentAdded, prevAmount: r.prevAmount, via: r.via, paymentDate: (txn && txn.date) || '', amount: Math.abs((txn && txn.amount) || 0) };
     }
 
     window.WFSubs = {
