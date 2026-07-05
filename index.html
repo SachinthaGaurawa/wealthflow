@@ -7121,7 +7121,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.49.0';
+        var WF_APP_VERSION = '7.50.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -10632,6 +10632,153 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         let gapiToken = null;
         let tokenClient;
 
+        // ─────────────────────────────────────────────────────────────────────
+        //  v7.50.0 — Google Drive auth that survives installed apps / APK / TWA
+        //  --------------------------------------------------------------------
+        //  Google blocks the sign-in (third-party) cookies its OAuth iframe needs
+        //  inside installed PWAs and Android/iOS WebViews, so a SILENT token
+        //  request (prompt:'') fails ASYNCHRONOUSLY. The old code had no
+        //  error_callback, so it failed with no fallback and no message — the
+        //  "Drive won't connect in the installed app" bug. We now escalate:
+        //      silent  →  interactive consent popup  →  browser bridge.
+        //  The browser bridge opens WealthFlow in the SYSTEM browser (where the
+        //  cookies DO work), completes Drive sign-in there, and relays the token
+        //  back through the user's OWN Firestore document — so the installed app
+        //  connects automatically, needing no third-party cookies at all. Tokens
+        //  live in localStorage, which 3p-cookie rules do not touch.
+        let _wfDriveAuthPhase = 'idle';    // 'silent' | 'interactive' | 'background' | 'idle'
+        let _wfDriveBridgeIv = null;       // UI watch while waiting on the browser bridge
+
+        // Pure (unit-tested): given the auth phase + GIS error type, decide next.
+        // → 'interactive' | 'bridge' | 'cancel' | 'quiet'
+        function _wfDriveEscalation(phase, errorType) {
+            const t = String(errorType || '');
+            if (phase === 'silent') return (t === 'popup_failed_to_open') ? 'bridge' : 'interactive';
+            if (phase === 'interactive') return (t === 'popup_closed') ? 'cancel' : 'bridge';
+            return 'quiet';   // background / standby failures stay silent
+        }
+        // Pure (unit-tested): should the app adopt a Drive token bridged via cloud?
+        function _wfShouldAdoptBridge(bridge, now, myDeviceId, haveValidToken) {
+            if (!bridge || !bridge.token) return false;
+            if (typeof bridge.expiry === 'number' && bridge.expiry <= now) return false; // expired
+            if (bridge.deviceId && bridge.deviceId === myDeviceId) return false;          // our own write
+            if (haveValidToken) return false;                                            // already connected
+            return true;
+        }
+        try { window._wfDriveEscalation = _wfDriveEscalation; window._wfShouldAdoptBridge = _wfShouldAdoptBridge; } catch (_) {}
+
+        // Central token requester — sets the phase so the async error handler knows
+        // how to escalate. interactive=false → silent (no UI); true → consent popup.
+        function _wfDriveRequestToken(interactive) {
+            if (typeof tokenClient === 'undefined' || !tokenClient) { notify('Google Services failing to load. Check connection.', 'error'); return; }
+            _wfDriveAuthPhase = interactive ? 'interactive' : 'silent';
+            const opts = interactive ? { prompt: 'consent' } : { prompt: '' };
+            if (window.currentUser && window.currentUser.email) opts.login_hint = window.currentUser.email;
+            try { tokenClient.requestAccessToken(opts); }
+            catch (e) { _wfDriveAuthPhase = 'idle'; if (interactive) _wfShowDriveBrowserBridge(); else _wfDriveRequestToken(true); }
+        }
+
+        // GIS error_callback — the missing piece. Fires when a token request fails
+        // (silent refresh blocked by 3p cookies, popup blocked, user cancelled…).
+        function _wfOnDriveAuthError(err) {
+            const phase = _wfDriveAuthPhase; _wfDriveAuthPhase = 'idle';
+            const next = _wfDriveEscalation(phase, err && err.type);
+            if (next === 'interactive') { _wfDriveRequestToken(true); return; }
+            if (next === 'bridge') { _wfShowDriveBrowserBridge(); return; }
+            if (next === 'cancel') { notify('Google Drive sign-in was cancelled.', 'warn'); return; }
+            // 'quiet' → a background/standby refresh failed; stay silent, retry later.
+        }
+
+        // The browser bridge modal: finish Drive sign-in once in the system browser
+        // (cookies work there) and the token relays back via Firestore.
+        function _wfShowDriveBrowserBridge() {
+            // If THIS instance IS the browser sign-in tab, never open another tab (that
+            // would loop) — we already have cookies here, so just re-offer consent.
+            if (window._wfIsDriveLinkInstance) {
+                try { notify('Google Drive sign-in did not finish. Please try approving again.', 'warn'); } catch (_) {}
+                try { setTimeout(function () { window._wfDriveLinkMode = true; _wfDriveRequestToken(true); }, 1500); } catch (_) {}
+                return;
+            }
+            // Flush any pending local changes FIRST so the browser instance loads the
+            // very latest data before it writes the bridge back — no round-trip clobber.
+            try { if (typeof syncToCloud === 'function') syncToCloud(); } catch (_) {}
+            const cloud = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>';
+            const url = location.origin + '/?drivelink=1';
+            showConfirm(cloud, 'Finish Google Drive sign-in in your browser',
+                'Your installed app cannot complete Google sign-in because Google blocks the sign-in cookies inside installed apps. Tap below to finish it once in your browser — sign in with the SAME Google account and approve Drive access. Your app will then connect automatically within a few seconds and stay connected.',
+                'btn-primary', 'Open sign-in in browser', function () {
+                    try {
+                        const a = document.createElement('a');
+                        a.href = url; a.target = '_blank'; a.rel = 'noopener';
+                        document.body.appendChild(a); a.click(); a.remove();
+                    } catch (_) { try { window.open(url, '_blank'); } catch (_) {} }
+                    _wfStartDriveBridgeWatch();
+                });
+        }
+
+        // While the user signs in via the browser, poll for the adopted token (the
+        // Firestore bridge listener sets gapiToken). Times out after 3 min gently.
+        function _wfStartDriveBridgeWatch() {
+            _wfStopDriveBridgeWatch();
+            const started = Date.now();
+            notify('Waiting for Google Drive sign-in in your browser…', 'info');
+            _wfDriveBridgeIv = setInterval(function () {
+                if (gapiToken) {
+                    _wfStopDriveBridgeWatch();
+                    notify('Google Drive connected.', 'success');
+                    try { triggerHaptic('success'); } catch (_) {}
+                    const act = window.pendingDriveAction;
+                    if (act === 'backup' || act === 'restore') { try { requestDrivePermission(act); } catch (_) {} }
+                    return;
+                }
+                if (Date.now() - started > 180000) {
+                    _wfStopDriveBridgeWatch();
+                    notify('Still not connected. Make sure you signed in with the same Google account in your browser, then try again.', 'warn');
+                }
+            }, 1500);
+        }
+        function _wfStopDriveBridgeWatch() { if (_wfDriveBridgeIv) { clearInterval(_wfDriveBridgeIv); _wfDriveBridgeIv = null; } }
+
+        // App side: adopt a Drive token the browser relayed through Firestore.
+        function _wfAdoptDriveBridge(bridge) {
+            try {
+                let myDev = ''; try { myDev = _getDeviceId(); } catch (_) {}
+                if (!_wfShouldAdoptBridge(bridge, Date.now(), myDev, !!gapiToken)) return false;
+                gapiToken = bridge.token;
+                try { localStorage.setItem('wf_drive_token', JSON.stringify({ token: bridge.token, expiry: bridge.expiry })); } catch (_) {}
+                try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
+                // consume the one-time bridge so it can never be replayed
+                try { if (userDocRef) userDocRef.update({ driveBridge: firebase.firestore.FieldValue.delete() }); } catch (_) {}
+                return true;
+            } catch (_) { return false; }
+        }
+
+        // Browser side: if opened as .../?drivelink=1, complete Drive sign-in here
+        // (cookies available) and relay the token to Firestore for the installed app.
+        function _wfMaybeRunDriveLink() {
+            try {
+                if (!/[?&]drivelink=1(?:&|$)/.test(location.search || '')) return;
+                window._wfIsDriveLinkInstance = true;   // never open another browser tab from here
+                let tries = 0;
+                const iv = setInterval(function () {
+                    tries++;
+                    // Wait for BOTH the signed-in user AND the Firestore relay channel
+                    // (userDocRef) to be ready — otherwise we would mint a token here
+                    // that could never reach the app. tokenClient must also be up.
+                    if (window.currentUser && (typeof userDocRef !== 'undefined' && userDocRef) && typeof tokenClient !== 'undefined' && tokenClient) {
+                        clearInterval(iv);
+                        window.pendingDriveAction = null;
+                        window._wfDriveLinkMode = true;   // the token callback will relay, not backup
+                        try { notify('Approve Google Drive to link it to your app…', 'info'); } catch (_) {}
+                        _wfDriveRequestToken(true);        // consent popup — top-level, cookies OK here
+                    } else if (tries > 120) {              // ~60s: give time to sign in first
+                        clearInterval(iv);
+                        try { notify('Please sign in to WealthFlow with the same account, then tap Connect via browser again.', 'warn'); } catch (_) {}
+                    }
+                }, 500);
+            } catch (_) {}
+        }
+
         function initDriveAuth() {
             if (typeof google === 'undefined') return;
 
@@ -10647,10 +10794,29 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         const expiry = Date.now() + ((tokenResponse.expires_in - 10) * 1000);
                         localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
                         try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
+                        _wfDriveAuthPhase = 'idle';
+                        // v7.50.0 — browser-bridge context: relay the freshly-minted token to
+                        // the installed app via the user's Firestore doc, then invite them back.
+                        if (window._wfDriveLinkMode) {
+                            window._wfDriveLinkMode = false;
+                            try {
+                                let dev = ''; try { dev = _getDeviceId(); } catch (_) {}
+                                const payload = { token: gapiToken, expiry: expiry, ts: Date.now(), deviceId: dev };
+                                if (userDocRef) {
+                                    userDocRef.update({ driveBridge: payload })
+                                        .then(() => { try { notify('Google Drive connected. You can return to the WealthFlow app now.', 'success'); } catch (_) {} })
+                                        .catch(() => { try { userDocRef.set({ driveBridge: payload }, { merge: true }); notify('Google Drive connected. You can return to the WealthFlow app now.', 'success'); } catch (_) {} });
+                                }
+                                // Tidy the address bar so a refresh does not needlessly re-run the link.
+                                try { history.replaceState(null, '', location.origin + location.pathname); } catch (_) {}
+                            } catch (_) {}
+                            return;
+                        }
                         if (window.pendingDriveAction === 'backup') executeDriveBackup();
                         if (window.pendingDriveAction === 'restore') fetchDriveBackups();
                     }
-                }
+                },
+                error_callback: (err) => { try { _wfOnDriveAuthError(err); } catch (_) {} }
             });
 
             const cached = localStorage.getItem('wf_drive_token');
@@ -10672,6 +10838,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         window.addEventListener('load', () => {
             setTimeout(initDriveAuth, 2000);
+            // v7.50.0 — if this instance was opened as .../?drivelink=1 (the browser
+            // sign-in bridge), complete Drive auth here and relay the token to the app.
+            setTimeout(_wfMaybeRunDriveLink, 3000);
         });
 
         async function requestDrivePermission(action) {
@@ -10736,24 +10905,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     }
                 }
             } catch (_) {}
-            // 3. Need a token. Refresh the hint to the signed-in account and
-            //    request SILENTLY (prompt:'') so no account chooser pops up —
-            //    the user already authorised Google at app sign-in.
-            if (tokenClient) {
-                try {
-                    if (window.currentUser && window.currentUser.email) {
-                        tokenClient.requestAccessToken({ prompt: '', login_hint: window.currentUser.email });
-                    } else {
-                        tokenClient.requestAccessToken({ prompt: '' });
-                    }
-                } catch (e) {
-                    // Fallback: a one-time consent (only if silent failed)
-                    try { tokenClient.requestAccessToken({ prompt: 'consent' }); }
-                    catch (_) { notify('Google Drive authorization failed. Please try again.', 'error'); }
-                }
-            } else {
-                notify('Google Services failing to load. Check connection.', 'error');
-            }
+            // 3. Need a token. v7.50.0 — request through the escalation state
+            //    machine: silent (no chooser) first; on the async failure that
+            //    installed apps hit when Google blocks third-party cookies, it
+            //    escalates to an interactive consent popup, then to the browser
+            //    bridge. This replaces the old silent-only call that failed
+            //    asynchronously with no fallback and no message.
+            _wfDriveRequestToken(false);
         }
 
         // Total record count across EVERY data-bearing collection in
@@ -10860,7 +11018,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                 if (typeof _origCb === 'function') { try { _origCb(tr); } catch (_) {} }
                                 if (!done) { done = true; resolve(); }
                             };
-                            try { tokenClient.requestAccessToken({ prompt: '', login_hint: window.currentUser.email }); }
+                            try { _wfDriveAuthPhase = 'background'; tokenClient.requestAccessToken({ prompt: '', login_hint: window.currentUser.email }); }
                             catch (_) { resolve(); }
                             setTimeout(() => { if (!done) { done = true; resolve(); } }, 6000);
                         });
@@ -11214,6 +11372,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 _wfDriveRefreshTs = Date.now();
                 try {
                     const hint = (window.currentUser && window.currentUser.email) || undefined;
+                    _wfDriveAuthPhase = 'background';
                     tokenClient.requestAccessToken({ prompt: '', login_hint: hint });
                 } catch (_) { return resolve(false); }
                 let tries = 0;
@@ -12941,6 +13100,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                                 // We suppress for 3 seconds after any local write.
                                                 if (!hasPending && source === 'server') {
                                                     const cloudData = snap.data();
+                                                    // v7.50.0 — adopt a Drive token the browser relayed via this doc
+                                                    // (installed-app bridge). Done BEFORE echo-suppression so the token
+                                                    // is picked up regardless of the appData merge decision below; the
+                                                    // helper self-guards on device id, expiry and existing token, and
+                                                    // consumes (deletes) the one-time bridge field after adopting.
+                                                    try { if (cloudData && cloudData.driveBridge) _wfAdoptDriveBridge(cloudData.driveBridge); } catch (_) {}
                                                     const msSinceLastWrite = Date.now() - _lastLocalWriteTs;
                                                     const _isOwnDevice = cloudData._writeDeviceId === _getDeviceId();
                                                     const isOwnEcho = _isOwnDevice && msSinceLastWrite < 3000;
@@ -19932,6 +20097,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="setting-info"><div class="setting-label">Restore Data Protocol</div><div class="setting-desc">Recover your portfolio from Google Drive or a local file.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="requestDrivePermission('restore'); openModal('mdRestoreCloud');">Restore Vault</button>
             </div>
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Drive won't connect in the installed app?</div><div class="setting-desc">Google blocks its sign-in cookies inside installed apps. Finish sign-in once in your browser with the same Google account and your app connects automatically — no cookies needed.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="_wfShowDriveBrowserBridge()">Connect via browser</button>
+            </div>
 
             <div style="font-size:12px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 8px;">Danger Zone</div>
             <div class="setting-row">
@@ -20225,8 +20394,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.49.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.49.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.50.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.50.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
