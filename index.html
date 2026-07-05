@@ -7121,7 +7121,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.50.0';
+        var WF_APP_VERSION = '7.51.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -10650,10 +10650,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         let _wfDriveBridgeIv = null;       // UI watch while waiting on the browser bridge
 
         // Pure (unit-tested): given the auth phase + GIS error type, decide next.
-        // → 'interactive' | 'bridge' | 'cancel' | 'quiet'
+        // → 'prompt' (show a button that starts consent) | 'bridge' | 'cancel' | 'quiet'
+        // A consent popup MUST be started from a real user gesture (a tap); browsers
+        // block popups opened from timers or async error callbacks. So a failed SILENT
+        // attempt never auto-opens a popup — it asks the user to tap a button.
         function _wfDriveEscalation(phase, errorType) {
             const t = String(errorType || '');
-            if (phase === 'silent') return (t === 'popup_failed_to_open') ? 'bridge' : 'interactive';
+            if (phase === 'silent') return 'prompt';                                   // need a gesture-started consent
             if (phase === 'interactive') return (t === 'popup_closed') ? 'cancel' : 'bridge';
             return 'quiet';   // background / standby failures stay silent
         }
@@ -10675,7 +10678,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const opts = interactive ? { prompt: 'consent' } : { prompt: '' };
             if (window.currentUser && window.currentUser.email) opts.login_hint = window.currentUser.email;
             try { tokenClient.requestAccessToken(opts); }
-            catch (e) { _wfDriveAuthPhase = 'idle'; if (interactive) _wfShowDriveBrowserBridge(); else _wfDriveRequestToken(true); }
+            catch (e) {
+                _wfDriveAuthPhase = 'idle';
+                // Never recurse into another popup here (no gesture) — surface a button.
+                if (window._wfIsDriveLinkInstance) _wfShowDriveLinkConsent();
+                else if (interactive) _wfShowDriveBrowserBridge();
+                else _wfShowDriveConsentPrompt();
+            }
         }
 
         // GIS error_callback — the missing piece. Fires when a token request fails
@@ -10683,28 +10692,61 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function _wfOnDriveAuthError(err) {
             const phase = _wfDriveAuthPhase; _wfDriveAuthPhase = 'idle';
             const next = _wfDriveEscalation(phase, err && err.type);
-            if (next === 'interactive') { _wfDriveRequestToken(true); return; }
-            if (next === 'bridge') { _wfShowDriveBrowserBridge(); return; }
-            if (next === 'cancel') { notify('Google Drive sign-in was cancelled.', 'warn'); return; }
+            if (next === 'prompt') {
+                // Silent failed → interactive consent is needed, but it MUST start from a
+                // fresh user tap. Show a button (context-aware: browser tab vs installed app).
+                if (window._wfIsDriveLinkInstance) _wfShowDriveLinkConsent(); else _wfShowDriveConsentPrompt();
+                return;
+            }
+            if (next === 'bridge') {
+                // The interactive popup failed. Installed app → offer the browser bridge.
+                // Browser tab → re-offer the consent button (never a new tab, never a timer).
+                if (window._wfIsDriveLinkInstance) _wfShowDriveLinkConsent(); else _wfShowDriveBrowserBridge();
+                return;
+            }
+            if (next === 'cancel') {
+                // Browser tab: re-offer the button so the user can try again (tap-driven,
+                // so there is no loop). Installed app: a toast is enough.
+                if (window._wfIsDriveLinkInstance) _wfShowDriveLinkConsent();
+                else notify('Google Drive sign-in was cancelled. Tap Sign in with Google to try again.', 'warn');
+                return;
+            }
             // 'quiet' → a background/standby refresh failed; stay silent, retry later.
+        }
+
+        // App-side consent prompt — its button starts the Google popup from a REAL
+        // user gesture (the fix for the popup-blocked / notification-flood bug).
+        function _wfShowDriveConsentPrompt() {
+            showConfirm('cloud', 'Connect Google Drive',
+                'Sign in with Google to authorize secure backup to your Drive.',
+                'btn-primary', 'Sign in with Google', function () {
+                    _wfDriveRequestToken(true);   // runs inside the click → gesture → popup allowed
+                });
+        }
+
+        // Browser-tab consent prompt — same gesture rule; on approval the token relays
+        // back to the installed app through Firestore.
+        function _wfShowDriveLinkConsent() {
+            showConfirm('cloud', 'Link Google Drive to your app',
+                'You are signed in to WealthFlow here in your browser. Tap below and approve Google Drive — your installed app will connect automatically. You can close this tab afterwards.',
+                'btn-primary', 'Approve Google Drive', function () {
+                    window._wfDriveLinkMode = true;
+                    _wfDriveRequestToken(true);   // click → gesture → popup consent (cookies work here)
+                });
         }
 
         // The browser bridge modal: finish Drive sign-in once in the system browser
         // (cookies work there) and the token relays back via Firestore.
         function _wfShowDriveBrowserBridge() {
-            // If THIS instance IS the browser sign-in tab, never open another tab (that
-            // would loop) — we already have cookies here, so just re-offer consent.
-            if (window._wfIsDriveLinkInstance) {
-                try { notify('Google Drive sign-in did not finish. Please try approving again.', 'warn'); } catch (_) {}
-                try { setTimeout(function () { window._wfDriveLinkMode = true; _wfDriveRequestToken(true); }, 1500); } catch (_) {}
-                return;
-            }
+            // If THIS instance IS the browser sign-in tab, never open another tab and
+            // never retry on a timer (that caused the notification flood). Just re-offer
+            // the consent button — the user taps it to try again (a real gesture).
+            if (window._wfIsDriveLinkInstance) { _wfShowDriveLinkConsent(); return; }
             // Flush any pending local changes FIRST so the browser instance loads the
             // very latest data before it writes the bridge back — no round-trip clobber.
             try { if (typeof syncToCloud === 'function') syncToCloud(); } catch (_) {}
-            const cloud = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>';
             const url = location.origin + '/?drivelink=1';
-            showConfirm(cloud, 'Finish Google Drive sign-in in your browser',
+            showConfirm('cloud', 'Finish Google Drive sign-in in your browser',
                 'Your installed app cannot complete Google sign-in because Google blocks the sign-in cookies inside installed apps. Tap below to finish it once in your browser — sign in with the SAME Google account and approve Drive access. Your app will then connect automatically within a few seconds and stay connected.',
                 'btn-primary', 'Open sign-in in browser', function () {
                     try {
@@ -10768,9 +10810,10 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     if (window.currentUser && (typeof userDocRef !== 'undefined' && userDocRef) && typeof tokenClient !== 'undefined' && tokenClient) {
                         clearInterval(iv);
                         window.pendingDriveAction = null;
-                        window._wfDriveLinkMode = true;   // the token callback will relay, not backup
-                        try { notify('Approve Google Drive to link it to your app…', 'info'); } catch (_) {}
-                        _wfDriveRequestToken(true);        // consent popup — top-level, cookies OK here
+                        // Show a button — the Google consent popup is started by the tap
+                        // (a real user gesture). Auto-firing it from this timer is exactly
+                        // what the browser blocks and what caused the sign-in-failed flood.
+                        _wfShowDriveLinkConsent();
                     } else if (tries > 120) {              // ~60s: give time to sign in first
                         clearInterval(iv);
                         try { notify('Please sign in to WealthFlow with the same account, then tap Connect via browser again.', 'warn'); } catch (_) {}
@@ -14012,7 +14055,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             _visualHaptic(type);
         }
 
+        let _wfLastNotifMsg = '', _wfLastNotifTs = 0;
         function notify(msg, type = 'success') {
+            // Defensive de-dupe — never stack the identical toast in a tight window.
+            // A single misbehaving loop must never flood the screen (belt-and-braces).
+            try { const _n = Date.now(); if (msg === _wfLastNotifMsg && (_n - _wfLastNotifTs) < 2500) return; _wfLastNotifMsg = msg; _wfLastNotifTs = _n; } catch (_) {}
             triggerHaptic(type === 'error' ? 'error' : (type === 'success' ? 'success' : 'light'));
             const el = document.createElement('div');
             el.className = `notif ${type}`;
@@ -20394,8 +20441,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.50.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.50.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.51.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.51.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
