@@ -3586,6 +3586,9 @@
             margin-top: 4px;
         }
 
+        .wf-db-row { transition: background .12s; }
+        .wf-db-row:hover { background: var(--bg2, #f5f5f7); }
+        .wf-db-row:active { background: var(--border, #ececec); }
         .toggle {
             width: 44px;
             height: 24px;
@@ -6731,6 +6734,11 @@
                 <div class="toggle" id="scanAutoCatToggle" onclick="setScanSetting('scanAutoCategory', !_scanSetting('scanAutoCategory', true))"></div>
             </div>
 
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Clean Drive file browser</div><div class="setting-desc">A thumbnail-free list sorted by most-recently-modified, with folder navigation, instead of Google's picker. Turning this on asks for a one-time Google Drive read permission.</div></div>
+                <div class="toggle" id="driveBrowserToggle" onclick="_wfToggleDriveBrowser()"></div>
+            </div>
+
             <div class="fg" style="margin-top:14px;">
                 <label class="fl">Default Receipt Currency</label>
                 <select class="fi" id="scanCurrencySel" onchange="setScanSetting('scanCurrency', this.value)">
@@ -7304,7 +7312,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.53.0';
+        var WF_APP_VERSION = '7.54.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -11850,6 +11858,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 if (typeof google === 'undefined' || !tokenClient) {
                     notify('Google Drive isn\'t ready yet — please try again in a moment.', 'warning'); return;
                 }
+                // v7.54.0 — when the user has enabled the clean, thumbnail-free browser,
+                // use it (drive.readonly). It requests its token from THIS tap (so the
+                // consent popup is allowed) and falls back to the Google Picker on its own
+                // if readonly is unavailable — the drive.file backup flow is never touched.
+                if (_scanSetting('driveCleanBrowser', false)) { _wfOpenDriveBrowser(inputId, type); return; }
                 notify('Connecting to Google Drive…', 'info');
                 const token = await _wfDriveToken(true);
                 if (!token) { notify('Couldn\'t connect to Google Drive. Please try again.', 'error'); return; }
@@ -11859,6 +11872,251 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 console.error('[Drive import]', e);
                 notify('Google Drive import is unavailable right now — please use Upload File instead.', 'error');
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        //  v7.54.0 — CUSTOM DRIVE BROWSER (opt-in): a thumbnail-free list, sorted
+        //  newest-modified first, with folder navigation. Uses an ISOLATED
+        //  drive.readonly token client so the drive.file backup/restore flow is
+        //  untouched, and falls back to the Google Picker automatically whenever
+        //  readonly is unavailable (scope not configured / consent declined /
+        //  session lost). Google renders the Picker's thumbnails inside a
+        //  cross-origin iframe and cannot suppress them, and a files.list under
+        //  drive.file only ever returns app-created files — so a real, clean,
+        //  full-Drive browser genuinely needs the readonly scope. Every piece is
+        //  guarded and degrades to the Picker, so Drive can never end up broken.
+        // ═══════════════════════════════════════════════════════════════════════
+        const _WF_DRIVE_RO_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+        let _wfRoTokenClient = null, _wfRoToken = null, _wfRoTokenExp = 0, _wfRoResolvers = [];
+        function _wfDriveReadonlyToken(interactive) {
+            return new Promise((resolve) => {
+                try {
+                    if (_wfRoToken && Date.now() < _wfRoTokenExp) return resolve(_wfRoToken);
+                    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return resolve(null);
+                    if (!_wfRoTokenClient) {
+                        _wfRoTokenClient = google.accounts.oauth2.initTokenClient({
+                            client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+                            scope: _WF_DRIVE_RO_SCOPE,
+                            login_hint: (window.currentUser && window.currentUser.email) ? window.currentUser.email : undefined,
+                            callback: (resp) => {
+                                if (resp && resp.access_token) {
+                                    _wfRoToken = resp.access_token;
+                                    _wfRoTokenExp = Date.now() + (((resp.expires_in || 3000) - 30) * 1000);
+                                    try { localStorage.setItem('wf_drive_ro_granted', '1'); } catch (_) {}
+                                }
+                                const rs = _wfRoResolvers.slice(); _wfRoResolvers = [];
+                                rs.forEach(fn => { try { fn(_wfRoToken || null); } catch (_) {} });
+                            },
+                            error_callback: () => {
+                                const rs = _wfRoResolvers.slice(); _wfRoResolvers = [];
+                                rs.forEach(fn => { try { fn(null); } catch (_) {} });
+                            }
+                        });
+                    }
+                    if (!interactive) return resolve(_wfRoToken || null);
+                    const wasPending = _wfRoResolvers.length > 0;
+                    _wfRoResolvers.push(resolve);
+                    if (!wasPending) {
+                        try { _wfRoTokenClient.requestAccessToken({ prompt: '' }); }
+                        catch (_) { const rs = _wfRoResolvers.slice(); _wfRoResolvers = []; rs.forEach(fn => fn(null)); return; }
+                    }
+                    setTimeout(() => { if (_wfRoResolvers.indexOf(resolve) >= 0) { _wfRoResolvers = _wfRoResolvers.filter(f => f !== resolve); resolve(_wfRoToken || null); } }, 60000);
+                } catch (_) { resolve(null); }
+            });
+        }
+
+        // Settings toggle handler — turning it ON requests the readonly grant from
+        // this very tap; if that fails the toggle stays OFF and the Picker remains.
+        function _wfToggleDriveBrowser() {
+            const on = _scanSetting('driveCleanBrowser', false);
+            if (on) {
+                const s = DB.getObj('settings', {}); s.driveCleanBrowser = false; DB.set('settings', s);
+                try { _refreshScannerSettingsUI(); } catch (_) {}
+                try { triggerHaptic('toggle'); } catch (_) {}
+                notify('Clean Drive browser turned off — Google\'s picker will be used.', 'info');
+                return;
+            }
+            if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+                notify('Google Drive isn\'t ready yet — please try again in a moment.', 'warning'); return;
+            }
+            notify('Requesting Google Drive read access…', 'info');
+            _wfDriveReadonlyToken(true).then(tok => {
+                if (tok) {
+                    const s = DB.getObj('settings', {}); s.driveCleanBrowser = true; DB.set('settings', s);
+                    try { _refreshScannerSettingsUI(); } catch (_) {}
+                    try { triggerHaptic('success'); } catch (_) {}
+                    notify('Clean Drive browser enabled — folders and files, newest first, no thumbnails.', 'success');
+                } else {
+                    notify('Couldn\'t enable it. Add the "drive.readonly" scope to this app\'s Google Cloud consent screen, then try again. The Google picker still works meanwhile.', 'error');
+                }
+            });
+        }
+        window._wfToggleDriveBrowser = _wfToggleDriveBrowser;
+
+        let _wfBrowse = null;   // { inputId, type, token, stack:[{id,name}], items, nextToken, loading }
+        function _wfDbEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+        function _wfRelDate(iso) {
+            try {
+                const d = new Date(iso); if (isNaN(d.getTime())) return '';
+                const s = Math.floor((Date.now() - d.getTime()) / 1000);
+                if (s < 0) return 'just now';
+                if (s < 60) return 'just now';
+                if (s < 3600) return Math.floor(s / 60) + ' min ago';
+                if (s < 86400) return Math.floor(s / 3600) + ' hr ago';
+                if (s < 2592000) return Math.floor(s / 86400) + ' d ago';
+                return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            } catch (_) { return ''; }
+        }
+        function _wfKb(sz) { const n = Number(sz) || 0; if (!n) return ''; if (n < 1024) return n + ' B'; if (n < 1048576) return Math.round(n / 1024) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; }
+        function _wfIsDriveFolder(m) { return m === 'application/vnd.google-apps.folder'; }
+        function _wfDriveMimeIcon(mime) {
+            const s = '<svg viewBox="0 0 24 24" fill="currentColor" width="22" height="22" aria-hidden="true">';
+            if (_wfIsDriveFolder(mime)) return s + '<path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>';
+            if (/pdf/i.test(mime)) return s + '<path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6zm7 1.5L18.5 9H13V3.5z"/></svg>';
+            if (/image\//i.test(mime)) return s + '<path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg>';
+            return s + '<path d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6z"/></svg>';
+        }
+        // Belt-and-suspenders ordering: folders first, then newest-modified first —
+        // guaranteed on the client regardless of any Drive orderBy quirk.
+        function _wfSortDriveItems(arr) {
+            return (arr || []).slice().sort((a, b) => {
+                const af = _wfIsDriveFolder(a.mimeType), bf = _wfIsDriveFolder(b.mimeType);
+                if (af !== bf) return af ? -1 : 1;
+                return String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || ''));
+            });
+        }
+        function _wfDriveList(token, folderId, pageToken) {
+            const q = "('" + folderId + "' in parents) and trashed=false and " +
+                "(mimeType='application/vnd.google-apps.folder' or mimeType contains 'image/' or " +
+                "mimeType='application/pdf' or mimeType='text/html' or mimeType='application/xhtml+xml')";
+            const p = new URLSearchParams({
+                q: q, orderBy: 'folder,modifiedTime desc', pageSize: '200',
+                fields: 'nextPageToken,files(id,name,mimeType,modifiedTime,size)',
+                spaces: 'drive', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true'
+            });
+            if (pageToken) p.set('pageToken', pageToken);
+            return fetch('https://www.googleapis.com/drive/v3/files?' + p.toString(), { headers: { Authorization: 'Bearer ' + token } })
+                .then(r => { if (!r.ok) throw new Error('list HTTP ' + r.status); return r.json(); });
+        }
+        function _wfEnsureBrowserDom() {
+            if (document.getElementById('wfDriveBrowser')) return;
+            const ov = document.createElement('div');
+            ov.id = 'wfDriveBrowser';
+            ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.55);display:none;align-items:flex-end;justify-content:center;';
+            ov.innerHTML =
+                '<div style="background:var(--card,#fff);width:100%;max-width:560px;height:82vh;border-radius:18px 18px 0 0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -8px 40px rgba(0,0,0,.35);">' +
+                '<div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border,#eee);">' +
+                '<div style="width:22px;height:22px;color:#1a73e8;">' + _wfDriveMimeIcon('image/') + '</div>' +
+                '<div style="font-weight:800;font-size:15px;flex:1;">Google Drive</div>' +
+                '<button id="wfDbClose" type="button" style="border:none;background:var(--bg2,#f2f2f2);color:var(--text,#111);border-radius:8px;padding:7px 14px;font-weight:700;cursor:pointer;">Close</button>' +
+                '</div>' +
+                '<div id="wfDbCrumb" style="padding:9px 16px;font-size:12px;overflow-x:auto;white-space:nowrap;border-bottom:1px solid var(--border,#f1f1f1);"></div>' +
+                '<div id="wfDbList" style="flex:1;overflow-y:auto;padding:6px 8px 20px;"></div>' +
+                '</div>';
+            document.body.appendChild(ov);
+            document.getElementById('wfDbClose').onclick = _wfCloseDriveBrowser;
+            ov.addEventListener('click', (e) => { if (e.target === ov) _wfCloseDriveBrowser(); });
+        }
+        function _wfCloseDriveBrowser() { const el = document.getElementById('wfDriveBrowser'); if (el) el.style.display = 'none'; _wfBrowse = null; }
+        function _wfRenderBrowser() {
+            _wfEnsureBrowserDom();
+            if (!_wfBrowse) return;
+            const crumb = document.getElementById('wfDbCrumb'), list = document.getElementById('wfDbList');
+            crumb.innerHTML = _wfBrowse.stack.map((n, i) => {
+                const last = i === _wfBrowse.stack.length - 1;
+                return '<span data-crumb="' + i + '" style="cursor:pointer;color:' + (last ? 'var(--text,#111)' : 'var(--primary,#6c5ce7)') + ';font-weight:' + (last ? '700' : '600') + ';">' + _wfDbEsc(n.name) + '</span>';
+            }).join('<span style="color:var(--text3,#bbb);"> &rsaquo; </span>');
+            [...crumb.querySelectorAll('[data-crumb]')].forEach(el => el.onclick = () => {
+                const idx = +el.getAttribute('data-crumb');
+                if (idx < _wfBrowse.stack.length - 1) { _wfBrowse.stack = _wfBrowse.stack.slice(0, idx + 1); _wfBrowseLoad(); }
+            });
+            if (_wfBrowse.loading) { list.innerHTML = '<div style="padding:44px;text-align:center;color:var(--text3,#999);">Loading…</div>'; return; }
+            const items = _wfBrowse.items || [];
+            if (!items.length) { list.innerHTML = '<div style="padding:44px;text-align:center;color:var(--text3,#999);">This folder is empty.</div>'; return; }
+            list.innerHTML = items.map((f, i) => {
+                const folder = _wfIsDriveFolder(f.mimeType);
+                return '<div data-row="' + i + '" class="wf-db-row" style="display:flex;align-items:center;gap:12px;padding:12px 10px;border-radius:10px;cursor:pointer;">' +
+                    '<div style="width:24px;height:24px;flex:none;display:flex;align-items:center;color:' + (folder ? '#f4b400' : 'var(--text3,#8a8a8a)') + ';">' + _wfDriveMimeIcon(f.mimeType) + '</div>' +
+                    '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _wfDbEsc(f.name) + '</div>' +
+                    '<div style="font-size:11px;color:var(--text3,#999);">' + _wfDbEsc(_wfRelDate(f.modifiedTime)) + (f.size ? (' &middot; ' + _wfDbEsc(_wfKb(f.size))) : '') + '</div>' +
+                    '</div>' + (folder ? '<div style="color:var(--text3,#ccc);font-size:20px;line-height:1;">&rsaquo;</div>' : '') +
+                    '</div>';
+            }).join('') + (_wfBrowse.nextToken ? '<div id="wfDbMore" style="padding:14px;text-align:center;color:var(--primary,#6c5ce7);font-weight:700;cursor:pointer;">Load more</div>' : '');
+            [...list.querySelectorAll('[data-row]')].forEach(el => el.onclick = () => {
+                const f = items[+el.getAttribute('data-row')];
+                if (_wfIsDriveFolder(f.mimeType)) { _wfBrowse.stack.push({ id: f.id, name: f.name }); _wfBrowseLoad(); }
+                else _wfBrowsePick(f);
+            });
+            const more = document.getElementById('wfDbMore'); if (more) more.onclick = () => _wfBrowseLoad(true);
+        }
+        function _wfBrowseLoad(append) {
+            if (!_wfBrowse) return;
+            if (!append) { _wfBrowse.items = []; _wfBrowse.nextToken = null; _wfBrowse.loading = true; }
+            _wfRenderBrowser();
+            const folder = _wfBrowse.stack[_wfBrowse.stack.length - 1];
+            _wfDriveList(_wfBrowse.token, folder.id, append ? _wfBrowse.nextToken : null)
+                .then(data => {
+                    if (!_wfBrowse) return;
+                    _wfBrowse.loading = false;
+                    _wfBrowse.items = _wfSortDriveItems((_wfBrowse.items || []).concat(data.files || []));
+                    _wfBrowse.nextToken = data.nextPageToken || null;
+                    _wfRenderBrowser();
+                })
+                .catch(err => {
+                    if (!_wfBrowse) return;
+                    _wfBrowse.loading = false;
+                    console.error('[Drive browser list]', err);
+                    if (/HTTP 40[13]/.test(String(err && err.message))) {
+                        _wfRoToken = null; _wfRoTokenExp = 0;
+                        const inp = _wfBrowse.inputId, ty = _wfBrowse.type;
+                        notify('Drive session expired — reconnecting…', 'info');
+                        _wfDriveReadonlyToken(true).then(tok => {
+                            if (tok && _wfBrowse) { _wfBrowse.token = tok; _wfBrowseLoad(append); }
+                            else { _wfCloseDriveBrowser(); notify('Couldn\'t reconnect — opening Google\'s picker instead.', 'warning'); _wfPickerFallback(inp, ty); }
+                        });
+                    } else {
+                        notify('Couldn\'t open that folder. Please try again.', 'error');
+                        _wfRenderBrowser();
+                    }
+                });
+        }
+        function _wfBrowsePick(f) {
+            if (!_wfBrowse) return;
+            const token = _wfBrowse.token, inputId = _wfBrowse.inputId, type = _wfBrowse.type;
+            _wfCloseDriveBrowser();
+            notify('Downloading “' + (f.name || 'file') + '” from Drive…', 'info');
+            fetch('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id) + '?alt=media&supportsAllDrives=true', { headers: { Authorization: 'Bearer ' + token } })
+                .then(r => { if (!r.ok) throw new Error('download HTTP ' + r.status); return r.blob(); })
+                .then(blob => {
+                    let name = f.name || 'drive-file'; let mime = f.mimeType || blob.type || 'application/octet-stream';
+                    if (!/\.[a-z0-9]{2,6}$/i.test(name)) {
+                        const ext = /pdf/i.test(mime) ? '.pdf' : /x?html/i.test(mime) ? '.html' : /png/i.test(mime) ? '.png' : /webp/i.test(mime) ? '.webp' : /hei[cf]/i.test(mime) ? '.heic' : /gif/i.test(mime) ? '.gif' : /bmp/i.test(mime) ? '.bmp' : /(jpe?g)/i.test(mime) ? '.jpg' : '';
+                        name += ext;
+                    }
+                    const file = new File([blob], name, { type: mime });
+                    _wfRouteFileToInput(file, inputId, type);
+                })
+                .catch(err => { console.error('[Drive browser download]', err); notify('Couldn\'t download that file from Drive. Please try again.', 'error'); });
+        }
+        function _wfPickerFallback(inputId, type) {
+            _wfDriveToken(true).then(token => {
+                if (!token) { notify('Couldn\'t connect to Google Drive. Please use Upload File instead.', 'error'); return; }
+                Promise.all([_wfEnsurePicker(), _wfLoadDriveConfig()]).then(() => _wfShowDrivePicker(token, inputId, type))
+                    .catch(() => notify('Google Drive is unavailable right now — please use Upload File.', 'error'));
+            });
+        }
+        function _wfOpenDriveBrowser(inputId, type) {
+            // Runs from the "From Drive" tap, so the readonly consent popup (first time)
+            // is permitted; a returning user's token refreshes silently.
+            notify('Opening Google Drive…', 'info');
+            _wfDriveReadonlyToken(true).then(tok => {
+                if (!tok) { _wfPickerFallback(inputId, type); return; }   // seamless fallback
+                _wfBrowse = { inputId: inputId, type: type, token: tok, stack: [{ id: 'root', name: 'My Drive' }], items: [], nextToken: null, loading: true };
+                _wfEnsureBrowserDom();
+                const ov = document.getElementById('wfDriveBrowser'); if (ov) ov.style.display = 'flex';
+                _wfBrowseLoad();
+            });
         }
 
         function _wfShowDrivePicker(token, inputId, type) {
@@ -20681,8 +20939,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.53.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.53.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.54.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.54.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -24596,6 +24854,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const tf = $('scanTfToggle'); if (tf) tf.classList.toggle('on', _scanSetting('scanTfEnhance', true));
             const ae = $('scanAutoEscToggle'); if (ae) ae.classList.toggle('on', _scanSetting('scanAutoEscalate', true));
             const ac = $('scanAutoCatToggle'); if (ac) ac.classList.toggle('on', _scanSetting('scanAutoCategory', true));
+            const dbz = $('driveBrowserToggle'); if (dbz) dbz.classList.toggle('on', _scanSetting('driveCleanBrowser', false));
             const cur = $('scanCurrencySel'); if (cur) cur.value = _scanSetting('scanCurrency', 'LKR');
             // Update the Configure button label in Settings
             document.querySelectorAll('button[onclick*="openScannerSettings"]').forEach(b => {
