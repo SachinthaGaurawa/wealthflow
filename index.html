@@ -7304,7 +7304,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.52.0';
+        var WF_APP_VERSION = '7.53.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -7418,6 +7418,43 @@
             return H;
         }
         try { window._wfCollectHealth = _wfCollectHealth; } catch (_) {}
+        // v7.53.0 — turn the raw health snapshot into a ranked, human-readable list
+        // of ACTUAL problems, so an issue is obvious at a glance instead of having to
+        // read every number. Pure + guarded: it can never throw. Severity order:
+        // error > warn > info. Each item says what and why, plus a plain-language hint.
+        function _wfDetectIssues(h, errSummary) {
+            const out = [];
+            const add = (sev, area, message, hint) => out.push({ severity: sev, area: area, message: message, hint: hint || '' });
+            try {
+                const s = (h && h.sync) || {}, d = (h && h.data) || {}, st = (h && h.storage) || {}, ac = (h && h.account) || {};
+                // ── Sync ──
+                if (s.cloudConnected === false && ac.signedIn === true)
+                    add('warn', 'sync', 'Signed in but the cloud is not connected.', 'Sync is paused — check the connection; changes are held locally until it reconnects.');
+                if (s.dirty === true && s.status && s.status !== 'Online')
+                    add('info', 'sync', 'There are unsaved changes while offline.', 'They will upload automatically the next time this device is online.');
+                if (typeof s.lastSyncAgeSec === 'number' && s.lastSyncAgeSec > 3600 && s.cloudConnected)
+                    add('warn', 'sync', 'This device has not synced in over an hour (' + Math.round(s.lastSyncAgeSec / 60) + ' min).', 'Open the app while online, or use Sync Now, so it catches up with the newest data.');
+                if (typeof s.pendingRecordDeletes === 'number' && s.pendingRecordDeletes > 0)
+                    add('info', 'sync', s.pendingRecordDeletes + ' record deletion(s) waiting to reach the cloud.', 'They clear on the next successful sync.');
+                // ── Data integrity ──
+                if (typeof d.missingId === 'number' && d.missingId > 0)
+                    add('warn', 'data', d.missingId + ' record(s) have no id.', 'Records without an id cannot be merged cleanly across devices — re-saving them assigns an id.');
+                if (typeof d.tombstones === 'number' && d.tombstones > 300)
+                    add('info', 'data', 'High number of deletion markers (' + d.tombstones + ').', 'Harmless — they are pruned automatically after 100 days.');
+                // ── Storage ──
+                if (typeof st.approxKB === 'number' && st.approxKB > 4500)
+                    add('warn', 'storage', 'Local storage is large (~' + (st.approxKB / 1024).toFixed(1) + ' MB).', 'Browsers cap local storage near 5 MB; export/clear old data or rely on cloud sync to avoid write failures.');
+                else if (typeof st.approxKB === 'number' && st.approxKB > 3500)
+                    add('info', 'storage', 'Local storage is growing (~' + (st.approxKB / 1024).toFixed(1) + ' MB).', 'Still fine — worth watching over time.');
+                // ── Errors from THIS build ──
+                if (errSummary && typeof errSummary.fromThisBuild === 'number' && errSummary.fromThisBuild > 0)
+                    add('error', 'errors', errSummary.fromThisBuild + ' error(s) recorded on the current build.', 'See the "errors" list below for the exact messages and stack traces.');
+            } catch (_) { /* detection is best-effort */ }
+            const rank = { error: 0, warn: 1, info: 2 };
+            out.sort((a, b) => (rank[a.severity] - rank[b.severity]));
+            return out;
+        }
+        try { window._wfDetectIssues = _wfDetectIssues; } catch (_) {}
         window._wfCopyDiagnostics = async function (btn) {
             let payload;
             try {
@@ -7427,9 +7464,13 @@
                 // build, and the set of distinct messages.
                 const fromThis = log.filter(e => (e && e.ver) === _WF_BUILD).length;
                 const uniqueMsgs = [...new Set(log.map(e => (e && e.msg) || '').filter(Boolean))];
+                const _summary = { totalErrors: log.length, fromThisBuild: fromThis, staleFromOlderBuilds: log.length - fromThis, uniqueMessages: uniqueMsgs };
+                const _health = _wfCollectHealth();
+                const _issues = _wfDetectIssues(_health, _summary);
                 payload = JSON.stringify({
                     build: _WF_BUILD,
                     when: new Date().toISOString(),
+                    detectedIssues: _issues.length ? _issues : 'none — all checks passed',
                     ua: navigator.userAgent,
                     screen: (window.innerWidth + 'x' + window.innerHeight),
                     dpr: window.devicePixelRatio || 1,
@@ -7437,8 +7478,8 @@
                     standalone: (function () { try { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; } catch (_) { return false; } })(),
                     activePage: (function () { try { const a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; } catch (_) { return ''; } })(),
                     dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })(),
-                    summary: { totalErrors: log.length, fromThisBuild: fromThis, staleFromOlderBuilds: log.length - fromThis, uniqueMessages: uniqueMsgs },
-                    health: _wfCollectHealth(),
+                    summary: _summary,
+                    health: _health,
                     errors: log
                 }, null, 2);
             } catch (e) { payload = 'diagnostics unavailable: ' + (e && e.message); }
@@ -8787,6 +8828,52 @@ Keep total under 200 words. No markdown, no asterisks.`;
             return canvas;
         }
 
+        // v7.53.0 — memory-safe OCR enhancement usable on MOBILE (iOS/Android),
+        // where the TensorFlow path above is skipped for memory. It runs on the
+        // already-downscaled canvas in a SINGLE getImageData pass with NO second
+        // buffer and NO TensorFlow, so peak memory stays bounded even on iOS.
+        //
+        // Operation: percentile-clipped auto-levels (a true black point at the 1st
+        // luminance percentile and white point at the 99th, so a few stray very
+        // dark/bright pixels don't wreck the stretch) followed by a mild contrast
+        // boost around mid-grey. This lifts faint, low-contrast, zoomed-out
+        // statement photos — the ones that used to fail OCR — so Cloud Vision /
+        // Gemini / OCR.space read them far more reliably. It deliberately does NOT
+        // hard-binarise (which would destroy fine digit detail) and is naturally
+        // self-limiting: a clean, already-high-contrast scan has black≈0 / white≈255,
+        // so the stretch is nearly a no-op and the image is left essentially intact.
+        function _enhanceForOCRLight(canvas) {
+            try {
+                const w = canvas.width, h = canvas.height;
+                if (!w || !h) return canvas;
+                const ctx = canvas.getContext('2d');
+                const img = ctx.getImageData(0, 0, w, h);
+                const d = img.data;
+                const hist = new Uint32Array(256);
+                for (let i = 0; i < d.length; i += 4) {
+                    const lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
+                    hist[lum < 0 ? 0 : lum > 255 ? 255 : lum]++;
+                }
+                const total = (d.length >> 2) || 1;
+                const loCut = total * 0.01, hiCut = total * 0.01;
+                let acc = 0, black = 0, white = 255;
+                for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= loCut) { black = v; break; } }
+                acc = 0;
+                for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc >= hiCut) { white = v; break; } }
+                let range = white - black; if (range < 16) range = 16;   // guard flat/blank images
+                const lut = new Uint8Array(256);
+                for (let v = 0; v < 256; v++) {
+                    let n = (v - black) / range; if (n < 0) n = 0; else if (n > 1) n = 1;
+                    n = 0.5 + (n - 0.5) * 1.15;                            // gentle contrast boost
+                    if (n < 0) n = 0; else if (n > 1) n = 1;
+                    lut[v] = (n * 255) | 0;
+                }
+                for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i + 1] = lut[d[i + 1]]; d[i + 2] = lut[d[i + 2]]; }
+                ctx.putImageData(img, 0, 0);
+            } catch (_) { /* enhancement is best-effort; original canvas is fine */ }
+            return canvas;
+        }
+
         // --- Ultra-HD Compress + Enhance Pipeline (memory-safe for iOS) ---
         // Large phone photos (12MP HEIC) used to decode at full resolution AND run a
         // TensorFlow pass — the combined memory spike crashed the iOS web process
@@ -8819,7 +8906,9 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
                     ctx.drawImage(bmp, 0, 0, w, h);
                     bmp.close && bmp.close(); bmp = null;          // release decoded pixels immediately
-                    if (applyEnhancement && !mobile) { try { _enhanceForOCR(canvas); } catch (_) {} }
+                    // v7.53.0 — enhance on mobile too, via the memory-safe light path
+                    // (desktop keeps the richer TensorFlow-capable enhancement).
+                    if (applyEnhancement) { try { mobile ? _enhanceForOCRLight(canvas) : _enhanceForOCR(canvas); } catch (_) {} }
                     const dataUrl = canvas.toDataURL('image/jpeg', quality);
                     const base64 = dataUrl.split(',')[1];
                     canvas.width = canvas.height = 0; canvas = null; // free canvas memory
@@ -8846,7 +8935,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                             const ctx = c.getContext('2d');
                             ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
                             ctx.drawImage(img, 0, 0, w, h);
-                            if (applyEnhancement && !mobile) { try { _enhanceForOCR(c); } catch (_) {} }
+                            if (applyEnhancement) { try { mobile ? _enhanceForOCRLight(c) : _enhanceForOCR(c); } catch (_) {} }
                             const dataUrl = c.toDataURL('image/jpeg', quality);
                             const base64 = dataUrl.split(',')[1];
                             c.width = c.height = 0;                 // free
@@ -9250,8 +9339,10 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 const q = modeQuality[scanMode] || 0.88;
                 const dim = modeDim[scanMode] || 1600;
 
-                // Step 1 — Compress + Enhance
-                const { base64: base64Img, kb } = await _compressImageToBase64(file, dim, q);
+                // Step 1 — Compress + Enhance (v7.53.0 — honour the user's scanTfEnhance
+                // setting, which was previously read but never applied; enhancement now
+                // also runs on mobile via the memory-safe light path).
+                const { base64: base64Img, kb } = await _compressImageToBase64(file, dim, q, tfEnhance);
                 console.log(`[AI Scan v4] Mode=${scanMode} Compressed: ${sizeMB}MB → ${kb}KB @ ${dim}px`);
                 if (isExpense) _showScanOverlay('🧠 AI Vision Analyzing…', `${scanMode.toUpperCase()} scan in progress`, 35);
                 else notify(`🔍 ${scanMode.toUpperCase()} scan with AI Vision…`, 'info');
@@ -9341,7 +9432,7 @@ Be conversational and precise.`;
                     try {
                         if (isExpense) {
                             _showScanOverlay('☁️ Cloud OCR API…', 'Querying 3rd party OCR.space', 50);
-                            const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, false);
+                            const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, true);
                             const ocrText = await _tryOCRSpace(ocrImg);
                             if (ocrText) {
                                 _showScanOverlay('📊 Parsing Cloud OCR…', 'Extracting exact numbers', 75);
@@ -20590,8 +20681,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.52.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.52.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.53.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.53.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
