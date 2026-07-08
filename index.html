@@ -6985,6 +6985,7 @@
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             cribReports: [], cribAnalyses: {},
+            _tomb: {},   // v7.52.0 — per-key deletion tombstones {key:{id:deleteTs}} for convergent multi-device merge
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
         let isInitialised = false;
@@ -7021,6 +7022,182 @@
             }
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        // v7.52.0 — CONVERGENT MULTI-DEVICE MERGE (record-level CRDT)
+        // ----------------------------------------------------------------------
+        // Root cause of app↔website divergence: the old sync pushed the ENTIRE
+        // appData and, on read, "cloud wins unless we're dirty" (no recency check).
+        // A stale device that was merely dirty would re-push old arrays over newer
+        // ones, and record deletions never propagated (filter() just drops locally,
+        // so the other device re-adds it). The fix: every record carries an update
+        // time (_ut); deletions leave a tombstone; and cloud reads MERGE per record
+        // by recency (newest wins) with tombstones removing deleted rows. This merge
+        // is commutative + idempotent, so every device converges to the union of the
+        // newest records — no whole-document clobber, deletes included.
+        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions'];
+        const _WF_TOMB_TTL = 100 * 24 * 3600 * 1000;   // keep tombstones ~100 days, then prune
+
+        // A record's effective update time: explicit _ut, else parsed createdAt, else 0.
+        function _utOf(r) {
+            if (!r || typeof r !== 'object') return 0;
+            if (typeof r._ut === 'number' && isFinite(r._ut)) return r._ut;
+            if (r.createdAt) { const t = Date.parse(r.createdAt); if (!isNaN(t)) return t; }
+            if (typeof r.paidAt === 'number') return r.paidAt;
+            return 0;
+        }
+        // Content signature of a record IGNORING _ut, so re-stamping never self-triggers.
+        function _recSig(r) {
+            try { const c = Object.assign({}, r); delete c._ut; return JSON.stringify(c); } catch (_) { return ''; }
+        }
+        // Deterministic tiebreak when two versions share the same _ut — same result on
+        // every device (required for convergence): keep the lexicographically greater sig.
+        function _recPreferred(a, b) {
+            const ua = _utOf(a), ub = _utOf(b);
+            if (ua !== ub) return ua > ub ? a : b;
+            return _recSig(a) >= _recSig(b) ? a : b;
+        }
+
+        // Called inside DB.set for record-array keys: compares the NEW array against
+        // the previously-persisted one (from localStorage, still holding the old state
+        // at this point) to (a) stamp _ut on new/changed records and (b) tombstone
+        // records that were removed. Mutates newArr's records in place and returns it.
+        function _wfStampAndTomb(key, newArr) {
+            if (!Array.isArray(newArr)) return newArr;
+            let prev = [];
+            try { prev = JSON.parse(localStorage.getItem('wf2_' + key) || '[]'); } catch (_) { prev = []; }
+            if (!Array.isArray(prev)) prev = [];
+            const prevById = new Map();
+            prev.forEach(r => { if (r && r.id != null) prevById.set(r.id, r); });
+            const now = Date.now();
+            const seen = new Set();
+            newArr.forEach(r => {
+                if (!r || typeof r !== 'object' || r.id == null) return;
+                seen.add(r.id);
+                const old = prevById.get(r.id);
+                if (!old) { if (typeof r._ut !== 'number') r._ut = now; return; }   // brand-new record -> stamp now
+                if (_recSig(r) !== _recSig(old)) { r._ut = now; return; }            // content changed -> bump now
+                // Unchanged: carry a PRIOR stamp if one existed; otherwise leave it
+                // unstamped (treated as oldest). Never invent "now" for an untouched
+                // legacy record — that could otherwise beat another device's real edit.
+                if (typeof r._ut !== 'number' && typeof old._ut === 'number') r._ut = old._ut;
+            });
+            // Anything present before but gone now = a deletion -> tombstone it.
+            if (!appData._tomb || typeof appData._tomb !== 'object') appData._tomb = {};
+            let tk = appData._tomb[key]; if (!tk || typeof tk !== 'object') { tk = {}; appData._tomb[key] = tk; }
+            let tombChanged = false;
+            prevById.forEach((old, id) => { if (!seen.has(id)) { tk[id] = now; tombChanged = true; } });
+            // A resurrected id (present again) clears its old tombstone.
+            seen.forEach(id => { if (tk[id] != null) { delete tk[id]; tombChanged = true; } });
+            if (tombChanged) { try { localStorage.setItem('wf2__tomb', JSON.stringify(appData._tomb)); } catch (_) {} }
+            return newArr;
+        }
+
+        // Merge two record arrays by id: newest _ut wins, deterministic tiebreak,
+        // tombstones (deleteTs ≥ record _ut) remove the record. Records without an id
+        // are preserved as-is (dedup by signature) so nothing is ever silently lost.
+        function _wfMergeRecordArray(localArr, cloudArr, tombMap) {
+            const L = Array.isArray(localArr) ? localArr : [];
+            const C = Array.isArray(cloudArr) ? cloudArr : [];
+            const byId = new Map();
+            const noId = [];
+            const put = (r) => {
+                if (!r || typeof r !== 'object') return;
+                if (r.id == null) { noId.push(r); return; }
+                const ex = byId.get(r.id);
+                byId.set(r.id, ex ? _recPreferred(r, ex) : r);
+            };
+            C.forEach(put); L.forEach(put);
+            const out = [];
+            byId.forEach((r, id) => {
+                const del = tombMap && tombMap[id];
+                if (typeof del === 'number' && del >= _utOf(r)) return;   // deleted after last edit -> stays gone
+                out.push(r);
+            });
+            // append id-less records (dedup by signature)
+            const sigs = new Set();
+            noId.forEach(r => { const s = _recSig(r); if (!sigs.has(s)) { sigs.add(s); out.push(r); } });
+            return out;
+        }
+
+        // Merge two tombstone maps {key:{id:ts}} keeping the newer deleteTs, pruning old.
+        function _wfMergeTombMaps(a, b) {
+            const out = {};
+            const cutoff = Date.now() - _WF_TOMB_TTL;
+            const fold = (src) => {
+                if (!src || typeof src !== 'object') return;
+                Object.keys(src).forEach(key => {
+                    const m = src[key]; if (!m || typeof m !== 'object') return;
+                    const dst = out[key] || (out[key] = {});
+                    Object.keys(m).forEach(id => {
+                        const ts = m[id];
+                        if (typeof ts !== 'number' || ts < cutoff) return;   // prune ancient tombstones
+                        if (dst[id] == null || ts > dst[id]) dst[id] = ts;
+                    });
+                });
+            };
+            fold(a); fold(b);
+            return out;
+        }
+
+        // ── THE ONE CLOUD APPLIER ───────────────────────────────────────────────
+        // Every path that reads the user document (live snapshot, manual pull,
+        // first sign-in hydration) funnels through THIS function, so there is one
+        // audited merge instead of three drifting copies. Record arrays converge
+        // per record by recency with tombstoned deletes; settings deep-merge with
+        // local priority; everything else copies from cloud. Returns flags so the
+        // caller can re-render and — when the merged truth is newer than the cloud
+        // copy — push it back up so the cloud converges too.
+        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, driveBridge: 1 };
+        function _wfApplyCloudData(cloudData) {
+            const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
+            if (!cloudData || typeof cloudData !== 'object') return res;
+            // 1) Converge tombstones first — the record merge below depends on them.
+            const localTomb = (appData._tomb && typeof appData._tomb === 'object') ? appData._tomb : {};
+            const cloudTomb = (cloudData._tomb && typeof cloudData._tomb === 'object') ? cloudData._tomb : {};
+            const mergedTomb = _wfMergeTombMaps(localTomb, cloudTomb);
+            const mergedTombJson = JSON.stringify(mergedTomb);
+            if (mergedTombJson !== JSON.stringify(localTomb)) {
+                appData._tomb = mergedTomb;
+                try { localStorage.setItem('wf2__tomb', mergedTombJson); } catch (_) {}
+            }
+            if (mergedTombJson !== JSON.stringify(cloudTomb)) res.needPush = true;   // cloud is missing our deletes
+            // 2) Record arrays — per-record newest-wins with tombstoned deletions.
+            _WF_RECORD_KEYS.forEach(key => {
+                if (!(key in cloudData) && !(key in appData)) return;
+                const merged = _wfMergeRecordArray(appData[key], cloudData[key], mergedTomb[key]);
+                const mJson = JSON.stringify(merged);
+                if (mJson !== JSON.stringify(appData[key] !== undefined ? appData[key] : [])) {
+                    appData[key] = merged;
+                    try { localStorage.setItem('wf2_' + key, mJson); } catch (_) {}
+                    if (key === 'sessions') res.sessionsChanged = true; else res.nonSessionChanged = true;
+                }
+                if (mJson !== JSON.stringify(cloudData[key] !== undefined ? cloudData[key] : [])) res.needPush = true;
+            });
+            // 3) Everything else — settings deep-merge (local priority), rest cloud-copy.
+            Object.keys(cloudData).forEach(key => {
+                if (_WF_SYNC_META_KEYS[key] || _WF_RECORD_KEYS.indexOf(key) !== -1) return;
+                if (key === 'settings') {
+                    const cloudSettings = cloudData.settings || {};
+                    const localSettings = appData.settings || {};
+                    const merged = Object.assign({}, cloudSettings, localSettings);
+                    if (JSON.stringify(merged) !== JSON.stringify(localSettings)) {
+                        appData.settings = merged;
+                        try { localStorage.setItem('wf2_settings', JSON.stringify(merged)); } catch (_) {}
+                        res.nonSessionChanged = true;
+                    }
+                    return;
+                }
+                const cj = JSON.stringify(cloudData[key]);
+                if (cj !== JSON.stringify(appData[key])) {
+                    appData[key] = cloudData[key];
+                    try { localStorage.setItem('wf2_' + key, cj); } catch (_) {}
+                    res.nonSessionChanged = true;
+                }
+            });
+            return res;
+        }
+        try { window._wfApplyCloudData = _wfApplyCloudData; } catch (_) {}
+
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
             getObj(k, def = {}) { return appData[k] !== undefined ? appData[k] : def; },
@@ -7030,6 +7207,12 @@
                     appData[k] = v; // in-memory only; lost on reload
                     console.log('[DECOY] Write blocked from disk/cloud:', k);
                     return;
+                }
+                // v7.52.0 — stamp per-record _ut and tombstone deletions BEFORE we
+                // overwrite localStorage (which still holds the previous state here).
+                // Skipped while applying a cloud snapshot (the merge sets _ut itself).
+                if (!isSyncingFromCloud && _WF_RECORD_KEYS.indexOf(k) !== -1) {
+                    try { v = _wfStampAndTomb(k, v); } catch (_) {}
                 }
                 appData[k] = v;
                 localStorage.setItem('wf2_' + k, JSON.stringify(v));
@@ -7121,7 +7304,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.51.0';
+        var WF_APP_VERSION = '7.52.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -7177,6 +7360,64 @@
                 });
             } catch (_) {}
         })();
+        // v7.52.0 — a deep health snapshot so issues (especially sync divergence) are
+        // diagnosable at a glance: sync state, per-key record counts + integrity + data
+        // recency, tombstones, storage usage, Drive, and account. All fields are guarded
+        // so collecting the report can never itself throw.
+        function _wfCollectHealth() {
+            const H = {};
+            const ageSec = (t) => (typeof t === 'number' && t) ? Math.round((Date.now() - t) / 1000) : null;
+            try {
+                let badge = ''; try { badge = (document.getElementById('onlineText') || {}).textContent || ''; } catch (_) {}
+                H.sync = {
+                    status: badge || 'unknown',
+                    dirty: (typeof isDirty !== 'undefined') ? !!isDirty : null,
+                    applyingCloud: (typeof isSyncingFromCloud !== 'undefined') ? !!isSyncingFromCloud : null,
+                    cloudConnected: (typeof userDocRef !== 'undefined') ? !!userDocRef : null,
+                    lastSyncAgeSec: (typeof lastSyncTime !== 'undefined') ? ageSec(lastSyncTime) : null,
+                    pendingRecordDeletes: (typeof _pendingCloudDeletes !== 'undefined' && _pendingCloudDeletes) ? (function () { try { return Object.keys(_pendingCloudDeletes).length; } catch (_) { return null; } })() : 0,
+                    deviceId: (function () { try { return typeof getDeviceId === 'function' ? getDeviceId() : null; } catch (_) { return null; } })()
+                };
+            } catch (e) { H.sync = { error: String(e && e.message) }; }
+            try {
+                const keys = (typeof _WF_RECORD_KEYS !== 'undefined') ? _WF_RECORD_KEYS : [];
+                const byKey = {}; let grand = 0, missId = 0, missUt = 0;
+                keys.forEach(k => {
+                    const arr = Array.isArray(appData[k]) ? appData[k] : [];
+                    let mi = 0, mu = 0, maxUt = 0;
+                    arr.forEach(r => {
+                        if (!r || r.id == null) mi++;
+                        if (!r || typeof r._ut !== 'number') mu++; else if (r._ut > maxUt) maxUt = r._ut;
+                    });
+                    grand += arr.length; missId += mi; missUt += mu;
+                    byKey[k] = { n: arr.length, noId: mi, noStamp: mu, newestEditAgeSec: ageSec(maxUt) };
+                });
+                let tombN = 0; const tomb = (appData._tomb && typeof appData._tomb === 'object') ? appData._tomb : {};
+                Object.keys(tomb).forEach(k => { try { tombN += Object.keys(tomb[k] || {}).length; } catch (_) {} });
+                H.data = { totalRecords: grand, missingId: missId, missingUpdateStamp: missUt, tombstones: tombN, byKey: byKey };
+            } catch (e) { H.data = { error: String(e && e.message) }; }
+            try {
+                let bytes = 0, wfKeys = 0;
+                for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); const v = localStorage.getItem(k) || ''; bytes += (k ? k.length : 0) + v.length; if (k && (k.indexOf('wf2_') === 0 || k.indexOf('wf_') === 0)) wfKeys++; }
+                H.storage = { approxKB: Math.round(bytes / 1024), wfKeys: wfKeys, totalKeys: localStorage.length };
+            } catch (e) { H.storage = { error: String(e && e.message) }; }
+            try {
+                H.drive = {
+                    connected: (typeof gapiToken !== 'undefined') ? !!gapiToken : null,
+                    everGranted: (function () { try { return localStorage.getItem('wf_drive_ever_granted') === '1'; } catch (_) { return null; } })()
+                };
+            } catch (e) { H.drive = { error: String(e && e.message) }; }
+            try {
+                const email = (window.currentUser && window.currentUser.email) || '';
+                H.account = {
+                    signedIn: !!(window.currentUser),
+                    email: email ? email.replace(/^(.{2}).*(@.*)$/, '$1***$2') : null,
+                    hasPin: !!(appData.auth && appData.auth.pin)
+                };
+            } catch (e) { H.account = { error: String(e && e.message) }; }
+            return H;
+        }
+        try { window._wfCollectHealth = _wfCollectHealth; } catch (_) {}
         window._wfCopyDiagnostics = async function (btn) {
             let payload;
             try {
@@ -7197,6 +7438,7 @@
                     activePage: (function () { try { const a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; } catch (_) { return ''; } })(),
                     dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })(),
                     summary: { totalErrors: log.length, fromThisBuild: fromThis, staleFromOlderBuilds: log.length - fromThis, uniqueMessages: uniqueMsgs },
+                    health: _wfCollectHealth(),
                     errors: log
                 }, null, 2);
             } catch (e) { payload = 'diagnostics unavailable: ' + (e && e.message); }
@@ -7401,30 +7643,10 @@
                 if (doc.exists) {
                     isSyncingFromCloud = true;
                     const cloudData = doc.data();
-                    Object.keys(cloudData).forEach(key => {
-                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
-
-                        if (key === 'settings') {
-                            // Deep-merge settings: cloud fills gaps, local wins for existing keys
-                            const cloudSettings = cloudData.settings || {};
-                            const localSettings = appData.settings || {};
-                            appData.settings = Object.assign({}, cloudSettings, localSettings);
-                            localStorage.setItem('wf2_settings', JSON.stringify(appData.settings));
-                            return;
-                        }
-
-                        // Protect local pending writes from being wiped by a manual force sync
-                        if (Array.isArray(appData[key]) && Array.isArray(cloudData[key])) {
-                            if (isDirty && JSON.stringify(appData[key]) !== JSON.stringify(cloudData[key])) {
-                                console.warn('[SYNC] 🛡️ forceSync: Race detected (unsynced local changes) — keeping local state for "' + key + '"');
-                                setDirty(true);
-                                return; // Skip overwriting appData for this key
-                            }
-                        }
-
-                        appData[key] = cloudData[key];
-                        localStorage.setItem('wf2_' + key, JSON.stringify(cloudData[key]));
-                    });
+                    // v7.52.0 — same convergent applier as the live listener: per-record
+                    // newest-wins with tombstoned deletes. A manual pull can no longer
+                    // wipe newer local records or resurrect deleted ones.
+                    const _applied = _wfApplyCloudData(cloudData);
                     isSyncingFromCloud = false;
                     lastSyncTime = Date.now();
 
@@ -7432,8 +7654,9 @@
                     // cloud copy still carried, then flush the deletes to the server.
                     try { _wfApplyPendingDeletesLocally(); _flushCloudDeletes(); } catch (_) { }
 
-                    if (isDirty) {
-                        debouncedSync(); // Ensure preserved local items are pushed!
+                    if (isDirty || _applied.needPush) {
+                        setDirty(true);
+                        debouncedSync(); // push the merged truth so the cloud converges
                     }
 
                     // ── v7.42.0 — the network fetch SUCCEEDED, so mark Online NOW,
@@ -11550,13 +11773,15 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         function _wfShowDrivePicker(token, inputId, type) {
             try {
                 const view = new google.picker.DocsView(google.picker.ViewId.DOCS)
-                    // ── v7.44.0 — show ONLY the files YOU uploaded/own, newest first,
-                    // as a plain LIST. setOwnedByMe(true) drops files merely shared with
-                    // you and keeps Drive's most-recently-added-by-you order, so your
-                    // latest upload is at the very top. Folders are excluded (a statement
-                    // is always a file), so there is no folders-first grouping to dig past.
+                    // ── v7.52.0 — show BOTH folders and files (folders navigable but not
+                    // selectable, since a statement is always a file), newest-owned first,
+                    // as a plain LIST. setOwnedByMe(true) drops files merely shared with you
+                    // and keeps Drive's most-recent order so the latest upload sits at top.
+                    // (Google renders the Picker inside a cross-origin iframe, so its per-file
+                    // thumbnail and sort toggle cannot be changed from here — a fully custom,
+                    // thumbnail-free browser needs the drive.readonly scope; see changelog.)
                     .setOwnedByMe(true)
-                    .setIncludeFolders(false)
+                    .setIncludeFolders(true)
                     .setSelectFolderEnabled(false)
                     .setMode(google.picker.DocsViewMode.LIST)
                     .setMimeTypes(_WF_DRIVE_MIME);
@@ -13037,38 +13262,16 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                             }
                                         } catch (_) {}
 
-                                        Object.keys(cloudData).forEach(key => {
-                                            if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
-
-                                            if (key === 'settings') {
-                                                // Deep-merge: cloud provides base, local overrides
-                                                const cloudSettings = cloudData.settings || {};
-                                                const localSettings = appData.settings || {};
-                                                appData.settings = Object.assign({}, cloudSettings, localSettings);
-                                                localStorage.setItem('wf2_settings', JSON.stringify(appData.settings));
-                                                return;
-                                            }
-
-                                            const localVal = appData[key];
-                                            const cloudVal = cloudData[key];
-                                            let finalVal = cloudVal;
-
-                                            // Array-merge protection: if local has items not in cloud, keep them
-                                            if (Array.isArray(localVal) && Array.isArray(cloudVal)) {
-                                                const cloudIds = new Set(cloudVal.map(x => x && x.id).filter(Boolean));
-                                                const localOnly = localVal.filter(x => x && x.id && !cloudIds.has(x.id));
-                                                if (localOnly.length > 0) {
-                                                    console.warn('[SYNC] 🛡️ INIT — preserving ' + localOnly.length +
-                                                        ' offline-only items in "' + key + '" (will be pushed to cloud)');
-                                                    finalVal = cloudVal.concat(localOnly);
-                                                    _localOnlyCount += localOnly.length;
-                                                }
-                                            }
-
-                                            appData[key] = finalVal;
-                                            localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
-                                        });
-                                        console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud (settings merged)');
+                                        // v7.52.0 — first sign-in hydration goes through the SAME convergent
+                                        // applier as the live listener and manual pull. This is where the old
+                                        // "cloud overwrites local unless the id is missing" logic lived — the
+                                        // reason a fresh app login could pull the cloud's OLDER records over
+                                        // newer local ones, or lose a local edit. Now it merges per-record by
+                                        // recency with tombstoned deletes, so login always yields the union of
+                                        // the newest data across every device — no reset ever required.
+                                        const _initApplied = _wfApplyCloudData(cloudData);
+                                        if (_initApplied.needPush) _localOnlyCount = Math.max(_localOnlyCount, 1);
+                                        console.log('[SYNC] ✅ Loaded', Object.keys(cloudData).length, 'keys from cloud (convergent merge)');
                                         // v7.41.0 — strip any keys the user already deleted (from the
                                         // persisted delete queue) that the cloud copy still carried, then
                                         // flush those deletes to the server so the cloud converges. Runs
@@ -13197,77 +13400,23 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                                         return;
                                                     }
 
-                                                    let nonSessionChanged = false;
-                                                    let sessionsChanged = false;
-
-                                                    const _isEq = (a, b) => {
-                                                        if (a === b) return true;
-                                                        if (a && b && typeof a == 'object' && typeof b == 'object') {
-                                                            if (Array.isArray(a) !== Array.isArray(b)) return false;
-                                                            let keys = Object.keys(a);
-                                                            if (keys.length !== Object.keys(b).length) return false;
-                                                            return keys.every(k => _isEq(a[k], b[k]));
-                                                        }
-                                                        return false;
-                                                    };
-
-                                                    // SETTINGS FIX: Deep-merge 'settings' instead of full replacement.
-                                                    // This ensures cloud data fills in missing keys but never wipes
-                                                    // keys that the user just changed locally.
-                                                    Object.keys(cloudData).forEach(key => {
-                                                        if (key === '_lastModified' || key === '_lastModifiedBy' || key === '_writeDeviceId' || key === '_writeTs') return;
-
-                                                        if (key === 'settings') {
-                                                            // Merge strategy: cloud fills gaps, but local wins for existing keys
-                                                            const cloudSettings = cloudData.settings || {};
-                                                            const localSettings = appData.settings || {};
-                                                            const merged = Object.assign({}, cloudSettings, localSettings);
-                                                            // Only update if the merged result differs from current
-                                                            if (!_isEq(merged, localSettings)) {
-                                                                appData.settings = merged;
-                                                                localStorage.setItem('wf2_settings', JSON.stringify(merged));
-                                                                nonSessionChanged = true;
-                                                                console.log('[SYNC] 🔧 Settings merged (cloud filled gaps, local preserved)');
-                                                            }
-                                                            return;
-                                                        }
-
-                                                        if (!_isEq(cloudData[key], appData[key])) {
-                                                            // ============================================================
-                                                            // CRITICAL FIX v6.9.1: SAVE-DISAPPEAR + INFINITE SYNC LOOP
-                                                            // ============================================================
-                                                            // Before blindly overwriting appData[key] with the cloud value,
-                                                            // protect against the race where the cloud snapshot arrives
-                                                            // BEFORE our recent local write has been replicated.
-                                                            const localVal = appData[key];
-                                                            const cloudVal = cloudData[key];
-                                                            let finalVal = cloudVal;
-                                                            // CRITICAL FIX: Preserve ENTIRE local array if we have pending local writes.
-                                                            // Prevents edits/deletions from reverting when an old cloud snapshot arrives.
-                                                            if (Array.isArray(localVal) && Array.isArray(cloudVal) && isDirty) {
-                                                                if (JSON.stringify(localVal) !== JSON.stringify(cloudVal)) {
-                                                                    console.warn('[SYNC] 🛡️ Race detected (unsynced local changes) — keeping local state for "' + key + '" to prevent revert.');
-                                                                    finalVal = localVal;
-                                                                    setDirty(true);
-
-                                                                    // We MUST trigger a debounced sync here, otherwise the preserved local
-                                                                    // state will NEVER push to the cloud until the user manually triggers another save!
-                                                                    setTimeout(debouncedSync, 1000);
-                                                                }
-                                                            }
-                                                            if (finalVal !== localVal) {
-                                                                appData[key] = finalVal;
-                                                                localStorage.setItem('wf2_' + key, JSON.stringify(finalVal));
-                                                                if (key === 'sessions') {
-                                                                    sessionsChanged = true;
-                                                                } else {
-                                                                    nonSessionChanged = true;
-                                                                }
-                                                            }
-                                                        }
-                                                    });
+                                                    // ═══ v7.52.0 — CONVERGENT RECORD MERGE ═══
+                                                    // The old logic here was "cloud wins, unless we're dirty then keep
+                                                    // the WHOLE local array" — with no recency check. A stale device
+                                                    // that happened to be dirty re-pushed OLD arrays over NEWER data
+                                                    // from the other device, and deletions never propagated (the other
+                                                    // device simply synced the record back). That is the app-vs-website
+                                                    // divergence users hit. Now every read funnels through ONE applier:
+                                                    // per-record newest-wins with tombstoned deletes — commutative and
+                                                    // idempotent, so app and website always converge to the same truth.
+                                                    const _applied = _wfApplyCloudData(cloudData);
+                                                    let nonSessionChanged = _applied.nonSessionChanged;
+                                                    let sessionsChanged = _applied.sessionsChanged;
                                                     isSyncingFromCloud = false;
                                                     lastSyncTime = Date.now();
+                                                    // The merged truth is newer than the cloud copy (our records or
+                                                    // deletes were missing there) → push it up so cloud converges too.
+                                                    if (_applied.needPush) { setDirty(true); setTimeout(debouncedSync, 800); }
 
                                                     // v7.41.0 — if this snapshot re-introduced a key the user already
                                                     // deleted (an offline delete not yet flushed), strip it again
@@ -20441,8 +20590,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.51.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.51.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.52.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.52.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
