@@ -7155,7 +7155,7 @@
         // local priority; everything else copies from cloud. Returns flags so the
         // caller can re-render and — when the merged truth is newer than the cloud
         // copy — push it back up so the cloud converges too.
-        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, driveBridge: 1 };
+        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, driveBridge: 1, driveRefresh: 1 };
         function _wfApplyCloudData(cloudData) {
             const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
             if (!cloudData || typeof cloudData !== 'object') return res;
@@ -7312,7 +7312,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.54.0';
+        var WF_APP_VERSION = '7.55.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -11021,9 +11021,9 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 return;
             }
             if (next === 'bridge') {
-                // The interactive popup failed. Installed app → offer the browser bridge.
+                // The interactive popup failed. Installed app → durable browser auth.
                 // Browser tab → re-offer the consent button (never a new tab, never a timer).
-                if (window._wfIsDriveLinkInstance) _wfShowDriveLinkConsent(); else _wfShowDriveBrowserBridge();
+                if (window._wfIsDriveLinkInstance) _wfShowDriveLinkConsent(); else _wfStartDriveDurableAuth();
                 return;
             }
             if (next === 'cancel') {
@@ -11144,6 +11144,274 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             } catch (_) {}
         }
 
+        /* ===== v7.55.0 durable Drive auth module (injected) ===== */
+// ═════════════════════════════════════════════════════════════════════════
+//  v7.55.0 — DURABLE, COOKIE-FREE GOOGLE DRIVE CONNECTION
+//  ------------------------------------------------------------------------
+//  Root-cause fix for "Drive keeps needing a browser sign-in in the app/APK".
+//  The implicit token flow (GIS requestAccessToken) issues a ~1h access token
+//  and no refresh token, and its silent re-mint needs Google's third-party
+//  cookies — which are permanently blocked inside installed apps / WebViews.
+//  So it died hourly and forced the browser bridge again and again.
+//
+//  Here we run the OAuth 2.0 AUTHORIZATION CODE flow (access_type=offline) in a
+//  real browser ONCE. The server (/api/drive-auth) exchanges the code for a
+//  long-lived REFRESH token, which we store in the user's own Firestore doc
+//  (per-user, rules-protected, drive.file scope). It syncs to every device —
+//  including the APK — and each device mints fresh access tokens by calling
+//  /api/drive-auth?action=refresh, with NO cookies and NO consent, forever.
+//  If the server lacks the client secret it replies { not_configured } and we
+//  fall back to the proven legacy bridge — nothing breaks.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ---- small utilities -----------------------------------------------------
+function _wfApiBase() {
+    try {
+        var h = location.hostname;
+        if (h.indexOf('github.io') >= 0 || h === 'localhost') return 'https://wealthflow-personal.vercel.app';
+        return '';
+    } catch (_) { return ''; }
+}
+function _wfRandId() {
+    try {
+        var a = new Uint8Array(16); crypto.getRandomValues(a);
+        return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    } catch (_) { return String(Date.now()) + Math.random().toString(16).slice(2); }
+}
+function _wfB64url(buf) {
+    var bin = '', arr = new Uint8Array(buf);
+    for (var i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function _wfPkceVerifier() {
+    try { var a = new Uint8Array(32); crypto.getRandomValues(a); return _wfB64url(a); }
+    catch (_) { return (_wfRandId() + _wfRandId()).slice(0, 64); }
+}
+async function _wfPkceChallenge(verifier) {
+    try {
+        var enc = new TextEncoder().encode(verifier);
+        var digest = await crypto.subtle.digest('SHA-256', enc);
+        return _wfB64url(digest);
+    } catch (_) { return verifier; } // plain fallback (Google accepts 'plain' if method omitted, but we set S256 only when hashing works)
+}
+
+// ---- refresh-token storage (local mirror of the Firestore field) ---------
+function _wfGetDriveRefreshToken() { try { return localStorage.getItem('wf_drive_refresh') || ''; } catch (_) { return ''; } }
+function _wfClearDriveRefreshToken() { try { localStorage.removeItem('wf_drive_refresh'); } catch (_) {} }
+function _wfAdoptDriveRefresh(rec) {
+    // Called from the Firestore snapshot handler. Mirror the newest refresh
+    // token locally so this device can mint access tokens with no cookies.
+    try {
+        if (!rec || !rec.token) return false;
+        if (_wfGetDriveRefreshToken() === rec.token) return false;
+        localStorage.setItem('wf_drive_refresh', rec.token);
+        try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
+        return true;
+    } catch (_) { return false; }
+}
+
+// ---- server calls --------------------------------------------------------
+async function _wfDriveServerExchange(code, verifier, redirectUri) {
+    try {
+        var r = await fetch(_wfApiBase() + '/api/drive-auth', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'exchange', code: code, code_verifier: verifier, redirect_uri: redirectUri })
+        });
+        return await r.json();
+    } catch (_) { return { ok: false, code: 'network' }; }
+}
+async function _wfDriveServerRefresh(rt) {
+    try {
+        var r = await fetch(_wfApiBase() + '/api/drive-auth', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'refresh', refresh_token: rt })
+        });
+        return await r.json();
+    } catch (_) { return { ok: false, code: 'network' }; }
+}
+
+// ---- the primary token source: durable, silent, cookie-free --------------
+// Preferred over the implicit silent refresh. Returns true if gapiToken is set.
+let _wfDurableRefreshInFlight = null;
+async function _wfEnsureDriveTokenDurable() {
+    try {
+        // 1) A live in-memory token that is not about to expire.
+        if (gapiToken) {
+            try { var c = JSON.parse(localStorage.getItem('wf_drive_token') || 'null'); if (!c || !c.expiry || Date.now() < c.expiry - 5000) return true; }
+            catch (_) { return true; }
+        }
+        // 2) A still-valid cached access token.
+        try {
+            var p = JSON.parse(localStorage.getItem('wf_drive_token') || 'null');
+            if (p && p.token && Date.now() < p.expiry - 5000) { gapiToken = p.token; return true; }
+        } catch (_) {}
+        // 3) Mint a fresh access token from the stored refresh token (server-side).
+        var rt = _wfGetDriveRefreshToken();
+        if (!rt) return false;
+        if (_wfDurableRefreshInFlight) return await _wfDurableRefreshInFlight; // de-dupe concurrent callers
+        _wfDurableRefreshInFlight = (async function () {
+            try {
+                var res = await _wfDriveServerRefresh(rt);
+                if (res && res.ok && res.access_token) {
+                    gapiToken = res.access_token;
+                    var expiry = Date.now() + ((Number(res.expires_in || 3600) - 30) * 1000);
+                    try { localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry: expiry })); localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
+                    return true;
+                }
+                if (res && res.code === 'invalid_grant') _wfClearDriveRefreshToken(); // revoked/expired → force clean re-auth
+                return false;
+            } catch (_) { return false; }
+            finally { _wfDurableRefreshInFlight = null; }
+        })();
+        return await _wfDurableRefreshInFlight;
+    } catch (_) { return false; }
+}
+try { window._wfEnsureDriveTokenDurable = _wfEnsureDriveTokenDurable; window._wfAdoptDriveRefresh = _wfAdoptDriveRefresh; } catch (_) {}
+
+// ---- app side: launch the one-time durable authorization ------------------
+// Opens the sign-in in a real browser (where cookies work). After it completes
+// there, the refresh token relays back via Firestore and the app connects for
+// good. Reuses the proven bridge watch. Falls back to the legacy access-token
+// bridge automatically if the server is not configured.
+function _wfStartDriveDurableAuth() {
+    if (window._wfIsDriveLinkInstance) { _wfBeginDriveAuthStart(); return; }
+    try { if (typeof syncToCloud === 'function') syncToCloud(); } catch (_) {}
+    var url = location.origin + '/?driveauth=1';
+    showConfirm('cloud', 'Connect Google Drive — stays connected',
+        'Finish a one-time Google sign-in in your browser with the SAME Google account and approve Drive. Your installed app then stays connected permanently — no cookies, no repeat sign-ins.',
+        'btn-primary', 'Open sign-in in browser', function () {
+            try {
+                var a = document.createElement('a');
+                a.href = url; a.target = '_blank'; a.rel = 'noopener';
+                document.body.appendChild(a); a.click(); a.remove();
+            } catch (_) { try { window.open(url, '_blank'); } catch (_) {} }
+            try { _wfStartDriveBridgeWatch(); } catch (_) {}
+        });
+}
+
+// ---- browser instance: run the code flow, relay the refresh token ---------
+function _wfMaybeRunDriveAuth() {
+    try {
+        var qs = location.search || '';
+        var params = new URLSearchParams(qs);
+        var code = params.get('code');
+        var state = params.get('state');
+        if (code && state && state.indexOf('wfdrive_') === 0) {   // OAuth callback
+            window._wfIsDriveLinkInstance = true;
+            _wfCompleteDriveAuthCallback(code, state);
+            return;
+        }
+        if (/[?&]driveauth=1(?:&|$)/.test(qs)) {                  // start marker
+            window._wfIsDriveLinkInstance = true;
+            _wfBeginDriveAuthStart();
+            return;
+        }
+    } catch (_) {}
+}
+
+function _wfBeginDriveAuthStart() {
+    // Wait for Firebase sign-in + the relay doc, then a gesture button (browsers
+    // block popups/redirects that are not started by a real tap).
+    var tries = 0;
+    var iv = setInterval(function () {
+        tries++;
+        if (window.currentUser && typeof userDocRef !== 'undefined' && userDocRef) {
+            clearInterval(iv);
+            showConfirm('cloud', 'Connect Google Drive (stays connected)',
+                'Approve Google Drive once here. Your installed app will then stay connected permanently — no more repeat sign-ins.',
+                'btn-primary', 'Approve Google Drive', function () { _wfRedirectToGoogleForCode(); });
+        } else if (tries > 120) {                                 // ~60s
+            clearInterval(iv);
+            try { notify('Please sign in to WealthFlow with the same account, then tap Connect again.', 'warn'); } catch (_) {}
+        }
+    }, 500);
+}
+
+async function _wfRedirectToGoogleForCode() {
+    try {
+        var verifier = _wfPkceVerifier();
+        var challenge = await _wfPkceChallenge(verifier);
+        var usedS256 = (challenge !== verifier);
+        var state = 'wfdrive_' + _wfRandId();
+        try { localStorage.setItem('wf_drive_pkce', JSON.stringify({ v: verifier, s: state, t: Date.now() })); } catch (_) {}
+        var redirectUri = location.origin + '/';
+        var scope = 'https://www.googleapis.com/auth/drive.file';
+        try { if (localStorage.getItem('wf_clean_drive_browser') === '1') scope += ' https://www.googleapis.com/auth/drive.readonly'; } catch (_) {}
+        var q = {
+            client_id: '1020193373377-paqvs1sgqr75l0lbcs9hju02fmouc0da.apps.googleusercontent.com',
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            scope: scope,
+            access_type: 'offline',
+            prompt: 'consent',
+            include_granted_scopes: 'true',
+            state: state
+        };
+        if (usedS256) { q.code_challenge = challenge; q.code_challenge_method = 'S256'; }
+        try { if (window.currentUser && window.currentUser.email) q.login_hint = window.currentUser.email; } catch (_) {}
+        var authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q).toString();
+        location.assign(authUrl);   // first-party full-page redirect (cookies work here)
+    } catch (_) {
+        try { notify('Could not start Google sign-in. Please try again.', 'error'); } catch (_) {}
+    }
+}
+
+async function _wfCompleteDriveAuthCallback(code, state) {
+    try {
+        var saved = null; try { saved = JSON.parse(localStorage.getItem('wf_drive_pkce') || 'null'); } catch (_) {}
+        try { history.replaceState(null, '', location.origin + location.pathname); } catch (_) {}
+        if (!saved || saved.s !== state) {   // CSRF / state mismatch → legacy relay
+            try { notify('Sign-in check failed. Using the standard connection…', 'warn'); } catch (_) {}
+            try { _wfShowDriveLinkConsent(); } catch (_) {}
+            return;
+        }
+        var redirectUri = location.origin + '/';
+        var resp = await _wfDriveServerExchange(code, saved.v, redirectUri);
+        try { localStorage.removeItem('wf_drive_pkce'); } catch (_) {}
+        if (resp && resp.ok && resp.access_token) {
+            var expiry = Date.now() + ((Number(resp.expires_in || 3600) - 30) * 1000);
+            gapiToken = resp.access_token;
+            try { localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry: expiry })); localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
+            var dev = ''; try { dev = _getDeviceId(); } catch (_) {}
+            var relay = { driveBridge: { token: gapiToken, expiry: expiry, ts: Date.now(), deviceId: dev } };
+            if (resp.refresh_token) {
+                relay.driveRefresh = { token: resp.refresh_token, ts: Date.now(), deviceId: dev };
+                try { localStorage.setItem('wf_drive_refresh', resp.refresh_token); } catch (_) {}
+            }
+            if (typeof userDocRef !== 'undefined' && userDocRef) {
+                userDocRef.update(relay)
+                    .then(function () { try { notify('Google Drive connected — your app will stay connected. You can return to WealthFlow now.', 'success'); } catch (_) {} })
+                    .catch(function () { try { userDocRef.set(relay, { merge: true }); notify('Google Drive connected. Return to WealthFlow now.', 'success'); } catch (_) {} });
+            }
+            return;
+        }
+        // Not configured, or exchange failed → legacy access-token relay so the
+        // app still connects (just not durably). Zero regression.
+        try { _wfShowDriveLinkConsent(); } catch (_) {}
+    } catch (_) {
+        try { _wfShowDriveLinkConsent(); } catch (_) {}
+    }
+}
+
+// ---- user control: disconnect (revoke + wipe everywhere) ------------------
+async function _wfDisconnectDrive() {
+    showConfirm('shield', 'Disconnect Google Drive',
+        'This revokes WealthFlow\'s Google Drive access on all your devices. Your existing backups already in Drive are NOT deleted. You can reconnect anytime.',
+        'btn-danger', 'Disconnect', async function () {
+            try {
+                var rt = _wfGetDriveRefreshToken();
+                if (rt) { try { await fetch(_wfApiBase() + '/api/drive-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'revoke', token: rt }) }); } catch (_) {} }
+                _wfClearDriveRefreshToken();
+                gapiToken = null;
+                try { localStorage.removeItem('wf_drive_token'); localStorage.removeItem('wf_drive_ever_granted'); } catch (_) {}
+                try { if (typeof userDocRef !== 'undefined' && userDocRef) userDocRef.update({ driveRefresh: firebase.firestore.FieldValue.delete(), driveBridge: firebase.firestore.FieldValue.delete() }); } catch (_) {}
+                try { notify('Google Drive disconnected.', 'success'); } catch (_) {}
+            } catch (_) { try { notify('Could not fully disconnect. Please try again.', 'error'); } catch (_) {} }
+        });
+}
+
+try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisconnectDrive = _wfDisconnectDrive; window._wfMaybeRunDriveAuth = _wfMaybeRunDriveAuth; } catch (_) {}
+
         function initDriveAuth() {
             if (typeof google === 'undefined') return;
 
@@ -11206,10 +11474,17 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // v7.50.0 — if this instance was opened as .../?drivelink=1 (the browser
             // sign-in bridge), complete Drive auth here and relay the token to the app.
             setTimeout(_wfMaybeRunDriveLink, 3000);
+            // v7.55.0 — durable (refresh-token) Drive auth: complete the browser
+            // code-flow if this is that instance, and silently restore a permanent
+            // connection on the app when a refresh token already exists.
+            setTimeout(_wfMaybeRunDriveAuth, 3000);
+            setTimeout(function(){ try { if (!gapiToken && _wfGetDriveRefreshToken()) _wfEnsureDriveTokenDurable(); } catch(_){} }, 4200);
         });
 
         async function requestDrivePermission(action) {
             window.pendingDriveAction = action;
+            // v7.55.0 — try the durable refresh-token connection first (no cookies, no UI).
+            try { if (!gapiToken) await _wfEnsureDriveTokenDurable(); } catch (_) {}
             // 1. Reuse a valid cached/captured token — NO login at all.
             if (gapiToken) {
                 if (action === 'backup') {
@@ -11591,6 +11866,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         async function executeDriveBackup() {
+            if (!gapiToken) { try { await _wfEnsureDriveTokenDurable(); } catch (_) {} }
             if (!gapiToken) return false;
             // (silent during auto-backups; manual flow shows its own toast)
 
@@ -12246,8 +12522,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // the GIS callback re-invokes this function once the token lands.
             if (!gapiToken) {
                 sel.innerHTML = '<option value="">Connecting to Google Drive…</option>';
-                _ensureDriveTokenSilent();
-                return;
+                try { await _wfEnsureDriveTokenDurable(); } catch (_) {}
+                if (!gapiToken) { _ensureDriveTokenSilent(); return; }
             }
             sel.innerHTML = '<option>Searching Drive…</option>';
 
@@ -13701,6 +13977,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                                     // helper self-guards on device id, expiry and existing token, and
                                                     // consumes (deletes) the one-time bridge field after adopting.
                                                     try { if (cloudData && cloudData.driveBridge) _wfAdoptDriveBridge(cloudData.driveBridge); } catch (_) {}
+                                                    try { if (cloudData && cloudData.driveRefresh) { if (_wfAdoptDriveRefresh(cloudData.driveRefresh) && !gapiToken) _wfEnsureDriveTokenDurable(); } } catch (_) {}
                                                     const msSinceLastWrite = Date.now() - _lastLocalWriteTs;
                                                     const _isOwnDevice = cloudData._writeDeviceId === _getDeviceId();
                                                     const isOwnEcho = _isOwnDevice && msSinceLastWrite < 3000;
@@ -20643,8 +20920,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="requestDrivePermission('restore'); openModal('mdRestoreCloud');">Restore Vault</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Drive won't connect in the installed app?</div><div class="setting-desc">Google blocks its sign-in cookies inside installed apps. Finish sign-in once in your browser with the same Google account and your app connects automatically — no cookies needed.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="_wfShowDriveBrowserBridge()">Connect via browser</button>
+                <div class="setting-info"><div class="setting-label">Drive won't connect in the installed app?</div><div class="setting-desc">Google blocks its sign-in cookies inside installed apps. Finish a <b>one-time</b> sign-in in your browser with the same Google account and your app then <b>stays connected permanently</b> — no cookies, no repeat sign-ins.</div></div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-primary btn-sm" onclick="_wfStartDriveDurableAuth()">Connect (stays connected)</button>
+                    <button class="btn btn-secondary btn-sm" onclick="_wfDisconnectDrive()">Disconnect</button>
+                </div>
             </div>
 
             <div style="font-size:12px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 8px;">Danger Zone</div>
@@ -20939,8 +21219,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.54.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.54.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.55.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.55.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
