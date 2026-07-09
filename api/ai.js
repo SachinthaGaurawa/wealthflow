@@ -456,17 +456,20 @@ export default async function handler(req, res) {
                 { k: 'destination', w: 2, norm: v => (v || '').toString().toLowerCase().trim() || null }
             ];
             const majority = {};
+            const agreement = {};
             CFIELDS.forEach(f => {
                 const t = {};
+                let total = 0;
                 parsed.forEach(({ j }) => {
                     const val = f.norm(j ? j[f.k] : null);
                     if (val === null) return;              // skip blanks — they can't win a field
+                    total++;
                     const kk = JSON.stringify(val);
                     t[kk] = (t[kk] || 0) + 1;
                 });
                 let bestVal, bestN = 0;
                 Object.entries(t).forEach(([kk, n]) => { if (n > bestN) { bestN = n; bestVal = kk; } });
-                if (bestVal !== undefined) majority[f.k] = JSON.parse(bestVal);
+                if (bestVal !== undefined) { majority[f.k] = JSON.parse(bestVal); agreement[f.k] = { votes: bestN, of: total, ratio: total ? Math.round((bestN / total) * 1000) / 1000 : 0 }; }
             });
             // Score every parsed reply by weighted agreement with the field-wise
             // majority; the reply matching the most consensus fields wins. Falls
@@ -483,7 +486,11 @@ export default async function handler(req, res) {
             best = best2 || parsed[0].r;
             // expose the fused field-wise majority so downstream can trust it even
             // if no single engine matched every field.
-            try { best._consensusFields = majority; } catch (_) {}
+            // overall consensus confidence = weighted mean of per-field agreement
+            let _wsum = 0, _csum = 0;
+            CFIELDS.forEach(f => { const a = agreement[f.k]; if (a && a.of > 0) { _csum += f.w * a.ratio; _wsum += f.w; } });
+            const _conf = _wsum ? Math.round((_csum / _wsum) * 1000) / 1000 : 0;
+            try { best._consensusFields = majority; best._consensusAgreement = agreement; best._consensusConfidence = _conf; } catch (_) {}
         } else {
             best = good.sort((a, b) => b.reply.length - a.reply.length)[0];
         }
@@ -502,6 +509,9 @@ export default async function handler(req, res) {
         mode: 'consensus',
         consensusOf: good.length,
         agreement: good.map(r => r.name),
+        consensusFields: best._consensusFields || null,
+        consensusConfidence: (best._consensusConfidence != null ? best._consensusConfidence : null),
+        fieldAgreement: best._consensusAgreement || null,
         latencyMs: best.ms
     });
 }
