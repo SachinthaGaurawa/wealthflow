@@ -39,6 +39,8 @@
         },
         // Durable user facts (self-stated)
         facts: [],
+        // v7.56.0 — learned vendor -> {category,type,destination} model (OCR verification)
+        vendorModel: {},
         // Counters
         trained: 0,
         feedback: { up: 0, down: 0 },
@@ -225,12 +227,186 @@
 
     load();
 
+    /* ══════════════════════════════════════════════════════════════════════
+     *  v7.56.0 — OCR EXTRACTION VERIFICATION (on-device)
+     *  ----------------------------------------------------------------------
+     *  Verifies what the AI + consensus extracted from a receipt / statement:
+     *    • AMOUNT must actually appear in the OCR text / numericTokens, and was
+     *      not read at low confidence (uses the confidence vision.js now emits).
+     *    • VENDOR is soft-flagged when the whole scan was low-confidence.
+     *    • CATEGORY / TYPE / DESTINATION are checked against a model this device
+     *      LEARNED from the user's own confirmed transactions — it fills blanks
+     *      and flags/repairs misclassifications the way the user actually files.
+     *  A tiny TensorFlow.js classifier is used as a second opinion WHEN tf.js is
+     *  already loaded in the app; otherwise the frequency model is the (always-
+     *  on) engine, so this adds no dependency and can never break the scan.
+     * ════════════════════════════════════════════════════════════════════════ */
+    function _vkey(v) { return String(v == null ? '' : v).toLowerCase().replace(/[^a-z0-9\u0d80-\u0dff\u0b80-\u0bff]+/g, ' ').trim().slice(0, 40); }
+
+    function learnTransaction(txn) {
+        try {
+            if (!txn) return;
+            var vk = _vkey(txn.vendor || txn.merchant || txn.name || txn.description);
+            if (!vk) return;
+            if (!model.vendorModel) model.vendorModel = {};
+            var e = model.vendorModel[vk] || { category: {}, type: {}, destination: {}, n: 0 };
+            ['category', 'type', 'destination'].forEach(function (fld) {
+                var val = _vkey(txn[fld]);
+                if (val) e[fld][val] = (e[fld][val] || 0) + 1;
+            });
+            e.n++;
+            model.vendorModel[vk] = e;
+            var keys = Object.keys(model.vendorModel);
+            if (keys.length > 1200) { keys.sort(function (a, b) { return (model.vendorModel[a].n || 0) - (model.vendorModel[b].n || 0); }); delete model.vendorModel[keys[0]]; }
+            save();
+        } catch (_) {}
+    }
+
+    function _topOf(map) {
+        var best = null, bestN = 0, total = 0;
+        for (var k in map) { total += map[k]; if (map[k] > bestN) { bestN = map[k]; best = k; } }
+        if (best == null) return null;
+        return { value: best, confidence: total ? (bestN / total) : 0, n: total };
+    }
+
+    function predictField(vendor, field) {
+        try {
+            var vk = _vkey(vendor);
+            if (!vk || !model.vendorModel || !model.vendorModel[vk]) return null;
+            var e = model.vendorModel[vk], m = e[field];
+            if (!m) return null;
+            var t = _topOf(m);
+            if (!t) return null;
+            t.samples = e.n;
+            return t;
+        } catch (_) { return null; }
+    }
+
+    function _numAppearsInText(amount, rawText, ocrMeta) {
+        if (amount == null || isNaN(amount)) return { present: false, confidence: null };
+        var a = Math.round(Number(amount) * 100) / 100;
+        if (ocrMeta && Array.isArray(ocrMeta.numericTokens)) {
+            for (var i = 0; i < ocrMeta.numericTokens.length; i++) {
+                var t = ocrMeta.numericTokens[i];
+                if (t && typeof t.value === 'number' && Math.abs(t.value - a) < 0.005) return { present: true, confidence: (t.confidence == null ? null : t.confidence) };
+            }
+        }
+        var txt = String(rawText || '');
+        if (!txt) return { present: false, confidence: null };
+        var variants = {};
+        variants[String(a)] = 1; variants[String(Math.round(a))] = 1; variants[a.toFixed(2)] = 1;
+        try { variants[a.toLocaleString('en-US')] = 1; variants[Math.round(a).toLocaleString('en-US')] = 1; variants[a.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })] = 1; } catch (_) {}
+        for (var v in variants) { if (v && txt.indexOf(v) !== -1) return { present: true, confidence: null }; }
+        var digits = String(Math.round(a));
+        var stripped = txt.replace(/[,\s]/g, '');
+        if (digits.length >= 2 && stripped.indexOf(digits) !== -1) return { present: true, confidence: null };
+        return { present: false, confidence: null };
+    }
+
+    // ---- optional TensorFlow.js second opinion (guarded; no-op without tf) ----
+    var _tfState = { model: null, labels: null, trainedN: 0 };
+    function _tfReady() { try { return !!(typeof window !== 'undefined' && window.tf && window.tf.sequential && window.tf.tensor2d); } catch (_) { return false; } }
+    var _TF_DIM = 48;
+    function _tfFeat(vendor) {
+        var vec = new Array(_TF_DIM).fill(0);
+        var toks = _vkey(vendor).split(/\s+/).filter(Boolean);
+        toks.forEach(function (tok) {
+            for (var i = 0; i < tok.length - 1; i++) {
+                var bg = tok.charCodeAt(i) * 31 + tok.charCodeAt(i + 1);
+                vec[Math.abs(bg) % _TF_DIM] += 1;
+            }
+            var h = 0; for (var j = 0; j < tok.length; j++) h = (h * 131 + tok.charCodeAt(j)) | 0;
+            vec[Math.abs(h) % _TF_DIM] += 1;
+        });
+        var mx = Math.max.apply(null, vec) || 1;
+        return vec.map(function (x) { return x / mx; });
+    }
+    function trainVerifier() {                    // call after data loads; safe if tf absent
+        try {
+            if (!_tfReady() || !model.vendorModel) return false;
+            var rows = [], labelSet = {};
+            Object.keys(model.vendorModel).forEach(function (vk) {
+                var e = model.vendorModel[vk]; var top = _topOf(e.category || {});
+                if (top && top.n >= 2) { rows.push({ vk: vk, label: top.value }); labelSet[top.value] = 1; }
+            });
+            var labels = Object.keys(labelSet);
+            if (rows.length < 8 || labels.length < 2) return false;
+            var tf = window.tf;
+            var xs = tf.tensor2d(rows.map(function (r) { return _tfFeat(r.vk); }));
+            var ys = tf.tensor2d(rows.map(function (r) { var o = new Array(labels.length).fill(0); o[labels.indexOf(r.label)] = 1; return o; }));
+            var net = tf.sequential();
+            net.add(tf.layers.dense({ inputShape: [_TF_DIM], units: 24, activation: 'relu' }));
+            net.add(tf.layers.dense({ units: labels.length, activation: 'softmax' }));
+            net.compile({ optimizer: tf.train.adam(0.01), loss: 'categoricalCrossentropy' });
+            net.fit(xs, ys, { epochs: 24, batchSize: 16, verbose: 0 }).then(function () {
+                _tfState.model = net; _tfState.labels = labels; _tfState.trainedN = rows.length;
+                try { xs.dispose(); ys.dispose(); } catch (_) {}
+            }).catch(function () { try { xs.dispose(); ys.dispose(); } catch (_) {} });
+            return true;
+        } catch (_) { return false; }
+    }
+    function _tfPredictCategory(vendor) {
+        try {
+            if (!_tfReady() || !_tfState.model || !_tfState.labels) return null;
+            var tf = window.tf;
+            var out = tf.tidy(function () { return _tfState.model.predict(tf.tensor2d([_tfFeat(vendor)])).dataSync(); });
+            var bi = 0; for (var i = 1; i < out.length; i++) if (out[i] > out[bi]) bi = i;
+            return { value: _tfState.labels[bi], confidence: out[bi] };
+        } catch (_) { return null; }
+    }
+
+    function verifyExtraction(record, rawText, ocrMeta) {
+        record = record || {}; ocrMeta = ocrMeta || {};
+        var verdicts = [], out = {};
+        for (var k in record) out[k] = record[k];
+        var ocrConf = (typeof ocrMeta.confidence === 'number') ? ocrMeta.confidence : null;
+
+        if (record.amount != null && record.amount !== '') {
+            var amt = parseFloat(String(record.amount).replace(/[^0-9.\-]/g, ''));
+            var chk = _numAppearsInText(amt, rawText, ocrMeta);
+            if (isNaN(amt) || amt <= 0) verdicts.push({ field: 'amount', aiValue: record.amount, action: 'flag', confidence: 0.2, reason: 'Amount is missing or not a positive number.' });
+            else if (!chk.present) verdicts.push({ field: 'amount', aiValue: amt, action: 'flag', confidence: 0.35, reason: 'Extracted amount was not found in the scanned text — please confirm.' });
+            else if (chk.confidence != null && chk.confidence < 0.6) verdicts.push({ field: 'amount', aiValue: amt, action: 'flag', confidence: chk.confidence, reason: 'The amount was read with low OCR confidence — please confirm.' });
+            else verdicts.push({ field: 'amount', aiValue: amt, action: 'accept', confidence: Math.max(0.8, chk.confidence || 0.85), reason: 'Amount verified in the scanned text.' });
+        }
+
+        if (record.vendor) {
+            if (ocrConf != null && ocrConf < 0.55) verdicts.push({ field: 'vendor', aiValue: record.vendor, action: 'flag', confidence: ocrConf, reason: 'The scan was low-confidence overall — check the merchant name.' });
+            else verdicts.push({ field: 'vendor', aiValue: record.vendor, action: 'accept', confidence: ocrConf == null ? 0.75 : Math.max(0.7, ocrConf), reason: 'Vendor accepted.' });
+        }
+
+        ['category', 'type', 'destination'].forEach(function (fld) {
+            var aiVal = record[fld], pred = predictField(record.vendor, fld);
+            var tfp = (fld === 'category') ? _tfPredictCategory(record.vendor) : null;
+            if (!pred || pred.samples < 2) {
+                if (tfp && tfp.confidence >= 0.85 && !aiVal) { out[fld] = tfp.value; verdicts.push({ field: fld, aiValue: '', suggestedValue: tfp.value, action: 'correct', confidence: tfp.confidence, reason: 'Filled by the on-device model (TensorFlow).' }); }
+                else if (aiVal) verdicts.push({ field: fld, aiValue: aiVal, action: 'accept', confidence: 0.6, reason: 'No learned history yet — kept AI value.' });
+                return;
+            }
+            var aiK = _vkey(aiVal);
+            if (!aiVal) { out[fld] = pred.value; verdicts.push({ field: fld, aiValue: '', suggestedValue: pred.value, action: 'correct', confidence: pred.confidence, reason: 'Filled from what you usually pick for this merchant.' }); }
+            else if (aiK === pred.value) { var boost = (tfp && tfp.value === pred.value) ? 0.05 : 0; verdicts.push({ field: fld, aiValue: aiVal, action: 'accept', confidence: Math.min(1, 0.7 + pred.confidence * 0.3 + boost), reason: 'Matches your history for this merchant.' }); }
+            else if (pred.confidence >= 0.8 && pred.samples >= 4) { out['_' + fld + 'Suggestion'] = pred.value; verdicts.push({ field: fld, aiValue: aiVal, suggestedValue: pred.value, action: 'flag', confidence: pred.confidence, reason: 'You usually file this merchant as "' + pred.value + '".' }); }
+            else verdicts.push({ field: fld, aiValue: aiVal, action: 'accept', confidence: 0.6, reason: 'Kept AI value (history not decisive).' });
+        });
+
+        var acc = 0, flg = 0;
+        verdicts.forEach(function (v) { if (v.action === 'accept') acc++; else if (v.action === 'flag') flg++; });
+        var score = verdicts.length ? Math.max(0, Math.min(1, (acc + 0.5 * (verdicts.length - acc - flg)) / verdicts.length)) : 0.5;
+        return { verified: out, verdicts: verdicts, score: score, needsReview: flg > 0 };
+    }
+
     window.WealthFlowML = {
         version: '1.0',
         observe: observe,
         recordFeedback: recordFeedback,
         predictIntent: predictIntent,
         personalizationBlock: personalizationBlock,
+        learnTransaction: learnTransaction,
+        predictField: predictField,
+        verifyExtraction: verifyExtraction,
+        trainVerifier: trainVerifier,
+        verifyStats: function () { return { vendors: (model.vendorModel ? Object.keys(model.vendorModel).length : 0), tfTrained: _tfState.trainedN }; },
         stats: function () {
             return {
                 trained: model.trained,
@@ -240,7 +416,7 @@
             };
         },
         reset: function () {
-            model = { wordIntent: {}, intentTotals: {}, prefs: { likedTone: {}, likedLength: 'medium', avgLikedWords: 120, topics: {}, language: null }, facts: [], trained: 0, feedback: { up: 0, down: 0 }, updatedAt: 0 };
+            model = { wordIntent: {}, intentTotals: {}, prefs: { likedTone: {}, likedLength: 'medium', avgLikedWords: 120, topics: {}, language: null }, facts: [], vendorModel: {}, trained: 0, feedback: { up: 0, down: 0 }, updatedAt: 0 };
             save();
         }
     };

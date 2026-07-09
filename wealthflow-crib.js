@@ -31,7 +31,7 @@
  *  ===========================================================================*/
 (function () {
     'use strict';
-    if (window.WFCrib && window.WFCrib.__v && window.WFCrib.__v >= 722) return;
+    if (window.WFCrib && window.WFCrib.__v && window.WFCrib.__v >= 756) return;
 
     var DB = window.DB;
     function _db() { return window.DB || DB; }
@@ -304,11 +304,13 @@
 
     function _analyse(fields, rawText) {
         var langName = _langName();
+        var _mdl = null; try { _mdl = _creditModel(fields, _finCtx()); } catch (_) {}
+        var _mdlLine = _mdl ? ('\n\nWealthFlow computed credit model (use these grounded numbers, do not contradict them): ' + JSON.stringify({ computedScore: _mdl.computedScore, risk: _mdl.riskCategory, utilisation: _mdl.utilisation, dti: _mdl.dti, factors: _mdl.factors.map(function (x) { return { k: x.key, pct: Math.round(x.score * 100) }; }), topFixes: _mdl.whatIf.slice(0, 3), flags: _mdl.flags.map(function (x) { return x.text; }) })) : '';
         var prompt =
             'You are WealthFlow AI \u2014 the user\'s warm, brilliant best friend who is also a top Sri Lankan credit expert. ' +
             'Talk like a real person texting a friend: natural, caring, encouraging, never robotic, never corporate. ' +
             'You are reviewing their CRIB credit report.\n\n' +
-            'Extracted data (JSON):\n' + JSON.stringify(fields) + _financialCtxLine() + '\n\n' +
+            'Extracted data (JSON):\n' + JSON.stringify(fields) + _financialCtxLine() + _mdlLine + '\n\n' +
             'Write TWO clearly separated sections, and nothing else:\n\n' +
             '[ANALYSIS]\n' +
             'A warm, deep, easy-to-understand read of their CRIB report \u2014 what their score and category really mean, what their facilities/defaults/inquiries say, and how it connects to their real money situation. Be specific and honest but kind. 2-4 short paragraphs.\n\n' +
@@ -350,6 +352,127 @@
         return _aiText(prompt).then(function (t) { return String(t || '').trim(); }).catch(function () { return ''; });
     }
 
+    /* ── v7.56.0 transparent, explainable credit model ───────────────────────────
+     *  Computes a CRIB-style score (250–900) from the parsed facility data plus
+     *  the user's real cash flow — with a full factor breakdown, utilisation/DTI
+     *  ratios, risk flags and what-if projections. Pure + deterministic, so the
+     *  WealthFlow score stays meaningful even when a report has no printed number.
+     */
+    function _cnum(v) { var n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; }
+    function _finCtx() {
+        try {
+            if (typeof window.buildFinancialContext === 'function') {
+                var c = window.buildFinancialContext();
+                return { income: _cnum(c.totalMonthlyIncome), expenses: _cnum(c.thisMonthExpenses),
+                         loanPayments: _cnum(c.monthlyLoanPayments), netCashFlow: _cnum(c.netMonthlyCashFlow),
+                         balance: _cnum(c.balanceOnHand), activeLoans: _cnum(c.activeLoans) };
+            }
+        } catch (_) {}
+        return {};
+    }
+    function _riskColor(code) { code = String(code || '').toUpperCase(); if (code === 'AA' || code === 'A') return 'var(--green,#10b981)'; if (code === 'B') return '#22c55e'; if (code === 'C') return 'var(--accent,#f5a623)'; if (code === 'D') return '#e0a82e'; return 'var(--red,#ef4444)'; }
+
+    function _creditModel(fields, fin) {
+        fields = fields || {}; fin = fin || {};
+        var facilities = Array.isArray(fields.facilities) ? fields.facilities : [];
+        var outstanding = _cnum(fields.totalOutstanding), overdue = _cnum(fields.overdueAmount);
+        var defaults = _cnum(fields.defaults), inquiries = _cnum(fields.inquiriesLast6Months);
+        var openF = _cnum(fields.openFacilities), closedF = _cnum(fields.closedFacilities);
+        var sumAmount = 0, sumArrears = 0, arrearsFacilities = 0, types = {};
+        facilities.forEach(function (ff) {
+            var amt = _cnum(ff && ff.amount) || 0; sumAmount += amt;
+            var arr = _cnum(ff && ff.arrears) || 0; sumArrears += arr;
+            var st = String(ff && ff.status || '').toLowerCase();
+            if (arr > 0 || /(overdue|arrear|default|npl|npa|writ|legal|settle|delinq|past due|\bbad\b)/.test(st)) arrearsFacilities++;
+            var ty = String(ff && ff.type || '').toLowerCase().trim(); if (ty) types[ty] = 1;
+        });
+        if (defaults == null) defaults = arrearsFacilities ? arrearsFacilities : null;
+        if (overdue == null && sumArrears > 0) overdue = sumArrears;
+        if (outstanding == null && sumAmount > 0) outstanding = sumAmount;
+        if (openF == null && facilities.length) openF = facilities.length;
+        var mixCount = Object.keys(types).length;
+        var facCount = (openF != null ? openF : facilities.length) || 0;
+        var dcount = defaults || 0;
+
+        var arrearsRatio = (overdue != null && outstanding) ? Math.max(0, Math.min(1, overdue / outstanding)) : (overdue > 0 ? 0.5 : 0);
+        var payHist = 1;
+        payHist -= Math.min(0.7, dcount * 0.22);
+        payHist -= arrearsRatio * 0.55;
+        if (facCount) payHist -= Math.min(0.25, (arrearsFacilities / Math.max(1, facCount)) * 0.4);
+        payHist = Math.max(0, Math.min(1, payHist));
+
+        var util = (outstanding != null && sumAmount > 0) ? Math.max(0, outstanding / sumAmount) : null;
+        var utilScore = util == null ? 0.6 : util <= 0.30 ? 1 : util <= 0.50 ? 0.82 : util <= 0.75 ? 0.55 : util <= 1.0 ? 0.3 : 0.12;
+
+        var mixScore = mixCount >= 3 ? 1 : mixCount === 2 ? 0.8 : mixCount === 1 ? 0.55 : 0.5;
+        if (closedF != null && closedF > 0) mixScore = Math.min(1, mixScore + 0.1);
+
+        var inq = inquiries || 0;
+        var inqScore = inquiries == null ? 0.7 : inq === 0 ? 1 : inq <= 1 ? 0.9 : inq <= 3 ? 0.65 : inq <= 5 ? 0.4 : 0.2;
+
+        var expScore = !facCount ? 0.6 : facCount <= 3 ? 1 : facCount <= 6 ? 0.8 : facCount <= 10 ? 0.55 : 0.35;
+
+        var factors = [
+            { key: 'payment', label: 'Payment history', weight: 0.35, score: payHist, detail: (dcount ? (dcount + ' default' + (dcount > 1 ? 's' : '')) : 'No defaults') + (overdue ? (' \u00B7 Rs ' + fmtNum(overdue) + ' overdue') : '') },
+            { key: 'utilisation', label: 'Credit utilisation', weight: 0.30, score: utilScore, detail: (util != null ? (Math.round(util * 100) + '% of facility limits used') : 'Utilisation not stated') },
+            { key: 'mix', label: 'Credit mix & depth', weight: 0.15, score: mixScore, detail: (mixCount ? (mixCount + ' facility type' + (mixCount > 1 ? 's' : '')) : 'Mix unclear') },
+            { key: 'inquiries', label: 'Recent inquiries', weight: 0.10, score: inqScore, detail: (inquiries != null ? (inq + ' in last 6 months') : 'Inquiries not stated') },
+            { key: 'exposure', label: 'Open exposure', weight: 0.10, score: expScore, detail: (facCount ? (facCount + ' open facilit' + (facCount > 1 ? 'ies' : 'y')) : 'Facilities not stated') }
+        ];
+        var overall = factors.reduce(function (a, ff) { return a + ff.weight * ff.score; }, 0);
+        var computedScore = Math.max(250, Math.min(900, Math.round(250 + overall * 650)));
+        function _cat(sc) { if (sc >= 800) return { code: 'AA', label: 'Very low risk' }; if (sc >= 740) return { code: 'A', label: 'Low risk' }; if (sc >= 660) return { code: 'B', label: 'Moderate risk' }; if (sc >= 580) return { code: 'C', label: 'Elevated risk' }; if (sc >= 500) return { code: 'D', label: 'High risk' }; return { code: 'HH', label: 'Very high risk' }; }
+        var riskCategory = _cat(computedScore);
+        var dti = (fin.loanPayments != null && fin.income) ? Math.max(0, fin.loanPayments / fin.income) : null;
+
+        var flags = [];
+        if (dcount >= 1) flags.push({ sev: 'high', text: dcount + ' facility default' + (dcount > 1 ? 's' : '') + ' on record \u2014 settle and get a paid-up letter.' });
+        if (arrearsFacilities >= 1) flags.push({ sev: 'high', text: arrearsFacilities + ' facilit' + (arrearsFacilities > 1 ? 'ies are' : 'y is') + ' in arrears \u2014 clear the oldest first.' });
+        if (util != null && util > 0.75) flags.push({ sev: 'high', text: 'Utilisation is ' + Math.round(util * 100) + '% \u2014 lenders read this as stretched. Aim below 30%.' });
+        else if (util != null && util > 0.50) flags.push({ sev: 'med', text: 'Utilisation is ' + Math.round(util * 100) + '% \u2014 bring it under 30% to lift your score.' });
+        if (inquiries != null && inq >= 4) flags.push({ sev: 'med', text: inq + ' hard inquiries in 6 months \u2014 pause new applications for a while.' });
+        if (dti != null && dti > 0.40) flags.push({ sev: 'high', text: 'Loan repayments are ' + Math.round(dti * 100) + '% of your income \u2014 above the 40% comfort line.' });
+        else if (dti != null && dti > 0.30) flags.push({ sev: 'med', text: 'Loan repayments are ' + Math.round(dti * 100) + '% of your income \u2014 keep an eye on this.' });
+        if (!flags.length && computedScore >= 740) flags.push({ sev: 'good', text: 'Clean profile \u2014 no defaults, healthy utilisation. Keep it up.' });
+
+        var whatIf = [];
+        function _rescore(mut) { var f2 = JSON.parse(JSON.stringify(fields)); mut(f2); return _creditModel(f2, fin).computedScore; }
+        if (overdue && overdue > 0) { var d1 = _rescore(function (x) { x.overdueAmount = 0; (x.facilities || []).forEach(function (y) { y.arrears = 0; }); x.defaults = 0; }); if (d1 > computedScore) whatIf.push({ action: 'Clear all arrears (Rs ' + fmtNum(overdue) + ')', delta: d1 - computedScore }); }
+        if (util != null && util > 0.30 && sumAmount > 0) { var tgt = Math.round(sumAmount * 0.30); var d2 = _rescore(function (x) { x.totalOutstanding = tgt; }); if (d2 > computedScore) whatIf.push({ action: 'Cut utilisation to 30% (owe \u2264 Rs ' + fmtNum(tgt) + ')', delta: d2 - computedScore }); }
+        if (inquiries != null && inq >= 2) { var d3 = _rescore(function (x) { x.inquiriesLast6Months = 0; }); if (d3 > computedScore) whatIf.push({ action: 'No new hard inquiries for 6 months', delta: d3 - computedScore }); }
+        whatIf.sort(function (a, b) { return b.delta - a.delta; });
+
+        var known = [outstanding, overdue, defaults, inquiries, facilities.length ? 1 : null].filter(function (v) { return v != null; }).length;
+        var confidence = Math.max(0.2, Math.min(1, known / 5));
+        return { computedScore: computedScore, factors: factors, overall: overall, riskCategory: riskCategory,
+                 utilisation: util, arrearsRatio: arrearsRatio, dti: dti, flags: flags, whatIf: whatIf, confidence: confidence,
+                 derived: { outstanding: outstanding, overdue: overdue, defaults: dcount, inquiries: (inquiries == null ? null : inq), facilities: facCount, mixCount: mixCount, arrearsFacilities: arrearsFacilities } };
+    }
+
+    function _modelHTML(m, focus) {
+        if (!m) return '';
+        var card = 'background:var(--card,#0f1626);border:1px solid var(--border2,#243049);border-radius:16px;padding:18px;margin-bottom:16px;';
+        var rc = m.riskCategory || {}; var showComputed = !!(focus && focus.score == null);
+        var h = '<div style="' + card + '">';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">';
+        h += '<div style="font-weight:700;"><i data-wfi="shield"></i> Credit health model' + (showComputed ? ' <span style="font-size:11px;color:var(--text3,#8a97ad);font-weight:600;">(computed)</span>' : '') + '</div>';
+        h += '<div style="text-align:right;"><span style="font-size:22px;font-weight:800;color:' + _riskColor(rc.code) + ';">' + m.computedScore + '</span><span style="font-size:12px;color:var(--text3,#8a97ad);"> / 900 \u00B7 ' + _esc(rc.code || '') + ' ' + _esc(rc.label || '') + '</span></div></div>';
+        m.factors.forEach(function (ff) {
+            var pc = Math.round(ff.score * 100); var col = ff.score >= 0.75 ? 'var(--green,#10b981)' : ff.score >= 0.5 ? 'var(--accent,#f5a623)' : 'var(--red,#ef4444)';
+            h += '<div style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px;"><span style="color:var(--text,#e8edf5);font-weight:600;">' + _esc(ff.label) + ' <span style="color:var(--text3,#8a97ad);font-weight:500;">' + Math.round(ff.weight * 100) + '%</span></span><span style="color:' + col + ';font-weight:700;">' + pc + '</span></div>';
+            h += '<div style="height:7px;background:rgba(255,255,255,0.07);border-radius:6px;overflow:hidden;"><div style="height:100%;width:' + pc + '%;background:' + col + ';border-radius:6px;"></div></div>';
+            h += '<div style="font-size:11.5px;color:var(--text3,#8a97ad);margin-top:3px;">' + _esc(ff.detail) + '</div></div>';
+        });
+        var chips = [];
+        if (m.utilisation != null) chips.push(['Utilisation', Math.round(m.utilisation * 100) + '%', m.utilisation <= 0.30 ? 'good' : m.utilisation <= 0.5 ? 'med' : 'bad']);
+        if (m.dti != null) chips.push(['Debt-to-income', Math.round(m.dti * 100) + '%', m.dti <= 0.30 ? 'good' : m.dti <= 0.4 ? 'med' : 'bad']);
+        if (m.arrearsRatio) chips.push(['Overdue ratio', Math.round(m.arrearsRatio * 100) + '%', m.arrearsRatio <= 0.05 ? 'good' : m.arrearsRatio <= 0.2 ? 'med' : 'bad']);
+        if (chips.length) { h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 4px;">'; chips.forEach(function (c) { var col = c[2] === 'good' ? 'var(--green,#10b981)' : c[2] === 'med' ? 'var(--accent,#f5a623)' : 'var(--red,#ef4444)'; h += '<div style="background:rgba(255,255,255,0.04);border:1px solid ' + col + ';border-radius:10px;padding:6px 10px;"><span style="font-size:10.5px;color:var(--text3,#8a97ad);text-transform:uppercase;letter-spacing:.4px;">' + c[0] + '</span><div style="font-size:15px;font-weight:800;color:' + col + ';">' + c[1] + '</div></div>'; }); h += '</div>'; }
+        if (m.flags && m.flags.length) { h += '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">'; m.flags.slice(0, 5).forEach(function (fl) { var col = fl.sev === 'high' ? 'var(--red,#ef4444)' : fl.sev === 'med' ? 'var(--accent,#f5a623)' : 'var(--green,#10b981)'; h += '<div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--text,#e8edf5);"><span style="color:' + col + ';font-weight:800;">\u2022</span><span>' + _esc(fl.text) + '</span></div>'; }); h += '</div>'; }
+        if (m.whatIf && m.whatIf.length) { h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border2,#243049);"><div style="font-size:12px;color:var(--text3,#8a97ad);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">What could lift your score</div>'; m.whatIf.slice(0, 3).forEach(function (w) { h += '<div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;margin-bottom:4px;"><span style="color:var(--text,#e8edf5);">' + _esc(w.action) + '</span><span style="color:var(--green,#10b981);font-weight:800;white-space:nowrap;">+' + w.delta + ' pts</span></div>'; }); h += '<div style="font-size:11px;color:var(--text3,#8a97ad);margin-top:4px;">Estimated by WealthFlow\u2019s model \u2014 real CRIB movement varies.</div></div>'; }
+        h += '</div>'; return h;
+    }
+
     /* ── score factor + bands ─────────────────────────────────────────────────── */
     function scoreFactor() {
         var reps = list();
@@ -360,6 +483,10 @@
             var lo = 250, hi = max || 900;
             return Math.max(0, Math.min(1, (s - lo) / (hi - lo)));
         }
+        try {
+            var _m = (latest.model && latest.model.computedScore != null) ? latest.model : _creditModel(latest.fields || {}, _finCtx());
+            if (_m && _m.computedScore != null) return Math.max(0, Math.min(1, (_m.computedScore - 250) / 650));
+        } catch (_) {}
         var cat = String(latest.category || '').toUpperCase();
         var catMap = { 'AA': 1, 'A': 0.85, 'B': 0.65, 'C': 0.45, 'D': 0.3, 'HH': 0.15 };
         if (catMap[cat] != null) return catMap[cat];
@@ -463,6 +590,7 @@
                     category: fields.category || '',
                     fields: fields,
                     fileName: file.name || 'CRIB report',
+                    model: (function(){ try { return _creditModel(fields, _finCtx()); } catch (_) { return null; } })(),
                     rawTextSample: String(res.rawText || '').slice(0, 600)
                 };
                 _saveReport(rep);
@@ -595,6 +723,7 @@
         var an = getAnalysis(focus.id);
         var cmp = compare();
         var band = _band(focus.score);
+        var _fmodel = (focus.model && focus.model.computedScore != null) ? focus.model : (function(){ try { return _creditModel(focus.fields || {}, _finCtx()); } catch (_) { return null; } })();
         var card = 'background:var(--card,#0f1626);border:1px solid var(--border2,#243049);border-radius:16px;padding:18px;margin-bottom:16px;';
         var html = '';
 
@@ -617,6 +746,8 @@
             html += '<div style="text-align:right;min-width:88px;"><div style="font-size:12px;color:var(--text3,#8a97ad);">vs previous</div><div style="font-size:24px;font-weight:800;color:' + (up ? 'var(--green,#10b981)' : 'var(--red,#ef4444)') + ';">' + (up ? '\u25B2 +' : '\u25BC ') + cmp.deltas.score + '</div></div>';
         }
         html += '</div></div>';
+
+        html += _modelHTML(_fmodel, focus);
 
         /* AI trend narrative */
         if (an && an.compare) {
@@ -774,13 +905,13 @@
 
     /* ── public API ───────────────────────────────────────────────────────────── */
     window.WFCrib = {
-        __v: 722,
+        __v: 756,
         open: function () { _openCrib(); },
         render: _renderCribUI,
         handleUpload: handleUpload,
         list: list, get: get, getAnalysis: getAnalysis,
         deleteReport: deleteReport,
-        compare: compare, scoreFactor: scoreFactor,
+        compare: compare, scoreFactor: scoreFactor, creditModel: _creditModel,
         contextForAdvisor: contextForAdvisor,
         reanalyse: reanalyse,
         fingerprint: fingerprint, textFingerprint: textFingerprint,
