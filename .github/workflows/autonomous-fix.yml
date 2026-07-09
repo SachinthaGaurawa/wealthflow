@@ -1,13 +1,24 @@
 name: Autonomous fix agent (free)
 
-# Phase 2: on a schedule, the agent reads the brain's proposal, drafts a code fix
-# with the FREE Gemini tier, and opens a Pull Request for review. Your CI
-# (wealthflow-ci.yml) tests it; you approve before it ships. 100% free.
+# =============================================================================
+# On a schedule the agent drafts a fix for ONE non-sensitive module, then this
+# workflow VALIDATES it (syntax + tests) INLINE — so it never depends on the
+# GITHUB_TOKEN-PR trigger quirk that used to leave PR checks unrun.
+#
+#   AUTONOMY_LEVEL (repo variable, Settings → Secrets and variables → Actions):
+#     • "auto"  → a validated, non-sensitive fix is committed to main AND shipped
+#                 as a patch update (release.cjs) — fully hands-off.
+#     • unset / anything else (DEFAULT, safe) → opens a review PR labelled
+#                 'ai-fix' that you merge with one click; the daily release then
+#                 ships it automatically.
+# The agent can NEVER touch index.html, auth, crypto, money, rules, sw.js, deps
+# or the pipeline (enforced inside autonomous-fix-agent.js), in either mode.
+# =============================================================================
 
 on:
   schedule:
-    - cron: '*/30 * * * *'     # every 30 min (GitHub may delay on free tier — fine)
-  workflow_dispatch: {}          # or run it manually anytime
+    - cron: '*/30 * * * *'      # every 30 min (free tier may delay — fine)
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -18,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  draft-fix:
+  fix:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,36 +40,75 @@ jobs:
           node-version: '20'
       - name: Install deps
         run: npm ci || npm install
-      - name: Install firebase-admin (agent dependency)
+      - name: firebase-admin (optional)
+        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
         run: npm install firebase-admin --no-save
 
       - name: Run the fix agent
-        id: agent
         continue-on-error: true
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-        run: |
-          node autonomous-fix-agent.js
-          echo "exit=$?" >> "$GITHUB_OUTPUT"
+        run: node autonomous-fix-agent.js
 
-      - name: Open Pull Request (only if a fix was written)
-        if: steps.agent.outputs.exit == '0' && hashFiles('ai-fix-pr.json') != ''
+      - name: Detect the drafted fix
+        id: check
+        run: |
+          if [ ! -f ai-fix-pr.json ]; then echo "have=no" >> "$GITHUB_OUTPUT"; echo "no fix this run"; exit 0; fi
+          FILE=$(node -e "console.log(require('./ai-fix-pr.json').file)")
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "have=yes" >> "$GITHUB_OUTPUT"
+          echo "drafted fix for: $FILE"
+
+      - name: Validate the fix (syntax + tests)
+        id: validate
+        if: steps.check.outputs.have == 'yes'
+        continue-on-error: true
+        run: |
+          FILE="${{ steps.check.outputs.file }}"
+          node --check "$FILE" || exit 1
+          if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.test?0:1)"; then
+            npm test || exit 1
+          else
+            echo "no test script — skipping tests"
+          fi
+          echo "ok=yes" >> "$GITHUB_OUTPUT"
+          echo "validation passed"
+
+      - name: Land + ship (AUTONOMY_LEVEL=auto, validated)
+        if: steps.check.outputs.have == 'yes' && steps.validate.outputs.ok == 'yes' && vars.AUTONOMY_LEVEL == 'auto'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          TITLE=$(node -e "console.log(require('./ai-fix-pr.json').title)")
+          FILE="${{ steps.check.outputs.file }}"
+          git config user.name  'wealthflow-agent'
+          git config user.email 'agent@users.noreply.github.com'
+          git add "$FILE"
+          git commit -m "$TITLE" -- "$FILE"
+          [ -n "$FIREBASE_SERVICE_ACCOUNT" ] && npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
+          node -e "process.stdout.write(require('./ai-fix-pr.json').title)" > .relnote
+          node release.cjs --patch --push --note "$(cat .relnote)"
+          rm -f .relnote
+
+      - name: Open a review PR (default, or if validation failed)
+        if: steps.check.outputs.have == 'yes' && (vars.AUTONOMY_LEVEL != 'auto' || steps.validate.outputs.ok != 'yes')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TITLE=$(node -e "console.log(require('./ai-fix-pr.json').title)")
-          FILE=$(node -e "console.log(require('./ai-fix-pr.json').file)")
+          FILE="${{ steps.check.outputs.file }}"
           node -e "console.log(require('./ai-fix-pr.json').body)" > pr-body.txt
+          if [ "${{ steps.validate.outputs.ok }}" != "yes" ]; then
+            printf '\n> Automated validation did not pass — please review carefully before merging.\n' >> pr-body.txt
+          fi
           BRANCH="ai-fix/$(date +%s)"
-          git config user.name "wealthflow-agent"
-          git config user.email "agent@users.noreply.github.com"
+          git config user.name  'wealthflow-agent'
+          git config user.email 'agent@users.noreply.github.com'
           git checkout -b "$BRANCH"
-          git add "$FILE"                      # only the fixed file is committed
+          git add "$FILE"
           git commit -m "$TITLE" -- "$FILE"
           git push origin "$BRANCH"
-          # 'ai-fix' label marks it for human review; it is NOT 'auto-safe', so the
-          # auto-merge workflow will not touch it. Create the label if missing.
-          gh label create ai-fix --color FFA500 --description "AI-drafted, needs human review" 2>/dev/null || true
+          gh label create ai-fix --color FFA500 --description "AI-drafted, needs review" 2>/dev/null || true
           gh pr create --title "$TITLE" --body-file pr-body.txt --base main --head "$BRANCH" --label ai-fix

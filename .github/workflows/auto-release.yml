@@ -1,61 +1,124 @@
-# =============================================================================
-# Autonomous scheduled release — runs with NO human.
-# Reads the brain's system/pendingRelease from Firestore; if it says a release
-# is due (urgent security OR monthly), it bumps the version, writes the
-# changelog/manifest, commits and pushes — which auto-deploys on Vercel.
-#
-# HONEST NOTE: this ships code that is ALREADY in the repo (e.g. a security
-# refresh / metadata bump). It cannot invent new feature code by itself — that
-# is written by a human and merged normally. What IS fully automatic: feedback
-# prioritisation, release-note generation, scheduling, version bump, deploy.
-#
-# SETUP (one time):
-#   Repo → Settings → Secrets and variables → Actions → New secret:
-#     FIREBASE_SERVICE_ACCOUNT = <your service-account JSON>
-#   Ensure the repo has write permission for Actions (Settings → Actions →
-#   General → Workflow permissions → Read and write).
-# =============================================================================
 name: Auto Release (WealthFlow)
+
+# =============================================================================
+# Cuts a REAL release with no human required:
+#   • bumps all 7 version locations via release.cjs (version law enforced)
+#   • writes the changelog + version.json notes
+#   • commits & pushes  →  Vercel auto-deploys  →  the in-app update system
+#     announces the new version to users
+# Firestore is OPTIONAL: brain-driven when FIREBASE_SERVICE_ACCOUNT is set,
+# a simple "new commits since the last release" heuristic otherwise.
+# Manual dispatch = one-click "Release now" (with optional explicit version).
+# =============================================================================
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # daily 06:00 UTC — checks if a release is due
-  workflow_dispatch: {}    # allow manual trigger too
+    - cron: '0 6 * * *'          # daily 06:00 UTC — release if due
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit version X.Y.Z (blank = auto-bump)'
+        required: false
+      bump:
+        description: 'Bump kind when no explicit version'
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      urgent:
+        description: 'Security release (forces the update for all users)'
+        type: boolean
+        default: false
+      note:
+        description: "What's-new text (optional)"
+        required: false
 
 permissions:
   contents: write
 
+concurrency:
+  group: wealthflow-release
+  cancel-in-progress: false
+
 jobs:
-  auto-release:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install firebase-admin
-        run: npm i firebase-admin@12 --no-save
-      - name: Decide & release if due
+
+      - name: Configure git
+        run: |
+          git config user.name  'WealthFlow Release Bot'
+          git config user.email 'bot@wealthflow.local'
+
+      # Best-effort: let the brain prioritise feedback + arm system/pendingRelease.
+      # Skips cleanly when firebase-admin / the secret are absent.
+      - name: Arm the release brain (optional)
+        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        continue-on-error: true
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          RELEASE_BRAIN_ENABLED: '1'
         run: |
-          node -e "
-          (async () => {
-            const admin = require('firebase-admin');
-            if (!process.env.FIREBASE_SERVICE_ACCOUNT) { console.log('No service account — skipping.'); process.exit(0); }
-            admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
-            const doc = await admin.firestore().collection('system').doc('pendingRelease').get();
-            if (!doc.exists) { console.log('No pendingRelease — nothing to do.'); process.exit(0); }
-            const d = doc.data();
-            if (!d.shouldRelease || d.consumed) { console.log('Release not due (' + (d.reason||'none') + ').'); process.exit(0); }
-            console.log('Release due:', d.suggestedVersion, d.reason);
-            process.exit(7); // signal: proceed
-          })().catch(e => { console.error(e); process.exit(0); });
-          " || EXIT=$?
-          if [ "${EXIT:-0}" = "7" ]; then
-            git config user.name  'WealthFlow Release Bot'
-            git config user.email 'bot@wealthflow.local'
-            node release.cjs --from-brain --push
-          else
-            echo 'Skipping release this run.'
+          npm i firebase-admin@12 --no-save
+          node release-brain.js || echo "brain step non-fatal"
+
+      - name: Decide if a release is due
+        id: due
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "due=yes" >> "$GITHUB_OUTPUT"; echo "manual dispatch → releasing"; exit 0
           fi
+          DUE=no
+          if [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
+            set +e
+            node -e "(async()=>{try{const a=require('firebase-admin');a.initializeApp({credential:a.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))});const d=await a.firestore().collection('system').doc('pendingRelease').get();const x=d.exists?d.data():{};process.exit((x.shouldRelease&&!x.consumed)?7:0);}catch(e){process.exit(0);}})();"
+            [ "$?" = "7" ] && DUE=yes
+            set -e
+          fi
+          if [ "$DUE" = "no" ]; then
+            LAST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$LAST" ]; then
+              N=$(git rev-list "${LAST}..HEAD" --count 2>/dev/null || echo 0)
+              [ "${N:-0}" -gt 0 ] && { DUE=yes; echo "$N new commit(s) since $LAST"; }
+            fi
+          fi
+          echo "due=$DUE" >> "$GITHUB_OUTPUT"
+          echo "release due: $DUE"
+
+      - name: Release
+        if: steps.due.outputs.due == 'yes'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          EVENT: ${{ github.event_name }}
+          IN_VERSION: ${{ github.event.inputs.version }}
+          IN_BUMP: ${{ github.event.inputs.bump }}
+          IN_URGENT: ${{ github.event.inputs.urgent }}
+          IN_NOTE: ${{ github.event.inputs.note }}
+        run: |
+          [ -n "$FIREBASE_SERVICE_ACCOUNT" ] && npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -n "$IN_VERSION" ]; then ARGS="--version $IN_VERSION --push"; else ARGS="--${IN_BUMP:-patch} --push"; fi
+          else
+            ARGS="--from-brain --push"
+          fi
+          [ "$IN_URGENT" = "true" ] && ARGS="$ARGS --urgent"
+          if [ -n "$IN_NOTE" ]; then node -e "process.stdout.write(process.env.IN_NOTE)" > .relnote; ARGS="$ARGS --note \"$(cat .relnote)\""; rm -f .relnote; fi
+          echo "→ node release.cjs $ARGS"
+          eval "node release.cjs $ARGS"
+
+      - name: Tag the release
+        if: steps.due.outputs.due == 'yes'
+        run: |
+          V=$(node -e "console.log(require('./version.json').latest)")
+          git tag "v$V" 2>/dev/null || true
+          git push origin "v$V" 2>/dev/null || true
+          echo "tagged v$V"
