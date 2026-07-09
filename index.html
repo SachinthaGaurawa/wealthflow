@@ -48,6 +48,29 @@
             try { document.documentElement.setAttribute('data-theme', 'dark'); } catch (_) {}
         }
 
+        // ── theme-swap crash beacon (independent of the fail counter) ───────────
+        // _applyThemeSafe() sets wf_theme_pending immediately BEFORE switching the
+        // theme and clears it ~0.9s later once the process has SURVIVED the swap.
+        // If we boot and it's still set, the last switch crashed the renderer
+        // before it could clear — so revert to the theme the user came FROM
+        // (known-good) and persist it, NO MATTER what the fail counter says. This
+        // heals a crashing swap on the very first reload, even when boot succeeds
+        // and resets 'fails' (the exact hole that trapped users in a crash loop).
+        try {
+            var _pend = localStorage.getItem('wf_theme_pending');
+            if (_pend) {
+                localStorage.removeItem('wf_theme_pending');
+                var _safe = localStorage.getItem('wf_theme_prev') || 'dark';
+                if (_safe !== 'dark' && _safe !== 'light') _safe = 'dark';
+                try {
+                    var _s2 = JSON.parse(localStorage.getItem('wf2_settings') || '{}');
+                    _s2.theme = _safe; localStorage.setItem('wf2_settings', JSON.stringify(_s2));
+                } catch (_) {}
+                localStorage.setItem('wf_theme_reverted', '1');
+                try { document.documentElement.setAttribute('data-theme', _safe); } catch (_) {}
+            }
+        } catch (_) {}
+
         // ── crash-loop guard #2: image-scan memory crash ───────────────────────
         // An image scan that was mid-flight when the web process died leaves
         // 'wf_img_scan_active' set. If we boot and still see it, the last image
@@ -388,6 +411,19 @@
             --text3: #94a3b8;
             --shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
             --sh2: 0 2px 8px rgba(0, 0, 0, 0.07);
+        }
+
+        /* v7.57.0 — CRITICAL: while switching Dark<->Light, disable EVERY
+           transition & animation. Otherwise changing all theme variables at once
+           animates hundreds of elements over .3s while the 12 backdrop-filter blur
+           layers re-rasterize every frame — a compositor/GPU spike that crashed
+           the iOS/WebView renderer (the app "restarted" and got stuck). Removed on
+           the next frame, so the swap is instant and jank-free with zero flash. */
+        html.wf-theme-switching *,
+        html.wf-theme-switching *::before,
+        html.wf-theme-switching *::after {
+            transition: none !important;
+            animation: none !important;
         }
 
         * {
@@ -7312,7 +7348,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.56.0';
+        var WF_APP_VERSION = '7.57.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -12831,6 +12867,59 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             try { if (viewId === 'authGoogle') startAuthSlider(); else stopAuthSlider(); } catch (_) {}
         }
 
+        // ── v7.57.0 — SAFE PIN ROUTING (never wrongly force "create a new PIN") ────
+        // Root fix for existing users being asked to CREATE a new PIN after a new-
+        // device login, a cache clear, or an app update. The old code decided
+        // "setup vs login" from LOCAL auth only, so before the cloud PIN synced it
+        // showed the Create-PIN screen — where a new PIN could OVERWRITE the real
+        // one. We now resolve the PIN from every source and only ever show setup when
+        // the SERVER authoritatively confirms no PIN exists (a genuine new user).
+        async function _wfRecoverPinFromCloud() {
+            try { var a = (typeof DB !== 'undefined') ? (DB.getObj('auth') || {}) : {}; if (a && a.pin) return 'found'; } catch (_) {}
+            try { var c = JSON.parse(localStorage.getItem('wf2_auth') || 'null'); if (c && c.pin) { try { appData.auth = Object.assign({}, appData.auth, c); } catch (_) {} return 'found'; } } catch (_) {}
+            if (typeof userDocRef === 'undefined' || !userDocRef || typeof currentUser === 'undefined' || !currentUser) return 'unknown';
+            var confirmedNone = false, sources = ['server', 'cache'];
+            for (var i = 0; i < sources.length; i++) {
+                try {
+                    var fresh = await userDocRef.get({ source: sources[i] });
+                    if (fresh) {
+                        var cAuth = fresh.exists ? ((fresh.data() || {}).auth) : null;
+                        if (cAuth && cAuth.pin) {
+                            try { appData.auth = Object.assign({}, appData.auth, cAuth); } catch (_) {}
+                            try { localStorage.setItem('wf2_auth', JSON.stringify(appData.auth)); } catch (_) {}
+                            return 'found';
+                        }
+                        if (sources[i] === 'server') confirmedNone = true;   // server answered → PIN truly absent
+                    }
+                } catch (_) { /* offline / cache-miss for this source */ }
+            }
+            return confirmedNone ? 'none' : 'unknown';
+        }
+        var _wfPinRouting = false;
+        function _wfRouteToPinScreen() {
+            if (_wfPinRouting) return; _wfPinRouting = true;
+            try { $('splash').classList.add('hide'); $('splash').style.display = 'none'; } catch (_) {}
+            try { $('authScreen').classList.add('show'); } catch (_) {}
+            var attempts = 0, shownLogin = false;
+            (function tick() {
+                _wfRecoverPinFromCloud().then(function (r) {
+                    // If the user already entered the app (or left the auth screen), stop —
+                    // never yank them back or re-show anything.
+                    try { if (!$('authScreen') || !$('authScreen').classList.contains('show')) { _wfPinRouting = false; return; } } catch (_) {}
+                    if (r === 'found') { _wfPinRouting = false; pinMode = 'login'; showAuthView('authLogin'); return; }
+                    if (r === 'none')  { _wfPinRouting = false; pinMode = 'setup'; showAuthView('authSetup'); return; }
+                    // 'unknown' → cloud unreachable. NEVER force setup (that is what wrongly
+                    // overwrote real PINs). Show login and keep resolving; the account
+                    // snapshot also fills the PIN in as soon as it syncs, making login work.
+                    if (!shownLogin) { shownLogin = true; pinMode = 'login'; showAuthView('authLogin'); }
+                    try { var sub = $('authLoginSub'); if (sub) sub.textContent = 'Syncing your account… please make sure you are online'; } catch (_) {}
+                    attempts++;
+                    if (attempts <= 40) setTimeout(tick, 750);   // ~30s of patient retry; snapshot is the long-term backstop
+                    else _wfPinRouting = false;
+                }).catch(function () { _wfPinRouting = false; try { if (!shownLogin && $('authScreen') && $('authScreen').classList.contains('show')) { pinMode = 'login'; showAuthView('authLogin'); } } catch (_) {} });
+            })();
+        }
+
         // ── Sign-in feature slider (auto-advance + dots + swipe sync) ───────────
         let _authSliderTimer = null;
         function startAuthSlider() {
@@ -14208,14 +14297,16 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         } catch (_) {}
                     }
 
-                    if (!auth.pin) {
-                        pinMode = 'setup';
-                        showAuthView('authSetup');
-                    } else {
+                    if (auth.pin) {
                         pinMode = 'login';
                         showAuthView('authLogin');
+                        notify('✅ Signed in with Google — please enter your PIN', 'success');
+                    } else {
+                        // Local has no PIN — but an existing user on a new device / after a
+                        // cache clear has it in the CLOUD, not here yet. Resolve against the
+                        // server before ever showing the Create-PIN screen.
+                        _wfRouteToPinScreen();
                     }
-                    notify('✅ Signed in with Google — please enter your PIN', 'success');
                 } catch (e) {
                     console.error('[BOOT] Re-entry finishBoot error:', e);
                 }
@@ -14351,8 +14442,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                     if (!recovered) {
                                         const late = DB.getObj('auth') || {};
                                         if (late.pin) { _bootEnterWithPin(); return; }
-                                        pinMode = 'setup';
-                                        showAuthView('authSetup');
+                                        _wfRouteToPinScreen();   // authoritative cloud check before ever showing setup
                                     }
                                 })();
                             } else {
@@ -14371,8 +14461,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                         _bootEnterWithPin();
                                     } else if (++waited >= 12) {  // ~3s max
                                         clearInterval(waitForAuth);
-                                        pinMode = 'setup';
-                                        showAuthView('authSetup');
+                                        _wfRouteToPinScreen();   // never force setup unless the cloud confirms none
                                     }
                                 }, 250);
                             }
@@ -15159,14 +15248,40 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function openSb() { $('sidebar').classList.add('open'); $('sbOverlay').classList.add('show'); }
         function closeSb() { $('sidebar').classList.remove('open'); $('sbOverlay').classList.remove('show'); }
 
+        function _wfThemeIcon(theme) {
+            return theme === 'dark'
+                ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>'
+                : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>';
+        }
+        // v7.57.0 — bullet-proof theme switch. Suppresses all transitions/animations
+        // for the swap (root-cause fix for the Dark<->Light renderer crash), drops a
+        // crash beacon so any residual crash self-heals on the next boot, and never
+        // throws. persist=false is used at boot (nothing to animate, nothing to save).
+        function _applyThemeSafe(next, persist) {
+            var html = document.documentElement;
+            try {
+                var prev = html.getAttribute('data-theme') || 'dark';
+                try { localStorage.setItem('wf_theme_prev', prev); localStorage.setItem('wf_theme_pending', next); } catch (_) {}
+                html.classList.add('wf-theme-switching');       // kill transitions for the swap
+                html.setAttribute('data-theme', next);
+                void html.offsetHeight;                          // force the no-transition style to apply now
+                try { var b = document.getElementById('themeBtn'); if (b) b.innerHTML = _wfThemeIcon(next); } catch (_) {}
+                if (persist) { try { var stg = DB.getObj('settings', {}); stg.theme = next; DB.set('settings', stg); } catch (_) {} }
+                var _reenable = function () { try { html.classList.remove('wf-theme-switching'); } catch (_) {} };
+                if (window.requestAnimationFrame) window.requestAnimationFrame(function () { window.requestAnimationFrame(_reenable); });
+                else setTimeout(_reenable, 60);
+                // survived the swap → clear the crash beacon
+                setTimeout(function () { try { localStorage.removeItem('wf_theme_pending'); } catch (_) {} }, 900);
+            } catch (e) {
+                try { html.setAttribute('data-theme', next); } catch (_) {}
+                try { html.classList.remove('wf-theme-switching'); } catch (_) {}
+                try { localStorage.removeItem('wf_theme_pending'); } catch (_) {}
+            }
+        }
         function toggleTheme() {
-            const cur = document.documentElement.getAttribute('data-theme');
-            const next = cur === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', next);
-            $('themeBtn').innerHTML = next === 'dark' ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>';
-            const settings = DB.getObj('settings', {});
-            settings.theme = next;
-            DB.set('settings', settings);
+            var cur = document.documentElement.getAttribute('data-theme');
+            var next = cur === 'dark' ? 'light' : 'dark';
+            _applyThemeSafe(next, true);
         }
 
         function initTheme() {
@@ -21220,8 +21335,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.56.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.56.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.57.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.57.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
