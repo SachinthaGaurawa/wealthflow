@@ -288,6 +288,10 @@
          merchant + card, and never deletes on a weak signal.
          Adds window.wfDedup. -->
     <script src="wealthflow-dedup.js" defer></script>
+    <!-- v7.58.0 — universal per-place / per-month transaction history & breakdown
+         (aggregates same-month payments, accumulates across imports, drill-down
+         to every underlying transaction). Adds window.WFHistory. -->
+    <script src="wealthflow-history.js" defer></script>
     <!-- v7.11.0 — Persistent "ask-me-later" review queue. When the AI genuinely
          can't be sure, the item waits here (encrypted, across sessions) and the
          user is prompted on their next visit. Resolving teaches wfMemory.
@@ -5418,6 +5422,7 @@
                     <div class="sh">
                         <div class="sh-title">Monthly Expenses</div>
                         <div class="sh-actions">
+                            <button type="button" class="wfh-launch" title="Monthly history &amp; breakdown" onclick="window.WFHistory&amp;&amp;WFHistory.open()" style="border:1px solid var(--border2,rgba(255,255,255,.14));background:var(--bg2,rgba(255,255,255,.05));color:var(--text2,#c3c8d8);border-radius:10px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18 9l-5 5-3-3-4 4"></path></svg>History</button>
                             <select class="fi" style="width:130px;" id="expMonth" onchange="renderExpenses()">
                                 <option value="">All Months</option>
                             </select>
@@ -7348,7 +7353,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.57.0';
+        var WF_APP_VERSION = '7.58.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -21335,8 +21340,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.57.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.57.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.58.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.58.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
