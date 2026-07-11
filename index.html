@@ -292,6 +292,10 @@
          (aggregates same-month payments, accumulates across imports, drill-down
          to every underlying transaction). Adds window.WFHistory. -->
     <script src="wealthflow-history.js" defer></script>
+    <!-- v7.59.0 — Sri Lanka Merchant Intelligence: deterministic merchant→category→tab
+         classifier (mobile→Telecom sub, insurer→Insurance sub, supermarket→Groceries,
+         bank fee→Bank Charges) with self-learning + self-verification. window.WFMerchants -->
+    <script src="wealthflow-merchants.js" defer></script>
     <!-- v7.11.0 — Persistent "ask-me-later" review queue. When the AI genuinely
          can't be sure, the item waits here (encrypted, across sessions) and the
          user is prompted on their next visit. Resolving teaches wfMemory.
@@ -7353,7 +7357,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.58.0';
+        var WF_APP_VERSION = '7.59.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -21340,8 +21344,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.58.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.58.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.59.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.59.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -26016,6 +26020,26 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     t._review = !!routed.needsReview;     // AI is unsure → ask the user
                     t._chequeType = routed.chequeType || '';
                     t._chequeNo = routed.chequeNo || '';
+                    // ── v7.59.0 — Sri Lanka Merchant Intelligence (window.WFMerchants):
+                    //    authoritative merchant->category->tab refinement — a mobile bill ->
+                    //    Telecom (Subscriptions), an insurer -> Insurance (Subscriptions), a
+                    //    supermarket -> Groceries (Expenses), a bank fee -> Bank Charges.
+                    //    Deterministic + instant. On a CREDIT CARD a normal purchase stays a
+                    //    card charge; only a recurring merchant may move to Subscriptions.
+                    try {
+                        if (window.WFMerchants) {
+                            const _ref = window.WFMerchants.refine(t.description, t.direction, { tab: t._dest, category: t._cat, subName: t._subName, subPhone: t._subPhone });
+                            if (_ref && (_acctType === 'bank_account' || _ref.tab === 'subscription')) {
+                                t._dest = _ref.tab;
+                                if (_ref.category) t._cat = _ref.category;
+                                if (_ref.subName) t._subName = _ref.subName;
+                                if (_ref.subPhone) t._subPhone = _ref.subPhone;
+                                t._mi = 1;
+                            } else if (_ref && _ref.category) {
+                                t._cat = _ref.category; t._mi = 1;   // CC purchase: keep card charge, improve category label
+                            }
+                        }
+                    } catch (_) {}
                     if (_acctType === 'bank_account') {
                         // For a bank account the "Type" column is only meaningful for
                         // fees and fuel — everything else is blank (the "Goes to"
@@ -26325,7 +26349,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         cc++;
                     } else if (dest === 'expenses') {
                         if (_dupIn(expArr, date, amount, desc, 'amount')) { dup++; return; }
-                        const cat = (window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other';
+                        const _mi = +(tr.dataset.idx); const _mt = (typeof txns !== 'undefined' && txns[_mi]) || {};
+                        const cat = (_mt._cat && _mt._cat !== 'Other') ? _mt._cat : ((window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other');
+                        try { if (window.WFMerchants) window.WFMerchants.learn(desc, 'expenses', cat); } catch (_) {}
                         const _rec = { id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'expenses', _rec.id); }
                         expArr.push(_rec);
@@ -26345,7 +26371,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // the merchant even if renamed) else auto-create, then record
                         // this month's payment. WFSubs de-dupes payments internally.
                         const si = (window.WFRoute && window.WFRoute.subscriptionInfo(desc)) || {};
-                        const routeInfo = { subName: si.name || desc, subKind: si.kind || 'other', subPhone: si.phone || null, category: si.category || 'Other' };
+                        const _si2 = +(tr.dataset.idx); const _st = (typeof txns !== 'undefined' && txns[_si2]) || {};
+                        const routeInfo = { subName: _st._subName || si.name || desc, subKind: _st._subKind || si.kind || 'other', subPhone: _st._subPhone || si.phone || null, category: (_st._cat && _st._cat !== 'Other') ? _st._cat : (si.category || 'Other') };
+                        try { if (window.WFMerchants) window.WFMerchants.learn(desc, 'subscription', routeInfo.category); } catch (_) {}
                         if (window.WFSubs) {
                             try {
                                 const res = window.WFSubs.apply({ description: desc, amount, direction: 'debit', date }, routeInfo);
