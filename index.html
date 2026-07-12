@@ -7357,7 +7357,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.60.0';
+        var WF_APP_VERSION = '7.61.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -21344,8 +21344,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.60.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.60.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.61.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.61.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -26034,12 +26034,17 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 if (_ref.category) t._cat = _ref.category;
                                 if (_ref.subName) t._subName = _ref.subName;
                                 if (_ref.subPhone) t._subPhone = _ref.subPhone;
+                                if (_ref.ccLast4) { t._ccLast4 = _ref.ccLast4; t._ccBrand = _ref.ccBrand || ''; }
                                 t._mi = 1;
                             } else if (_ref && _ref.category) {
                                 t._cat = _ref.category; t._mi = 1;   // CC purchase: keep card charge, improve category label
                             }
                         }
                     } catch (_) {}
+                    // ── v7.61.0 — anything still unidentified is queued for the
+                    //    Autonomous Merchant Verification Engine (resolved right after
+                    //    this pass, from YOUR real statement — never a guessed name).
+                    try { if (window.WFMerchants && window.WFMerchants.discover) window.WFMerchants.discover(t.description, t.direction); } catch (_) {}
                     if (_acctType === 'bank_account') {
                         // For a bank account the "Type" column is only meaningful for
                         // fees and fuel — everything else is blank (the "Goes to"
@@ -26084,6 +26089,21 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
             };
             _routeAll();
+            // ── v7.61.0 — REAL-TIME merchant discovery. Every merchant this statement
+            //    contains that nothing could identify is sent to your OWN /api/ai, where
+            //    TWO independent passes must AGREE and both score >= 0.95 before it is
+            //    ever written. Anything less is held for your confirmation, never guessed.
+            //    Then we re-route so the new knowledge applies to this very import.
+            try {
+                if (window.WFMerchants && window.WFMerchants.resolveUnknowns && (window.WFMerchants.unknowns() || []).length) {
+                    window.WFMerchants.resolveUnknowns().then(function (r) {
+                        if (r && r.resolved) { _routeAll(); try { _reRenderBody(); } catch (_) {} }
+                        if (r && (r.resolved || r.held)) {
+                            try { toast('Merchant intelligence: ' + r.resolved + ' identified' + (r.held ? ', ' + r.held + ' need your confirmation' : '')); } catch (_) {}
+                        }
+                    }).catch(function () {});
+                }
+            } catch (_) {}
             const overlay = document.createElement('div');
             overlay.className = 'mo';
             document.body.appendChild(overlay);
@@ -26387,7 +26407,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // "PAYMENT - THANK YOU"). Stored like a charge so it auto-settles
                         // outstanding charges, oldest first. NOT a ledger income/expense.
                         if (_dupIn(ccPayArr, date, amount, desc, 'amount')) { dup++; return; }
-                        const _pay = { id: uid(), bank, card_last4: (parsed && (parsed.card_last4 || parsed.last4)) || '', amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
+                        const _payT = (typeof txns !== 'undefined' && txns[+(tr.dataset.idx)]) || {};
+                        const _pay = { id: uid(), bank, card_last4: _payT._ccLast4 || (parsed && (parsed.card_last4 || parsed.last4)) || '', amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _pay); WFBatch.record(_batch, 'ccPayments', _pay.id); }
                         ccPayArr.push(_pay);
                         ccPay++;
