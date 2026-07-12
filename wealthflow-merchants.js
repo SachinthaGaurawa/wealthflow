@@ -85,12 +85,24 @@
     // Banks CUT merchant names to fit a fixed field: "Aliexpress"->"Aliexpres",
     // "Vital Essence (Pvt) Ltd"->"Vital Essence (Pvt) Lt". Allow up to 2 missing
     // trailing characters, but only on long distinctive keys (never short ones).
+    var _reCache = {};
+    function _wordRe(k) { return _reCache[k] || (_reCache[k] = new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b')); }
     function hasKey(nd, gd, key) {
         if (!key) return false;
-        if (nd.indexOf(key) >= 0) return true;
-        var kg = glue(key);
-        if (kg.length < 4) return false;
+        var k = String(key).trim();
+        if (!k) return false;
+        // A SHORT single word may ONLY match on a word boundary in the normalised text.
+        // It must NEVER take the glued path: glue() deletes every space, so "spar" would
+        // match inside "SPARe part", "gold" inside "GOLDen Key Hospital" and "mart"
+        // inside "walMART" — silently mis-filing real merchants.
+        if (k.length <= 6 && k.indexOf(' ') < 0) return _wordRe(k).test(nd);
+        if (nd.indexOf(k) >= 0) return true;
+        var kg = glue(k);
+        if (kg.length < 6) return false;                       // never glue-match a short key
         if (gd.indexOf(kg) >= 0) return true;
+        // Banks TRUNCATE merchant names to fit a fixed field ("Aliexpress"->"Aliexpres",
+        // "Vital Essence (Pvt) Ltd"->"Vital Essence (Pvt) Lt"). Allow up to 2 missing
+        // trailing characters, but only on long distinctive keys.
         if (kg.length >= 8 && gd.indexOf(kg.slice(0, kg.length - 1)) >= 0) return true;
         if (kg.length >= 10 && gd.indexOf(kg.slice(0, kg.length - 2)) >= 0) return true;
         return false;
@@ -118,7 +130,8 @@
         ['Groceries', ['supermarket', 'super market', 'food city', 'grocer', 'mini mart', 'minimart', 'mart ', ' mart', 'super cent', 'supercent', 'mpcs', 'co op city', 'coop city', 'co-op', 'sathosa', 'provision', 'general store', 'daily needs']],
         ['Transport', ['interchange', 'expressway', 'express way', ' rda', 'rda ', 'toll', 'taxi', 'cab service', 'rent a car', 'car rent', 'vehicle rent', 'bus depot', 'railway', 'parking', 'transport']],
         ['Fuel', ['filling station', 'fuel station', 'petrol shed', 'petroleum', 'service station']],
-        ['Shopping', ['apparel', 'garment', 'textile', ' tex', 'dress point', 'dress shop', 'fashion', 'boutique', 'footwear', 'shoe ', 'jewell', 'furniture', 'hardware', 'electronic', 'computer', 'communication', 'cellular', 'mobile shop', 'phone shop', 'technolog', 'distribut', 'traders', 'enterprises', 'stores', 'book shop', 'bookshop', 'stationery', 'toy ', 'gift ']],
+        ['Gold', ['jewellers', 'jewellery', 'jewelers', 'goldsmith', 'gold shop']],
+        ['Shopping', ['apparel', 'garment', 'textile', ' tex', 'dress point', 'dress shop', 'fashion', 'boutique', 'footwear', 'shoe ', 'furniture', 'hardware', 'electronic', 'computer', 'communication', 'cellular', 'mobile shop', 'phone shop', 'technolog', 'distribut', 'traders', 'enterprises', 'stores', 'book shop', 'bookshop', 'stationery', 'toy ', 'gift ']],
         ['Education', ['institute', 'campus', 'college', 'academy', 'university', 'tuition', 'school ']],
         ['Utilities', ['water board', 'electricity', 'gas company']],
         ['Gym/Fitness', ['gym', 'fitness', 'health club', 'yoga']]
@@ -182,10 +195,10 @@
         for (var i = 0; i < REGISTRY.length; i++) {
             var cat = REGISTRY[i][0], kws = REGISTRY[i][1];
             for (var j = 0; j < kws.length; j++) {
-                var k = kws[j]; var kg = glue(k);
-                if ((k.indexOf(' ') >= 0 || k.charAt(0) === ' ' || k.charAt(k.length - 1) === ' ') ? (nd.indexOf(k.trim()) >= 0) : (nd.indexOf(k) >= 0 || (kg.length >= 4 && gd.indexOf(kg) >= 0))) {
-                    return { category: cat, keyword: k.trim() };
-                }
+                // hasKey applies the SAME rules everywhere: a short single word needs a
+                // word boundary (so "spar" can't fire inside "SPARe part" and "jewell"
+                // can't fire inside "JEWELLers"), long keys tolerate bank truncation.
+                if (hasKey(nd, gd, kws[j])) return { category: cat, keyword: kws[j] };
             }
         }
         return null;
@@ -408,71 +421,80 @@
     function unknowns() { return _loadQ(LS_UNKNOWN); }
     function pending() { return _loadQ(LS_PENDING); }
 
+    // The prompt MUST contain "Return only JSON" and a {"vendor":...} example: that is
+    // exactly what ai.js's wantsJSON regex looks for, and it is what switches the backend
+    // from mode=fastest (ONE engine) to mode=consensus (ALL 16 engines, then a field-wise
+    // MAJORITY VOTE on vendor/category/destination). Without it we were trusting a single
+    // model's guess and calling it consensus.
     var SYS = [
         'You are the WealthFlow Autonomous Merchant Verification Engine for Sri Lanka.',
-        'For each raw bank narration: (1) isolate the core merchant entity, discarding POS/terminal codes, city names, reference numbers;',
-        '(2) deduce the industry from the text (a 10-digit number starting 077/071/070/078/076/075/074/072 is a Sri Lankan mobile -> Telecom;',
-        '"Life"/"Insurance"/"Assurance" -> Insurance; CEB/LECO/Water Board -> Utilities);',
-        '(3) cross-reference what you know of real Sri Lankan and global companies;',
-        '(4) audit yourself — if the entity could honestly belong to more than one category, LOWER the confidence. Never invent a merchant.',
-        'goes_to must be exactly one of: Subscription, Expenses.',
-        'type must be exactly one of: Telecom, Insurance, Streaming, Software, Internet, Utilities, Groceries, Dining, Health, Transport, Fuel, Education, Government, Shopping, Gold, Gym/Fitness, Leasing.',
-        'confidence_score is 0.00-1.00. Use >=0.95 ONLY when the entity is unmistakable. If you are not certain, score it BELOW 0.95 — a low score is correct and safe; a confident wrong answer is a system failure.',
-        'Reply with ONLY a JSON array, no prose, no markdown fences:',
-        '[{"raw":"...","merchant":"...","goes_to":"...","type":"...","confidence":0.00,"why":"..."}]'
+        'Identify the merchant in a raw bank narration: discard POS/terminal codes, city names and reference numbers.',
+        'Deduce the industry from the text. A 10-digit number starting 077/071/070/078/076/075/074/072 is a Sri Lankan mobile -> Telecom.',
+        '"Life"/"Insurance"/"Assurance" -> Insurance. CEB/LECO/Water Board -> Utilities. Supermarkets -> Groceries.',
+        'If the entity could honestly belong to more than one category, LOWER the confidence. Never invent a merchant.',
+        'category must be exactly one of: Telecom, Insurance, Streaming, Software, Internet, Utilities, Groceries, Dining, Health, Transport, Fuel, Education, Government, Shopping, Gold, Gym/Fitness, Leasing.',
+        'destination must be exactly "subscription" or "expenses".',
+        'confidence is 0.00-1.00. Use >= 0.95 ONLY when the merchant is unmistakable. A low score is CORRECT and safe; a confident wrong answer is a system failure.',
+        'Return only JSON, no prose and no markdown fences, in exactly this shape:',
+        '{"vendor":"...","category":"...","destination":"subscription|expenses","confidence":0.00,"why":"..."}'
     ].join('\n');
 
-    function _askAI(items, provider) {
-        var prompt = SYS + '\n\nClassify these ' + items.length + ' narrations:\n' + items.map(function (x, i) { return (i + 1) + '. ' + x.raw; }).join('\n');
-        var body = { prompt: prompt, temperature: 0, maxTokens: 1500 };
-        if (provider) body.preferredProvider = provider;
+    // One narration per call so the backend's field-wise majority vote actually applies.
+    // Returns { entry, engines } — engines = how many of the 16 produced a valid reply.
+    function _askOne(item) {
+        var body = { prompt: SYS + '\n\nNarration: "' + String(item.raw).replace(/"/g, "'") + '"', mode: 'consensus', temperature: 0, maxTokens: 400 };
         return fetch(AI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
             .then(function (r) { return r && r.ok ? r.json() : null; })
             .then(function (j) {
-                var txt = (j && (j.reply || j.text || j.result)) || '';
-                var m = String(txt).match(/\[[\s\S]*\]/);
-                if (!m) return [];
-                try { var a = JSON.parse(m[0]); return Array.isArray(a) ? a : []; } catch (_) { return []; }
+                if (!j) return { entry: null, engines: 0 };
+                var m = String(j.reply || '').match(/\{[\s\S]*\}/);
+                if (!m) return { entry: null, engines: 0 };
+                var e = null; try { e = JSON.parse(m[0]); } catch (_) { return { entry: null, engines: 0 }; }
+                return { entry: e, engines: +(j.consensusOf || 1), item: item };
             })
-            .catch(function () { return []; });
+            .catch(function () { return { entry: null, engines: 0 }; });
     }
 
-    // Real-time resolution. TWO independent passes must AGREE on the category and both
-    // must clear 0.95 before anything is written — a single model's answer is never trusted.
+    // Real-time resolution. An answer is written ONLY when at least TWO of the sixteen
+    // engines produced a valid reply (so it is a genuine consensus, not one model's word),
+    // the category is inside the taxonomy, AND the confidence clears 0.95.
     function resolveUnknowns(limit) {
         try {
             if (typeof fetch !== 'function') return Promise.resolve({ resolved: 0, held: 0, note: 'no fetch' });
             var q = _loadQ(LS_UNKNOWN);
             if (!q.length) return Promise.resolve({ resolved: 0, held: 0, note: 'nothing unknown' });
-            var batch = q.slice(0, Math.max(1, Math.min(20, limit || 12)));
-            return Promise.all([_askAI(batch, ''), _askAI(batch, 'groq')]).then(function (res) {
-                var A = res[0] || [], B = res[1] || [];
-                var byRawB = {}; B.forEach(function (e) { if (e && e.raw) byRawB[norm(e.raw)] = e; });
+            var batch = q.slice(0, Math.max(1, Math.min(12, limit || 8)));
+            return Promise.all(batch.map(_askOne)).then(function (res) {
                 var resolved = 0, held = 0, holdList = _loadQ(LS_PENDING);
-                A.forEach(function (e) {
-                    if (!e || !e.raw || !e.type) return;
-                    var peer = byRawB[norm(e.raw)];
-                    var agree = peer && String(peer.type) === String(e.type);
-                    var conf = Math.min(+e.confidence || 0, peer ? (+peer.confidence || 0) : (+e.confidence || 0));
-                    var src = batch.filter(function (x) { return norm(x.raw) === norm(e.raw); })[0];
-                    if (!src || !VALID_CATS[e.type]) return;
-                    if (agree && conf >= WRITE_GATE) {
-                        learn(src.raw, SUB_CATS[e.type] ? 'subscription' : 'expenses', e.type, conf);
+                res.forEach(function (r) {
+                    var src = r.item, e = r.entry;
+                    if (!src) return;
+                    var cat = e && e.category, conf = e ? (+e.confidence || 0) : 0;
+                    var agreed = r.engines >= 2;
+                    if (e && cat && VALID_CATS[cat] && agreed && conf >= WRITE_GATE) {
+                        learn(src.raw, (e.destination === 'subscription' || SUB_CATS[cat]) ? 'subscription' : 'expenses', cat, conf);
                         resolved++;
-                    } else {
-                        held++;
-                        if (!holdList.some(function (h) { return h.key === src.key; })) {
-                            holdList.push({ key: src.key, raw: src.raw, merchant: e.merchant || src.name, type: e.type,
-                                goesTo: SUB_CATS[e.type] ? 'subscription' : 'expenses', confidence: +conf.toFixed(2),
-                                why: e.why || '', reason: agree ? 'below the 0.95 gate' : 'the two AI passes disagreed', at: Date.now() });
-                        }
+                        return;
+                    }
+                    held++;
+                    if (!holdList.some(function (h) { return h.key === src.key; })) {
+                        holdList.push({
+                            key: src.key, raw: src.raw, merchant: (e && e.vendor) || src.name,
+                            type: (cat && VALID_CATS[cat]) ? cat : '', goesTo: (cat && SUB_CATS[cat]) ? 'subscription' : 'expenses',
+                            confidence: +conf.toFixed(2), why: (e && e.why) || '',
+                            reason: !e ? 'the AI could not read this merchant'
+                                  : !agreed ? 'only one engine answered — not a consensus'
+                                  : !VALID_CATS[cat] ? 'the category was outside the taxonomy'
+                                  : 'below the 0.95 confidence gate',
+                            at: Date.now()
+                        });
                     }
                 });
                 _saveQ(LS_PENDING, holdList);
                 var keys = {}; batch.forEach(function (x) { keys[x.key] = 1; });
                 _saveQ(LS_UNKNOWN, q.filter(function (x) { return !keys[x.key]; }));
-                try { root.console && root.console.log('[WFMerchants] resolved ' + resolved + ' merchant(s); ' + held + ' held for confirmation'); } catch (_) {}
-                return { resolved: resolved, held: held, note: 'consensus of 2 passes, gate ' + WRITE_GATE };
+                try { root.console && root.console.log('[WFMerchants] resolved ' + resolved + '; held ' + held + ' for confirmation'); } catch (_) {}
+                return { resolved: resolved, held: held, note: '16-engine consensus, gate ' + WRITE_GATE };
             }).catch(function () { return { resolved: 0, held: 0, note: 'AI unreachable' }; });
         } catch (_) { return Promise.resolve({ resolved: 0, held: 0, note: 'error' }); }
     }
