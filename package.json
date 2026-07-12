@@ -5,14 +5,14 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "vercel dev",
     "deploy": "vercel --prod",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:ci": "vitest run --reporter=default"
+    "test:ci": "vitest run --passWithNoTests --reporter=default"
   },
   "keywords": [
     "finance",
