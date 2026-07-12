@@ -5909,26 +5909,7 @@
 
 
     <div class="decoy-indicator" id="decoyIndicator">DECOY MODE</div>
-    <div id="mdLanguage" class="mo" style="display:none; z-index:9999;">
-        <div class="md md-sm"
-            style="height:85vh; max-height:700px; display:flex; flex-direction:column; padding:0; overflow:hidden;">
-            <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
-                <div class="md-title">🌐 AI Response Language</div>
-                <button class="md-x" onclick="closeModal('mdLanguage')"><i data-wfi="x"></i></button>
-            </div>
-            <div
-                style="padding:16px 20px 10px; background:var(--bg2); border-bottom:1px solid var(--border); flex-shrink:0;">
-                <input type="text" class="fi" id="langSearchInput" placeholder="🔍 Search 70+ languages..."
-                    style="margin:0; border-radius:12px; font-size:15px; padding:12px 16px;"
-                    oninput="filterLangModal()">
-            </div>
-            <div id="langListContainer" style="flex:1; overflow-y:auto; padding:8px 12px; background:var(--card);">
-                <!-- Filled dynamically -->
-            </div>
-        </div>
-    </div>
-
-    <button class="fab-ai-btn" id="fabAIBtn" onclick="toggleFloatingAI()" title="Ask AI"><i data-wfi="bot"></i></button>
+        <button class="fab-ai-btn" id="fabAIBtn" onclick="toggleFloatingAI()" title="Ask AI"><i data-wfi="bot"></i></button>
     <div class="floating-ai-bar" id="floatingAIBar">
         <button class="floating-ai-close" onclick="toggleFloatingAI()" title="Close"
             aria-label="Close AI bar"><i data-wfi="x"></i></button>
@@ -7357,7 +7338,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.61.0';
+        var WF_APP_VERSION = '7.62.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -21344,8 +21325,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.61.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.61.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.62.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.62.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -26363,7 +26344,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // previous `paid: past` wrongly marked EVERY imported charge
                         // "Paid" because statement dates are always in the past.
                         const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
-                        const _rec = { id: uid(), desc, bank, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: false, createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), desc, bank, card_last4: _last4 || '', type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: false, createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'cconetime', _rec.id); }
                         ccArr.push(_rec);
                         cc++;

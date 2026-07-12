@@ -60,11 +60,23 @@
 
     /* ---------- pure intelligence (unit-tested in Node) ---------- */
     // Match a charge/payment row to a card by its last-4.
-    function _matchLast4(row, last4) { return String((row && (row.card_last4 || row.last4)) || '') === String(last4); }
+    // v7.62.0 — LEGACY RESCUE. Every charge imported before this build was written with
+    // NO card_last4 (the statement importer simply never set it), so nothing ever matched
+    // and every registered card showed "Outstanding 0 / 0% used" — the whole feature looked
+    // dead. Those rows are unambiguous when the card is the ONLY one registered for its
+    // bank, so we fall back to the bank. With two cards on one bank we stay strict rather
+    // than double-count.
+    function _matchLast4(row, last4, card, bankIsUnique) {
+        const rl = String((row && (row.card_last4 || row.last4)) || '');
+        if (rl) return rl === String(last4);
+        if (!bankIsUnique || !card || !card.bank) return false;
+        const rb = String((row && row.bank) || '').toLowerCase().trim();
+        return !!rb && rb === String(card.bank).toLowerCase().trim();
+    }
 
-    function cardSummary(last4, charges, payments, card) {
-        const mine = (charges || []).filter(c => _matchLast4(c, last4));
-        const pays = (payments || []).filter(p => _matchLast4(p, last4));
+    function cardSummary(last4, charges, payments, card, bankIsUnique) {
+        const mine = (charges || []).filter(c => _matchLast4(c, last4, card, bankIsUnique));
+        const pays = (payments || []).filter(p => _matchLast4(p, last4, card, bankIsUnique));
         const amt = c => _num(c.combinedTotal != null ? c.combinedTotal : c.amount);
         const ym = new Date().toISOString().slice(0, 7);
         const monthOf = r => String((r && (r.date || r.createdAt)) || '').slice(0, 7);
@@ -137,11 +149,16 @@
         const reg = _reg();
         const keys = Object.keys(reg);
         const charges = _arr('cconetime'), pays = _arr('ccPayments');
+        // How many registered cards share each bank? A legacy charge with no last-4 can
+        // only be attributed when its bank maps to exactly ONE card.
+        const _bankN = {};
+        keys.forEach(k => { const b = String((reg[k] && reg[k].bank) || '').toLowerCase().trim(); if (b) _bankN[b] = (_bankN[b] || 0) + 1; });
+        const _uniq = k => { const b = String((reg[k] && reg[k].bank) || '').toLowerCase().trim(); return !!b && _bankN[b] === 1; };
 
         // Portfolio totals across all credit cards.
         let totOut = 0, totLimit = 0, anyCredit = false;
         keys.forEach(k => {
-            const s = cardSummary(k, charges, pays, reg[k]);
+            const s = cardSummary(k, charges, pays, reg[k], _uniq(k));
             if (reg[k].type === 'credit_card') { anyCredit = true; totOut += s.outstanding; totLimit += _num(reg[k].creditLimit); }
         });
         const totalsHost = document.getElementById('wfCardRegTotals');
@@ -170,10 +187,10 @@
         keys.sort((a, b) => {
             const ca = reg[a].type === 'credit_card', cb = reg[b].type === 'credit_card';
             if (ca !== cb) return ca ? -1 : 1;
-            const sa = cardSummary(a, charges, pays, reg[a]), sb = cardSummary(b, charges, pays, reg[b]);
+            const sa = cardSummary(a, charges, pays, reg[a], _uniq(a)), sb = cardSummary(b, charges, pays, reg[b], _uniq(b));
             return (sb.utilization || 0) - (sa.utilization || 0);
         });
-        host.innerHTML = keys.map(k => _tile(k, reg[k], cardSummary(k, charges, pays, reg[k]))).join('');
+        host.innerHTML = keys.map(k => _tile(k, reg[k], cardSummary(k, charges, pays, reg[k], _uniq(k)))).join('');
         // wire per-tile actions
         keys.forEach(k => {
             const e = document.getElementById('wfCardEdit_' + k); if (e) e.onclick = (ev) => { ev.stopPropagation(); showForm(k); };
