@@ -1,8 +1,8 @@
 {
-  "schema": "wealthflow.merchants/v1",
-  "version": 1,
-  "updated": "2026-07-11",
-  "source": "wealthflow-seed",
+  "schema": "wealthflow.merchants/v2",
+  "version": 2,
+  "updated": "2026-07-12",
+  "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
       "subscription",
@@ -43,3631 +43,4867 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 693,
+  "count": 694,
   "merchants": [
     {
       "key": "bake house",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "bakehouse",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "bakery",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "barbeque",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "barista",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "barista coffee",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "bistro",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "buffet",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "burger",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "burger factory",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "burger king",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "burger king lanka",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "burgerking",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cafe",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cafe kumbuk",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cafeteria",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "canteen",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "chatime",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "chinese dragon",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "chinese dragon cafe",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "chooti",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cinnabon",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "coffee",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "coffee bean",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cool spot",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "crepe",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "crepe runner",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "creperunner",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dessert",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dinemore",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dominos",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dominos pizza lanka",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "donut",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dunkin",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "eatery",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "elephant house",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fast food",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "food court",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "foodcourt",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fried chicken",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "green cabin",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "grill",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hela bojun",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hoppers",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ice cream",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "java lounge",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "juice bar",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kfc",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kfc lanka",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kottu",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "krispy kreme",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lamprais",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mandiya",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mcdonald",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mcdonalds",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ministry of crab",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "noodles",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nuga gama",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "perera and sons",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pereraandsons",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pilawoos",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pizza",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pizza corner",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pizza hut",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pizza hut lanka",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pizzahut",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "raja bojun",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ramen",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "restaurant",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "rice and curry",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "shanmugas",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "shawarma",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "simply strawberries",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "spicy food",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sponge",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "starbucks",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "strawberries",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "subway",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "subway lanka",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sushi",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "tea shop",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "the coffee bean",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "the commons",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "the sizzle",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "upali restaurant",
       "category": "Dining",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "waffle",
       "category": "Dining",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "academy",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apiit",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apiit lanka",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "book shop",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "book store",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "bookshop",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "bookstore",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "british council",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cambridge",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "campus",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "college",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "coursera",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "day care",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "diploma",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "edexcel",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gateway college",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ielts",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "iit campus",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "institute",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "international school",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kaplan",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kdu",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lyceum international",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "makeen",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "makeen books",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "montessori",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nsbm",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nsbm green university",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ousl",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pearson",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pre school",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "preschool",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "royal institute",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sarasavi",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sarasavi bookshop",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "school",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sliit",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "stafford",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "stafford international",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "toefl",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "tuition",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "udemy",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "university",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vijitha yapa",
       "category": "Education",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vijitha yapa bookshop",
       "category": "Education",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "associated motorways",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceypetco",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cpc filling",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cpc filling station",
       "category": "Fuel",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "diesel",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "filling station",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fuel",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fuel shed",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gas station",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "indian oil lanka",
       "category": "Fuel",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ioc",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lanka ioc",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laugfs petroleum",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lioc",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "petrol",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "petrol shed",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "petroleum",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "rm parks",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sinopec",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sinopec lanka",
       "category": "Fuel",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "total energies",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "united petroleum",
       "category": "Fuel",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "united petroleum lanka",
       "category": "Fuel",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gem stone",
       "category": "Gold",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gold",
       "category": "Gold",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pawn",
       "category": "Gold",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pawning",
       "category": "Gold",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "raja jewellers",
       "category": "Gold",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "stone n string",
       "category": "Gold",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sunil jewellers",
       "category": "Gold",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "swarna mahal",
       "category": "Gold",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "swarnamahal",
       "category": "Gold",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vogue jewell",
       "category": "Gold",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vogue jewellers",
       "category": "Gold",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "za jewellers",
       "category": "Gold",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "company registration",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "court fees",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "credit information",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "credit information bureau",
       "category": "Government",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "crib",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "department of motor traffic",
       "category": "Government",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "divisional secretariat",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "e revenue",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "e revenue license",
       "category": "Government",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "erl",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "erl payment",
       "category": "Government",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "government",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "grama niladhari",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "immigration",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "immigration emigration",
       "category": "Government",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "inland revenue",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "inland revenue department",
       "category": "Government",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ird",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "land registry",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "license fee",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "motor traffic",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "municipal council",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "passport",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pradeshiya sabha",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "registrar",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "registrar of companies",
       "category": "Government",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "rmv",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "title documents",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "urban council",
       "category": "Government",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "arpico daily",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "arpico super",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "arpico supercentre",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cargills",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cargills food city",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "co op city",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "coop city",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cooperative",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "daily super",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "delight holdings",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dunhinda brothers",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "food city",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "food house",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "foodcity",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "foodstar",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fresh mart",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "glomark",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "glomark supermarket",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "grocery",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "healthy living",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "healthy living market",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "jaya super",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "john keells",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "keells",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "keells super",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "keels",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lanka sathosa",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laugfs super",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laugfs supermarket",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mac mart",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "macmart",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "maharaja super",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "maharaja supermarket",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "maliban super",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mini mart",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "minimart",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mpcs",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nihal stores",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "provision",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sathosa",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sathosa retail",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "spar",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "spar supermarket",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "su711",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sunup",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sunup mart",
       "category": "Groceries",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "super market",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "supermarket",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vishwa super",
       "category": "Groceries",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "asiri",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "asiri hospital",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ayurveda",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ayurvedic",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "central hospital",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "channelling",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "city pharmacy",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "clinic",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dental",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dentist",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "diagnostic",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "doc990",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "durdans",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "durdans hospital",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "e channelling",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "echannel",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "echannelling",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "eye hospital",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "glaxo",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "golden key hospital",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "healthguard",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "healthguard pharmacy",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hemas hospital",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hospital",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "isuru pharmacy",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laboratory",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laksiri",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laksiri pharmacy",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lanka hospital",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lanka hospitals",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "med store",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "medi lab",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "medical",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "medicare",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "medicine",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mediplus",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "medisense",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "medstore",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "navinna",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nawaloka",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nawaloka hospital",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ninewells",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ninewells hospital",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "no 1 pharmacy",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nursing home",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "odoc",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "optical",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "optician",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "osu sala",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "osusala",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pharma",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pharmacy",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "physiotherapy",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "radiology",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "raj pharmacy",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "scan center",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "scan centre",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "spectacle",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "state pharmaceuticals",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sunrise pharmacy",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "supplements",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "surgery",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "union chemist",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "union chemists",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vinsons pharmacy",
       "category": "Health",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vital essence",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vitamins",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "x ray",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "xray",
       "category": "Health",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "aia",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "aia insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "aia insurance lanka",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "allianz",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "allianz insurance lanka",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amana takaful",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amana takaful life",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "arpico insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "assurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceylinco",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceylinco general",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceylinco life",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "continental insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "continental insurance lanka",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "coop life",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cooperative insurance",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cooplife",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "critical illness",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "endowment",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fairfirst",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fairfirst insurance",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "general insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "health insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hnb assurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
+    },
+    {
+      "key": "hnb general",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "hnb general insurance",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "insuarance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "insurence",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "janashakthi",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "janashakthi insurance",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "life cover",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "life insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "life insurance corporation",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lolc general",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lolc general insurance",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lolc insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lolc life",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lolc life assurance",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mbsl insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "medical insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "motor insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "orient insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "peoples insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "policy premium",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sanasa general",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sanasa insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sanasa life",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "softlogic finance life",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "softlogic life",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "softlogic life insurance",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sri lanka insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sri lanka insurance corporation",
       "category": "Insurance",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "srilanka insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "takaful",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "union assurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vehicle insurance",
       "category": "Insurance",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "4g router",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "adsl",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "broadband",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fiber",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fibre",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "home broadband",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "home internet",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "internet bill",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wi fi",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wifi",
       "category": "Internet",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "abans",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "adidas",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "alibaba",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "aliexpress",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amazon",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amazon com",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apparel",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apple store",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "bata",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "bata shoes",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "boutique",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "celltronics",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "clicknshop",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "clothing",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cotton collection",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "damro",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "damro furniture",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "daraz",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "daraz lk",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "department store",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dress point",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dresspoint",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dsi",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dsi footwear",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ebay",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "electronics",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fabric",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fashion bug",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "fashionbug",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "foodstar marketing",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "footwear",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "furniture",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "garment",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gift shop",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hameedia",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "handbag",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "home centre",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "homelux",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "house of fashion",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "houseoffashion",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "huawei",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ikman lk",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "jewell",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kapruka",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "koko",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laptop",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laptop lk",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "liquor",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mac mart kandy",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mint pay",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mintpay",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "new kandy tex",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nike",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "no limit",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nolimit",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "odel",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "oppo",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "oppo lanka",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "realme",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "redmi",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "redmi lanka",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "samsung",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "samsung store",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "saree",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sense micro",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "serandib technologies",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "shein",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "showroom",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "simplytek",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "singer",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "singer sri lanka",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "smartphone",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "softlogic",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "softlogic holdings",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sriyani dress",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "takas lk",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "temu",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "tex",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "textile",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "toys",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wine store",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wine world",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wish.com",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wow lk",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "xiaomi",
       "category": "Shopping",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "xiaomi store",
       "category": "Shopping",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "1password",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "adobe",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "adobe creative cloud",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amazon web",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amazon web services",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "anthropic",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "anthropic claude",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apple com bill",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apple.com",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apple.com/bill",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "applecombill",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "atlassian",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "atlassian jira",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "aws",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "azure",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "canva",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "canva pro",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "chatgpt",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "claude.ai",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cloudflare",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "cloudflare inc",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "digital ocean",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "digitalocean",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dropbox",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dropbox plus",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "evernote",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "expressvpn",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "figma",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "figma design",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "github",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "github copilot",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "godaddy",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "google cloud",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "google gsuite",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "google one",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "google play",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "google storage",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "google workspace",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "googleone",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "grammarly",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "heroku",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "icloud",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "jetbrains",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "jetbrains ai",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "jira",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lastpass",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "linode",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "microsoft",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "microsoft 365",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "microsoft azure",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ms365",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "namecheap",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "netlify",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "netlify inc",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nintendo",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nordvpn",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "notion",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "notion labs",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "office 365",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "office365",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "openai",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "openai chatgpt",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "play google",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "playstation network",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "proton",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "psn",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "slack",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "slack technologies",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "squarespace",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "steam games",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "surfshark",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vercel",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vercel inc",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wix.com",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wordpress",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "xbox",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "zoom communications",
       "category": "Software",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "zoom video",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "zoom.us",
       "category": "Software",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amazon prime",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "amazon prime video",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apple music",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apple tv",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "apple tv plus",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "applemusic",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "appletv",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "audible",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "crunchyroll",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dazn",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "deezer",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "disney",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "disney plus",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hbo",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hbo max",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hotstar",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hulu",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "iflix",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "netflix",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "netflix.com",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "patreon",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "prime video",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "primevideo",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "shahid",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sony liv",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "spotify",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "spotify premium",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "twitch",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "viu",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wwe network",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "youtube",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "youtube music",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "youtube premium",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "youtubepremium",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "yt premium",
       "category": "Streaming",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "zee5",
       "category": "Streaming",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "airtel",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "airtel lanka",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "airtime",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dialog",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dialog axiata",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dialog broadband",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dialog finance",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dialog reload",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dialog self care",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "dialog tv",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "etisalat",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ez cash",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ezcash",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "genie",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hutch",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hutch lanka",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "hutchison",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kaspa",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lanka bell",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lanka communication",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lankabell",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lucky communication",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mcash",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mobitel",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mobitel reload",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "mobitel selfcare",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "peo tv",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "peotv",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "prepaid reload",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "recharge",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "reload",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "slt",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "slt broadband",
       "category": "Telecom",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "slt mobitel",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sltmobitel",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sri lanka telecom",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "starpoints",
       "category": "Telecom",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ace cabs",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "auto part",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "battery",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "budget taxi",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "car park",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "car rent",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "car rental",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "car wash",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "carwash",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ctb",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ctb bus",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "emission test",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "expressway",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "expressway toll",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "garage",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "highway",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "interchange",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kangaroo cab",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kangaroo cabs",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "katunayake expressway",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "kurunegala interchange",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lubricant",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ndb transport",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "parking",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "peliyagoda interchange",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pick me",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "pickme",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "puncture",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "railway",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "rda",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "rda toll",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "rent a car",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "rent car",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "revenue license",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "season ticket",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "seeduwa interchange",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "self drive",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sltb",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "southern expressway",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "spare part",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "taxi",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "three wheeler",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "tire",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "toll",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "tuk tuk",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "tyre",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "uber",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "uber lanka",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vehicle emission",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vehicle rent",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "vehicle service",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wheel alignment",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "yego",
       "category": "Transport",
-      "goesTo": "expenses"
+      "goesTo": "expenses",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "yego cabs",
       "category": "Transport",
       "goesTo": "expenses",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceb",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceb ebill",
       "category": "Utilities",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceylon electricity",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "ceylon electricity board",
       "category": "Utilities",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "electricity",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "electricity bill",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gas bill",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gas cylinder",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "gas refill",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "lanka electricity company",
       "category": "Utilities",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "laugfs gas",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "leco",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "litro",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "litro gas",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "meter reading",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "national water supply",
       "category": "Utilities",
       "goesTo": "subscription",
-      "src": "seed-extra"
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "nwsdb",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "prepaid meter",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "sewerage",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "wasa",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "water bill",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     },
     {
       "key": "water board",
       "category": "Utilities",
-      "goesTo": "subscription"
+      "goesTo": "subscription",
+      "confidence": 1,
+      "source": "seed"
     }
-  ]
+  ],
+  "gate": 0.95,
+  "ambiguous": 14
 }
