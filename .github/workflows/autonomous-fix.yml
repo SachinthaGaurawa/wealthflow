@@ -3,34 +3,51 @@ name: Autonomous fix agent (free)
 # =============================================================================
 # On a schedule the agent drafts a fix for ONE non-sensitive module, then this
 # workflow VALIDATES it (syntax + tests) INLINE — so it never depends on the
-# GITHUB_TOKEN-PR trigger quirk that used to leave PR checks unrun.
+# GITHUB_TOKEN-PR trigger quirk that leaves PR checks unrun.
 #
-#   AUTONOMY_LEVEL (repo variable, Settings → Secrets and variables → Actions):
-#     • "auto"  → a validated, non-sensitive fix is committed to main AND shipped
-#                 as a patch update (release.cjs) — fully hands-off.
-#     • unset / anything else (DEFAULT, safe) → opens a review PR labelled
-#                 'ai-fix' that you merge with one click; the daily release then
-#                 ships it automatically.
+#   AUTONOMY_LEVEL (repo variable, Settings -> Secrets and variables -> Actions):
+#     • "auto"  -> a validated, non-sensitive fix is committed to the default
+#                  branch AND shipped as a patch update (release.cjs).
+#     • unset / anything else (DEFAULT, safe) -> opens a review PR labelled
+#                  'ai-fix' that you merge with one click; the daily release
+#                  then ships it automatically.
 # The agent can NEVER touch index.html, auth, crypto, money, rules, sw.js, deps
 # or the pipeline (enforced inside autonomous-fix-agent.js), in either mode.
+#
+# NOTE ON `secrets` IN CONDITIONS (this is why the old file was invalid):
+#   GitHub does NOT expose the `secrets` context to any `if:` — not a job's and
+#   not a step's. The legal pattern is to hoist the *presence* of the secret into
+#   a job-level `env` (job `env` DOES allow `secrets`) and gate on `env.*`.
+#
+# NOTE ON ACTIONS MINUTES:
+#   The old schedule was '*/30 * * * *' = 48 runs/day. On a PRIVATE repo GitHub
+#   Free gives 2,000 minutes/month — that alone would exhaust the quota and then
+#   EVERY workflow in the repo stops, including releases. It now runs every 2h
+#   (12/day). If your repo is PUBLIC, Actions minutes are unlimited and you can
+#   safely restore '*/30 * * * *' on the cron line below.
 # =============================================================================
 
 on:
   schedule:
-    - cron: '*/30 * * * *'      # every 30 min (free tier may delay — fine)
+    - cron: '0 */2 * * *'       # every 2 hours (see NOTE ON ACTIONS MINUTES)
   workflow_dispatch: {}
 
 permissions:
   contents: write
   pull-requests: write
 
+# Shared with every workflow that pushes to the default branch, so two bots can
+# never push at the same moment and lose a race.
 concurrency:
-  group: autonomous-fix
+  group: wealthflow-main-push
   cancel-in-progress: false
 
 jobs:
   fix:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HAS_FIREBASE: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,10 +55,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
       - name: Install deps
         run: npm ci || npm install
+
       - name: firebase-admin (optional)
-        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        if: env.HAS_FIREBASE == 'true'
         run: npm install firebase-admin --no-save
 
       - name: Run the fix agent
@@ -55,8 +74,23 @@ jobs:
       - name: Detect the drafted fix
         id: check
         run: |
-          if [ ! -f ai-fix-pr.json ]; then echo "have=no" >> "$GITHUB_OUTPUT"; echo "no fix this run"; exit 0; fi
-          FILE=$(node -e "console.log(require('./ai-fix-pr.json').file)")
+          if [ ! -f ai-fix-pr.json ]; then
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "no fix this run"
+            exit 0
+          fi
+          FILE=$(node -p "require('./ai-fix-pr.json').file" 2>/dev/null || true)
+          # the draft must name a file that actually exists, or we ignore it
+          if [ -z "${FILE:-}" ] || [ "$FILE" = "undefined" ] || [ ! -f "$FILE" ]; then
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "draft names no valid file — ignoring"
+            exit 0
+          fi
+          if git diff --quiet -- "$FILE"; then
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "file is unchanged — nothing to commit"
+            exit 0
+          fi
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
           echo "have=yes" >> "$GITHUB_OUTPUT"
           echo "drafted fix for: $FILE"
@@ -65,11 +99,14 @@ jobs:
         id: validate
         if: steps.check.outputs.have == 'yes'
         continue-on-error: true
+        env:
+          # passed through env, never interpolated into the shell — an AI-authored
+          # value can then never be executed as a command
+          FIX_FILE: ${{ steps.check.outputs.file }}
         run: |
-          FILE="${{ steps.check.outputs.file }}"
-          node --check "$FILE" || exit 1
+          node --check "$FIX_FILE"
           if node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts.test?0:1)"; then
-            npm test || exit 1
+            npm test
           else
             echo "no test script — skipping tests"
           fi
@@ -80,35 +117,44 @@ jobs:
         if: steps.check.outputs.have == 'yes' && steps.validate.outputs.ok == 'yes' && vars.AUTONOMY_LEVEL == 'auto'
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIX_FILE: ${{ steps.check.outputs.file }}
         run: |
-          TITLE=$(node -e "console.log(require('./ai-fix-pr.json').title)")
-          FILE="${{ steps.check.outputs.file }}"
+          TITLE=$(node -p "require('./ai-fix-pr.json').title" 2>/dev/null || true)
+          if [ -z "${TITLE:-}" ] || [ "$TITLE" = "undefined" ]; then
+            TITLE="fix: automated patch"
+          fi
           git config user.name  'wealthflow-agent'
           git config user.email 'agent@users.noreply.github.com'
-          git add "$FILE"
-          git commit -m "$TITLE" -- "$FILE"
-          [ -n "$FIREBASE_SERVICE_ACCOUNT" ] && npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
-          node -e "process.stdout.write(require('./ai-fix-pr.json').title)" > .relnote
-          node release.cjs --patch --push --note "$(cat .relnote)"
-          rm -f .relnote
+          git add -- "$FIX_FILE"
+          git commit -m "$TITLE" -- "$FIX_FILE"
+          if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
+            npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
+          fi
+          git pull --rebase --autostash origin "$GITHUB_REF_NAME" || true
+          # --note takes the title as ONE argument: quotes/backticks in it stay inert
+          node release.cjs --patch --push --note "$TITLE"
 
       - name: Open a review PR (default, or if validation failed)
         if: steps.check.outputs.have == 'yes' && (vars.AUTONOMY_LEVEL != 'auto' || steps.validate.outputs.ok != 'yes')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIX_FILE: ${{ steps.check.outputs.file }}
+          VALIDATED: ${{ steps.validate.outputs.ok }}
         run: |
-          TITLE=$(node -e "console.log(require('./ai-fix-pr.json').title)")
-          FILE="${{ steps.check.outputs.file }}"
-          node -e "console.log(require('./ai-fix-pr.json').body)" > pr-body.txt
-          if [ "${{ steps.validate.outputs.ok }}" != "yes" ]; then
-            printf '\n> Automated validation did not pass — please review carefully before merging.\n' >> pr-body.txt
+          TITLE=$(node -p "require('./ai-fix-pr.json').title" 2>/dev/null || true)
+          if [ -z "${TITLE:-}" ] || [ "$TITLE" = "undefined" ]; then
+            TITLE="fix: automated patch"
+          fi
+          node -e "process.stdout.write(String(require('./ai-fix-pr.json').body || 'AI-drafted fix.'))" > pr-body.txt
+          if [ "${VALIDATED:-}" != "yes" ]; then
+            printf '\n> Automated validation did not pass — review carefully before merging.\n' >> pr-body.txt
           fi
           BRANCH="ai-fix/$(date +%s)"
           git config user.name  'wealthflow-agent'
           git config user.email 'agent@users.noreply.github.com'
           git checkout -b "$BRANCH"
-          git add "$FILE"
-          git commit -m "$TITLE" -- "$FILE"
+          git add -- "$FIX_FILE"
+          git commit -m "$TITLE" -- "$FIX_FILE"
           git push origin "$BRANCH"
           gh label create ai-fix --color FFA500 --description "AI-drafted, needs review" 2>/dev/null || true
-          gh pr create --title "$TITLE" --body-file pr-body.txt --base main --head "$BRANCH" --label ai-fix
+          gh pr create --title "$TITLE" --body-file pr-body.txt --base "$GITHUB_REF_NAME" --head "$BRANCH" --label ai-fix

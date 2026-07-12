@@ -4,11 +4,20 @@ name: Auto Release (WealthFlow)
 # Cuts a REAL release with no human required:
 #   • bumps all 7 version locations via release.cjs (version law enforced)
 #   • writes the changelog + version.json notes
-#   • commits & pushes  →  Vercel auto-deploys  →  the in-app update system
+#   • commits & pushes  ->  Vercel auto-deploys  ->  the in-app update system
 #     announces the new version to users
 # Firestore is OPTIONAL: brain-driven when FIREBASE_SERVICE_ACCOUNT is set,
-# a simple "new commits since the last release" heuristic otherwise.
+# a simple "new commits since the last release tag" heuristic otherwise.
 # Manual dispatch = one-click "Release now" (with optional explicit version).
+#
+# NOTE ON `secrets` IN CONDITIONS (this is why the old file was invalid):
+#   GitHub does NOT expose the `secrets` context to any `if:` — not a job's and
+#   not a step's. Only `env`, `github`, `inputs`, `job`, `matrix`, `needs`,
+#   `runner`, `steps`, `strategy` and `vars` are available there.
+#   The legal pattern (used below) is to hoist the *presence* of the secret into
+#   a job-level `env` value (job `env` DOES allow `secrets`) and then gate steps
+#   on `env.HAS_FIREBASE`. Every step also re-checks in the shell, so the run is
+#   correct even if the gate is ever removed.
 # =============================================================================
 
 on:
@@ -19,6 +28,7 @@ on:
       version:
         description: 'Explicit version X.Y.Z (blank = auto-bump)'
         required: false
+        type: string
       bump:
         description: 'Bump kind when no explicit version'
         type: choice
@@ -31,21 +41,27 @@ on:
       note:
         description: "What's-new text (optional)"
         required: false
+        type: string
 
 permissions:
   contents: write
 
+# Shared with every workflow that pushes to the default branch, so two bots can
+# never push at the same moment and lose a race.
 concurrency:
-  group: wealthflow-release
+  group: wealthflow-main-push
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 15          # a hung npm can otherwise burn GitHub's 6h default
+    env:
+      HAS_FIREBASE: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0         # full history + tags (the "due" check needs them)
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -56,15 +72,21 @@ jobs:
           git config user.email 'bot@wealthflow.local'
 
       # Best-effort: let the brain prioritise feedback + arm system/pendingRelease.
-      # Skips cleanly when firebase-admin / the secret are absent.
       - name: Arm the release brain (optional)
-        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        if: env.HAS_FIREBASE == 'true'
         continue-on-error: true
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           RELEASE_BRAIN_ENABLED: '1'
         run: |
-          npm i firebase-admin@12 --no-save
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
+            echo "no service account — skipping the brain"
+            exit 0
+          fi
+          npm i firebase-admin@12 --no-save >/dev/null 2>&1 || {
+            echo "firebase-admin install failed — skipping the brain"
+            exit 0
+          }
           node release-brain.js || echo "brain step non-fatal"
 
       - name: Decide if a release is due
@@ -74,23 +96,53 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           if [ "$EVENT" = "workflow_dispatch" ]; then
-            echo "due=yes" >> "$GITHUB_OUTPUT"; echo "manual dispatch → releasing"; exit 0
+            echo "due=yes" >> "$GITHUB_OUTPUT"
+            echo "manual dispatch -> releasing"
+            exit 0
           fi
+
           DUE=no
-          if [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+
+          # 1) has the brain armed a release?
+          if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
             npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
             set +e
             node -e "(async()=>{try{const a=require('firebase-admin');a.initializeApp({credential:a.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))});const d=await a.firestore().collection('system').doc('pendingRelease').get();const x=d.exists?d.data():{};process.exit((x.shouldRelease&&!x.consumed)?7:0);}catch(e){process.exit(0);}})();"
-            [ "$?" = "7" ] && DUE=yes
+            RC=$?
             set -e
-          fi
-          if [ "$DUE" = "no" ]; then
-            LAST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-            if [ -n "$LAST" ]; then
-              N=$(git rev-list "${LAST}..HEAD" --count 2>/dev/null || echo 0)
-              [ "${N:-0}" -gt 0 ] && { DUE=yes; echo "$N new commit(s) since $LAST"; }
+            if [ "$RC" = "7" ]; then
+              DUE=yes
+              echo "brain: a release is armed"
             fi
           fi
+
+          # 2) otherwise: are there commits since the last release tag?
+          LAST=$(git describe --tags --abbrev=0 2>/dev/null || true)
+
+          if [ -z "${LAST:-}" ]; then
+            # BOOTSTRAP. With no release tag, "commits since the last release" can never
+            # be computed, so a scheduled release could NEVER fire (the tag is only made
+            # by this workflow -> deadlock). Tag the CURRENT version at HEAD: this code IS
+            # the current release, so there is nothing to ship right now, but every future
+            # commit is now measurable and tomorrow's run works.
+            CUR=$(node -p "require('./version.json').latest" 2>/dev/null || true)
+            if [ -n "${CUR:-}" ]; then
+              git tag "v$CUR" || true
+              git push origin "v$CUR" || true
+              echo "bootstrapped tag v$CUR (no release tag existed) — nothing to release this run"
+            else
+              echo "could not read version.json — skipping bootstrap"
+            fi
+          elif [ "$DUE" = "no" ]; then
+            N=$(git rev-list "${LAST}..HEAD" --count 2>/dev/null || echo 0)
+            if [ "${N:-0}" -gt 0 ]; then
+              DUE=yes
+              echo "$N new commit(s) since $LAST"
+            else
+              echo "no new commits since $LAST"
+            fi
+          fi
+
           echo "due=$DUE" >> "$GITHUB_OUTPUT"
           echo "release due: $DUE"
 
@@ -99,26 +151,52 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           EVENT: ${{ github.event_name }}
-          IN_VERSION: ${{ github.event.inputs.version }}
-          IN_BUMP: ${{ github.event.inputs.bump }}
-          IN_URGENT: ${{ github.event.inputs.urgent }}
-          IN_NOTE: ${{ github.event.inputs.note }}
+          IN_VERSION: ${{ inputs.version }}
+          IN_BUMP: ${{ inputs.bump }}
+          IN_URGENT: ${{ inputs.urgent }}
+          IN_NOTE: ${{ inputs.note }}
         run: |
-          [ -n "$FIREBASE_SERVICE_ACCOUNT" ] && npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            if [ -n "$IN_VERSION" ]; then ARGS="--version $IN_VERSION --push"; else ARGS="--${IN_BUMP:-patch} --push"; fi
-          else
-            ARGS="--from-brain --push"
+          if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
+            npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
           fi
-          [ "$IN_URGENT" = "true" ] && ARGS="$ARGS --urgent"
-          if [ -n "$IN_NOTE" ]; then node -e "process.stdout.write(process.env.IN_NOTE)" > .relnote; ARGS="$ARGS --note \"$(cat .relnote)\""; rm -f .relnote; fi
-          echo "→ node release.cjs $ARGS"
-          eval "node release.cjs $ARGS"
+
+          # Build an argv ARRAY — never `eval` a command string. A release note
+          # containing quotes, backticks or $(...) is then passed through verbatim
+          # and can never be word-split, mangled, or executed.
+          ARGS=()
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -n "${IN_VERSION:-}" ]; then
+              ARGS+=(--version "$IN_VERSION")
+            else
+              ARGS+=("--${IN_BUMP:-patch}")
+            fi
+          else
+            ARGS+=(--from-brain)      # degrades to a patch bump with no Firestore
+          fi
+          ARGS+=(--push)
+          if [ "${IN_URGENT:-}" = "true" ]; then ARGS+=(--urgent); fi
+          if [ -n "${IN_NOTE:-}" ]; then ARGS+=(--note "$IN_NOTE"); fi
+
+          # get ahead of any other bot push before release.cjs commits
+          git pull --rebase --autostash origin "$GITHUB_REF_NAME" || true
+
+          printf 'running: node release.cjs'
+          printf ' %q' "${ARGS[@]}"
+          printf '\n'
+          node release.cjs "${ARGS[@]}"
 
       - name: Tag the release
         if: steps.due.outputs.due == 'yes'
         run: |
-          V=$(node -e "console.log(require('./version.json').latest)")
-          git tag "v$V" 2>/dev/null || true
-          git push origin "v$V" 2>/dev/null || true
+          V=$(node -p "require('./version.json').latest" 2>/dev/null || true)
+          if [ -z "${V:-}" ]; then
+            echo "could not read version.json — skipping tag"
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null 2>&1; then
+            echo "tag v$V already exists — nothing to do"
+            exit 0
+          fi
+          git tag "v$V"
+          git push origin "v$V" || echo "tag push failed (non-fatal)"
           echo "tagged v$V"

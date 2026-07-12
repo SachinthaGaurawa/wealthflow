@@ -1,5 +1,6 @@
+name: Merchant List Sync (WealthFlow)
+
 # =============================================================================
-# WealthFlow — Merchant List Auto-Sync
 # Runs on a schedule with NO human. Every run it VERIFIES + dedupes + sorts the
 # merchant list (merchants.json). When an Anthropic key is configured it also
 # asks Claude for NEW real Sri-Lankan/global merchants, re-verifies each against
@@ -15,8 +16,10 @@
 #
 # The engine lives at Test/merchant-expand.cjs (a plain Node script; Vercel only
 # builds api/*.js as functions, so it never touches the deployment).
+#
+# NOTE: `secrets` is passed via a step `env:` (legal). It is NEVER used in an
+# `if:` — GitHub does not expose the secrets context to any conditional.
 # =============================================================================
-name: Merchant List Sync (WealthFlow)
 
 on:
   schedule:
@@ -26,33 +29,47 @@ on:
 permissions:
   contents: write
 
+# Shared with every workflow that pushes to the default branch, so two bots can
+# never push at the same moment and lose a race.
 concurrency:
-  group: merchant-sync
+  group: wealthflow-main-push
   cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
       - name: Expand & verify merchant list
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           MERCHANT_BATCH: ${{ vars.MERCHANT_BATCH }}
         run: node Test/merchant-expand.cjs
+
       - name: Commit if the list changed
         run: |
-          if [ -n "$(git status --porcelain merchants.json)" ]; then
-            git config user.name  'WealthFlow Merchant Bot'
-            git config user.email 'bot@wealthflow.local'
-            git add merchants.json
-            git commit -m 'chore(merchants): auto-expand + verify merchant list [skip ci]'
-            git push
-            echo 'merchants.json updated and pushed.'
-          else
-            echo 'No changes to merchants.json this run.'
+          if [ -z "$(git status --porcelain merchants.json)" ]; then
+            echo "No changes to merchants.json this run."
+            exit 0
           fi
+          git config user.name  'WealthFlow Merchant Bot'
+          git config user.email 'bot@wealthflow.local'
+          git add merchants.json
+          git commit -m 'chore(merchants): auto-expand + verify merchant list [skip ci]'
+          # retry around a concurrent bot push (release / fix agent)
+          for i in 1 2 3; do
+            if git push; then
+              echo "merchants.json updated and pushed."
+              exit 0
+            fi
+            echo "push rejected (attempt $i) — rebasing on the latest default branch"
+            git pull --rebase --autostash origin "$GITHUB_REF_NAME" || true
+          done
+          echo "could not push after 3 attempts — will retry next run"
+          exit 1
