@@ -21,7 +21,14 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILE = process.env.MERCHANTS_FILE || path.join(__dirname, '..', 'merchants.json');
+// Find merchants.json no matter where this script sits. GitHub Actions runs with
+// cwd = repo root, so cwd wins; the __dirname fallbacks cover being run directly
+// from the repo root or from any sub-folder (test/, Test/, tests/ …).
+const FILE = (function () {
+  const cands = [process.env.MERCHANTS_FILE, path.join(process.cwd(), 'merchants.json'), path.join(__dirname, 'merchants.json'), path.join(__dirname, '..', 'merchants.json')].filter(Boolean);
+  for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch (_) {} }
+  return path.join(process.cwd(), 'merchants.json');
+})();
 const GATE = 0.95;
 
 const VALID_CATS = { Telecom:1, Insurance:1, Streaming:1, Software:1, Internet:1, Utilities:1, Groceries:1, Dining:1, Health:1, Transport:1, Fuel:1, Education:1, Government:1, Shopping:1, Gold:1, 'Gym/Fitness':1, Leasing:1, 'Bank Charges':1, 'Cash Withdrawal':1, Other:1 };
@@ -45,8 +52,8 @@ const SYSTEM = [
 '- "key" = a lowercase distinctive signal that really appears in a bank narration (the brand only; no city; no POS id).',
 '- confidence 0.00-1.00. Use >= 0.95 ONLY when the company unmistakably exists and the category is beyond doubt.',
 '  A low score is CORRECT and safe. A confident wrong answer is a system failure.',
-'Reply with ONLY a JSON array, no prose, no markdown fences:',
-'[{"key":"...","category":"...","goes_to":"subscription|expenses","confidence":0.00}]'
+'Return only JSON, no prose and no markdown fences, in exactly this shape:',
+'{"merchants":[{"key":"...","vendor":"...","category":"...","destination":"subscription|expenses","confidence":0.00}]}'
 ].join('\n');
 
 async function ask(sector, existing, pass) {
@@ -61,11 +68,21 @@ async function ask(sector, existing, pass) {
   // 1) preferred: the user's OWN deployed endpoint — no new secret required
   if (APP) {
     try {
+      // mode:'consensus' makes ai.js run ALL 16 engines and keep only valid replies.
+      // preferredProvider is effectively ignored by the backend (everything resolved to
+      // groq), so the two passes are separated by TEMPERATURE instead — genuinely
+      // independent samples that then have to agree.
       const r = await fetch(APP + '/api/ai', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: SYSTEM + '\n\n' + user, temperature: 0, maxTokens: 1800, preferredProvider: pass === 2 ? 'groq' : '' })
+        body: JSON.stringify({ prompt: SYSTEM + '\n\n' + user, mode: 'consensus', temperature: pass === 2 ? 0.5 : 0, maxTokens: 1800 })
       });
-      if (r.ok) { const j = await r.json(); return parse(j.reply || j.text || ''); }
+      if (r.ok) {
+        const j = await r.json();
+        const out = parse(j.reply || j.text || '');
+        out.note = 'consensusOf=' + (j.consensusOf || 1) + ' (' + (j.agreement || []).length + ' engines)';
+        out.engines = j.consensusOf || 1;
+        return out;
+      }
       return { list: [], note: 'APP_URL /api/ai HTTP ' + r.status };
     } catch (e) { return { list: [], note: 'APP_URL unreachable: ' + (e && e.message) }; }
   }
@@ -84,10 +101,12 @@ async function ask(sector, existing, pass) {
   } catch (e) { return { list: [], note: 'anthropic error: ' + (e && e.message) }; }
 }
 function parse(text) {
-  const m = String(text || '').match(/\[[\s\S]*\]/);
-  if (!m) return { list: [], note: 'no JSON in reply' };
-  try { const a = JSON.parse(m[0]); return { list: Array.isArray(a) ? a : [], note: 'ok' }; }
-  catch (_) { return { list: [], note: 'JSON parse failed' }; }
+  const t = String(text || '');
+  const obj = t.match(/\{[\s\S]*\}/);
+  if (obj) { try { const j = JSON.parse(obj[0]); if (Array.isArray(j.merchants)) return { list: j.merchants, note: 'ok' }; } catch (_) {} }
+  const arr = t.match(/\[[\s\S]*\]/);
+  if (arr) { try { const a = JSON.parse(arr[0]); if (Array.isArray(a)) return { list: a, note: 'ok' }; } catch (_) {} }
+  return { list: [], note: 'no parseable JSON in reply' };
 }
 
 // SELF-CORRECTION AUDIT: a short key that is contained in a LONGER key of a
@@ -123,7 +142,7 @@ async function run() {
     const peer = B.get(k);
     const conf = Math.min(+e.confidence || 0, peer ? (+peer.confidence || 0) : 0);
     if (!peer || peer.category !== e.category || conf < GATE) { held++; return; }   // no consensus / below gate → NOT written
-    map.set(k, { key:k, category:e.category, goesTo:goesToFor({ goesTo: e.goes_to, category: e.category }), confidence:+conf.toFixed(2), source:'ai-consensus' });
+    map.set(k, { key:k, category:e.category, goesTo:goesToFor({ goesTo: e.destination || e.goes_to, category: e.category }), confidence:+conf.toFixed(2), source:'ai-consensus' });
     added++;
   });
   function validEntry2(e) { return !!(e && typeof e.key === 'string' && norm(e.key).length >= 2 && e.category && VALID_CATS[e.category]); }
