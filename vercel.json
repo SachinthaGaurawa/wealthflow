@@ -67,6 +67,19 @@
       ]
     },
     {
+      "source": "/merchants.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=1800, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/json; charset=utf-8"
+        }
+      ]
+    },
+    {
       "source": "/manifest.json",
       "headers": [
         {
@@ -142,6 +155,10 @@
     {
       "source": "/manifest.json",
       "destination": "/manifest.json"
+    },
+    {
+      "source": "/merchants.json",
+      "destination": "/merchants.json"
     },
     {
       "source": "/(.*)",

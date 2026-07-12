@@ -32,6 +32,11 @@
     root.WF_MERCHANTS_LOADED = '1.0';
     var VERSION = '1.0';
     var LS_LEARN = 'wf_merchant_learned';
+    var LS_REMOTE = 'wf_merchants_remote_v1';        // verified copy of the fetched list
+    var LS_REMOTE_TS = 'wf_merchants_remote_ts';      // last sync time (throttle)
+    var REMOTE_URL = '/merchants.json';               // same-origin, served static by Vercel
+    var REMOTE_TTL = 6 * 3600 * 1000;                 // re-sync at most every 6h
+    var _remote = [];                                 // [{key,category,goesTo}] sorted by key length desc
 
     function norm(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
     // a compact form that KEEPS letters+digits glued (so "apple.com/bill" → "applecombill",
@@ -174,6 +179,14 @@
             return out;
         }
 
+        // 5b) auto-updated remote merchant list (verified) — fills gaps the seed lacks
+        var rem = _matchFlat(nd, gd);
+        if (rem) {
+            out.category = rem.category; out.matched = 'remote:' + rem.key; out.confidence = 0.88;
+            if (SUB_CATS[rem.category] || rem.goesTo === 'subscription') { out.goesTo = 'subscription'; out.subName = _subName(raw, rem.category); out.subPhone = ph || ''; out.reason = rem.category + ' \u2192 Subscriptions (auto-updated list)'; }
+            else { out.goesTo = 'expenses'; out.type = rem.category === 'Fuel' ? 'fuel' : 'purchase'; out.reason = rem.category + ' \u2192 Expenses (auto-updated list)'; }
+            return out;
+        }
         // 6) cash withdrawal (not a fee) → Expenses · Cash Withdrawal
         if (/\b(atm withdrawal|cash withdrawal|cardless cash|crm withdrawal)\b/.test(nd)) {
             out.goesTo = 'expenses'; out.category = 'Cash Withdrawal'; out.confidence = 0.8; out.matched = 'cash'; out.reason = 'cash withdrawal → Expenses'; return out;
@@ -181,6 +194,32 @@
         // unknown → let WFRoute / AI consensus decide
         return out;
     }
+    // valid taxonomy — the ONLY categories a remote/AI entry may claim (self-verification)
+    var VALID_CATS = { Telecom: 1, Insurance: 1, Streaming: 1, Software: 1, Internet: 1, Utilities: 1, Groceries: 1, Dining: 1, Health: 1, Transport: 1, Fuel: 1, Education: 1, Government: 1, Shopping: 1, Gold: 1, 'Gym/Fitness': 1, Leasing: 1, 'Bank Charges': 1, 'Cash Withdrawal': 1, Other: 1 };
+    function _validEntry(e) { return !!(e && typeof e.key === 'string' && e.key.length >= 2 && e.category && VALID_CATS[e.category]); }
+    function _matchFlat(nd, gd) { for (var i = 0; i < _remote.length; i++) { var e = _remote[i]; var kg = glue(e.key); if (nd.indexOf(e.key) >= 0 || (kg.length >= 4 && gd.indexOf(kg) >= 0)) return e; } return null; }
+    function _loadRemoteCache() { try { var a = JSON.parse(root.localStorage.getItem(LS_REMOTE) || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; } }
+    function _saveRemoteCache(a) { try { root.localStorage.setItem(LS_REMOTE, JSON.stringify(a)); } catch (_) {} }
+    function _setRemote(a) { _remote = (a || []).slice().sort(function (x, y) { return String(y.key).length - String(x.key).length; }); }  // longer/more-specific keys win
+    // fetch the auto-updated merchant list, VERIFY every entry against the taxonomy, then merge.
+    function syncRemote(url, force) {
+        try {
+            if (typeof fetch !== 'function') return Promise.resolve(0);
+            var now = Date.now();
+            if (!force) { var last = +(root.localStorage.getItem(LS_REMOTE_TS) || 0); if (now - last < REMOTE_TTL) return Promise.resolve(-1); }
+            try { root.localStorage.setItem(LS_REMOTE_TS, String(now)); } catch (_) {}
+            return fetch((url || REMOTE_URL) + '?_=' + now, { cache: 'no-store' }).then(function (r) { return r && r.ok ? r.json() : null; }).then(function (j) {
+                if (!j || !Array.isArray(j.merchants)) return 0;
+                var clean = [], seen = {};
+                j.merchants.forEach(function (e) { if (!_validEntry(e)) return; var k = norm(e.key); if (!k || seen[k]) return; seen[k] = 1; clean.push({ key: k, category: e.category, goesTo: (e.goesTo === 'subscription' || e.goesTo === 'expenses' || e.goesTo === 'income') ? e.goesTo : (SUB_CATS[e.category] ? 'subscription' : 'expenses') }); });
+                _saveRemoteCache(clean); _setRemote(clean);
+                try { root.console && root.console.log('[WFMerchants] \u2713 synced ' + clean.length + ' verified merchants (list v' + (j.version || '?') + ')'); } catch (_) {}
+                return clean.length;
+            }).catch(function () { return 0; });
+        } catch (_) { return Promise.resolve(0); }
+    }
+    function verifyRemote() { var bad = 0; _remote.forEach(function (e) { if (!_validEntry(e)) bad++; }); return { ok: bad === 0, count: _remote.length, invalid: bad }; }
+
     function _subName(raw, cat) {
         var brand = merchantKey(raw);
         brand = brand ? brand.replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : '';
@@ -241,7 +280,9 @@
         _saveLearned(o); return n;
     }
 
-    try { verify(); } catch (_) {}   // heal any conflicts on load
-    root.WFMerchants = { classify: classify, refine: refine, learn: learn, verify: verify, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, VERSION: VERSION };
+    try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
+    try { verify(); } catch (_) {}                          // heal any learned conflicts on load
+    try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
+    root.WFMerchants = { classify: classify, refine: refine, learn: learn, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

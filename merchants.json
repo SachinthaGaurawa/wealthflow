@@ -1,0 +1,3673 @@
+{
+  "schema": "wealthflow.merchants/v1",
+  "version": 1,
+  "updated": "2026-07-11",
+  "source": "wealthflow-seed",
+  "taxonomy": {
+    "goesTo": [
+      "subscription",
+      "expenses",
+      "income"
+    ],
+    "categories": [
+      "Telecom",
+      "Insurance",
+      "Streaming",
+      "Software",
+      "Internet",
+      "Utilities",
+      "Groceries",
+      "Dining",
+      "Health",
+      "Transport",
+      "Fuel",
+      "Education",
+      "Government",
+      "Shopping",
+      "Gold",
+      "Leasing",
+      "Gym/Fitness",
+      "Bank Charges",
+      "Cash Withdrawal",
+      "Other"
+    ],
+    "subscriptionCategories": [
+      "Telecom",
+      "Insurance",
+      "Streaming",
+      "Internet",
+      "Utilities",
+      "Software",
+      "Gym/Fitness",
+      "Leasing"
+    ]
+  },
+  "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
+  "count": 693,
+  "merchants": [
+    {
+      "key": "bake house",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "bakehouse",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "bakery",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "barbeque",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "barista",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "barista coffee",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "bistro",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "buffet",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "burger",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "burger factory",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "burger king",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "burger king lanka",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "burgerking",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cafe",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cafe kumbuk",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cafeteria",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "canteen",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "chatime",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "chinese dragon",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "chinese dragon cafe",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "chooti",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cinnabon",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "coffee",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "coffee bean",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cool spot",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "crepe",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "crepe runner",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "creperunner",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dessert",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dinemore",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dominos",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dominos pizza lanka",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "donut",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dunkin",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "eatery",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "elephant house",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fast food",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "food court",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "foodcourt",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fried chicken",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "green cabin",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "grill",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "hela bojun",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "hoppers",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ice cream",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "java lounge",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "juice bar",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "kfc",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "kfc lanka",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "kottu",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "krispy kreme",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "lamprais",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mandiya",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mcdonald",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mcdonalds",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ministry of crab",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "noodles",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nuga gama",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "perera and sons",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pereraandsons",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pilawoos",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pizza",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pizza corner",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "pizza hut",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pizza hut lanka",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "pizzahut",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "raja bojun",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ramen",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "restaurant",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "rice and curry",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "shanmugas",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "shawarma",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "simply strawberries",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "spicy food",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sponge",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "starbucks",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "strawberries",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "subway",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "subway lanka",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "sushi",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "tea shop",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "the coffee bean",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "the commons",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "the sizzle",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "upali restaurant",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "waffle",
+      "category": "Dining",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "academy",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "apiit",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "apiit lanka",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "book shop",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "book store",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "bookshop",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "bookstore",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "british council",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cambridge",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "campus",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "college",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "coursera",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "day care",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "diploma",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "edexcel",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "gateway college",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ielts",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "iit campus",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "institute",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "international school",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "kaplan",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "kdu",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "lyceum international",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "makeen",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "makeen books",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "montessori",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nsbm",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nsbm green university",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ousl",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pearson",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pre school",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "preschool",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "royal institute",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "sarasavi",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sarasavi bookshop",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "school",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sliit",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "stafford",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "stafford international",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "toefl",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "tuition",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "udemy",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "university",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "vijitha yapa",
+      "category": "Education",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "vijitha yapa bookshop",
+      "category": "Education",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "associated motorways",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ceypetco",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cpc filling",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cpc filling station",
+      "category": "Fuel",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "diesel",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "filling station",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fuel",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fuel shed",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "gas station",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "indian oil lanka",
+      "category": "Fuel",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ioc",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "lanka ioc",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laugfs petroleum",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "lioc",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "petrol",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "petrol shed",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "petroleum",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "rm parks",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sinopec",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sinopec lanka",
+      "category": "Fuel",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "total energies",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "united petroleum",
+      "category": "Fuel",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "united petroleum lanka",
+      "category": "Fuel",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "gem stone",
+      "category": "Gold",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "gold",
+      "category": "Gold",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pawn",
+      "category": "Gold",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pawning",
+      "category": "Gold",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "raja jewellers",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "stone n string",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "sunil jewellers",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "swarna mahal",
+      "category": "Gold",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "swarnamahal",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "vogue jewell",
+      "category": "Gold",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "vogue jewellers",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "za jewellers",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "company registration",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "court fees",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "credit information",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "credit information bureau",
+      "category": "Government",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "crib",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "department of motor traffic",
+      "category": "Government",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "divisional secretariat",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "e revenue",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "e revenue license",
+      "category": "Government",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "erl",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "erl payment",
+      "category": "Government",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "government",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "grama niladhari",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "immigration",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "immigration emigration",
+      "category": "Government",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "inland revenue",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "inland revenue department",
+      "category": "Government",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ird",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "land registry",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "license fee",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "motor traffic",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "municipal council",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "passport",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pradeshiya sabha",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "registrar",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "registrar of companies",
+      "category": "Government",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "rmv",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "title documents",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "urban council",
+      "category": "Government",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "arpico daily",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "arpico super",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "arpico supercentre",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cargills",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cargills food city",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "co op city",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "coop city",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cooperative",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "daily super",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "delight holdings",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dunhinda brothers",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "food city",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "food house",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "foodcity",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "foodstar",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fresh mart",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "glomark",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "glomark supermarket",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "grocery",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "healthy living",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "healthy living market",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "jaya super",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "john keells",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "keells",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "keells super",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "keels",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "lanka sathosa",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laugfs super",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laugfs supermarket",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "mac mart",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "macmart",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "maharaja super",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "maharaja supermarket",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "maliban super",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mini mart",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "minimart",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mpcs",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nihal stores",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "provision",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sathosa",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sathosa retail",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "spar",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "spar supermarket",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "su711",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sunup",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sunup mart",
+      "category": "Groceries",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "super market",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "supermarket",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "vishwa super",
+      "category": "Groceries",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "asiri",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "asiri hospital",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ayurveda",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ayurvedic",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "central hospital",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "channelling",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "city pharmacy",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "clinic",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dental",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dentist",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "diagnostic",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "doc990",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "durdans",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "durdans hospital",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "e channelling",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "echannel",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "echannelling",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "eye hospital",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "glaxo",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "golden key hospital",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "healthguard",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "healthguard pharmacy",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "hemas hospital",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "hospital",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "isuru pharmacy",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laboratory",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laksiri",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laksiri pharmacy",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "lanka hospital",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "lanka hospitals",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "med store",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "medi lab",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "medical",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "medicare",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "medicine",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mediplus",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "medisense",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "medstore",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "navinna",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nawaloka",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nawaloka hospital",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ninewells",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ninewells hospital",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "no 1 pharmacy",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nursing home",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "odoc",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "optical",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "optician",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "osu sala",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "osusala",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pharma",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pharmacy",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "physiotherapy",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "radiology",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "raj pharmacy",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "scan center",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "scan centre",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "spectacle",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "state pharmaceuticals",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "sunrise pharmacy",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "supplements",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "surgery",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "union chemist",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "union chemists",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "vinsons pharmacy",
+      "category": "Health",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "vital essence",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "vitamins",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "x ray",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "xray",
+      "category": "Health",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "aia",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "aia insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "aia insurance lanka",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "allianz",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "allianz insurance lanka",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "amana takaful",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "amana takaful life",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "arpico insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "assurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "ceylinco",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "ceylinco general",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ceylinco life",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "continental insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "continental insurance lanka",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "coop life",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "cooperative insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "cooplife",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "critical illness",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "endowment",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "fairfirst",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "fairfirst insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "general insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "health insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "hnb assurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "hnb general insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "insuarance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "insurence",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "janashakthi",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "janashakthi insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "life cover",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "life insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "life insurance corporation",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "lolc general",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lolc general insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "lolc insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lolc life",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lolc life assurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "mbsl insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "medical insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "motor insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "orient insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "peoples insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "policy premium",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "sanasa general",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "sanasa insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "sanasa life",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "softlogic finance life",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "softlogic life",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "softlogic life insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "sri lanka insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "sri lanka insurance corporation",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "srilanka insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "takaful",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "union assurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "vehicle insurance",
+      "category": "Insurance",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "4g router",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "adsl",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "broadband",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "fiber",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "fibre",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "home broadband",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "home internet",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "internet bill",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "wi fi",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "wifi",
+      "category": "Internet",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "abans",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "adidas",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "alibaba",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "aliexpress",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "amazon",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "amazon com",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "apparel",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "apple store",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "bata",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "bata shoes",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "boutique",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "celltronics",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "clicknshop",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "clothing",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "cotton collection",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "damro",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "damro furniture",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "daraz",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "daraz lk",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "department store",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dress point",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dresspoint",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dsi",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "dsi footwear",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ebay",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "electronics",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fabric",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fashion bug",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "fashionbug",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "foodstar marketing",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "footwear",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "furniture",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "garment",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "gift shop",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "hameedia",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "handbag",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "home centre",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "homelux",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "house of fashion",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "houseoffashion",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "huawei",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ikman lk",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "jewell",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "kapruka",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "koko",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laptop",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "laptop lk",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "liquor",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mac mart kandy",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mint pay",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "mintpay",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "new kandy tex",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nike",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "no limit",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "nolimit",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "odel",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "oppo",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "oppo lanka",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "realme",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "redmi",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "redmi lanka",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "samsung",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "samsung store",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "saree",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sense micro",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "serandib technologies",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "shein",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "showroom",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "simplytek",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "singer",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "singer sri lanka",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "smartphone",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "softlogic",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "softlogic holdings",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "sriyani dress",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "takas lk",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "temu",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "tex",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "textile",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "toys",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "wine store",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "wine world",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "wish.com",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "wow lk",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "xiaomi",
+      "category": "Shopping",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "xiaomi store",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "1password",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "adobe",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "adobe creative cloud",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "amazon web",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "amazon web services",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "anthropic",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "anthropic claude",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "apple com bill",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "apple.com",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "apple.com/bill",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "applecombill",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "atlassian",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "atlassian jira",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "aws",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "azure",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "canva",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "canva pro",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "chatgpt",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "claude.ai",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "cloudflare",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "cloudflare inc",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "digital ocean",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "digitalocean",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "dropbox",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "dropbox plus",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "evernote",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "expressvpn",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "figma",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "figma design",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "github",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "github copilot",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "godaddy",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "google cloud",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "google gsuite",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "google one",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "google play",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "google storage",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "google workspace",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "googleone",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "grammarly",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "heroku",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "icloud",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "jetbrains",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "jetbrains ai",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "jira",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lastpass",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "linode",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "microsoft",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "microsoft 365",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "microsoft azure",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ms365",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "namecheap",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "netlify",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "netlify inc",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "nintendo",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "nordvpn",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "notion",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "notion labs",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "office 365",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "office365",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "openai",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "openai chatgpt",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "play google",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "playstation network",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "proton",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "psn",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "slack",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "slack technologies",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "squarespace",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "steam games",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "surfshark",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "vercel",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "vercel inc",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "wix.com",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "wordpress",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "xbox",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "zoom communications",
+      "category": "Software",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "zoom video",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "zoom.us",
+      "category": "Software",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "amazon prime",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "amazon prime video",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "apple music",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "apple tv",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "apple tv plus",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "applemusic",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "appletv",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "audible",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "crunchyroll",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "dazn",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "deezer",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "disney",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "disney plus",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "hbo",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "hbo max",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "hotstar",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "hulu",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "iflix",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "netflix",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "netflix.com",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "patreon",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "prime video",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "primevideo",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "shahid",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "sony liv",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "spotify",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "spotify premium",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "twitch",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "viu",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "wwe network",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "youtube",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "youtube music",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "youtube premium",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "youtubepremium",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "yt premium",
+      "category": "Streaming",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "zee5",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "airtel",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "airtel lanka",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "airtime",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "dialog",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "dialog axiata",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "dialog broadband",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "dialog finance",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "dialog reload",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "dialog self care",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "dialog tv",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "etisalat",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "ez cash",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "ezcash",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "genie",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "hutch",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "hutch lanka",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "hutchison",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "kaspa",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lanka bell",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lanka communication",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lankabell",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lucky communication",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "mcash",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "mobitel",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "mobitel reload",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "mobitel selfcare",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "peo tv",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "peotv",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "prepaid reload",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "recharge",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "reload",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "slt",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "slt broadband",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "slt mobitel",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "sltmobitel",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "sri lanka telecom",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "starpoints",
+      "category": "Telecom",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "ace cabs",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "auto part",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "battery",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "budget taxi",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "car park",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "car rent",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "car rental",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "car wash",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "carwash",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ctb",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ctb bus",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "emission test",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "expressway",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "expressway toll",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "garage",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "highway",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "interchange",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "kangaroo cab",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "kangaroo cabs",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "katunayake expressway",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "kurunegala interchange",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "lubricant",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "ndb transport",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "parking",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "peliyagoda interchange",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "pick me",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "pickme",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "puncture",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "railway",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "rda",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "rda toll",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "rent a car",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "rent car",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "revenue license",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "season ticket",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "seeduwa interchange",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "self drive",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "sltb",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "southern expressway",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "spare part",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "taxi",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "three wheeler",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "tire",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "toll",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "tuk tuk",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "tyre",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "uber",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "uber lanka",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "vehicle emission",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "vehicle rent",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "vehicle service",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "wheel alignment",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "yego",
+      "category": "Transport",
+      "goesTo": "expenses"
+    },
+    {
+      "key": "yego cabs",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ceb",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "ceb ebill",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "ceylon electricity",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "ceylon electricity board",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "electricity",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "electricity bill",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "gas bill",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "gas cylinder",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "gas refill",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "lanka electricity company",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "laugfs gas",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "leco",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "litro",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "litro gas",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "meter reading",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "national water supply",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "src": "seed-extra"
+    },
+    {
+      "key": "nwsdb",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "prepaid meter",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "sewerage",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "wasa",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "water bill",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    },
+    {
+      "key": "water board",
+      "category": "Utilities",
+      "goesTo": "subscription"
+    }
+  ]
+}
