@@ -29,7 +29,10 @@ const FILE = (function () {
   for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch (_) {} }
   return path.join(process.cwd(), 'merchants.json');
 })();
-const GATE = 0.95;
+// GLOBAL registry gate. merchants.json is trusted by EVERY device, so a wrong entry
+// here is contagious. It demands 0.99 — far stricter than the 0.95 a merchant needs to
+// be learned on your own phone, where a mistake only ever affects you.
+const GATE = 0.99;
 
 const VALID_CATS = { Telecom:1, Insurance:1, Streaming:1, Software:1, Internet:1, Utilities:1, Groceries:1, Dining:1, Health:1, Transport:1, Fuel:1, Education:1, Government:1, Shopping:1, Gold:1, 'Gym/Fitness':1, Leasing:1, 'Bank Charges':1, 'Cash Withdrawal':1, Other:1 };
 const SUB = { Telecom:1, Insurance:1, Streaming:1, Internet:1, Utilities:1, Software:1, 'Gym/Fitness':1, Leasing:1 };
@@ -142,6 +145,22 @@ function audit(list) {
   return conflicts;
 }
 
+// Ask /api/verify to prove a candidate is a real business, with a citation. Consensus
+// alone almost never legitimately reaches 0.99 (it is recall, not evidence) — so without
+// this, the 0.99 global gate would freeze the registry forever. Evidence is what earns 0.99.
+// Serper costs credits, so only the STRONGEST candidates are verified, capped per run.
+async function webVerify(app, key) {
+  const url = app + '/api/verify';
+  const ctl = new AbortController();
+  const kill = setTimeout(() => ctl.abort(), 20000);
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ merchant: key }), signal: ctl.signal });
+    clearTimeout(kill);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) { clearTimeout(kill); return null; }
+}
+
 async function run() {
   const doc = load();
   const before = (doc.merchants || []).length;
@@ -165,11 +184,34 @@ async function run() {
     if (map.has(k)) return;                                   // already known
     const conf = +e.confidence || 0;
     if (engines < 3) { held++; return; }                      // not a consensus
-    if (conf < GATE) { held++; return; }                      // below the 0.95 gate
+    if (conf < GATE) { held++; return; }                      // below the 0.99 GLOBAL gate
     map.set(k, { key: k, category: e.category, goesTo: goesToFor({ goesTo: e.destination || e.goes_to, category: e.category }), confidence: +conf.toFixed(2), source: 'ai-consensus' });
     added++;
   });
   function validEntry2(e) { return !!(e && typeof e.key === 'string' && norm(e.key).length >= 2 && e.category && VALID_CATS[e.category]); }
+
+  // ── evidence stage: give the strongest near-miss candidates a chance to EARN 0.99 ──
+  const APPU = (process.env.APP_URL || '').replace(/\/+$/, '');
+  const vcap = Math.max(0, Math.min(10, +(process.env.MERCHANT_VERIFY_BATCH || 3)));
+  let webVerified = 0, searched = 0;
+  if (APPU && vcap > 0) {
+    const strong = (res.list || [])
+      .filter(e => validEntry2(e) && !map.has(norm(e.key)) && (+e.confidence || 0) >= 0.90)
+      .sort((a, b) => (+b.confidence || 0) - (+a.confidence || 0))
+      .slice(0, vcap);
+    for (const e of strong) {
+      searched++;
+      const v = await webVerify(APPU, e.key);
+      if (!v || v.exists !== true) continue;
+      const cited = Array.isArray(v.evidence_urls) && v.evidence_urls.length > 0;
+      const cat = v.category && VALID_CATS[v.category] ? v.category : null;
+      if (!cited || !cat || (+v.confidence || 0) < GATE) continue;      // must clear 0.99 WITH a citation
+      const k = norm(e.key);
+      if (map.has(k)) continue;
+      map.set(k, { key: k, category: cat, goesTo: (v.destination === 'subscription' || SUB[cat]) ? 'subscription' : 'expenses', confidence: +(+v.confidence).toFixed(2), source: 'web-verified' });
+      webVerified++; added++; held--;
+    }
+  }
 
   const merchants = [...map.values()].sort((x, y) => x.category.localeCompare(y.category) || x.key.localeCompare(y.key));
   const conflicts = audit(merchants);
@@ -185,10 +227,10 @@ async function run() {
     doc.merchants = merchants;
     fs.writeFileSync(FILE, JSON.stringify(doc, null, 2) + '\n');
   }
-  console.log('[merchant-expand] sector=%s engines=%d before=%d removed=%d added=%d held=%d conflicts=%d after=%d changed=%s | %s',
-    sector, engines, before, removed, added, held, conflicts.length, merchants.length, changed, res.note);
+  console.log('[merchant-expand] sector=%s engines=%d before=%d removed=%d added=%d (web-verified %d of %d searched) held=%d conflicts=%d after=%d changed=%s | %s',
+    sector, engines, before, removed, added, webVerified, searched, held, conflicts.length, merchants.length, changed, res.note);
   if (conflicts.length) conflicts.slice(0, 5).forEach(x => console.log('  [audit] CONFLICT: "%s" is listed as both %s and %s', x.key, x.a, x.b));
-  return { before, removed, added, held, engines, conflicts: conflicts.length, after: merchants.length, changed };
+  return { before, removed, added, held, engines, webVerified, searched, conflicts: conflicts.length, after: merchants.length, changed };
 }
 
 module.exports = { validEntry, goesToFor, norm, ask, audit, run, VALID_CATS, SUB, GATE };
