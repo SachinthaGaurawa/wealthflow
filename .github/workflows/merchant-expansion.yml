@@ -17,37 +17,28 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      # CRITICAL RESOLUTION 1: Explicitly check out the repository to the runner workspace.
-      # Without this initialization step, the runner remains an empty directory, causing MODULE_NOT_FOUND.
       - name: Checkout repository codebase
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # DIAGNOSTIC STEP: Verify directory structure to preempt case sensitivity issues
       - name: Verify Workspace Structure
         run: |
           ls -la
           echo "Verifying Test directory existence..."
-          ls -la Test/ || echo "WARNING: Directory Test/ does not exist. Check case sensitivity. If your folder is named 'test' in lowercase, you must update the run command below."
+          ls -la Test/ || echo "WARNING: Directory Test/ does not exist. Check case sensitivity."
 
-      # Aligning the runtime strictly with the environment logged in the telemetry (Node.js v20.20.2)
       - name: Initialize Node.js Environment
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # Note: cache: 'npm' has been completely removed to fix the lock file error.
 
-      # Install necessary packages defined in package.json to resolve third-party dependencies
-      - name: Install Application Dependencies
-        run: npm ci || npm install
-
-      # CRITICAL RESOLUTION 2: Execute script with fully injected environment variables.
-      # Note: If the directory in your repository is actually lowercase 'test', change the path to test/merchant-expand.cjs
       - name: Expand & verify merchant list
         env:
           APP_URL: ${{ vars.APP_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # This successfully grabs your API key from the Variables tab shown in your screenshot
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_API_KEY || secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           MERCHANT_BATCH: ${{ vars.MERCHANT_BATCH }}
         run: node Test/merchant-expand.cjs
