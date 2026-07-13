@@ -276,6 +276,10 @@
          this re-adds the modal to map a last-4 to credit-card vs bank-account so
          the brain routes service-charge debits correctly. Adds window.wfOpenCardRegistry. -->
     <script src="wealthflow-card-registry.js" defer></script>
+    <!-- v7.64.0 — Merchant review. When the engine cannot VERIFY a merchant against the
+         web at >=0.95 it writes nothing and holds it. This is where you see those, with
+         the sources it found and the reason it refused, and settle them in one tap. -->
+    <script src="wealthflow-verify-panel.js" defer></script>
     <!-- v7.13.0 — Feedback Intelligence: scores & ranks all user feedback by
          urgency (security/crashes first), clusters duplicates so repeated
          reports raise priority. The honest, transparent version of "AI considers
@@ -7338,7 +7342,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.63.2';
+        var WF_APP_VERSION = '7.64.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -20931,6 +20935,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>
                 <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Register each card &amp; account to see live <b>outstanding balances, credit-limit utilization, spend and next-due dates</b> — and let WealthFlow <b>auto-file every charge to the correct tab</b> by its last-4 (a debit on a credit card goes to CC One-Time with its service charge; on a bank account it goes to Expenses).</div>
                 <button type="button" class="btn btn-secondary btn-sm" style="width:100%;" onclick="wfOpenCardRegistry()">Manage cards &amp; accounts</button>
+                <button type="button" class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" onclick="wfOpenMerchantReview()">Merchant review <span data-wfv-badge style="display:none;margin-left:6px;background:rgba(245,158,11,.18);color:#f0b34e;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:800;"></span></button>
             </div>
             <div class="setting-row">
                 <div class="setting-info" style="flex:1;min-width:0;">
@@ -21325,8 +21330,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.63.2</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.63.2</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.64.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.64.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -26079,8 +26084,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 if (window.WFMerchants && window.WFMerchants.resolveUnknowns && (window.WFMerchants.unknowns() || []).length) {
                     window.WFMerchants.resolveUnknowns().then(function (r) {
                         if (r && r.resolved) { _routeAll(); try { _reRenderBody(); } catch (_) {} }
+                        try { window.WFVerifyPanel && window.WFVerifyPanel.badge(); } catch (_) {}
                         if (r && (r.resolved || r.held)) {
-                            try { toast('Merchant intelligence: ' + r.resolved + ' identified' + (r.held ? ', ' + r.held + ' need your confirmation' : '')); } catch (_) {}
+                            var _m = (r.verified ? r.verified + ' verified on the web' : '') +
+                                     (r.resolved > (r.verified || 0) ? ((r.verified ? ', ' : '') + (r.resolved - (r.verified || 0)) + ' by AI consensus') : '') +
+                                     (r.held ? ((r.resolved ? ' · ' : '') + r.held + ' need you') : '');
+                            try { toast('Merchants: ' + (_m || 'nothing new')); } catch (_) {}
+                            // Nothing was guessed. Show what is waiting instead of burying it.
+                            if (r.held) { try { setTimeout(function () { window.WFVerifyPanel && window.WFVerifyPanel.open(); }, 900); } catch (_) {} }
                         }
                     }).catch(function () {});
                 }

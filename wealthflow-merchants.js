@@ -35,7 +35,14 @@
     var LS_UNKNOWN = 'wf_merchant_unknown';   // merchants seen in YOUR statements that nothing could identify
     var LS_PENDING = 'wf_merchant_pending';   // AI answers that did NOT clear the 0.95 gate — never written, shown for confirmation
     var AI_URL = '/api/ai';                   // your OWN endpoint — it already holds every AI key in Vercel
-    var WRITE_GATE = 0.95;                    // spec: below this, NOTHING is written to the registry
+    var VERIFY_URL = '/api/verify';           // SEARCH-FIRST verification (Serper -> one fast LLM, cite-or-abstain)
+    // TWO gates, deliberately different.
+    //   LOCAL  0.95 — learned on THIS device only. Lower, so the app actually learns
+    //                 your habits instead of freezing.
+    //   GLOBAL 0.99 — required before a merchant may enter merchants.json, which every
+    //                 device on earth then trusts. A wrong entry there is contagious.
+    var WRITE_GATE = 0.95;                    // local device gate
+    var GLOBAL_GATE = 0.99;                   // global registry gate (enforced in the Action too)
     var LS_REMOTE = 'wf_merchants_remote_v1';        // verified copy of the fetched list
     var LS_REMOTE_TS = 'wf_merchants_remote_ts';      // last sync time (throttle)
     var REMOTE_URL = '/merchants.json';               // same-origin, served static by Vercel
@@ -439,36 +446,68 @@
         '{"vendor":"...","category":"...","destination":"subscription|expenses","confidence":0.00,"why":"..."}'
     ].join('\n');
 
-    // One narration per call so the backend's field-wise majority vote actually applies.
-    // Returns { entry, engines } — engines = how many of the 16 produced a valid reply.
+    // ── SEARCH-FIRST verification (the primary path) ─────────────────────────
+    // Ask /api/verify: it Googles the merchant with a Sri Lanka geo-bias, hands ONLY
+    // those results to one fast model, and refuses to answer unless it can cite a URL
+    // that really appeared in them. Evidence beats recall — a model cannot invent a
+    // shop that does not exist.
+    function _verify(item) {
+        return fetch(VERIFY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ merchant: item.raw }) })
+            .then(function (r) { return r && r.ok ? r.json() : null; })
+            .then(function (v) { return { v: v, item: item }; })
+            .catch(function () { return { v: null, item: item }; });
+    }
+
+    // ── 16-engine consensus (the fallback, when search finds nothing) ────────
     function _askOne(item) {
         var body = { prompt: SYS + '\n\nNarration: "' + String(item.raw).replace(/"/g, "'") + '"', mode: 'consensus', temperature: 0, maxTokens: 400 };
         return fetch(AI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
             .then(function (r) { return r && r.ok ? r.json() : null; })
             .then(function (j) {
-                if (!j) return { entry: null, engines: 0 };
+                if (!j) return { entry: null, engines: 0, item: item };
                 var m = String(j.reply || '').match(/\{[\s\S]*\}/);
-                if (!m) return { entry: null, engines: 0 };
-                var e = null; try { e = JSON.parse(m[0]); } catch (_) { return { entry: null, engines: 0 }; }
+                if (!m) return { entry: null, engines: 0, item: item };
+                var e = null; try { e = JSON.parse(m[0]); } catch (_) { return { entry: null, engines: 0, item: item }; }
                 return { entry: e, engines: +(j.consensusOf || 1), item: item };
             })
-            .catch(function () { return { entry: null, engines: 0 }; });
+            .catch(function () { return { entry: null, engines: 0, item: item }; });
     }
 
-    // Real-time resolution. An answer is written ONLY when at least TWO of the sixteen
-    // engines produced a valid reply (so it is a genuine consensus, not one model's word),
-    // the category is inside the taxonomy, AND the confidence clears 0.95.
+    // Resolve every merchant YOUR statements contain that nothing could identify.
+    //   1. SEARCH-FIRST  — /api/verify must find the business AND cite a real URL.
+    //   2. FALLBACK      — if search finds nothing, fall back to the 16-engine consensus.
+    //   3. HOLD          — if neither clears 0.95, nothing is written. It waits for you,
+    //                      with the reason and the evidence links attached.
     function resolveUnknowns(limit) {
         try {
             if (typeof fetch !== 'function') return Promise.resolve({ resolved: 0, held: 0, note: 'no fetch' });
             var q = _loadQ(LS_UNKNOWN);
             if (!q.length) return Promise.resolve({ resolved: 0, held: 0, note: 'nothing unknown' });
             var batch = q.slice(0, Math.max(1, Math.min(12, limit || 8)));
-            return Promise.all(batch.map(_askOne)).then(function (res) {
-                var resolved = 0, held = 0, holdList = _loadQ(LS_PENDING);
-                res.forEach(function (r) {
+
+            return Promise.all(batch.map(_verify)).then(function (vres) {
+                var verified = 0, needFallback = [], holdList = _loadQ(LS_PENDING);
+
+                vres.forEach(function (r) {
+                    var v = r.v, src = r.item;
+                    var cited = v && Array.isArray(v.evidence_urls) && v.evidence_urls.length > 0;
+                    if (v && v.exists === true && v.category && VALID_CATS[v.category] && cited && (+v.confidence || 0) >= WRITE_GATE) {
+                        learn(src.raw, (v.destination === 'subscription' || SUB_CATS[v.category]) ? 'subscription' : 'expenses', v.category, +v.confidence);
+                        verified++;
+                        return;
+                    }
+                    needFallback.push({ item: src, v: v });
+                });
+
+                if (!needFallback.length) return { verified: verified, fb: [], holdList: holdList };
+                return Promise.all(needFallback.map(function (x) { return _askOne(x.item); })).then(function (fb) {
+                    return { verified: verified, fb: fb, holdList: holdList, vmap: needFallback };
+                });
+            }).then(function (stage) {
+                var resolved = stage.verified, held = 0, holdList = stage.holdList;
+                (stage.fb || []).forEach(function (r, i) {
                     var src = r.item, e = r.entry;
-                    if (!src) return;
+                    var vprev = (stage.vmap && stage.vmap[i] && stage.vmap[i].v) || null;
                     var cat = e && e.category, conf = e ? (+e.confidence || 0) : 0;
                     var agreed = r.engines >= 2;
                     if (e && cat && VALID_CATS[cat] && agreed && conf >= WRITE_GATE) {
@@ -479,13 +518,21 @@
                     held++;
                     if (!holdList.some(function (h) { return h.key === src.key; })) {
                         holdList.push({
-                            key: src.key, raw: src.raw, merchant: (e && e.vendor) || src.name,
-                            type: (cat && VALID_CATS[cat]) ? cat : '', goesTo: (cat && SUB_CATS[cat]) ? 'subscription' : 'expenses',
-                            confidence: +conf.toFixed(2), why: (e && e.why) || '',
-                            reason: !e ? 'the AI could not read this merchant'
+                            key: src.key, raw: src.raw,
+                            merchant: (vprev && vprev.vendor) || (e && e.vendor) || src.name,
+                            type: (cat && VALID_CATS[cat]) ? cat : ((vprev && vprev.category) || ''),
+                            goesTo: (cat && SUB_CATS[cat]) ? 'subscription' : 'expenses',
+                            confidence: +Math.max(conf, (vprev && +vprev.confidence) || 0).toFixed(2),
+                            evidence: (vprev && vprev.evidence_urls) || [],
+                            industry: (vprev && vprev.industry) || '',
+                            why: (e && e.why) || (vprev && vprev.abstain_reason) || '',
+                            reason: (vprev && vprev.abstain_reason === 'search_not_configured') ? 'web search is not configured — add SERPER_API_KEY in Vercel'
+                                  : (vprev && vprev.abstain_reason === 'no_search_results') ? 'the web has no record of this merchant'
+                                  : (vprev && vprev.abstain_reason === 'no_valid_citation') ? 'the AI could not cite a real source — refused'
+                                  : !e ? 'the AI could not read this merchant'
                                   : !agreed ? 'only one engine answered — not a consensus'
                                   : !VALID_CATS[cat] ? 'the category was outside the taxonomy'
-                                  : 'below the 0.95 confidence gate',
+                                  : 'below the ' + WRITE_GATE + ' confidence gate',
                             at: Date.now()
                         });
                     }
@@ -493,9 +540,9 @@
                 _saveQ(LS_PENDING, holdList);
                 var keys = {}; batch.forEach(function (x) { keys[x.key] = 1; });
                 _saveQ(LS_UNKNOWN, q.filter(function (x) { return !keys[x.key]; }));
-                try { root.console && root.console.log('[WFMerchants] resolved ' + resolved + '; held ' + held + ' for confirmation'); } catch (_) {}
-                return { resolved: resolved, held: held, note: '16-engine consensus, gate ' + WRITE_GATE };
-            }).catch(function () { return { resolved: 0, held: 0, note: 'AI unreachable' }; });
+                try { root.console && root.console.log('[WFMerchants] verified ' + stage.verified + ' by web search, ' + (resolved - stage.verified) + ' by consensus, ' + held + ' held'); } catch (_) {}
+                return { resolved: resolved, verified: stage.verified, held: held, note: 'search-first, gate ' + WRITE_GATE };
+            }).catch(function () { return { resolved: 0, held: 0, note: 'verification unreachable' }; });
         } catch (_) { return Promise.resolve({ resolved: 0, held: 0, note: 'error' }); }
     }
 
@@ -554,6 +601,6 @@
     try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
     try { verify(); } catch (_) {}                          // heal any learned conflicts on load
     try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
-    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, VERSION: VERSION };
+    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
