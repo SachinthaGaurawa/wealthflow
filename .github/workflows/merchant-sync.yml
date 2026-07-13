@@ -1,75 +1,57 @@
-name: Merchant List Sync (WealthFlow)
-
-# =============================================================================
-# Verifies + de-duplicates merchants.json every run, and grows it using YOUR OWN
-# /api/ai endpoint.
-#
-# SETUP - one repo VARIABLE, no secret:
-#   Settings -> Secrets and variables -> Actions -> Variables:
-#     APP_URL = https://wealthflow-personal.vercel.app
-# =============================================================================
+name: Merchant Expansion Pipeline
 
 on:
-  schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
   push:
-    paths:
-      - '.github/workflows/merchant-sync.yml'
-      - 'test/merchant-expand.cjs'
-
-permissions:
-  contents: write
-
-concurrency:
-  group: merchant-sync
-  cancel-in-progress: false
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
 
 jobs:
-  sync:
+  expand-merchants:
+    name: Expand and Verify Merchant List
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - name: Checkout repository codebase
+        uses: actions/checkout@v4
         with:
-          node-version: '20'
+          fetch-depth: 1
 
-      - name: Expand and verify merchant list
+      - name: Locate the engine (case-proof)
+        id: find
+        run: |
+          SCRIPT=""
+          for c in test/merchant-expand.cjs Test/merchant-expand.cjs tests/merchant-expand.cjs merchant-expand.cjs; do
+            if [ -f "$c" ]; then SCRIPT="$c"; break; fi
+          done
+          if; then
+            SCRIPT=$(find. -maxdepth 3 -name 'merchant-expand.cjs' -not -path './node_modules/*' | head -n1 || true)
+          fi
+          if; then
+            echo "::error::merchant-expand.cjs is not in the repository. Upload it to the repo root (or the test/ folder)."
+            exit 1
+          fi
+          echo "script=$SCRIPT" >> "$GITHUB_OUTPUT"
+          echo "Found script at: $SCRIPT"
+
+      - name: Initialize Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install Application Dependencies
+        run: npm install --no-package-lock || echo "No package.json found, skipping install."
+
+      - name: Expand & verify merchant list
         env:
+          SCRIPT: ${{ steps.find.outputs.script }}
           APP_URL: ${{ vars.APP_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ vars.ANTHROPIC_API_KEY || secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           MERCHANT_BATCH: ${{ vars.MERCHANT_BATCH }}
-        run: |
-          # Hardcoded to the exact lowercase path shown in your repository
-          node test/merchant-expand.cjs | tee /tmp/merchant.log
-          {
-            echo "### Merchant List Sync"
-            echo ""
-            echo '```'
-            cat /tmp/merchant.log
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Commit if the list changed
-        run: |
-          if [ -z "$(git status --porcelain merchants.json)" ]; then
-            echo "No changes to merchants.json this run."
-            exit 0
-          fi
-          git config user.name  'WealthFlow Merchant Bot'
-          git config user.email 'bot@wealthflow.local'
-          git add merchants.json
-          git commit -m 'chore(merchants): auto-expand + verify merchant list [skip ci]'
-          for i in 1 2 3; do
-            if git push; then
-              echo "merchants.json updated and pushed."
-              exit 0
-            fi
-            echo "push rejected (attempt $i) - rebasing on default branch"
-            git pull --rebase --autostash origin "$GITHUB_REF_NAME" || true
-          done
-          echo "could not push after 3 attempts - will retry next run"
-          exit 1
+        run: node "$SCRIPT"
