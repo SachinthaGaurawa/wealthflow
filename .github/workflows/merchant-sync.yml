@@ -22,10 +22,12 @@ on:
 permissions:
   contents: write
 
-# Shared with every workflow that pushes to the default branch, so two bots can
-# never push at the same moment and lose a race.
+# Its OWN group. Sharing one group with the other bots made GitHub CANCEL queued
+# merchant runs (the history showed ~2h gaps instead of hourly). A push race is already
+# handled by the rebase-retry loop in the commit step, so the shared group cost runs and
+# bought nothing.
 concurrency:
-  group: wealthflow-main-push
+  group: merchant-sync
   cancel-in-progress: false
 
 jobs:
@@ -58,11 +60,29 @@ jobs:
       - name: Expand & verify merchant list
         env:
           SCRIPT: ${{ steps.find.outputs.script }}
+          # APP_URL is the ONLY thing you need to set. It points at your own /api/ai,
+          # which already holds all 16 AI engine keys in Vercel.
           APP_URL: ${{ vars.APP_URL }}
+          # Optional fallback only — leave these unset. They are used solely if APP_URL
+          # is missing, and the run works perfectly without them.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           MERCHANT_BATCH: ${{ vars.MERCHANT_BATCH }}
-        run: node "$SCRIPT"
+        run: |
+          echo "engine : $SCRIPT ($(wc -c < "$SCRIPT") bytes)"
+          echo "APP_URL: ${APP_URL:-<not set — the list can only self-verify, not grow>}"
+          node "$SCRIPT" | tee /tmp/merchant.log
+          {
+            echo "### Merchant List Sync"
+            echo ''
+            echo '```'
+            cat /tmp/merchant.log
+            echo '```'
+            if [ -f merchants.json ]; then
+              echo ''
+              echo "**Merchants in the list:** $(node -p "require('./merchants.json').count")"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit if the list changed
         run: |
