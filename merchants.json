@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 8,
+  "version": 9,
   "updated": "2026-07-13",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 712,
+  "count": 735,
   "merchants": [
     {
       "key": "bake house",
@@ -3511,6 +3511,34 @@
       "source": "seed"
     },
     {
+      "key": "autodesk",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "avast",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "avg",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "avira",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "aws",
       "category": "Software",
       "goesTo": "subscription",
@@ -3525,6 +3553,13 @@
       "source": "seed"
     },
     {
+      "key": "bitdefender",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "canva",
       "category": "Software",
       "goesTo": "subscription",
@@ -3537,6 +3572,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "ccleaner",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "chatgpt",
@@ -3595,6 +3637,13 @@
       "source": "seed"
     },
     {
+      "key": "eset",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "evernote",
       "category": "Software",
       "goesTo": "subscription",
@@ -3607,6 +3656,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "f-secure",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "figma",
@@ -3642,6 +3698,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "google",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "google cloud",
@@ -3707,6 +3770,20 @@
       "source": "seed"
     },
     {
+      "key": "hitmanpro",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "ibm",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "icloud",
       "category": "Software",
       "goesTo": "subscription",
@@ -3735,6 +3812,13 @@
       "source": "seed"
     },
     {
+      "key": "kaspersky",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "lastpass",
       "category": "Software",
       "goesTo": "subscription",
@@ -3747,6 +3831,20 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "malwarebytes",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "mcafee",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "microsoft",
@@ -3812,6 +3910,13 @@
       "source": "seed"
     },
     {
+      "key": "norton",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "notion",
       "category": "Software",
       "goesTo": "subscription",
@@ -3854,6 +3959,20 @@
       "source": "seed"
     },
     {
+      "key": "oracle",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "panda",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "play google",
       "category": "Software",
       "goesTo": "subscription",
@@ -3880,6 +3999,27 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "quickheal",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "salesforce",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "sap",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "slack",
@@ -3917,6 +4057,20 @@
       "source": "seed"
     },
     {
+      "key": "symantec",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "trend micro",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "vercel",
       "category": "Software",
       "goesTo": "subscription",
@@ -3929,6 +4083,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "vmware",
+      "category": "Software",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "wix.com",
