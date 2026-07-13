@@ -44,8 +44,25 @@ jobs:
           HAS_HUMAN_APPROVAL: ${{ contains(github.event.pull_request.labels.*.name, 'human-approved') }}
         run: |
           set -e
-          git fetch origin "$BASE" --depth=1 || true
-          CHANGED=$(git diff --name-only "origin/$BASE...HEAD" || git diff --name-only HEAD~1...HEAD)
+          
+          # Determine the base for comparison
+          if [ -z "$BASE" ]; then
+            BASE="main"
+          fi
+          
+          # Try to fetch the base branch
+          git fetch origin "$BASE" --depth=1 2>/dev/null || true
+          
+          # Get changed files - try multiple methods
+          if [ -n "$(git rev-parse origin/$BASE 2>/dev/null)" ]; then
+            CHANGED=$(git diff --name-only "origin/$BASE...HEAD")
+          elif [ -n "$(git rev-parse HEAD~1 2>/dev/null)" ]; then
+            CHANGED=$(git diff --name-only HEAD~1...HEAD)
+          else
+            # Fallback: show all files if we can't determine diff
+            CHANGED=$(git diff --name-only --cached)
+          fi
+          
           echo "Changed files:"; echo "$CHANGED"
 
           # SENSITIVE PATHS — money, auth, security, data rules, the service worker,
