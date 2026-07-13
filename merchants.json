@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 9,
+  "version": 10,
   "updated": "2026-07-13",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 735,
+  "count": 747,
   "merchants": [
     {
       "key": "bake house",
@@ -1124,6 +1124,34 @@
       "source": "seed"
     },
     {
+      "key": "alankara",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "amaragems",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "colombojewellers",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "ellawala",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "gem stone",
       "category": "Gold",
       "goesTo": "expenses",
@@ -1136,6 +1164,34 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "hansagems",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "kandyjewellers",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "lalithjewellers",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "mallika",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "pawn",
@@ -1152,11 +1208,25 @@
       "source": "seed"
     },
     {
+      "key": "premier",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "raja jewellers",
       "category": "Gold",
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "serendib",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "stone n string",
@@ -1187,6 +1257,13 @@
       "source": "seed"
     },
     {
+      "key": "tilak",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "vogue jewell",
       "category": "Gold",
       "goesTo": "expenses",
@@ -1199,6 +1276,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "wellawatta",
+      "category": "Gold",
+      "goesTo": "expenses",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "za jewellers",
