@@ -1,34 +1,17 @@
 #!/usr/bin/env node
 /* =============================================================================
- * WealthFlow — Autonomous Merchant Verification Engine  (registry side)
- * Run by .github/workflows/merchant-sync.yml.
- *
- * WHY THE OLD ONE NEVER UPDATED: it needed an ANTHROPIC_API_KEY GitHub Secret.
- * If that was not set it returned nothing, so merchants.json never grew — and
- * even with it, it asked a model to BRAINSTORM merchant names, which is guessing.
- *
- * NOW:
- *   • It calls YOUR OWN deployed /api/ai (which already holds every AI key in
- *     Vercel). Set the repo variable APP_URL and it works with NO new secret.
- *   • EVERY candidate must be confirmed by TWO independent passes that AGREE,
- *     and both must score >= 0.95. A single model's word is never trusted.
- *   • EVERY run re-verifies + de-duplicates the whole registry and runs a
- *     self-correction AUDIT that finds ambiguous keys (a short key that collides
- *     with a longer one in a DIFFERENT category — the "Softlogic" vs
- *     "Softlogic Life" trap).
- *   • Writes only when something really changed. Never hard-fails the Action.
+ * WealthFlow — Autonomous Merchant Verification Engine (registry side)
  * ============================================================================= */
 const fs = require('fs');
 const path = require('path');
 
-// Find merchants.json no matter where this script sits. GitHub Actions runs with
-// cwd = repo root, so cwd wins; the __dirname fallbacks cover being run directly
-// from the repo root or from any sub-folder (test/, Test/, tests/ …).
+// Find merchants.json no matter where this script sits.
 const FILE = (function () {
   const cands = [process.env.MERCHANTS_FILE, path.join(process.cwd(), 'merchants.json'), path.join(__dirname, 'merchants.json'), path.join(__dirname, '..', 'merchants.json')].filter(Boolean);
   for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch (_) {} }
   return path.join(process.cwd(), 'merchants.json');
 })();
+
 const GATE = 0.95;
 
 const VALID_CATS = { Telecom:1, Insurance:1, Streaming:1, Software:1, Internet:1, Utilities:1, Groceries:1, Dining:1, Health:1, Transport:1, Fuel:1, Education:1, Government:1, Shopping:1, Gold:1, 'Gym/Fitness':1, Leasing:1, 'Bank Charges':1, 'Cash Withdrawal':1, Other:1 };
@@ -37,8 +20,15 @@ const SECTORS = ['Telecom','Insurance','Groceries','Dining','Health','Transport'
 
 const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 const validEntry = e => !!(e && typeof e.key === 'string' && norm(e.key).length >= 2 && e.category && VALID_CATS[e.category]);
-const goesToFor = e => { const g = e.goesTo; return (g === 'subscription' || g === 'expenses' || g === 'income') ? g : (SUB[e.category] ? 'subscription' : 'expenses'); };
-const load = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch (_) { return { schema:'wealthflow.merchants/v2', version:0, merchants:[] }; } };
+const goesToFor = e => { 
+  const g = e.goesTo;
+  return (g === 'subscription' || g === 'expenses' || g === 'income') ? g : (SUB[e.category] ? 'subscription' : 'expenses');
+};
+
+const load = () => { 
+  try { return JSON.parse(fs.readFileSync(FILE, 'utf8'));
+  } catch (_) { return { schema:'wealthflow.merchants/v2', version:0, merchants:[] }; } 
+};
 
 const SYSTEM = [
 'You are the WealthFlow Autonomous Merchant Verification Engine for the Sri Lankan market.',
@@ -58,11 +48,6 @@ const SYSTEM = [
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ai.js in mode:'consensus' runs ALL 16 engines and votes field-wise. Measured against
-// the live endpoint a single call takes 32-51s, and a Vercel Hobby function is KILLED at
-// 60s. The old code fired TWO of these in parallel — they contended for the same function
-// and one came back HTTP 504 every time, so nothing was ever added. We now fire exactly
-// ONE call (the 16-engine vote IS the consensus) and RETRY it on a timeout instead.
 async function ask(sector, existing) {
   const APP = (process.env.APP_URL || '').replace(/\/+$/, '');
   const want = Math.max(8, Math.min(25, +(process.env.MERCHANT_BATCH || 18)));
@@ -72,6 +57,7 @@ async function ask(sector, existing) {
     'Already known — do NOT repeat any of these: ' + existing.slice(0, 300).join('; ') + '.',
     'List up to ' + want + ' REAL merchants in that sector that are missing.'
   ].join('\n');
+  
   const prompt = SYSTEM + '\n\n' + user;
 
   if (APP) {
@@ -86,6 +72,7 @@ async function ask(sector, existing) {
           signal: ctl.signal
         });
         clearTimeout(kill);
+        
         if (r.ok) {
           const j = await r.json();
           const out = parse(j.reply || j.text || '');
@@ -93,10 +80,16 @@ async function ask(sector, existing) {
           out.note = 'consensusOf=' + out.engines + (attempt > 1 ? ' (attempt ' + attempt + ')' : '');
           return out;
         }
-        if (r.status >= 500 && attempt < 3) { await sleep(5000 * attempt); continue; }   // 504 = the function timed out
+        if (r.status >= 500 && attempt < 3) { 
+          await sleep(5000 * attempt);
+          continue; 
+        }
         return { list: [], engines: 0, note: '/api/ai HTTP ' + r.status };
       } catch (e) {
-        if (attempt < 3) { await sleep(5000 * attempt); continue; }
+        if (attempt < 3) { 
+          await sleep(5000 * attempt);
+          continue; 
+        }
         return { list: [], engines: 0, note: 'network: ' + ((e && e.message) || e) };
       }
     }
@@ -104,6 +97,7 @@ async function ask(sector, existing) {
 
   const KEY = process.env.ANTHROPIC_API_KEY;
   if (!KEY) return { list: [], engines: 0, note: 'set the APP_URL repo variable (e.g. https://your-app.vercel.app) to enable growth' };
+  
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -113,7 +107,7 @@ async function ask(sector, existing) {
     if (!r.ok) return { list: [], engines: 0, note: 'anthropic HTTP ' + r.status };
     const j = await r.json();
     const out = parse((j.content || []).filter(x => x.type === 'text').map(x => x.text).join(''));
-    out.engines = 3;   // a single frontier model is treated as clearing the engine floor
+    out.engines = 3;
     return out;
   } catch (e) { return { list: [], engines: 0, note: 'anthropic error: ' + ((e && e.message) || e) }; }
 }
@@ -121,17 +115,22 @@ async function ask(sector, existing) {
 function parse(text) {
   const t = String(text || '');
   const obj = t.match(/\{[\s\S]*\}/);
-  if (obj) { try { const j = JSON.parse(obj[0]); if (Array.isArray(j.merchants)) return { list: j.merchants, note: 'ok' }; } catch (_) {} }
+  if (obj) { 
+    try { 
+      const j = JSON.parse(obj[0]); 
+      if (Array.isArray(j.merchants)) return { list: j.merchants, note: 'ok' };
+    } catch (_) {} 
+  }
   const arr = t.match(/\[[\s\S]*\]/);
-  if (arr) { try { const a = JSON.parse(arr[0]); if (Array.isArray(a)) return { list: a, note: 'ok' }; } catch (_) {} }
+  if (arr) { 
+    try { 
+      const a = JSON.parse(arr[0]);
+      if (Array.isArray(a)) return { list: a, note: 'ok' }; 
+    } catch (_) {} 
+  }
   return { list: [], note: 'no parseable JSON in reply' };
 }
 
-// SELF-CORRECTION AUDIT. The matcher resolves keys LONGEST-FIRST and a short single
-// word only matches on a WORD BOUNDARY, so "gold" cannot fire inside "GOLDen Key
-// Hospital" and "amazon web services" always beats "amazon". Reporting those as
-// "ambiguous" was crying wolf (all 13 were proven to classify correctly). The only
-// genuinely broken state is the SAME key claiming TWO different categories.
 function audit(list) {
   const seen = new Map(), conflicts = [];
   list.forEach(e => {
@@ -145,35 +144,41 @@ function audit(list) {
 async function run() {
   const doc = load();
   const before = (doc.merchants || []).length;
-
-  // verify + de-duplicate every stored entry
   const map = new Map();
-  (doc.merchants || []).forEach(e => { if (!validEntry(e)) return; const k = norm(e.key); if (map.has(k)) return; map.set(k, { key:k, category:e.category, goesTo:goesToFor(e), confidence:(e.confidence != null ? +e.confidence : 1), source:e.source || 'seed' }); });
+  
+  (doc.merchants || []).forEach(e => { 
+    if (!validEntry(e)) return; 
+    const k = norm(e.key); 
+    if (map.has(k)) return; 
+    map.set(k, { key:k, category:e.category, goesTo:goesToFor(e), confidence:(e.confidence != null ? +e.confidence : 1), source:e.source || 'seed' }); 
+  });
   const removed = before - map.size;
 
-  // grow — ONE 16-engine consensus call. An entry is written ONLY when at least THREE of
-  // the sixteen engines produced a valid reply (a genuine consensus, not one model's word),
-  // the category is inside the taxonomy, AND the confidence clears the 0.95 gate.
-  const sector = SECTORS[Math.floor(Date.now() / 36e5) % SECTORS.length];   // rotate hourly
+  const sector = SECTORS[Math.floor(Date.now() / 36e5) % SECTORS.length];
   const keys = [...map.keys()];
   const res = await ask(sector, keys);
   const engines = res.engines || 0;
   let added = 0, held = 0;
+  
   (res.list || []).forEach(e => {
-    if (!validEntry2(e)) { held++; return; }                 // outside the taxonomy / no key
+    if (!validEntry2(e)) { held++; return; }                 
     const k = norm(e.key);
-    if (map.has(k)) return;                                   // already known
+    if (map.has(k)) return;                                   
     const conf = +e.confidence || 0;
-    if (engines < 3) { held++; return; }                      // not a consensus
-    if (conf < GATE) { held++; return; }                      // below the 0.95 gate
+    if (engines < 3) { held++; return; }                      
+    if (conf < GATE) { held++; return; }                      
     map.set(k, { key: k, category: e.category, goesTo: goesToFor({ goesTo: e.destination || e.goes_to, category: e.category }), confidence: +conf.toFixed(2), source: 'ai-consensus' });
     added++;
   });
-  function validEntry2(e) { return !!(e && typeof e.key === 'string' && norm(e.key).length >= 2 && e.category && VALID_CATS[e.category]); }
+  
+  function validEntry2(e) { 
+    return !!(e && typeof e.key === 'string' && norm(e.key).length >= 2 && e.category && VALID_CATS[e.category]);
+  }
 
   const merchants = [...map.values()].sort((x, y) => x.category.localeCompare(y.category) || x.key.localeCompare(y.key));
   const conflicts = audit(merchants);
   const changed = merchants.length !== before || removed > 0 || added > 0;
+  
   if (changed) {
     doc.schema = 'wealthflow.merchants/v2';
     doc.version = (doc.version || 0) + 1;
@@ -185,9 +190,11 @@ async function run() {
     doc.merchants = merchants;
     fs.writeFileSync(FILE, JSON.stringify(doc, null, 2) + '\n');
   }
+  
   console.log('[merchant-expand] sector=%s engines=%d before=%d removed=%d added=%d held=%d conflicts=%d after=%d changed=%s | %s',
     sector, engines, before, removed, added, held, conflicts.length, merchants.length, changed, res.note);
   if (conflicts.length) conflicts.slice(0, 5).forEach(x => console.log('  [audit] CONFLICT: "%s" is listed as both %s and %s', x.key, x.a, x.b));
+  
   return { before, removed, added, held, engines, conflicts: conflicts.length, after: merchants.length, changed };
 }
 
