@@ -22,20 +22,30 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Locate the engine (case-proof)
+      - name: Locate the script
         id: find
         run: |
           SCRIPT=""
+          
+          # 1. Try all common folder names
           for c in test/merchant-expand.cjs Test/merchant-expand.cjs tests/merchant-expand.cjs merchant-expand.cjs; do
-            if [ -f "$c" ]; then SCRIPT="$c"; break; fi
+            if [ -f "$c" ]; then 
+              SCRIPT="$c"
+              break
+            fi
           done
+          
+          # 2. If not found, do a deep search of the repository
           if; then
             SCRIPT=$(find. -maxdepth 3 -name 'merchant-expand.cjs' -not -path './node_modules/*' | head -n1 || true)
           fi
+          
+          # 3. If it is still completely missing, fail gracefully
           if; then
-            echo "::error::merchant-expand.cjs is not in the repository. Upload it to the repo root (or the test/ folder)."
+            echo "::error::Could not find merchant-expand.cjs anywhere in the repository."
             exit 1
           fi
+          
           echo "script=$SCRIPT" >> "$GITHUB_OUTPUT"
           echo "Found script at: $SCRIPT"
 
