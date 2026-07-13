@@ -2,30 +2,21 @@ name: Merchant List Sync (WealthFlow)
 
 # =============================================================================
 # Verifies + de-duplicates merchants.json every run, and grows it using YOUR OWN
-# /api/ai endpoint (which already holds all 16 AI engine keys in Vercel).
+# /api/ai endpoint.
 #
 # SETUP — one repo VARIABLE, no secret:
 #   Settings -> Secrets and variables -> Actions -> Variables:
-#     APP_URL = https://<your-app>.vercel.app
-#
-# WHY THE LAST RUN FAILED: this file said "node Test/merchant-expand.cjs" but the
-# folder in the repo is "test/" (lowercase). Linux is case-sensitive, so it was
-# MODULE_NOT_FOUND. The step now FINDS the script wherever it lives, so the case
-# of the folder can never break it again.
+#     APP_URL = https://wealthflow-personal.vercel.app
 # =============================================================================
 
 on:
   schedule:
-    - cron: '0 * * * *'     # hourly (repo is public → Actions minutes are free)
+    - cron: '0 * * * *'
   workflow_dispatch: {}
 
 permissions:
   contents: write
 
-# Its OWN group. Sharing one group with the other bots made GitHub CANCEL queued
-# merchant runs (the history showed ~2h gaps instead of hourly). A push race is already
-# handled by the rebase-retry loop in the commit step, so the shared group cost runs and
-# bought nothing.
 concurrency:
   group: merchant-sync
   cancel-in-progress: false
@@ -60,17 +51,10 @@ jobs:
       - name: Expand & verify merchant list
         env:
           SCRIPT: ${{ steps.find.outputs.script }}
-          # APP_URL is the ONLY thing you need to set. It points at your own /api/ai,
-          # which already holds all 16 AI engine keys in Vercel.
           APP_URL: ${{ vars.APP_URL }}
-          # Optional fallback only — leave these unset. They are used solely if APP_URL
-          # is missing, and the run works perfectly without them.
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
-          MERCHANT_BATCH: ${{ vars.MERCHANT_BATCH }}
         run: |
           echo "engine : $SCRIPT ($(wc -c < "$SCRIPT") bytes)"
-          echo "APP_URL: ${APP_URL:-<not set — the list can only self-verify, not grow>}"
+          echo "APP_URL: ${APP_URL:-<not set>}"
           node "$SCRIPT" | tee /tmp/merchant.log
           {
             echo "### Merchant List Sync"
