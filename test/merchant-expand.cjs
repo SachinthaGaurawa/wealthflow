@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 /* =============================================================================
- * WealthFlow — Autonomous Merchant Verification Engine (registry side)
+ * WealthFlow — Autonomous Merchant Verification Engine
  * ============================================================================= */
 const fs = require('fs');
 const path = require('path');
 
-// Find merchants.json no matter where this script sits.
+// Find merchants.json
 const FILE = (function () {
-  const cands = [process.env.MERCHANTS_FILE, path.join(process.cwd(), 'merchants.json'), path.join(__dirname, 'merchants.json'), path.join(__dirname, '..', 'merchants.json')].filter(Boolean);
+  const cands = [
+    process.env.MERCHANTS_FILE, 
+    path.join(process.cwd(), 'merchants.json'), 
+    path.join(__dirname, 'merchants.json'), 
+    path.join(__dirname, '..', 'merchants.json')
+  ].filter(Boolean);
   for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch (_) {} }
   return path.join(process.cwd(), 'merchants.json');
 })();
@@ -41,7 +46,6 @@ const SYSTEM = [
 '- Bank charges and fees are NOT merchants. Never propose one.',
 '- "key" = a lowercase distinctive signal that really appears in a bank narration (the brand only; no city; no POS id).',
 '- confidence 0.00-1.00. Use >= 0.95 ONLY when the company unmistakably exists and the category is beyond doubt.',
-'  A low score is CORRECT and safe. A confident wrong answer is a system failure.',
 'Return only JSON, no prose and no markdown fences, in exactly this shape:',
 '{"merchants":[{"key":"...","vendor":"...","category":"...","destination":"subscription|expenses","confidence":0.00}]}'
 ].join('\n');
@@ -95,21 +99,7 @@ async function ask(sector, existing) {
     }
   }
 
-  const KEY = process.env.ANTHROPIC_API_KEY;
-  if (!KEY) return { list: [], engines: 0, note: 'set the APP_URL repo variable (e.g. https://your-app.vercel.app) to enable growth' };
-  
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5', max_tokens: 2000, temperature: 0, system: SYSTEM, messages: [{ role: 'user', content: user }] })
-    });
-    if (!r.ok) return { list: [], engines: 0, note: 'anthropic HTTP ' + r.status };
-    const j = await r.json();
-    const out = parse((j.content || []).filter(x => x.type === 'text').map(x => x.text).join(''));
-    out.engines = 3;
-    return out;
-  } catch (e) { return { list: [], engines: 0, note: 'anthropic error: ' + ((e && e.message) || e) }; }
+  return { list: [], engines: 0, note: 'APP_URL is not configured properly.' };
 }
 
 function parse(text) {
@@ -193,7 +183,6 @@ async function run() {
   
   console.log('[merchant-expand] sector=%s engines=%d before=%d removed=%d added=%d held=%d conflicts=%d after=%d changed=%s | %s',
     sector, engines, before, removed, added, held, conflicts.length, merchants.length, changed, res.note);
-  if (conflicts.length) conflicts.slice(0, 5).forEach(x => console.log('  [audit] CONFLICT: "%s" is listed as both %s and %s', x.key, x.a, x.b));
   
   return { before, removed, added, held, engines, conflicts: conflicts.length, after: merchants.length, changed };
 }
