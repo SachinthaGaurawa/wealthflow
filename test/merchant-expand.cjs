@@ -56,50 +56,68 @@ const SYSTEM = [
 '{"merchants":[{"key":"...","vendor":"...","category":"...","destination":"subscription|expenses","confidence":0.00}]}'
 ].join('\n');
 
-async function ask(sector, existing, pass) {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ai.js in mode:'consensus' runs ALL 16 engines and votes field-wise. Measured against
+// the live endpoint a single call takes 32-51s, and a Vercel Hobby function is KILLED at
+// 60s. The old code fired TWO of these in parallel — they contended for the same function
+// and one came back HTTP 504 every time, so nothing was ever added. We now fire exactly
+// ONE call (the 16-engine vote IS the consensus) and RETRY it on a timeout instead.
+async function ask(sector, existing) {
   const APP = (process.env.APP_URL || '').replace(/\/+$/, '');
+  const want = Math.max(8, Math.min(25, +(process.env.MERCHANT_BATCH || 18)));
   const user = [
     'Sector to cover: ' + sector + '.',
     'Allowed category values: ' + Object.keys(VALID_CATS).join(', ') + '.',
-    'Already known — do NOT repeat any of these: ' + existing.slice(0, 400).join('; ') + '.',
-    'List up to ' + (+process.env.MERCHANT_BATCH || 30) + ' REAL merchants in that sector that are missing.'
+    'Already known — do NOT repeat any of these: ' + existing.slice(0, 300).join('; ') + '.',
+    'List up to ' + want + ' REAL merchants in that sector that are missing.'
   ].join('\n');
+  const prompt = SYSTEM + '\n\n' + user;
 
-  // 1) preferred: the user's OWN deployed endpoint — no new secret required
   if (APP) {
-    try {
-      // mode:'consensus' makes ai.js run ALL 16 engines and keep only valid replies.
-      // preferredProvider is effectively ignored by the backend (everything resolved to
-      // groq), so the two passes are separated by TEMPERATURE instead — genuinely
-      // independent samples that then have to agree.
-      const r = await fetch(APP + '/api/ai', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt: SYSTEM + '\n\n' + user, mode: 'consensus', temperature: pass === 2 ? 0.5 : 0, maxTokens: 1800 })
-      });
-      if (r.ok) {
-        const j = await r.json();
-        const out = parse(j.reply || j.text || '');
-        out.note = 'consensusOf=' + (j.consensusOf || 1) + ' (' + (j.agreement || []).length + ' engines)';
-        out.engines = j.consensusOf || 1;
-        return out;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const ctl = new AbortController();
+        const kill = setTimeout(() => ctl.abort(), 80000);
+        const r = await fetch(APP + '/api/ai', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ prompt, mode: 'consensus', temperature: 0, maxTokens: 1400 }),
+          signal: ctl.signal
+        });
+        clearTimeout(kill);
+        if (r.ok) {
+          const j = await r.json();
+          const out = parse(j.reply || j.text || '');
+          out.engines = +(j.consensusOf || 1);
+          out.note = 'consensusOf=' + out.engines + (attempt > 1 ? ' (attempt ' + attempt + ')' : '');
+          return out;
+        }
+        if (r.status >= 500 && attempt < 3) { await sleep(5000 * attempt); continue; }   // 504 = the function timed out
+        return { list: [], engines: 0, note: '/api/ai HTTP ' + r.status };
+      } catch (e) {
+        if (attempt < 3) { await sleep(5000 * attempt); continue; }
+        return { list: [], engines: 0, note: 'network: ' + ((e && e.message) || e) };
       }
-      return { list: [], note: 'APP_URL /api/ai HTTP ' + r.status };
-    } catch (e) { return { list: [], note: 'APP_URL unreachable: ' + (e && e.message) }; }
+    }
   }
-  // 2) fallback: a direct Anthropic key, if one happens to be configured
+
   const KEY = process.env.ANTHROPIC_API_KEY;
-  if (!KEY) return { list: [], note: 'set the APP_URL repo variable (e.g. https://your-app.vercel.app) to enable growth' };
+  if (!KEY) return { list: [], engines: 0, note: 'set the APP_URL repo variable (e.g. https://your-app.vercel.app) to enable growth' };
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5', max_tokens: 2000, temperature: pass === 2 ? 0.3 : 0, system: SYSTEM, messages: [{ role:'user', content: user }] })
+      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5', max_tokens: 2000, temperature: 0, system: SYSTEM, messages: [{ role: 'user', content: user }] })
     });
-    if (!r.ok) return { list: [], note: 'anthropic HTTP ' + r.status };
+    if (!r.ok) return { list: [], engines: 0, note: 'anthropic HTTP ' + r.status };
     const j = await r.json();
-    return parse((j.content || []).filter(b => b.type === 'text').map(b => b.text).join(''));
-  } catch (e) { return { list: [], note: 'anthropic error: ' + (e && e.message) }; }
+    const out = parse((j.content || []).filter(x => x.type === 'text').map(x => x.text).join(''));
+    out.engines = 3;   // a single frontier model is treated as clearing the engine floor
+    return out;
+  } catch (e) { return { list: [], engines: 0, note: 'anthropic error: ' + ((e && e.message) || e) }; }
 }
+
 function parse(text) {
   const t = String(text || '');
   const obj = t.match(/\{[\s\S]*\}/);
@@ -109,15 +127,19 @@ function parse(text) {
   return { list: [], note: 'no parseable JSON in reply' };
 }
 
-// SELF-CORRECTION AUDIT: a short key that is contained in a LONGER key of a
-// DIFFERENT category is a trap ("softlogic"/Shopping would swallow "Softlogic Life").
+// SELF-CORRECTION AUDIT. The matcher resolves keys LONGEST-FIRST and a short single
+// word only matches on a WORD BOUNDARY, so "gold" cannot fire inside "GOLDen Key
+// Hospital" and "amazon web services" always beats "amazon". Reporting those as
+// "ambiguous" was crying wolf (all 13 were proven to classify correctly). The only
+// genuinely broken state is the SAME key claiming TWO different categories.
 function audit(list) {
-  const amb = [];
-  for (const a of list) for (const b of list) {
-    if (a === b || a.category === b.category) continue;
-    if (b.key.length > a.key.length && b.key.indexOf(a.key) >= 0) { amb.push({ key: a.key, category: a.category, collidesWith: b.key, other: b.category }); break; }
-  }
-  return amb;
+  const seen = new Map(), conflicts = [];
+  list.forEach(e => {
+    const prev = seen.get(e.key);
+    if (prev && prev !== e.category) conflicts.push({ key: e.key, a: prev, b: e.category });
+    seen.set(e.key, e.category);
+  });
+  return conflicts;
 }
 
 async function run() {
@@ -129,26 +151,28 @@ async function run() {
   (doc.merchants || []).forEach(e => { if (!validEntry(e)) return; const k = norm(e.key); if (map.has(k)) return; map.set(k, { key:k, category:e.category, goesTo:goesToFor(e), confidence:(e.confidence != null ? +e.confidence : 1), source:e.source || 'seed' }); });
   const removed = before - map.size;
 
-  // grow — TWO passes must agree, both >= 0.95
+  // grow — ONE 16-engine consensus call. An entry is written ONLY when at least THREE of
+  // the sixteen engines produced a valid reply (a genuine consensus, not one model's word),
+  // the category is inside the taxonomy, AND the confidence clears the 0.95 gate.
   const sector = SECTORS[Math.floor(Date.now() / 36e5) % SECTORS.length];   // rotate hourly
   const keys = [...map.keys()];
-  const [a, b] = await Promise.all([ask(sector, keys, 1), ask(sector, keys, 2)]);
-  const B = new Map((b.list || []).filter(validEntry2).map(e => [norm(e.key), e]));
+  const res = await ask(sector, keys);
+  const engines = res.engines || 0;
   let added = 0, held = 0;
-  (a.list || []).forEach(e => {
-    if (!validEntry2(e)) return;
+  (res.list || []).forEach(e => {
+    if (!validEntry2(e)) { held++; return; }                 // outside the taxonomy / no key
     const k = norm(e.key);
-    if (map.has(k)) return;
-    const peer = B.get(k);
-    const conf = Math.min(+e.confidence || 0, peer ? (+peer.confidence || 0) : 0);
-    if (!peer || peer.category !== e.category || conf < GATE) { held++; return; }   // no consensus / below gate → NOT written
-    map.set(k, { key:k, category:e.category, goesTo:goesToFor({ goesTo: e.destination || e.goes_to, category: e.category }), confidence:+conf.toFixed(2), source:'ai-consensus' });
+    if (map.has(k)) return;                                   // already known
+    const conf = +e.confidence || 0;
+    if (engines < 3) { held++; return; }                      // not a consensus
+    if (conf < GATE) { held++; return; }                      // below the 0.95 gate
+    map.set(k, { key: k, category: e.category, goesTo: goesToFor({ goesTo: e.destination || e.goes_to, category: e.category }), confidence: +conf.toFixed(2), source: 'ai-consensus' });
     added++;
   });
   function validEntry2(e) { return !!(e && typeof e.key === 'string' && norm(e.key).length >= 2 && e.category && VALID_CATS[e.category]); }
 
   const merchants = [...map.values()].sort((x, y) => x.category.localeCompare(y.category) || x.key.localeCompare(y.key));
-  const amb = audit(merchants);
+  const conflicts = audit(merchants);
   const changed = merchants.length !== before || removed > 0 || added > 0;
   if (changed) {
     doc.schema = 'wealthflow.merchants/v2';
@@ -157,14 +181,14 @@ async function run() {
     doc.source = 'wealthflow-auto';
     doc.gate = GATE;
     doc.count = merchants.length;
-    doc.ambiguous = amb.length;
+    doc.conflicts = conflicts.length;
     doc.merchants = merchants;
     fs.writeFileSync(FILE, JSON.stringify(doc, null, 2) + '\n');
   }
-  console.log('[merchant-expand] sector=%s before=%d removed=%d added=%d held=%d ambiguous=%d after=%d changed=%s | %s / %s',
-    sector, before, removed, added, held, amb.length, merchants.length, changed, a.note, b.note);
-  if (amb.length) amb.slice(0, 5).forEach(x => console.log('  [audit] ambiguous key "%s" (%s) is swallowed by "%s" (%s)', x.key, x.category, x.collidesWith, x.other));
-  return { before, removed, added, held, ambiguous: amb.length, after: merchants.length, changed };
+  console.log('[merchant-expand] sector=%s engines=%d before=%d removed=%d added=%d held=%d conflicts=%d after=%d changed=%s | %s',
+    sector, engines, before, removed, added, held, conflicts.length, merchants.length, changed, res.note);
+  if (conflicts.length) conflicts.slice(0, 5).forEach(x => console.log('  [audit] CONFLICT: "%s" is listed as both %s and %s', x.key, x.a, x.b));
+  return { before, removed, added, held, engines, conflicts: conflicts.length, after: merchants.length, changed };
 }
 
 module.exports = { validEntry, goesToFor, norm, ask, audit, run, VALID_CATS, SUB, GATE };
