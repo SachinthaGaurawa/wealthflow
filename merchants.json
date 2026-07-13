@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 6,
+  "version": 7,
   "updated": "2026-07-13",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 706,
+  "count": 711,
   "merchants": [
     {
       "key": "bake house",
@@ -2258,11 +2258,25 @@
       "source": "seed"
     },
     {
+      "key": "aig",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "allianz",
       "category": "Insurance",
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "allianz care",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "allianz insurance lanka",
@@ -2431,6 +2445,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "guardian",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "guardian general",
@@ -2636,6 +2657,13 @@
       "source": "seed"
     },
     {
+      "key": "sih",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "softlogic finance life",
       "category": "Insurance",
       "goesTo": "subscription",
@@ -2700,6 +2728,13 @@
     },
     {
       "key": "union commercial",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "union life",
       "category": "Insurance",
       "goesTo": "subscription",
       "confidence": 0.95,
