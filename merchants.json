@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 4,
+  "version": 5,
   "updated": "2026-07-13",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 701,
+  "count": 703,
   "merchants": [
     {
       "key": "bake house",
@@ -2286,6 +2286,13 @@
       "source": "seed"
     },
     {
+      "key": "arpi",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "arpico insurance",
       "category": "Insurance",
       "goesTo": "subscription",
@@ -2333,6 +2340,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "continental",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "continental insurance",
