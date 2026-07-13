@@ -191,6 +191,15 @@
             return (sb.utilization || 0) - (sa.utilization || 0);
         });
         host.innerHTML = keys.map(k => _tile(k, reg[k], cardSummary(k, charges, pays, reg[k], _uniq(k)))).join('');
+        // v7.65.0 — the statement day and due day you entered were never read by anything.
+        // Now they are: due dates, overdue, utilization and the cost of carrying a balance.
+        try {
+            if (W.WFInsights) {
+                let ins = document.getElementById('wfCardInsights');
+                if (!ins) { ins = document.createElement('div'); ins.id = 'wfCardInsights'; ins.style.marginBottom = '14px'; host.parentNode.insertBefore(ins, host); }
+                W.WFInsights.renderInto(ins, W.WFInsights.cards(), { title: 'What needs you' });
+            }
+        } catch (_) {}
         // wire per-tile actions
         keys.forEach(k => {
             const e = document.getElementById('wfCardEdit_' + k); if (e) e.onclick = (ev) => { ev.stopPropagation(); showForm(k); };

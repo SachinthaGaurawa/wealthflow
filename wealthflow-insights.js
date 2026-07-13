@@ -1,0 +1,307 @@
+/* =============================================================================
+ *  WealthFlow — Intelligence Layer  v1.0   ·   window.WFInsights
+ *
+ *  Your screens showed you WHAT HAPPENED. They never told you WHAT TO DO.
+ *
+ *    · Cards        — you entered a statement day and a due day, and NOTHING in the
+ *                     app ever read them. Every "dueDay" in the codebase belonged to
+ *                     Subscriptions. Your AMEX bill could go overdue in silence.
+ *    · Subscriptions— every price rise you have ever paid is already stored in
+ *                     monthOverrides. Nothing has ever looked at it.
+ *    · Dashboard    — six widgets of history, zero decisions.
+ *
+ *  This reads what is already there and turns it into ranked, dated actions.
+ *  Read-only: it never writes to your data.
+ * ============================================================================= */
+(function () {
+    var W = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
+    if (W.WF_INSIGHTS === '1.0') return;
+    W.WF_INSIGHTS = '1.0';
+
+    var SEV = { critical: 0, high: 1, medium: 2, low: 3 };
+    var DEFAULT_APR = 28;          // typical Sri Lankan credit-card APR — an ESTIMATE, always labelled
+
+    function DB() { return W.DB; }
+    function arr(k) { try { var a = DB() && DB().get(k); return Array.isArray(a) ? a : []; } catch (_) { return []; } }
+    function reg() { try { return (W.wfCardRegistry && W.wfCardRegistry.get && W.wfCardRegistry.get()) || {}; } catch (_) { return {}; } }
+    function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+    function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+    function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+
+    /* Next calendar occurrence of a day-of-month, clamped to short months. */
+    function nextOn(day, from) {
+        day = Math.max(1, Math.min(31, Math.round(num(day))));
+        var t = from ? new Date(from) : new Date(); t.setHours(0, 0, 0, 0);
+        var y = t.getFullYear(), m = t.getMonth();
+        var d = new Date(y, m, Math.min(day, daysInMonth(y, m)));
+        if (d < t) { m += 1; if (m > 11) { m = 0; y += 1; } d = new Date(y, m, Math.min(day, daysInMonth(y, m))); }
+        return d;
+    }
+    function daysBetween(a, b) { return Math.round((b - a) / 86400000); }
+    function money(n) { try { return 'LKR ' + Math.round(num(n)).toLocaleString('en-LK'); } catch (_) { return 'LKR ' + Math.round(num(n)); } }
+
+    /* Attribute a charge/payment to a card. Mirrors the Cards screen exactly, including
+       the legacy rescue: rows imported before v7.62.0 carry no last-4, so a bank match
+       is used — but ONLY when that bank maps to exactly one card, never double-counting. */
+    function mine(rows, last4, card, bankUnique) {
+        return (rows || []).filter(function (r) {
+            var rl = String((r && (r.card_last4 || r.last4)) || '');
+            if (rl) return rl === String(last4);
+            if (!bankUnique || !card || !card.bank) return false;
+            var rb = String((r && r.bank) || '').toLowerCase().trim();
+            return !!rb && rb === String(card.bank).toLowerCase().trim();
+        });
+    }
+
+    /* ── CARDS ─────────────────────────────────────────────────────────────── */
+    function cards() {
+        var R = reg(), keys = Object.keys(R), out = [];
+        if (!keys.length) return out;
+        var bankN = {};
+        keys.forEach(function (k) { var b = String((R[k] && R[k].bank) || '').toLowerCase().trim(); if (b) bankN[b] = (bankN[b] || 0) + 1; });
+        var uniq = function (k) { var b = String((R[k] && R[k].bank) || '').toLowerCase().trim(); return !!b && bankN[b] === 1; };
+
+        var charges = arr('cconetime'), pays = arr('ccPayments');
+        var today = new Date(); today.setHours(0, 0, 0, 0);
+
+        keys.forEach(function (k) {
+            var c = R[k];
+            if (!c || c.type !== 'credit_card') return;
+            var u = uniq(k);
+            var mineC = mine(charges, k, c, u);
+            var outstanding = mineC.filter(function (x) { return !x.paid; })
+                                   .reduce(function (s, x) { return s + num(x.combinedTotal || x.amount); }, 0);
+            var label = (c.name || c.bank || 'Card') + ' ••••' + k;
+
+            // 1) payment due — the thing the app has NEVER told you
+            if (c.dueDay && outstanding > 0) {
+                var due = nextOn(c.dueDay);
+                var d = daysBetween(today, due);
+                // if the due day already passed this month and money is still owed, it is late
+                var lastDue = new Date(due); lastDue.setMonth(lastDue.getMonth() - 1);
+                var overdueDays = daysBetween(lastDue, today);
+                if (d > 20 && overdueDays > 0 && overdueDays <= 25) {
+                    out.push({ sev: 'critical', kind: 'card_overdue', card: k, title: label + ' is OVERDUE',
+                        body: money(outstanding) + ' was due on the ' + c.dueDay + ' — ' + overdueDays + ' day(s) ago.',
+                        action: 'Pay it now', amount: outstanding });
+                } else if (d <= 5) {
+                    out.push({ sev: d <= 2 ? 'critical' : 'high', kind: 'card_due', card: k,
+                        title: label + ' due in ' + d + ' day' + (d === 1 ? '' : 's'),
+                        body: money(outstanding) + ' outstanding · due on the ' + c.dueDay + '.',
+                        action: 'Pay before ' + due.toDateString().slice(4, 10), amount: outstanding });
+                } else if (d <= 10) {
+                    out.push({ sev: 'medium', kind: 'card_due_soon', card: k,
+                        title: label + ' due in ' + d + ' days',
+                        body: money(outstanding) + ' outstanding.', amount: outstanding });
+                }
+            }
+
+            // 2) statement closing — spend after it and you get a month's free float
+            if (c.statementDay) {
+                var st = nextOn(c.statementDay), sd = daysBetween(today, st);
+                if (sd <= 3) {
+                    out.push({ sev: 'low', kind: 'card_statement', card: k,
+                        title: label + ' statement closes in ' + sd + ' day' + (sd === 1 ? '' : 's'),
+                        body: 'Anything you buy after the ' + c.statementDay + ' lands on next month\u2019s bill.' });
+                }
+            }
+
+            // 3) utilization — what actually moves a credit score
+            var lim = num(c.creditLimit);
+            if (lim > 0 && outstanding > 0) {
+                var util = outstanding / lim;
+                if (util >= 0.7) {
+                    out.push({ sev: 'high', kind: 'card_util', card: k,
+                        title: label + ' is ' + Math.round(util * 100) + '% used',
+                        body: money(outstanding) + ' of ' + money(lim) + '. Above 70% weighs on your credit score — CRIB sees it.',
+                        amount: outstanding - lim * 0.3 });
+                } else if (util >= 0.3) {
+                    out.push({ sev: 'low', kind: 'card_util', card: k,
+                        title: label + ' is ' + Math.round(util * 100) + '% used',
+                        body: 'Bringing it under 30% (' + money(lim * 0.3) + ') is the cheapest way to lift your score.' });
+                }
+            }
+
+            // 4) the cost of carrying it — factual, with the assumption stated
+            if (outstanding > 0) {
+                var apr = num(c.apr) > 0 ? num(c.apr) : DEFAULT_APR;
+                var monthly = outstanding * (apr / 100) / 12;
+                if (monthly >= 250) {
+                    out.push({ sev: 'medium', kind: 'card_interest', card: k,
+                        title: 'Carrying ' + label + ' costs about ' + money(monthly) + ' a month',
+                        body: 'At ' + apr + '% APR' + (num(c.apr) > 0 ? '' : ' (assumed — set it on the card to be exact)') +
+                              ', that is ' + money(monthly * 12) + ' a year in interest alone.', amount: monthly });
+                }
+            }
+        });
+        return out;
+    }
+
+    /* ── SUBSCRIPTIONS ─────────────────────────────────────────────────────── */
+    var CYCLE_PER_YEAR = { monthly: 12, quarterly: 4, yearly: 1, annual: 1, weekly: 52 };
+    function perYear(s) { return CYCLE_PER_YEAR[String(s.cycle || 'monthly').toLowerCase()] || 12; }
+
+    /* monthOverrides is a { "YYYY-MM": amount } map the app has always written and never read. */
+    function priceSeries(s) {
+        var mo = s.monthOverrides || {};
+        return Object.keys(mo).filter(function (k) { return /^\d{4}-\d{2}$/.test(k); }).sort()
+            .map(function (k) { return { month: k, amount: num(mo[k]) }; })
+            .filter(function (p) { return p.amount > 0; });
+    }
+
+    function subs() {
+        var list = arr('subscriptions'), out = [];
+        if (!list.length) return out;
+        var today = new Date(); today.setHours(0, 0, 0, 0);
+
+        // annual cost — nobody has ever added this up for you
+        var yearly = list.reduce(function (t, s) { return t + num(s.amount) * perYear(s); }, 0);
+        if (yearly > 0) {
+            var biggest = list.slice().sort(function (a, b) { return num(b.amount) * perYear(b) - num(a.amount) * perYear(a); })[0];
+            out.push({ sev: 'low', kind: 'sub_total',
+                title: list.length + ' subscription' + (list.length === 1 ? '' : 's') + ' cost you ' + money(yearly) + ' a year',
+                body: biggest ? ('The biggest is ' + biggest.name + ' at ' + money(num(biggest.amount) * perYear(biggest)) + ' a year.') : '',
+                amount: yearly });
+        }
+
+        list.forEach(function (s) {
+            var ser = priceSeries(s);
+
+            // 1) PRICE RISE — the data was always there
+            if (ser.length >= 2) {
+                var last = ser[ser.length - 1], prev = ser[ser.length - 2];
+                if (prev.amount > 0 && last.amount > prev.amount * 1.03) {
+                    var up = last.amount - prev.amount, pct = Math.round((up / prev.amount) * 100);
+                    out.push({ sev: pct >= 20 ? 'high' : 'medium', kind: 'sub_price_up', sub: s.id,
+                        title: s.name + ' went up ' + money(up) + ' (+' + pct + '%)',
+                        body: money(prev.amount) + ' \u2192 ' + money(last.amount) + ' in ' + last.month +
+                              '. That is ' + money(up * perYear(s)) + ' more a year.', amount: up * perYear(s) });
+                }
+            }
+
+            // 2) DORMANT — you are still tracking it but nothing has been charged
+            var lastMonth = ser.length ? ser[ser.length - 1].month : null;
+            if (lastMonth) {
+                var parts = lastMonth.split('-');
+                var lastDate = new Date(+parts[0], +parts[1] - 1, 28);
+                var gap = daysBetween(lastDate, today);
+                if (gap > 60) {
+                    out.push({ sev: 'medium', kind: 'sub_dormant', sub: s.id,
+                        title: s.name + ' has not been charged since ' + lastMonth,
+                        body: 'That is ' + Math.round(gap / 30) + ' months. If you cancelled it, remove it \u2014 it is inflating your forecast by ' +
+                              money(num(s.amount) * perYear(s)) + ' a year.', amount: num(s.amount) * perYear(s) });
+                }
+            }
+
+            // 3) RENEWAL — due within a week
+            if (s.dueDay) {
+                var due = nextOn(s.dueDay), d = daysBetween(today, due);
+                if (d <= 3) {
+                    out.push({ sev: d <= 1 ? 'high' : 'low', kind: 'sub_renew', sub: s.id,
+                        title: s.name + ' renews in ' + d + ' day' + (d === 1 ? '' : 's'),
+                        body: money(s.amount) + ' on the ' + s.dueDay + '.', amount: num(s.amount) });
+                }
+            }
+        });
+
+        // 4) DUPLICATES — paying twice for the same thing
+        var seen = {};
+        list.forEach(function (s) {
+            var k = norm(s.name); if (!k) return;
+            if (seen[k]) {
+                out.push({ sev: 'high', kind: 'sub_dupe', sub: s.id,
+                    title: 'You have two subscriptions called ' + s.name,
+                    body: 'Paying ' + money(s.amount) + ' and ' + money(seen[k].amount) + '. One of them is probably a duplicate.',
+                    amount: Math.min(num(s.amount), num(seen[k].amount)) * perYear(s) });
+            } else seen[k] = s;
+        });
+        return out;
+    }
+
+    /* ── THE BRIEF — one ranked list for the Dashboard ─────────────────────── */
+    function brief(limit) {
+        var all = [];
+        try { all = all.concat(cards()); } catch (_) {}
+        try { all = all.concat(subs()); } catch (_) {}
+        all.sort(function (a, b) {
+            var s = SEV[a.sev] - SEV[b.sev];
+            return s !== 0 ? s : (num(b.amount) - num(a.amount));   // then by money at stake
+        });
+        return all.slice(0, Math.max(1, limit || 5));
+    }
+
+    /* ── the strip you actually see ─────────────────────────────────────────── */
+    var TONE = {
+        critical: ['#ff5c5c', 'rgba(255,92,92,.13)', 'rgba(255,92,92,.28)'],
+        high:     ['#f0b34e', 'rgba(245,158,11,.11)', 'rgba(245,158,11,.24)'],
+        medium:   ['#7fb2ff', 'rgba(127,178,255,.09)', 'rgba(127,178,255,.2)'],
+        low:      ['#8d99ad', 'rgba(255,255,255,.035)', 'rgba(255,255,255,.08)']
+    };
+    var GLYPH = {
+        card_overdue: 'M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+        card_due: 'M3 10h18M7 3v4M17 3v4M5 21h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z',
+        card_due_soon: 'M3 10h18M7 3v4M17 3v4M5 21h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z',
+        card_statement: 'M3 10h18M5 21h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z',
+        card_util: 'M12 20V10M18 20V4M6 20v-4',
+        card_interest: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+        sub_price_up: 'M23 6l-9.5 9.5-5-5L1 18M17 6h6v6',
+        sub_dormant: 'M12 6v6l4 2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z',
+        sub_dupe: 'M20 9H11a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+        sub_renew: 'M23 4v6h-6M1 20v-6h6M20.5 9A9 9 0 0 0 5.6 5.6L1 10m22 4l-4.6 4.4A9 9 0 0 1 3.5 15',
+        sub_total: 'M3 3v18h18M18.7 8L13 13.7l-3-3L6 15'
+    };
+    function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+    function styleOnce() {
+        if (document.getElementById('wfi-css')) return;
+        var st = document.createElement('style'); st.id = 'wfi-css';
+        st.textContent = [
+            '.wfi-wrap{display:flex;flex-direction:column;gap:8px}',
+            '.wfi-hdr{display:flex;align-items:center;gap:8px;margin:0 2px 4px;font-size:11px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--muted,#8d99ad)}',
+            '.wfi-hdr span{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:700;font-size:11px;color:var(--muted,#8d99ad)}',
+            '.wfi{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:13px;border:1px solid;line-height:1.42}',
+            '.wfi-ic{flex:0 0 auto;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.05)}',
+            '.wfi-t{font-size:13px;font-weight:750;color:var(--text,#eef2f8);margin-bottom:2px}',
+            '.wfi-b{font-size:11.5px;color:var(--muted,#8d99ad)}',
+            '.wfi-a{display:inline-block;margin-top:6px;font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06)}',
+            '.wfi-ok{display:flex;gap:9px;align-items:center;padding:13px;border-radius:13px;border:1px solid rgba(52,211,153,.22);background:rgba(52,211,153,.07);color:#34d399;font-size:12.5px;font-weight:650}'
+        ].join('');
+        document.head.appendChild(st);
+    }
+
+    function tile(it) {
+        var t = TONE[it.sev] || TONE.low;
+        var path = GLYPH[it.kind] || GLYPH.card_util;
+        return '<div class="wfi" style="border-color:' + t[2] + ';background:' + t[1] + '">' +
+            '<div class="wfi-ic" style="color:' + t[0] + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg></div>' +
+            '<div style="min-width:0"><div class="wfi-t">' + esc(it.title) + '</div>' +
+            (it.body ? '<div class="wfi-b">' + esc(it.body) + '</div>' : '') +
+            (it.action ? '<div class="wfi-a" style="color:' + t[0] + '">' + esc(it.action) + '</div>' : '') +
+            '</div></div>';
+    }
+
+    /* Paint a list of insights into an element. Silent (renders nothing) when all is well
+       on a sub-panel; the dashboard shows an explicit all-clear instead. */
+    function renderInto(el, items, opts) {
+        if (typeof el === 'string') el = document.getElementById(el);
+        if (!el) return 0;
+        styleOnce();
+        items = items || [];
+        opts = opts || {};
+        if (!items.length) {
+            el.innerHTML = opts.allClear
+                ? '<div class="wfi-ok"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Nothing needs you right now.</div>'
+                : '';
+            el.style.display = opts.allClear ? '' : 'none';
+            return 0;
+        }
+        el.style.display = '';
+        el.innerHTML = '<div class="wfi-wrap">' +
+            (opts.title ? '<div class="wfi-hdr">' + esc(opts.title) + '<span>' + items.length + '</span></div>' : '') +
+            items.map(tile).join('') + '</div>';
+        return items.length;
+    }
+
+    W.WFInsights = { cards: cards, subs: subs, brief: brief, nextOn: nextOn, renderInto: renderInto, _mine: mine, VERSION: '1.0' };
+    try { console.log('[WFInsights] Intelligence layer v1.0 loaded'); } catch (_) {}
+})();
