@@ -180,6 +180,11 @@
     </script>
     <meta charset="UTF-8">
     <!-- Professional stroke icons (replaces emojis) — must load before app markup -->
+    <!-- v7.66.0 — Stability. Loaded FIRST and NOT deferred: it must arm the crash
+         detector before anything else can die. An iOS renderer crash kills the process
+         before any JS error handler can run — which is why your diagnostics reported
+         0 errors while you were living through repeated crashes. -->
+    <script src="wealthflow-stability.js"></script>
     <script src="wealthflow-icons.js"></script>
     <!-- v7.5.5 — user-scalable=no + maximum-scale=1 prevents the iOS Safari
          "address-bar collapses when user pinches" behaviour that was
@@ -7347,7 +7352,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.65.0';
+        var WF_APP_VERSION = '7.66.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -7484,6 +7489,25 @@
                     add('warn', 'data', d.missingId + ' record(s) have no id.', 'Records without an id cannot be merged cleanly across devices — re-saving them assigns an id.');
                 if (typeof d.tombstones === 'number' && d.tombstones > 300)
                     add('info', 'data', 'High number of deletion markers (' + d.tombstones + ').', 'Harmless — they are pruned automatically after 100 days.');
+                    
+                    // v7.66.0 — CRASHES. An iOS renderer crash kills the process before any JS error
+                    // handler runs, so "totalErrors: 0" was true AND useless. WFStability marks a
+                    // session alive and clears it on a clean exit; a marker that survives means the
+                    // last session was killed. Now the report actually shows them.
+                    try {
+                        var _cr = (window.WFStability && window.WFStability.crashes()) || [];
+                        if (_cr.length) {
+                            var _last = _cr[_cr.length - 1];
+                            add('error', 'stability', _cr.length + ' crash(es) detected — the app was killed without a clean exit.',
+                                'Last: ' + _last.page + ' page, ' + _last.dom + ' DOM nodes, ' + _last.charts + ' charts alive' +
+                                (_last.heapMB ? ', ' + _last.heapMB + 'MB heap' : '') + ', survived ' + _last.aliveSec + 's (build ' + _last.build + ').');
+                        }
+                        var _ig = (window.WFStability && window.WFStability.integrity()) || null;
+                        if (_ig && _ig.unstamped > 0) {
+                            add('warn', 'data', _ig.unstamped + ' record(s) still carry no update stamp.',
+                                'A record with no _ut loses every sync merge and any tombstone can delete it. WFStability heals these automatically a few seconds after boot.');
+                        }
+                    } catch (_) {}
                 // ── Storage ──
                 if (typeof st.approxKB === 'number' && st.approxKB > 4500)
                     add('warn', 'storage', 'Local storage is large (~' + (st.approxKB / 1024).toFixed(1) + ' MB).', 'Browsers cap local storage near 5 MB; export/clear old data or rely on cloud sync to avoid write failures.');
@@ -10188,6 +10212,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
             // Render any AI-generated charts now that the canvases exist.
             if (_charts.length && typeof Chart !== 'undefined') {
+                // v7.66.0 — destroy the PREVIOUS AI charts before drawing again. These
+                // instances were created and thrown away; Chart.js keeps a canvas, a GPU
+                // texture and listeners alive, so ten AI charts leaked ten of them. On iOS
+                // that is precisely how the renderer dies with no JS error to show for it.
+                try { if (window.WFStability) window.WFStability.destroyGroup('ai'); } catch (_) {}
                 const _palette = ['#d4af37', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'];
                 setTimeout(() => {
                     _charts.forEach(({ id, spec }) => {
@@ -10210,7 +10239,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                 tension: 0.35,
                                 pointBackgroundColor: _palette[i % _palette.length]
                             }));
-                            new Chart(cv.getContext('2d'), {
+                            var _aic = new Chart(cv.getContext('2d'), {
                                 type: (spec.type === 'doughnut' ? 'doughnut' : spec.type) || 'bar',
                                 data: { labels: spec.labels || [], datasets: ds },
                                 options: {
@@ -10226,6 +10255,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                                     }
                                 }
                             });
+                            try { if (window.WFStability) window.WFStability.track(_aic, 'ai'); } catch (_) {}
                         } catch (e) { console.warn('[ai-chart] render failed:', e && e.message); }
                     });
                 }, 60);
@@ -15451,7 +15481,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const freq = $('i_freq').value;
             let calc = freq === 'monthly' ? amount * rate / 100 / 12 : freq === 'annual' ? amount * rate / 100 : amount * rate / 100 / 4;
             const override = parseMoney($('i_override').value);
-            const rec = { id: editMode || uid(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
+            const rec = { id: editMode || uid(), createdAt: ((DB.get('income') || []).find(x => x.id === editMode) || {}).createdAt || new Date().toISOString(), name, company, amount, rate, start: $('i_start').value, end: $('i_end').value, freq, day: $('i_day').value, monthly: override || calc, notes: $('i_notes').value };
             const arr = DB.get('income');
             const isNewRecord = !editMode;
             if (editMode) { const i = arr.findIndex(x => x.id === editMode); if (i > -1) arr[i] = rec; } else arr.push(rec);
@@ -21339,8 +21369,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.65.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.65.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.66.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.66.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -23286,6 +23316,9 @@ Be direct and use real numbers. Avoid generic advice.`;
             const existing = editMode ? arr.find(x => x.id === editMode) : null;
             const rec = {
                 id: editMode || uid(),
+                // v7.66.0 — subscriptions never carried a createdAt, so _utOf() fell all
+                // the way through to 0 and every one was a permanent merge loser.
+                createdAt: (existing && existing.createdAt) || new Date().toISOString(),
                 name, category: cat, amount, dueDay: day,
                 cycle: $('sub_cycle').value,
                 anomalyDetect: $('sub_anomaly').value === '1',
