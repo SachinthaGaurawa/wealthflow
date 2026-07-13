@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 3,
+  "version": 4,
   "updated": "2026-07-13",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 695,
+  "count": 701,
   "merchants": [
     {
       "key": "bake house",
@@ -2293,11 +2293,25 @@
       "source": "seed"
     },
     {
+      "key": "asiacapital",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.96,
+      "source": "ai-consensus"
+    },
+    {
       "key": "assurance",
       "category": "Insurance",
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "aviva",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.97,
+      "source": "ai-consensus"
     },
     {
       "key": "ceylinco",
@@ -2389,6 +2403,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "hdfc ergo",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "health insurance",
@@ -2552,6 +2573,13 @@
       "source": "seed"
     },
     {
+      "key": "sanasa",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "sanasa general",
       "category": "Insurance",
       "goesTo": "subscription",
@@ -2608,6 +2636,13 @@
       "source": "seed"
     },
     {
+      "key": "sri lanka transport board",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "srilanka insurance",
       "category": "Insurance",
       "goesTo": "subscription",
@@ -2627,6 +2662,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "union commercial",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "vehicle insurance",
@@ -4912,5 +4954,6 @@
     }
   ],
   "gate": 0.95,
-  "ambiguous": 14
+  "ambiguous": 14,
+  "conflicts": 0
 }
