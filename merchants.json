@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 5,
+  "version": 6,
   "updated": "2026-07-13",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 703,
+  "count": 706,
   "merchants": [
     {
       "key": "bake house",
@@ -2321,6 +2321,13 @@
       "source": "ai-consensus"
     },
     {
+      "key": "axa",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.96,
+      "source": "ai-consensus"
+    },
+    {
       "key": "ceylinco",
       "category": "Insurance",
       "goesTo": "subscription",
@@ -2391,6 +2398,13 @@
       "source": "seed"
     },
     {
+      "key": "eagle insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
+    },
+    {
       "key": "endowment",
       "category": "Insurance",
       "goesTo": "subscription",
@@ -2417,6 +2431,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "guardian general",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.95,
+      "source": "ai-consensus"
     },
     {
       "key": "hdfc ergo",
