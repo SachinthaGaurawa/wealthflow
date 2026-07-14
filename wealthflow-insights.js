@@ -348,18 +348,18 @@
     function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
     function styleOnce() {
-        if (document.getElementById('wfi-css')) return;
-        var st = document.createElement('style'); st.id = 'wfi-css';
+        if (document.getElementById('wfx-css')) return;
+        var st = document.createElement('style'); st.id = 'wfx-css';
         st.textContent = [
-            '.wfi-wrap{display:flex;flex-direction:column;gap:8px}',
-            '.wfi-hdr{display:flex;align-items:center;gap:8px;margin:0 2px 4px;font-size:11px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--muted,#8d99ad)}',
-            '.wfi-hdr span{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:700;font-size:11px;color:var(--muted,#8d99ad)}',
-            '.wfi{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:13px;border:1px solid;line-height:1.42}',
-            '.wfi-ic{flex:0 0 auto;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.05)}',
-            '.wfi-t{font-size:13px;font-weight:750;color:var(--text,#eef2f8);margin-bottom:2px}',
-            '.wfi-b{font-size:11.5px;color:var(--muted,#8d99ad)}',
-            '.wfi-a{display:inline-block;margin-top:6px;font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06)}',
-            '.wfi-ok{display:flex;gap:9px;align-items:center;padding:13px;border-radius:13px;border:1px solid rgba(52,211,153,.22);background:rgba(52,211,153,.07);color:#34d399;font-size:12.5px;font-weight:650}'
+            '.wfx-wrap{display:flex;flex-direction:column;gap:8px}',
+            '.wfx-hdr{display:flex;align-items:center;gap:8px;margin:0 2px 4px;font-size:11px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--muted,#8d99ad)}',
+            '.wfx-hdr span{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:700;font-size:11px;color:var(--muted,#8d99ad)}',
+            '.wfx{display:flex;gap:11px;align-items:flex-start;padding:11px 12px;border-radius:13px;border:1px solid;line-height:1.42}',
+            '.wfx-ic{flex:0 0 auto;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.05)}',
+            '.wfx-t{font-size:13px;font-weight:750;color:var(--text,#eef2f8);margin-bottom:2px}',
+            '.wfx-b{font-size:11.5px;color:var(--muted,#8d99ad)}',
+            '.wfx-a{display:inline-block;margin-top:6px;font-size:11px;font-weight:750;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.06)}',
+            '.wfx-ok{display:flex;gap:9px;align-items:center;padding:13px;border-radius:13px;border:1px solid rgba(52,211,153,.22);background:rgba(52,211,153,.07);color:#34d399;font-size:12.5px;font-weight:650}'
         ].join('');
         document.head.appendChild(st);
     }
@@ -367,13 +367,13 @@
     function tile(it) {
         var t = TONE[it.sev] || TONE.low;
         var path = GLYPH[it.kind] || GLYPH.card_util;
-        return '<div class="wfi" style="border-color:' + t[2] + ';background:' + t[1] + '">' +
-            '<div class="wfi-ic" style="color:' + t[0] + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg></div>' +
-            '<div style="min-width:0"><div class="wfi-t">' + esc(it.title) + '</div>' +
-            (it.body ? '<div class="wfi-b">' + esc(it.body) + '</div>' : '') +
+        return '<div class="wfx" style="border-color:' + t[2] + ';background:' + t[1] + '">' +
+            '<div class="wfx-ic" style="color:' + t[0] + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg></div>' +
+            '<div style="min-width:0"><div class="wfx-t">' + esc(it.title) + '</div>' +
+            (it.body ? '<div class="wfx-b">' + esc(it.body) + '</div>' : '') +
             (it.action ? (it.fix
-                ? '<button type="button" class="wfi-a wfi-fix" data-fix="' + esc(it.fix) + '" style="color:' + t[0] + ';border:1px solid ' + t[2] + ';cursor:pointer;background:rgba(255,255,255,.06)">' + esc(it.action) + '</button>'
-                : '<div class="wfi-a" style="color:' + t[0] + '">' + esc(it.action) + '</div>') : '') +
+                ? '<button type="button" class="wfx-a wfx-fix" data-fix="' + esc(it.fix) + '" style="color:' + t[0] + ';border:1px solid ' + t[2] + ';cursor:pointer;background:rgba(255,255,255,.06)">' + esc(it.action) + '</button>'
+                : '<div class="wfx-a" style="color:' + t[0] + '">' + esc(it.action) + '</div>') : '') +
             '</div></div>';
     }
 
@@ -387,18 +387,18 @@
         opts = opts || {};
         if (!items.length) {
             el.innerHTML = opts.allClear
-                ? '<div class="wfi-ok"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Nothing needs you right now.</div>'
+                ? '<div class="wfx-ok"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Nothing needs you right now.</div>'
                 : '';
             el.style.display = opts.allClear ? '' : 'none';
             return 0;
         }
         el.style.display = '';
-        el.innerHTML = '<div class="wfi-wrap">' +
-            (opts.title ? '<div class="wfi-hdr">' + esc(opts.title) + '<span>' + items.length + '</span></div>' : '') +
+        el.innerHTML = '<div class="wfx-wrap">' +
+            (opts.title ? '<div class="wfx-hdr">' + esc(opts.title) + '<span>' + items.length + '</span></div>' : '') +
             items.map(tile).join('') + '</div>';
         // wire the one-tap repairs
         try {
-            el.querySelectorAll('.wfi-fix').forEach(function (b) {
+            el.querySelectorAll('.wfx-fix').forEach(function (b) {
                 b.onclick = function () {
                     var f = b.getAttribute('data-fix');
                     if (f === 'mergeSubs') {
