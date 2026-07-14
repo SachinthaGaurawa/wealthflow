@@ -7352,7 +7352,7 @@
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.68.0';
+        var WF_APP_VERSION = '7.69.0';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -15272,6 +15272,22 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function renderPage(name) {
             const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv, crib: () => { try { if (window.WFCrib) window.WFCrib.render(); } catch (_) {} } };
             if (fn[name]) fn[name]();
+            // v7.69.0 — ONE hook for every screen. Whatever page you open, its intelligence
+            // strip is painted at the top. Pages with nothing to say render nothing at all.
+            try {
+                if (window.WFInsights) {
+                    var W = window.WFInsights;
+                    var strips = {
+                        crib:     ['wfCribInsights', function () { return W.crib(); },      'Credit report intelligence'],
+                        loans:    ['wfLoanInsights', function () { return W.loans(); },     'Loan intelligence'],
+                        expenses: ['wfExpInsights',  function () { return W.expenses(); },  'Expense intelligence'],
+                        income:   ['wfIncInsights',  function () { return [].concat(W.income(), W.incomeIntel()); }, 'Income intelligence'],
+                        cconetime:['wfCardStrip',    function () { return W.cards(); },     'What needs you']
+                    };
+                    var cfg = strips[name];
+                    if (cfg) _wfStrip('page-' + name, cfg[0], cfg[1](), cfg[2]);
+                }
+            } catch (_) {}
         }
 
         function openSb() { $('sidebar').classList.add('open'); $('sbOverlay').classList.add('show'); }
@@ -17021,6 +17037,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         function renderLoans() {
+            // v7.69.0 — the question the Debt Demolisher never answered: what happens if I
+            // pay a bit more? Plus the trap where the payment does not even cover interest.
+            try { _wfStrip('page-loans', 'wfLoanInsights', window.WFInsights.loans(), 'Loan intelligence'); } catch (_) {}
             let arr = DB.get('loans');
             const s = sortState['loans'];
             if (s?.field) arr.sort((a, b) => {
@@ -21394,8 +21413,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.68.0</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.68.0</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.0</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.0</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>

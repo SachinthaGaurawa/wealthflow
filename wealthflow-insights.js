@@ -532,6 +532,169 @@
         return out;
     }
 
+    /* ── LOANS ────────────────────────────────────────────────────────────────
+       The app has an avalanche/snowball demolisher, but it has NEVER answered the one
+       question that actually changes behaviour: "what happens if I pay a bit more?"     */
+
+    // Standard amortisation. i = monthly rate. Returns null when the payment cannot even
+    // cover the interest (the debt would never be repaid) — we say so rather than divide
+    // by zero and print nonsense.
+    function monthsToClear(balance, i, pay) {
+        if (balance <= 0) return 0;
+        if (i <= 0) return pay > 0 ? Math.ceil(balance / pay) : null;
+        if (pay <= balance * i) return null;                      // never repaid
+        return Math.log(pay / (pay - balance * i)) / Math.log(1 + i);
+    }
+    function balanceAfter(P, i, pay, k) {
+        if (k <= 0) return P;
+        if (i <= 0) return Math.max(0, P - pay * k);
+        var g = Math.pow(1 + i, k);
+        return Math.max(0, P * g - pay * (g - 1) / i);
+    }
+    function monthsElapsed(start) {
+        var d = Date.parse(start || '');
+        if (!isFinite(d)) return 0;
+        var a = new Date(d), b = new Date();
+        return Math.max(0, (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()));
+    }
+
+    function loanState(l) {
+        var P = num(l.amount || l.principal);
+        var rate = num(l.rate);
+        var i = rate / 100 / 12;
+        var pay = num(l.monthly || l.emi);
+        var term = num(l.dur || l.months || l.term);
+        if (!pay && P > 0 && term > 0) {                          // derive the EMI if it was never entered
+            pay = i > 0 ? (P * i * Math.pow(1 + i, term)) / (Math.pow(1 + i, term) - 1) : P / term;
+        }
+        if (P <= 0 || pay <= 0) return null;
+        var k = Math.min(monthsElapsed(l.start), term || 1e9);
+        var bal = balanceAfter(P, i, pay, k);
+        var left = monthsToClear(bal, i, pay);
+        return { name: l.name || l.bank || 'Loan', P: P, i: i, rate: rate, pay: pay, bal: bal, left: left,
+                 interestLeft: left == null ? null : Math.max(0, left * pay - bal) };
+    }
+
+    function loans() {
+        var list = arr('loans'), out = [];
+        if (!list.length) return out;
+        var st = list.map(loanState).filter(Boolean);
+        if (!st.length) return out;
+
+        // 1) A payment that does not even cover the interest is a trap, not a loan.
+        st.filter(function (l) { return l.left === null; }).forEach(function (l) {
+            out.push({ sev: 'critical', kind: 'loan_never', 
+                title: l.name + ' will NEVER be repaid at this payment',
+                body: money(l.pay) + ' a month does not even cover the ' + money(l.bal * l.i) +
+                      ' of interest it accrues. The balance grows every month. This needs to change now.',
+                amount: l.bal });
+        });
+
+        var live = st.filter(function (l) { return l.left !== null && l.bal > 0; });
+        if (!live.length) return out;
+
+        // 2) THE OVERPAYMENT QUESTION — the one that actually changes behaviour.
+        var totalPay = live.reduce(function (t, l) { return t + l.pay; }, 0);
+        var target = live.slice().sort(function (a, b) { return b.rate - a.rate; })[0];   // avalanche: highest rate
+        [0.10, 0.25].forEach(function (bump) {
+            var extra = Math.round(target.pay * bump / 100) * 100;                        // a round number
+            if (extra < 500) return;
+            var newLeft = monthsToClear(target.bal, target.i, target.pay + extra);
+            if (newLeft == null) return;
+            var saved = target.interestLeft - Math.max(0, newLeft * (target.pay + extra) - target.bal);
+            var sooner = target.left - newLeft;
+            if (saved < 1000 || sooner < 1) return;
+            out.push({ sev: bump === 0.10 ? 'medium' : 'low', kind: 'loan_overpay',
+                title: money(extra) + ' more a month on ' + target.name + ' saves you ' + money(saved),
+                body: 'It would be gone ' + Math.round(sooner) + ' month' + (Math.round(sooner) === 1 ? '' : 's') +
+                      ' sooner \u2014 ' + Math.round(target.left) + ' months becomes ' + Math.round(newLeft) +
+                      '. Every rupee goes straight at the principal, and it is the ' + target.rate + '% loan, so it is the most expensive money you owe.',
+                amount: saved });
+        });
+
+        // 3) WHICH DEBT TO ATTACK — avalanche, with the reason stated.
+        if (live.length > 1) {
+            var cheapest = live.slice().sort(function (a, b) { return a.rate - b.rate; })[0];
+            if (target.rate > cheapest.rate + 1) {
+                out.push({ sev: 'medium', kind: 'loan_attack',
+                    title: 'Attack ' + target.name + ' first \u2014 it is your most expensive debt',
+                    body: 'At ' + target.rate + '% it costs you ' + money(target.bal * target.i) +
+                          ' a month just to exist. ' + cheapest.name + ' at ' + cheapest.rate +
+                          '% costs ' + money(cheapest.bal * cheapest.i) + '. The same extra rupee kills more interest here.',
+                    amount: target.bal * (target.rate - cheapest.rate) / 100 });
+            }
+        }
+
+        // 4) WHAT THIS DEBT ACTUALLY COSTS YOU — the number nobody wants to print.
+        var interestLeft = live.reduce(function (t, l) { return t + (l.interestLeft || 0); }, 0);
+        var balLeft = live.reduce(function (t, l) { return t + l.bal; }, 0);
+        if (interestLeft > 5000) {
+            out.push({ sev: 'low', kind: 'loan_cost',
+                title: 'You still owe ' + money(balLeft) + ' \u2014 and ' + money(interestLeft) + ' of that is pure interest',
+                body: 'Across ' + live.length + ' loan' + (live.length === 1 ? '' : 's') + ' at ' + money(totalPay) +
+                      ' a month. That interest buys you nothing. It is the whole reason to overpay.',
+                amount: interestLeft });
+        }
+        return out;
+    }
+
+    /* ── CRIB ─────────────────────────────────────────────────────────────────
+       You have a score and a report, and the app draws a chart of it. Nothing has ever
+       told you WHY it is what it is, or which single action lifts it most.            */
+    function crib() {
+        var reports = arr('cribReports'), out = [];
+        if (!reports.length) return out;
+        var r = reports.slice().sort(function (a, b) {
+            return String(b.reportDate || b.date || '').localeCompare(String(a.reportDate || a.date || ''));
+        })[0];
+        var score = num(r.score);
+        if (!score) return out;
+
+        var drivers = [];
+        // OVERDUE — by far the heaviest single drag on a CRIB score.
+        var od = num(r.overdue);
+        if (od > 0) drivers.push({ pts: 80, label: od + ' overdue account' + (od === 1 ? '' : 's'),
+            fix: 'Clear the overdue balance. Nothing else you can do moves the score this much.', sev: 'critical' });
+
+        // UTILISATION — from the report if present, otherwise from the cards you registered.
+        var util = num(r.utilisation || r.utilization);
+        if (!util) {
+            try {
+                var R = reg(), charges = arr('cconetime'), lim = 0, owed = 0;
+                Object.keys(R).forEach(function (k) {
+                    if (R[k].type !== 'credit_card') return;
+                    lim += num(R[k].creditLimit);
+                    owed += charges.filter(function (c) { return String(c.card_last4 || '') === k && !c.paid; })
+                                   .reduce(function (t, c) { return t + num(c.combinedTotal || c.amount); }, 0);
+                });
+                if (lim > 0) util = owed / lim * 100;
+            } catch (_) {}
+        }
+        if (util >= 30) drivers.push({ pts: util >= 70 ? 60 : 30, label: Math.round(util) + '% card utilisation',
+            fix: 'Bring it under 30%. This is the fastest lever you have — it updates on your next statement, not in years.',
+            sev: util >= 70 ? 'high' : 'medium' });
+
+        // INQUIRIES — every credit application leaves a mark.
+        var inq = num(r.inquiries);
+        if (inq >= 3) drivers.push({ pts: Math.min(40, inq * 8), label: inq + ' recent credit inquiries',
+            fix: 'Stop applying for new credit. Each application costs you points and they take months to fall off.', sev: 'medium' });
+
+        if (!drivers.length) {
+            out.push({ sev: 'low', kind: 'crib_clean',
+                title: 'Your CRIB score is ' + score + ' and nothing is dragging it down',
+                body: 'No overdue accounts, healthy utilisation, no recent inquiry spree. Keep it exactly like this.' });
+            return out;
+        }
+        drivers.sort(function (a, b) { return b.pts - a.pts; });
+        drivers.forEach(function (d, idx) {
+            out.push({ sev: d.sev, kind: 'crib_driver',
+                title: (idx === 0 ? 'Biggest drag on your CRIB score: ' : 'Also hurting your score: ') + d.label,
+                body: d.fix + ' Worth roughly ' + d.pts + ' points.',
+                amount: d.pts * 1000 });
+        });
+        return out;
+    }
+
     /* ── THE BRIEF — one ranked list for the Dashboard ─────────────────────── */
     function brief(limit) {
         var all = [];
@@ -540,6 +703,8 @@
         try { all = all.concat(income()); } catch (_) {}
         try { all = all.concat(expenses()); } catch (_) {}
         try { all = all.concat(incomeIntel()); } catch (_) {}
+        try { all = all.concat(loans()); } catch (_) {}
+        try { all = all.concat(crib()); } catch (_) {}
         all.sort(function (a, b) {
             var s = SEV[a.sev] - SEV[b.sev];
             return s !== 0 ? s : (num(b.amount) - num(a.amount));   // then by money at stake
@@ -574,6 +739,12 @@
         exp_recurring: 'M23 4v6h-6M1 20v-6h6M20.5 9A9 9 0 0 0 5.6 5.6L1 10m22 4l-4.6 4.4A9 9 0 0 1 3.5 15',
         exp_pace: 'M23 6l-9.5 9.5-5-5L1 18M17 6h6v6',
         exp_transfers: 'M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3',
+        loan_never: 'M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+        loan_overpay: 'M23 6l-9.5 9.5-5-5L1 18M17 6h6v6',
+        loan_attack: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
+        loan_cost: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+        crib_driver: 'M12 20V10M18 20V4M6 20v-4',
+        crib_clean: 'M20 6L9 17l-5-5',
         inc_drop: 'M23 18l-9.5-9.5-5 5L1 6M17 18h6v-6',
         inc_concentration: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'
     };
@@ -646,7 +817,7 @@
         return items.length;
     }
 
-    W.WFInsights = { cards: cards, subs: subs, income: income, expenses: expenses, incomeIntel: incomeIntel, brief: brief, nextOn: nextOn, renderInto: renderInto,
+    W.WFInsights = { cards: cards, subs: subs, income: income, expenses: expenses, incomeIntel: incomeIntel, loans: loans, crib: crib, brief: brief, nextOn: nextOn, renderInto: renderInto,
         findDuplicateSubs: findDuplicateSubs, mergeDuplicateSubs: mergeDuplicateSubs, subDisplayName: subDisplayName, _mine: mine, VERSION: '1.1' };
     try { console.log('[WFInsights] Intelligence layer v1.0 loaded'); } catch (_) {}
 })();
