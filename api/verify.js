@@ -31,6 +31,40 @@
 const CATEGORIES = ['Telecom', 'Insurance', 'Streaming', 'Software', 'Internet', 'Utilities', 'Groceries', 'Dining', 'Health', 'Transport', 'Fuel', 'Education', 'Government', 'Shopping', 'Gold', 'Gym/Fitness', 'Leasing'];
 const SUBSCRIPTION_CATS = { Telecom: 1, Insurance: 1, Streaming: 1, Internet: 1, Utilities: 1, Software: 1, 'Gym/Fitness': 1, Leasing: 1 };
 
+// Google's knowledgeGraph.type says "Insurance company" or "Supermarket"; a model will
+// happily answer "Retail" or "Health and Wellness". Those are RIGHT — they are simply not
+// spelled the way our taxonomy spells them. Throwing them away and answering "unknown"
+// would be pedantry, not rigour. We map them.
+const INDUSTRY_MAP = [
+    [/insur|assuran/i, 'Insurance'],
+    [/supermarket|grocer|convenience store|food city/i, 'Groceries'],
+    [/restaurant|cafe|coffee|bakery|pizza|fast.?food|dining|eatery|hotel|catering/i, 'Dining'],
+    [/pharmac|hospital|clinic|medical|health|dental|laborator|wellness|nursing|ayurved/i, 'Health'],
+    [/telecom|mobile network|cellular|wireless carrier/i, 'Telecom'],
+    [/petrol|fuel|filling station|gas station|petroleum/i, 'Fuel'],
+    [/jewell?er|goldsmith|gold /i, 'Gold'],
+    [/gym|fitness|yoga|pilates|health club/i, 'Gym/Fitness'],
+    [/stream|video.on.demand|television network/i, 'Streaming'],
+    [/software|saas|technolog|it services|computer|electronics manufact|internet compan|web/i, 'Software'],
+    [/broadband|internet service|isp/i, 'Internet'],
+    [/electricit|water board|utility|power compan|energy/i, 'Utilities'],
+    [/school|college|universit|educat|tuition|institute|academy|training/i, 'Education'],
+    [/transport|taxi|bus |railway|airline|travel|logistic|courier|delivery/i, 'Transport'],
+    [/government|ministry|department of|municipal|council|authority|revenue/i, 'Government'],
+    [/leasing|finance compan|microfinance/i, 'Leasing'],
+    [/retail|shop|store|apparel|clothing|boutique|hardware|furniture|supermart|department/i, 'Shopping']
+];
+function mapIndustry() {
+    for (var i = 0; i < arguments.length; i++) {
+        var v = String(arguments[i] || '');
+        if (!v) continue;
+        for (var j = 0; j < INDUSTRY_MAP.length; j++) {
+            if (INDUSTRY_MAP[j][0].test(v)) return INDUSTRY_MAP[j][1];
+        }
+    }
+    return null;
+}
+
 const SEARCH_TIMEOUT_MS = 8000;    // research: hard-abort the search at 8s
 const LLM_TIMEOUT_MS = 12000;
 const MAX_MERCHANT_LEN = 120;
@@ -116,34 +150,114 @@ function buildPrompt(merchant, ctx) {
         'Cite only URLs that literally appear above. Return only JSON.';
 }
 
-async function classify(prompt, origin) {
-    const ctl = new AbortController();
-    const kill = setTimeout(() => ctl.abort(), LLM_TIMEOUT_MS);
+// Work out our OWN public origin. `req.headers.host` is not guaranteed on every Vercel
+// runtime, and "https://undefined" fails INSTANTLY — which is exactly what was happening:
+// /api/verify searched fine, then died in ~200ms with llm_failed.
+function selfOrigin(req) {
+    const h = (req && req.headers) || {};
+    const host = h['x-forwarded-host'] || h.host ||
+                 process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+                 process.env.VERCEL_URL || '';
+    if (!host) return '';
+    const proto = h['x-forwarded-proto'] || 'https';
+    return proto + '://' + String(host).split(',')[0].trim();
+}
+
+function guard(ms) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    return { signal: c.signal, done: () => clearTimeout(t) };
+}
+
+/* FOUR independent ways to reach a model. If one is unavailable we use the next; the
+   verification never depends on a single hop. Each returns raw text, or null. */
+async function viaAnthropic(prompt) {
+    const K = process.env.ANTHROPIC_API_KEY;
+    if (!K) return null;
+    const g = guard(LLM_TIMEOUT_MS);
     try {
-        // Preferred: one fast frontier model (best JSON adherence).
-        if (process.env.ANTHROPIC_API_KEY) {
-            const r = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-                body: JSON.stringify({ model: process.env.VERIFY_MODEL || 'claude-haiku-4-5', max_tokens: 500, temperature: 0, messages: [{ role: 'user', content: prompt }] }),
-                signal: ctl.signal
-            });
-            clearTimeout(kill);
-            if (!r.ok) return null;
-            const j = await r.json();
-            return (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-        }
-        // Fallback with NO new key: your own /api/ai in fastest mode (~2-5s).
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-api-key': K, 'anthropic-version': '2023-06-01' },
+            body: JSON.stringify({ model: process.env.VERIFY_MODEL || 'claude-haiku-4-5', max_tokens: 500, temperature: 0, messages: [{ role: 'user', content: prompt }] }),
+            signal: g.signal
+        });
+        g.done();
+        if (!r.ok) return null;
+        const j = await r.json();
+        return (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('') || null;
+    } catch (_) { g.done(); return null; }
+}
+
+async function viaGroq(prompt) {
+    const K = process.env.GROQ_API_KEY;
+    if (!K) return null;
+    const g = guard(LLM_TIMEOUT_MS);
+    try {
+        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: 'Bearer ' + K },
+            body: JSON.stringify({ model: 'llama-3.3-70b-versatile', temperature: 0, max_tokens: 500, messages: [{ role: 'user', content: prompt }] }),
+            signal: g.signal
+        });
+        g.done();
+        if (!r.ok) return null;
+        const j = await r.json();
+        return (((j.choices || [])[0] || {}).message || {}).content || null;
+    } catch (_) { g.done(); return null; }
+}
+
+async function viaGemini(prompt) {
+    const K = process.env.GEMINI_API_KEY;
+    if (!K) return null;
+    const g = guard(LLM_TIMEOUT_MS);
+    try {
+        const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + K, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 500, responseMimeType: 'application/json' } }),
+            signal: g.signal
+        });
+        g.done();
+        if (!r.ok) return null;
+        const j = await r.json();
+        const parts = ((((j.candidates || [])[0] || {}).content || {}).parts) || [];
+        return parts.map(p => p.text || '').join('') || null;
+    } catch (_) { g.done(); return null; }
+}
+
+async function viaOwnAI(prompt, origin) {
+    if (!origin) return null;
+    const g = guard(LLM_TIMEOUT_MS);
+    try {
         const r = await fetch(origin + '/api/ai', {
             method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ prompt, mode: 'fastest', temperature: 0, maxTokens: 500 }),
-            signal: ctl.signal
+            signal: g.signal
         });
-        clearTimeout(kill);
+        g.done();
         if (!r.ok) return null;
         const j = await r.json();
-        return j.reply || j.text || '';
-    } catch (_) { clearTimeout(kill); return null; }
+        return j.reply || j.text || null;
+    } catch (_) { g.done(); return null; }
+}
+
+/* Direct providers first (one hop, no cold start), then our own /api/ai which holds all
+   sixteen engines. Returns { text, via } so the response can tell you WHO answered. */
+async function classify(prompt, origin) {
+    const chain = [
+        ['anthropic', viaAnthropic],
+        ['groq', viaGroq],
+        ['gemini', viaGemini],
+        ['own-ai', p => viaOwnAI(p, origin)]
+    ];
+    for (const [name, fn] of chain) {
+        try {
+            const t = await fn(prompt);
+            if (t && String(t).trim()) return { text: t, via: name };
+        } catch (_) {}
+    }
+    return { text: null, via: null };
 }
 
 /* ---- handler ------------------------------------------------------------ */
@@ -173,12 +287,12 @@ export default async function handler(req, res) {
     const ctx = trim(s.data);
     if (ctx.empty) return NONE('no_search_results');
 
-    const origin = 'https://' + (req.headers['x-forwarded-host'] || req.headers.host);
-    const raw = await classify(buildPrompt(merchant, ctx), origin);
-    if (!raw) return NONE('llm_failed');
+    const origin = selfOrigin(req);
+    const got = await classify(buildPrompt(merchant, ctx), origin);
+    if (!got.text) return NONE('llm_failed');
 
     let out;
-    try { out = JSON.parse(String(raw).match(/\{[\s\S]*\}/)[0]); }
+    try { out = JSON.parse(String(got.text).match(/\{[\s\S]*\}/)[0]); }
     catch (_) { return NONE('llm_bad_json'); }
 
     // ---- CITE-OR-ABSTAIN: strip any URL we did not actually supply ----------
@@ -188,8 +302,28 @@ export default async function handler(req, res) {
         out.confidence = 0;
         out.abstain_reason = 'no_valid_citation';   // the model invented its source
     }
-    // ---- taxonomy guard: a category outside our world is not a category ----
-    if (out.category && CATEGORIES.indexOf(out.category) < 0) { out.category = null; out.confidence = 0; out.abstain_reason = out.abstain_reason || 'category_out_of_taxonomy'; }
+    // ---- taxonomy guard, with a translation layer ----
+    // "Retail" and "Insurance company" are correct answers spelled our way; only give up
+    // when NOTHING in the model's answer OR the knowledge graph maps to a real category.
+    if (out.category && CATEGORIES.indexOf(out.category) < 0) {
+        // ORDER MATTERS. Google's knowledgeGraph.type is structured data straight from the
+        // source and is the most trustworthy; the model's own one-word category is the
+        // least. Checking "Retail" first would map a health shop to Shopping.
+        var mapped = mapIndustry(ctx.kg && ctx.kg.type, out.industry, ctx.kg && ctx.kg.description, out.category);
+        if (mapped) {
+            out.industry = out.industry || out.category;
+            out.category = mapped;
+            out.confidence = Math.min(out.confidence, 0.97);   // a translated answer is never a 0.99 certainty
+        } else {
+            out.category = null; out.confidence = 0;
+            out.abstain_reason = out.abstain_reason || 'category_out_of_taxonomy';
+        }
+    }
+    // If the model gave no category at all but Google named the industry, use that.
+    if (!out.category && out.exists === true && ctx.kg && ctx.kg.type) {
+        var kgm = mapIndustry(ctx.kg.type, ctx.kg.description);
+        if (kgm) { out.category = kgm; out.industry = out.industry || ctx.kg.type; out.confidence = Math.min(out.confidence || 0.9, 0.95); out.abstain_reason = null; }
+    }
     if (out.category && (out.destination !== 'subscription' && out.destination !== 'expenses')) {
         out.destination = SUBSCRIPTION_CATS[out.category] ? 'subscription' : 'expenses';
     }
@@ -197,7 +331,7 @@ export default async function handler(req, res) {
     out.vendor = clean(out.vendor, 120) || merchant;
     out.industry = out.industry ? clean(out.industry, 120) : null;
     out.abstain_reason = out.abstain_reason ? clean(out.abstain_reason, 120) : null;
-    out.source = 'serper+llm';
+    out.source = 'serper+' + (got.via || 'llm');
     out.kgType = ctx.kg ? ctx.kg.type : null;
 
     return res.status(200).json(out);
