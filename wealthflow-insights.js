@@ -311,12 +311,235 @@
         return out;
     }
 
+    /* ── EXPENSES ─────────────────────────────────────────────────────────────
+       74 records, LKR 4.49M, and the app never once told you anything about them.
+       Everything below is read from data you already have.                        */
+    // Group by the BRAND the classifier recognised, not the raw line. "Cargills Food City
+    // Kuliyapitiya" and "Cargills 01" are the SAME shop — counting them as two different
+    // merchants hides where your money actually goes.
+    var _mkCache = {};
+    function _mkey(d) {
+        var raw = String(d || '');
+        if (_mkCache[raw] !== undefined) return _mkCache[raw];
+        var k = '';
+        try {
+            if (W.WFMerchants && W.WFMerchants.classify) {
+                var c = W.WFMerchants.classify(raw, 'debit');
+                if (c && c.matched && !/^(fee|card):/.test(c.matched)) k = String(c.matched).replace(/^[a-z]+:/, '').trim();
+            }
+            if (!k && W.WFMerchants && W.WFMerchants.merchantKey) k = W.WFMerchants.merchantKey(raw) || '';
+        } catch (_) {}
+        if (!k) k = norm(raw).slice(0, 24);
+        _mkCache[raw] = k;
+        return k;
+    }
+    function _amt(e) { return num(e && (e.combinedTotal || e.amount)); }
+    function _ym(e) { return String((e && e.date) || '').slice(0, 7); }
+
+    // A BANK FEE is supposed to repeat — three LKR 25 CEFT charges on one day is not a
+    // double charge, it is three transfers. And a TRANSFER is not a merchant: telling you
+    // "73% of your spending goes to Cutivation Proje" when that is money you moved, not
+    // money you spent, is worse than saying nothing. Both are excluded from the merchant
+    // analytics, and transfers get their own insight instead.
+    var RE_NOT_MERCHANT = /\b(transfer|ceft|cash|withdrawal|deposit|atm|crm|cheque|chq|slips|standing order)\b/i;
+    function isFeeRow(e) {
+        var c = String((e && (e.category || e.type)) || '');
+        if (/bank charge|charges/i.test(c)) return true;
+        return /\b(fee|fees|charges?|levy|commission|stamp duty|vat)\b/i.test(String((e && (e.desc || e.name)) || ''));
+    }
+    function isMerchantRow(e) {
+        if (isFeeRow(e)) return false;
+        var c = String((e && (e.category || e.type)) || '');
+        if (/^(transfer|cash withdrawal|bank charges|other)$/i.test(c)) return false;
+        return !RE_NOT_MERCHANT.test(String((e && (e.desc || e.name)) || ''));
+    }
+
+    function expenses() {
+        var all = arr('expenses'), out = [];
+        if (all.length < 3) return out;
+        var today = new Date(); today.setHours(0, 0, 0, 0);
+        var thisYM = today.toISOString().slice(0, 7);
+
+        // ── 1) DOUBLE CHARGES — the same merchant, the same amount, the same day.
+        //     This is REAL MONEY you can get back, and nothing has ever looked for it.
+        var byDay = {};
+        all.filter(isMerchantRow).forEach(function (e) {
+            var k = String(e.date || '') + '|' + _mkey(e.desc || e.name) + '|' + Math.round(_amt(e));
+            (byDay[k] = byDay[k] || []).push(e);
+        });
+        var dbl = Object.keys(byDay).filter(function (k) { return byDay[k].length > 1; }).map(function (k) { return byDay[k]; });
+        if (dbl.length) {
+            var lost = dbl.reduce(function (t, g) { return t + _amt(g[0]) * (g.length - 1); }, 0);
+            out.push({ sev: 'critical', kind: 'exp_double',
+                title: dbl.length + ' possible double charge' + (dbl.length === 1 ? '' : 's') + ' — ' + money(lost) + ' at stake',
+                body: 'The same merchant billed you the same amount on the same day. ' +
+                      'Top: ' + _clean(dbl[0][0].desc || dbl[0][0].name) + ' \u00d7' + dbl[0].length +
+                      ' at ' + money(_amt(dbl[0][0])) + '. If it was not intentional, your bank will refund it.',
+                amount: lost });
+        }
+
+        // ── 2) BANK FEES — 47 of the 208 rows in your statements were fees. Nobody added them up.
+        var fees = all.filter(isFeeRow);
+        var feeYear = fees.filter(function (e) { return String(e.date || '').slice(0, 4) === String(today.getFullYear()); })
+                          .reduce(function (t, e) { return t + _amt(e); }, 0);
+        if (feeYear > 0) {
+            out.push({ sev: feeYear > 10000 ? 'high' : 'medium', kind: 'exp_fees',
+                title: 'You paid ' + money(feeYear) + ' in bank fees this year',
+                body: fees.length + ' charges. Fees are the easiest money in your whole budget to get rid of — most are avoidable by changing HOW you pay, not WHAT you pay.',
+                amount: feeYear });
+        }
+
+        // ── 3) ANOMALY — a single charge far above your normal for that merchant.
+        var byM = {};
+        all.filter(isMerchantRow).forEach(function (e) { var k = _mkey(e.desc || e.name); if (k) (byM[k] = byM[k] || []).push(e); });
+        Object.keys(byM).forEach(function (k) {
+            var g = byM[k]; if (g.length < 3) return;
+            var amts = g.map(_amt).filter(function (a) { return a > 0; });
+            if (amts.length < 3) return;
+            var sorted = amts.slice().sort(function (a, b) { return a - b; });
+            var med = sorted[Math.floor(sorted.length / 2)];
+            if (med <= 0) return;
+            var recent = g.slice().sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); })[0];
+            var r = _amt(recent);
+            if (r > med * 3 && r - med > 3000) {
+                var nm = _clean(recent.desc || recent.name);
+                out.push({ sev: 'high', kind: 'exp_anomaly',
+                    title: money(r) + ' at ' + nm + ' — ' + (r / med).toFixed(1) + '\u00d7 your normal',
+                    body: 'You usually pay about ' + money(med) + ' there (' + g.length + ' visits). This one is ' + money(r - med) + ' more. Worth a look.',
+                    amount: r - med });
+            }
+        });
+
+        // ── 4) WHERE YOUR MONEY ACTUALLY GOES — concentration.
+        var totals = {}, grand = 0;
+        all.filter(isMerchantRow).filter(function (e) { return String(e.date || '').slice(0, 4) === String(today.getFullYear()); })
+           .forEach(function (e) { var k = _mkey(e.desc || e.name); if (!k) return; totals[k] = (totals[k] || 0) + _amt(e); grand += _amt(e); });
+        var top = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; }).slice(0, 3);
+        if (grand > 0 && top.length === 3) {
+            var share = top.reduce(function (t, k) { return t + totals[k]; }, 0) / grand;
+            if (share >= 0.35) {
+                out.push({ sev: 'low', kind: 'exp_concentration',
+                    title: Math.round(share * 100) + '% of your spending goes to just 3 places',
+                    body: top.map(function (k) { return _title2(k) + ' ' + money(totals[k]); }).join(' \u00b7 ') +
+                          '. Cutting 10% from these three saves you more than cutting 50% from everything else.',
+                    amount: grand * share * 0.1 });
+            }
+        }
+
+        // ── 5) A RECURRING BILL YOU ARE NOT TRACKING.
+        var subs = arr('subscriptions'), known = {};
+        subs.forEach(function (x) { known[_mkey(x.name)] = 1; });
+        Object.keys(byM).forEach(function (k) {
+            if (known[k]) return;
+            var g = byM[k];
+            var months = {}; g.forEach(function (e) { var m = _ym(e); if (m) months[m] = 1; });
+            var mc = Object.keys(months).length;
+            if (mc < 3) return;                                  // in 3+ separate months
+            var amts = g.map(_amt);
+            var avg = amts.reduce(function (a, b) { return a + b; }, 0) / amts.length;
+            var spread = Math.max.apply(null, amts) - Math.min.apply(null, amts);
+            if (avg > 500 && spread <= avg * 0.25) {             // and a steady amount
+                out.push({ sev: 'medium', kind: 'exp_recurring',
+                    title: _title2(k) + ' looks like a bill you are not tracking',
+                    body: 'Charged in ' + mc + ' different months at about ' + money(avg) +
+                          ' each. That is ' + money(avg * 12) + ' a year sitting outside your Subscriptions.',
+                    amount: avg * 12 });
+            }
+        });
+
+        // ── 5b) A TRANSFER THAT DWARFS EVERYTHING ELSE. It is not shopping — but if one
+        //      movement is most of your outflow, you should still see it named.
+        var moves = all.filter(function (e) { return !isMerchantRow(e) && !isFeeRow(e); });
+        var moveTot = moves.reduce(function (t, e) { return t + _amt(e); }, 0);
+        var spendTot = all.reduce(function (t, e) { return t + _amt(e); }, 0);
+        if (spendTot > 0 && moveTot / spendTot > 0.5 && moves.length) {
+            var big = moves.slice().sort(function (a, b) { return _amt(b) - _amt(a); })[0];
+            out.push({ sev: 'low', kind: 'exp_transfers',
+                title: money(moveTot) + ' of your outflow was moved, not spent',
+                body: Math.round(moveTot / spendTot * 100) + '% of what left your account was transfers, cash and cheques \u2014 not purchases. ' +
+                      'The largest was ' + money(_amt(big)) + ' (' + _clean(big.desc || big.name) + '). ' +
+                      'Your real spending is ' + money(spendTot - moveTot) + '.',
+                amount: moveTot });
+        }
+
+        // ── 6) THIS MONTH vs YOUR NORMAL.
+        var byMonth = {};
+        all.forEach(function (e) { var m = _ym(e); if (m) byMonth[m] = (byMonth[m] || 0) + _amt(e); });
+        var months = Object.keys(byMonth).filter(function (m) { return m < thisYM; }).sort();
+        if (months.length >= 2 && byMonth[thisYM]) {
+            var hist = months.slice(-3).map(function (m) { return byMonth[m]; });
+            var mean = hist.reduce(function (a, b) { return a + b; }, 0) / hist.length;
+            var now = byMonth[thisYM];
+            var day = today.getDate(), dim = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+            var pace = now / Math.max(1, day) * dim;             // where this month is heading
+            if (mean > 0 && pace > mean * 1.25) {
+                out.push({ sev: 'high', kind: 'exp_pace',
+                    title: 'This month is heading for ' + money(pace) + ' — ' + Math.round((pace / mean - 1) * 100) + '% above normal',
+                    body: money(now) + ' spent in ' + day + ' days. Your last ' + hist.length + ' months averaged ' + money(mean) + '.',
+                    amount: pace - mean });
+            }
+        }
+        return out;
+    }
+    function _title2(x) { return String(x || '').replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }); }
+    // Never show the raw bank line to a human.
+    function _clean(d) {
+        try { if (W.WFMerchants && W.WFMerchants.cleanName) { var c = W.WFMerchants.cleanName(d); if (c && c.length >= 3) return c.slice(0, 30); } } catch (_) {}
+        return String(d || '').slice(0, 30);
+    }
+
+    /* ── INCOME (beyond the zero-income notice) ───────────────────────────────── */
+    function incomeIntel() {
+        var recv = arr('incomeRecv'), out = [];
+        if (recv.length < 2) return out;
+        var today = new Date(); today.setHours(0, 0, 0, 0);
+        var thisYM = today.toISOString().slice(0, 7);
+
+        var byMonth = {};
+        recv.forEach(function (r) {
+            var m = r.month || String(r.date || '').slice(0, 7);
+            if (m) byMonth[m] = (byMonth[m] || 0) + num(r.amount);
+        });
+        var ms = Object.keys(byMonth).sort();
+
+        // income DROP — the single most important thing a finance app can tell you
+        if (ms.length >= 3) {
+            var prev = ms.filter(function (m) { return m < thisYM; }).slice(-3);
+            var mean = prev.reduce(function (t, m) { return t + byMonth[m]; }, 0) / Math.max(1, prev.length);
+            var now = byMonth[thisYM] || 0;
+            if (mean > 0 && now > 0 && now < mean * 0.7) {
+                out.push({ sev: 'high', kind: 'inc_drop',
+                    title: 'Income is down ' + Math.round((1 - now / mean) * 100) + '% this month',
+                    body: money(now) + ' so far, against a ' + money(mean) + ' average. At your current spending you have a ' + money(mean - now) + ' hole to cover.',
+                    amount: mean - now });
+            }
+        }
+        // CONCENTRATION RISK — one source paying for everything
+        var bySrc = {}, tot = 0;
+        recv.filter(function (r) { return String(r.date || r.month || '').slice(0, 4) === String(today.getFullYear()); })
+            .forEach(function (r) { var k = norm(r.name || r.type || 'other'); bySrc[k] = (bySrc[k] || 0) + num(r.amount); tot += num(r.amount); });
+        var srcs = Object.keys(bySrc);
+        if (tot > 0 && srcs.length > 1) {
+            var biggest = srcs.sort(function (a, b) { return bySrc[b] - bySrc[a]; })[0];
+            var sh = bySrc[biggest] / tot;
+            if (sh >= 0.85) {
+                out.push({ sev: 'medium', kind: 'inc_concentration',
+                    title: Math.round(sh * 100) + '% of your income comes from one source',
+                    body: 'If ' + _title2(biggest) + ' stopped tomorrow you would lose ' + money(bySrc[biggest]) + ' a year. That is the single biggest risk in your finances.',
+                    amount: bySrc[biggest] });
+            }
+        }
+        return out;
+    }
+
     /* ── THE BRIEF — one ranked list for the Dashboard ─────────────────────── */
     function brief(limit) {
         var all = [];
         try { all = all.concat(cards()); } catch (_) {}
         try { all = all.concat(subs()); } catch (_) {}
         try { all = all.concat(income()); } catch (_) {}
+        try { all = all.concat(expenses()); } catch (_) {}
+        try { all = all.concat(incomeIntel()); } catch (_) {}
         all.sort(function (a, b) {
             var s = SEV[a.sev] - SEV[b.sev];
             return s !== 0 ? s : (num(b.amount) - num(a.amount));   // then by money at stake
@@ -343,7 +566,16 @@
         sub_dupe: 'M20 9H11a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
         sub_renew: 'M23 4v6h-6M1 20v-6h6M20.5 9A9 9 0 0 0 5.6 5.6L1 10m22 4l-4.6 4.4A9 9 0 0 1 3.5 15',
         sub_total: 'M3 3v18h18M18.7 8L13 13.7l-3-3L6 15',
-        income_zero: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'
+        income_zero: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+        exp_double: 'M20 9H11a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+        exp_fees: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6',
+        exp_anomaly: 'M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+        exp_concentration: 'M21.2 15.9A10 10 0 1 1 8.1 2.8M22 12A10 10 0 0 0 12 2v10z',
+        exp_recurring: 'M23 4v6h-6M1 20v-6h6M20.5 9A9 9 0 0 0 5.6 5.6L1 10m22 4l-4.6 4.4A9 9 0 0 1 3.5 15',
+        exp_pace: 'M23 6l-9.5 9.5-5-5L1 18M17 6h6v6',
+        exp_transfers: 'M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3',
+        inc_drop: 'M23 18l-9.5-9.5-5 5L1 6M17 18h6v-6',
+        inc_concentration: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'
     };
     function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
@@ -414,7 +646,7 @@
         return items.length;
     }
 
-    W.WFInsights = { cards: cards, subs: subs, income: income, brief: brief, nextOn: nextOn, renderInto: renderInto,
+    W.WFInsights = { cards: cards, subs: subs, income: income, expenses: expenses, incomeIntel: incomeIntel, brief: brief, nextOn: nextOn, renderInto: renderInto,
         findDuplicateSubs: findDuplicateSubs, mergeDuplicateSubs: mergeDuplicateSubs, subDisplayName: subDisplayName, _mine: mine, VERSION: '1.1' };
     try { console.log('[WFInsights] Intelligence layer v1.0 loaded'); } catch (_) {}
 })();
