@@ -15,8 +15,8 @@
  * ============================================================================= */
 (function () {
     var W = (typeof window !== 'undefined') ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
-    if (W.WF_INSIGHTS === '1.0') return;
-    W.WF_INSIGHTS = '1.0';
+    if (W.WF_INSIGHTS === '1.1') return;
+    W.WF_INSIGHTS = '1.1';
 
     var SEV = { critical: 0, high: 1, medium: 2, low: 3 };
     var DEFAULT_APR = 28;          // typical Sri Lankan credit-card APR — an ESTIMATE, always labelled
@@ -204,17 +204,110 @@
             }
         });
 
-        // 4) DUPLICATES — paying twice for the same thing
-        var seen = {};
-        list.forEach(function (s) {
-            var k = norm(s.name); if (!k) return;
-            if (seen[k]) {
-                out.push({ sev: 'high', kind: 'sub_dupe', sub: s.id,
-                    title: 'You have two subscriptions called ' + s.name,
-                    body: 'Paying ' + money(s.amount) + ' and ' + money(seen[k].amount) + '. One of them is probably a duplicate.',
-                    amount: Math.min(num(s.amount), num(seen[k].amount)) * perYear(s) });
-            } else seen[k] = s;
+        // 4) DUPLICATES — the old import named a subscription after the RAW bank line, so
+        //    two statements spelling the same merchant slightly differently made TWO of it.
+        //    Group by the CLEAN merchant name, not the messy stored one.
+        var groups = findDuplicateSubs();
+        groups.forEach(function (g) {
+            var nm = (W.WFMerchants && W.WFMerchants.cleanName) ? W.WFMerchants.cleanName(g[0].name) : g[0].name;
+            var waste = g.slice(1).reduce(function (t, s) { return t + num(s.amount) * perYear(s); }, 0);
+            out.push({ sev: 'high', kind: 'sub_dupe', sub: g[0].id, fix: 'mergeSubs',
+                title: g.length + ' duplicate subscriptions for ' + nm,
+                body: 'They were named after the raw bank line, so the same merchant was created ' + g.length +
+                      ' times. Your forecast is overstated by ' + money(waste) + ' a year.',
+                action: 'Merge them', amount: waste });
         });
+        return out;
+    }
+
+    /* ── repair the duplicates the old naming already created ────────────────── */
+    function subKey(s) {
+        try {
+            if (W.WFMerchants && W.WFMerchants.cleanName && s && s.name) return norm(W.WFMerchants.cleanName(s.name));
+        } catch (_) {}
+        // strip the auto-numbering the old code appended on a name collision ("… - 1")
+        return norm(String((s && s.name) || '').replace(/\s*-\s*\d+\s*$/, ''));
+    }
+    function findDuplicateSubs() {
+        var by = {};
+        arr('subscriptions').forEach(function (s) {
+            var k = subKey(s); if (!k) return;
+            (by[k] = by[k] || []).push(s);
+        });
+        return Object.keys(by).filter(function (k) { return by[k].length > 1; }).map(function (k) { return by[k]; });
+    }
+    // Keep the richest record, fold the others' history into it, delete them. Never loses data.
+    function mergeDuplicateSubs() {
+        var groups = findDuplicateSubs();
+        if (!groups.length) return { groups: 0, removed: 0 };
+        var list = arr('subscriptions').slice(), kill = {}, removed = 0;
+        groups.forEach(function (g) {
+            var score = function (s) { return Object.keys(s.monthOverrides || {}).length * 10 + (s.history || []).length; };
+            g.sort(function (a, b) { return score(b) - score(a); });
+            var keep = g[0];
+            keep.monthOverrides = Object.assign({}, keep.monthOverrides || {});
+            keep.history = (keep.history || []).slice();
+            keep.merchantKeys = (keep.merchantKeys || []).slice();
+            g.slice(1).forEach(function (d) {
+                Object.keys(d.monthOverrides || {}).forEach(function (m) {
+                    if (keep.monthOverrides[m] == null) keep.monthOverrides[m] = d.monthOverrides[m];
+                });
+                (d.history || []).forEach(function (h) { keep.history.push(h); });
+                (d.merchantKeys || []).forEach(function (k) { if (keep.merchantKeys.indexOf(k) < 0) keep.merchantKeys.push(k); });
+                kill[d.id] = 1; removed++;
+            });
+            if (W.WFMerchants && W.WFMerchants.cleanName) { try { keep.name = W.WFMerchants.cleanName(keep.name); } catch (_) {} }
+            keep._ut = Date.now();
+        });
+        var next = list.filter(function (s) { return !kill[s.id]; });
+        // Also clean the LONE survivors. A subscription with no twin still kept the ugly
+        // name the old import gave it — "Kaushi's Insuarance - 1" keeps that auto-numbered
+        // "- 1" forever, and "Pos Transaction …" keeps the bank's prefix.
+        var renamed = 0;
+        next.forEach(function (s) {
+            var clean = subDisplayName(s);
+            if (clean && clean !== s.name) { s.name = clean; s._ut = Date.now(); renamed++; }
+        });
+        try { DB().set('subscriptions', next); } catch (_) { return { groups: 0, removed: 0, renamed: 0 }; }
+        return { groups: groups.length, removed: removed, renamed: renamed };
+    }
+
+    // The name a subscription SHOULD have: the clean brand, with the old auto-numbering
+    // ("- 1") and the bank's prefix stripped.
+    function subDisplayName(s) {
+        var raw = String((s && s.name) || '').replace(/\s*-\s*\d+\s*$/, '').trim();
+        if (!raw) return '';
+        try {
+            if (W.WFMerchants && W.WFMerchants.cleanName) {
+                var c = W.WFMerchants.cleanName(raw);
+                if (c && c.length >= 3 && !/^(Other|Subscription)$/i.test(c)) return c;
+            }
+        } catch (_) {}
+        return raw;
+    }
+
+    /* ── INCOME ───────────────────────────────────────────────────────────────── */
+    // The dashboard shows LKR 0.00 income beside millions in expenses and a huge negative
+    // net saving. That number is HONEST — Year Income reads `incomeRecv` (money actually
+    // received), and the Investments store is deliberately excluded so the same money is
+    // not counted twice. But shown with no explanation it just looks broken. Say it plainly.
+    function income() {
+        var out = [], recv = arr('incomeRecv'), src = arr('income'), exp = arr('expenses');
+        var y = new Date().getFullYear();
+        var got = recv.filter(function (r) { return String(r && (r.date || r.month) || '').slice(0, 4) === String(y); })
+                      .reduce(function (t, r) { return t + num(r.amount); }, 0);
+        var spent = exp.filter(function (r) { return String(r && r.date || '').slice(0, 4) === String(y); })
+                       .reduce(function (t, r) { return t + num(r.combinedTotal || r.amount); }, 0);
+        if (got === 0 && spent > 0) {
+            out.push({ sev: 'high', kind: 'income_zero',
+                title: 'Year income reads zero, against ' + money(spent) + ' of spending',
+                body: src.length
+                    ? ('That is not a glitch. It counts money actually RECEIVED, and you have none recorded this year — your ' +
+                       src.length + ' entries live on the Investments page, which is excluded on purpose so the same money is not counted twice. ' +
+                       'Import a statement with your salary or credits, or add them on the Income page.')
+                    : 'It counts money actually RECEIVED. Import a statement containing your credits, or add them on the Income page.',
+                action: 'Add your income', amount: spent });
+        }
         return out;
     }
 
@@ -223,6 +316,7 @@
         var all = [];
         try { all = all.concat(cards()); } catch (_) {}
         try { all = all.concat(subs()); } catch (_) {}
+        try { all = all.concat(income()); } catch (_) {}
         all.sort(function (a, b) {
             var s = SEV[a.sev] - SEV[b.sev];
             return s !== 0 ? s : (num(b.amount) - num(a.amount));   // then by money at stake
@@ -248,7 +342,8 @@
         sub_dormant: 'M12 6v6l4 2M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z',
         sub_dupe: 'M20 9H11a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
         sub_renew: 'M23 4v6h-6M1 20v-6h6M20.5 9A9 9 0 0 0 5.6 5.6L1 10m22 4l-4.6 4.4A9 9 0 0 1 3.5 15',
-        sub_total: 'M3 3v18h18M18.7 8L13 13.7l-3-3L6 15'
+        sub_total: 'M3 3v18h18M18.7 8L13 13.7l-3-3L6 15',
+        income_zero: 'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'
     };
     function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
@@ -276,7 +371,9 @@
             '<div class="wfi-ic" style="color:' + t[0] + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg></div>' +
             '<div style="min-width:0"><div class="wfi-t">' + esc(it.title) + '</div>' +
             (it.body ? '<div class="wfi-b">' + esc(it.body) + '</div>' : '') +
-            (it.action ? '<div class="wfi-a" style="color:' + t[0] + '">' + esc(it.action) + '</div>' : '') +
+            (it.action ? (it.fix
+                ? '<button type="button" class="wfi-a wfi-fix" data-fix="' + esc(it.fix) + '" style="color:' + t[0] + ';border:1px solid ' + t[2] + ';cursor:pointer;background:rgba(255,255,255,.06)">' + esc(it.action) + '</button>'
+                : '<div class="wfi-a" style="color:' + t[0] + '">' + esc(it.action) + '</div>') : '') +
             '</div></div>';
     }
 
@@ -299,9 +396,25 @@
         el.innerHTML = '<div class="wfi-wrap">' +
             (opts.title ? '<div class="wfi-hdr">' + esc(opts.title) + '<span>' + items.length + '</span></div>' : '') +
             items.map(tile).join('') + '</div>';
+        // wire the one-tap repairs
+        try {
+            el.querySelectorAll('.wfi-fix').forEach(function (b) {
+                b.onclick = function () {
+                    var f = b.getAttribute('data-fix');
+                    if (f === 'mergeSubs') {
+                        var r = mergeDuplicateSubs();
+                        try { W.notify && W.notify(r.removed ? ('Merged ' + r.groups + ' duplicate subscription(s) — ' + r.removed + ' removed, no history lost.') : 'Nothing to merge.', r.removed ? 'success' : 'info'); } catch (_) {}
+                        try { if (typeof W.renderSubscriptions === 'function') W.renderSubscriptions(); } catch (_) {}
+                        try { if (typeof W.renderDashboard === 'function') W.renderDashboard(); } catch (_) {}
+                        renderInto(el, opts.source === 'subs' ? subs() : brief(opts.limit || 5), opts);
+                    }
+                };
+            });
+        } catch (_) {}
         return items.length;
     }
 
-    W.WFInsights = { cards: cards, subs: subs, brief: brief, nextOn: nextOn, renderInto: renderInto, _mine: mine, VERSION: '1.0' };
+    W.WFInsights = { cards: cards, subs: subs, income: income, brief: brief, nextOn: nextOn, renderInto: renderInto,
+        findDuplicateSubs: findDuplicateSubs, mergeDuplicateSubs: mergeDuplicateSubs, subDisplayName: subDisplayName, _mine: mine, VERSION: '1.1' };
     try { console.log('[WFInsights] Intelligence layer v1.0 loaded'); } catch (_) {}
 })();

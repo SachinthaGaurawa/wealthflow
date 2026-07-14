@@ -264,7 +264,7 @@
         if (reg) {
             out.category = reg.category; out.matched = reg.keyword; out.confidence = 0.9;
             if (SUB_CATS[reg.category]) {
-                out.goesTo = 'subscription'; out.subName = _subName(raw, reg.category); out.subPhone = ph || '';
+                out.goesTo = 'subscription'; out.subName = _subName(raw, reg.category, reg.keyword); out.subPhone = ph || '';
                 out.reason = reg.category + ' → Subscriptions (recurring)';
             } else {
                 out.goesTo = 'expenses';
@@ -278,7 +278,7 @@
         var rem = _matchFlat(nd, gd);
         if (rem) {
             out.category = rem.category; out.matched = 'remote:' + rem.key; out.confidence = 0.88;
-            if (SUB_CATS[rem.category] || rem.goesTo === 'subscription') { out.goesTo = 'subscription'; out.subName = _subName(raw, rem.category); out.subPhone = ph || ''; out.reason = rem.category + ' \u2192 Subscriptions (auto-updated list)'; }
+            if (SUB_CATS[rem.category] || rem.goesTo === 'subscription') { out.goesTo = 'subscription'; out.subName = _subName(raw, rem.category, rem.key); out.subPhone = ph || ''; out.reason = rem.category + ' \u2192 Subscriptions (auto-updated list)'; }
             else { out.goesTo = 'expenses'; out.type = rem.category === 'Fuel' ? 'fuel' : 'purchase'; out.reason = rem.category + ' \u2192 Expenses (auto-updated list)'; }
             return out;
         }
@@ -288,7 +288,7 @@
         var ind = industryOf(nd, gd);
         if (ind) {
             out.category = ind.category; out.matched = 'industry:' + ind.token; out.confidence = 0.95;
-            if (SUB_CATS[ind.category]) { out.goesTo = 'subscription'; out.subName = _subName(raw, ind.category); out.subPhone = ph || ''; out.reason = ind.category + ' → Subscriptions (industry: ' + ind.token + ')'; }
+            if (SUB_CATS[ind.category]) { out.goesTo = 'subscription'; out.subName = _subName(raw, ind.category, null); out.subPhone = ph || ''; out.reason = ind.category + ' → Subscriptions (industry: ' + ind.token + ')'; }
             else { out.goesTo = 'expenses'; out.type = ind.category === 'Fuel' ? 'fuel' : 'purchase'; out.reason = ind.category + ' → Expenses (industry: ' + ind.token + ')'; }
             return out;
         }
@@ -326,10 +326,37 @@
     }
     function verifyRemote() { var bad = 0; _remote.forEach(function (e) { if (!_validEntry(e)) bad++; }); return { ok: bad === 0, count: _remote.length, invalid: bad }; }
 
-    function _subName(raw, cat) {
-        var brand = merchantKey(raw);
-        brand = brand ? brand.replace(/\b\w/g, function (c) { return c.toUpperCase(); }) : '';
-        return brand || cat;
+    function _title(x) { return String(x || '').replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }).trim(); }
+
+    // The DISPLAY name of a subscription. This used to be merchantKey(raw), which left
+    // the bank's debris behind ("Allianz Life Insurancela 03") and — far worse — the
+    // import then fell back to the RAW NARRATION, so a subscription was literally called
+    // "Pos Transaction Allianz Life Insurancela". Two statements that spell the same
+    // merchant slightly differently then produced TWO subscriptions, which is where your
+    // duplicate "Dialog" and the auto-numbered "Kaushi's Insuarance - 1" came from.
+    //
+    // We now prefer the BRAND WE ACTUALLY MATCHED — it is clean by construction.
+    function _subName(raw, cat, matched) {
+        // The ISOLATED entity is the merchant's real name with the bank's debris removed —
+        // "Pos Transaction Allianz Life Insurance Colombo 03" -> "Allianz Life Insurance".
+        // Prefer it over the matched keyword, which is often a generic industry token
+        // ("insurance") rather than the brand.
+        var iso = isolate(raw);
+        if (iso && iso.length >= 3) return _title(iso);
+        if (matched) {
+            var k = String(matched).replace(/^[a-z]+:/, '').trim();
+            if (k && k.length >= 3 && !/^\d+$/.test(k)) return _title(k);
+        }
+        var mk = merchantKey(raw);
+        if (mk && mk.length >= 3 && !/^\d+$/.test(mk)) return _title(mk);
+        return cat || 'Subscription';
+    }
+
+    // A clean, stable display name for ANY merchant — used by the import so a subscription
+    // can never again be named after the raw bank line.
+    function cleanName(raw) {
+        var c = classify(raw, 'debit');
+        return _subName(raw, c.category, c.matched);
     }
 
     // ── refine(): plug into the import — improve WFRoute's routing when we're sure
@@ -369,6 +396,8 @@
         t = t.replace(/\b\d{1,2}\b/g, ' ');           // "colombo 03"
         t = t.replace(CITIES, ' ');
         t = t.replace(/\b(pvt|pv|ltd|lt|plc|limited|private|company|co)\b/g, ' ');
+        // the bank's own verbs are not part of anyone's name
+        t = t.replace(/\b(charges?|payment|payments|transfer|bill|withdrawal|deposit|debit|credit|outward|inward|transaction|purchase|fee|fees)\b/g, ' ');
         return t.replace(/\s+/g, ' ').trim();
     }
 
@@ -601,6 +630,6 @@
     try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
     try { verify(); } catch (_) {}                          // heal any learned conflicts on load
     try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
-    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, VERSION: VERSION };
+    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
