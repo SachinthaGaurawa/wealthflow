@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.67.1",
+  "latest": "7.67.2",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -402,7 +402,8 @@
     "7.65.0": "Intelligence layer: your card statement day and due day were captured and never read by anything - now they drive real alerts (due, overdue, utilization, the cost of carrying a balance). Every price rise you have ever paid was already stored and never looked at - now it is surfaced, with dormant and duplicate subscriptions. The Dashboard finally tells you what to DO, not just what happened.",
     "7.66.0": "Stability & Integrity. Your diagnostics said 0 errors while you were crashing: an iOS renderer crash kills the process before any JS handler runs. We now detect crashes and record exactly what they looked like. Found the cause: every AI-generated chart called new Chart() and threw the instance away, leaking a canvas and a GPU texture each time. Also healed 40 records that carried no update stamp - they were losing every sync merge and any tombstone could delete them.",
     "7.67.0": "Fixes the bugs in your screenshots. Subscriptions were being NAMED after the raw bank line ('Pos Transaction Allianz Life Insurancela'), and because they are matched by name, two statements spelling the same merchant differently created TWO subscriptions - which is where the duplicate Dialog and the auto-numbered 'Kaushis Insuarance - 1' came from. Names are now the clean merchant, a one-tap Merge repairs the duplicates you already have without losing history, and the LKR 0.00 income is explained instead of just looking broken.",
-    "7.67.1": "ICONS FIXED. Every icon in the app was rendering as an empty bordered circle. I caused it in v7.65.0: the insight layer injected a CSS rule for .wfi - which is the class the icon system puts on every SVG it renders. My rule (border-radius 13px, border 1px, padding, display:flex) overrode it, turning all 37 icons into empty rounded boxes. The insight layer now uses its own .wfx namespace, and a new full-system simulation loads every module together and asserts all 37 icons render - so this can never happen again."
+    "7.67.1": "ICONS FIXED. Every icon in the app was rendering as an empty bordered circle. I caused it in v7.65.0: the insight layer injected a CSS rule for .wfi - which is the class the icon system puts on every SVG it renders. My rule (border-radius 13px, border 1px, padding, display:flex) overrode it, turning all 37 icons into empty rounded boxes. The insight layer now uses its own .wfx namespace, and a new full-system simulation loads every module together and asserts all 37 icons render - so this can never happen again.",
+    "7.67.2": "Improvements and fixes in this release."
   },
   "version": "7.24.1"
 }
