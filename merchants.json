@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 19,
+  "version": 20,
   "updated": "2026-07-16",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 764,
+  "count": 765,
   "merchants": [
     {
       "key": "bake house",
@@ -2718,6 +2718,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "lolcfinsure",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "mbsl insurance",
