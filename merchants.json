@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 18,
+  "version": 19,
   "updated": "2026-07-16",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 761,
+  "count": 764,
   "merchants": [
     {
       "key": "bake house",
@@ -2958,6 +2958,13 @@
       "source": "web-verified"
     },
     {
+      "key": "hnb finance",
+      "category": "Leasing",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "lb finance",
       "category": "Leasing",
       "goesTo": "subscription",
@@ -2965,11 +2972,25 @@
       "source": "web-verified"
     },
     {
+      "key": "lolc finance",
+      "category": "Leasing",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "people's leasing",
       "category": "Leasing",
       "goesTo": "subscription",
       "confidence": 0.99,
       "source": "web-verified"
+    },
+    {
+      "key": "peoples leasing",
+      "category": "Leasing",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "ai-consensus"
     },
     {
       "key": "abans",
