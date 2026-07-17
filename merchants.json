@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 22,
+  "version": 23,
   "updated": "2026-07-17",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 770,
+  "count": 777,
   "merchants": [
     {
       "key": "bake house",
@@ -2930,6 +2930,13 @@
       "source": "seed"
     },
     {
+      "key": "dialog 4g home",
+      "category": "Internet",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "fiber",
       "category": "Internet",
       "goesTo": "subscription",
@@ -2963,6 +2970,27 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "mobitel 4g home",
+      "category": "Internet",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "mobitel broadband",
+      "category": "Internet",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
+      "key": "slt fiber",
+      "category": "Internet",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
     },
     {
       "key": "wi fi",
@@ -4547,6 +4575,13 @@
       "source": "seed"
     },
     {
+      "key": "slt peo tv",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "sony liv",
       "category": "Streaming",
       "goesTo": "subscription",
@@ -4701,6 +4736,13 @@
       "source": "seed"
     },
     {
+      "key": "dialog wifi",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "etisalat",
       "category": "Telecom",
       "goesTo": "subscription",
@@ -4776,6 +4818,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "lankabell wifi",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "lucky communication",
