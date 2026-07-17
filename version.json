@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.69.2",
+  "latest": "7.69.3",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -406,7 +406,8 @@
     "7.68.0": "Expenses and Income intelligence. Your dashboard has been telling you LKR 4.49M of expenses and minus 4.49M net savings - and 95 percent of that is money you MOVED, not money you SPENT. Your real spending is LKR 211,138. The app now finds double charges (real money back), totals your bank fees, catches a charge that is several times your normal, shows where your money actually goes with merchants grouped by brand, spots bills you are not tracking, warns when the month is running hot, and flags an income drop or single-source risk.",
     "7.69.0": "Loans and CRIB intelligence, and /api/verify FIXED. Your merchant verification was searching correctly and then dying with llm_failed: without an Anthropic key it called your own /api/ai using req.headers.host, which is not guaranteed on Vercel - it was building https://undefined and failing in 200ms. It now has four independent paths and never depends on one hop. Loans finally answer the question that changes behaviour: pay LKR 2,400 more a month and this loan dies 8 months sooner and costs you LKR 59,735 less. CRIB tells you WHY your score is what it is, ranked by points.",
     "7.69.1": "Improvements and fixes in this release.",
-    "7.69.2": "Improvements and fixes in this release."
+    "7.69.2": "Improvements and fixes in this release.",
+    "7.69.3": "Improvements and fixes in this release."
   },
   "version": "7.24.1"
 }
