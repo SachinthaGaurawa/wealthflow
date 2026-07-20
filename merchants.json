@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 37,
-  "updated": "2026-07-19",
+  "version": 38,
+  "updated": "2026-07-20",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 800,
+  "count": 805,
   "merchants": [
     {
       "key": "bake house",
@@ -4624,6 +4624,13 @@
       "source": "ai-consensus"
     },
     {
+      "key": "disneyhotstar",
+      "category": "Streaming",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "hbo",
       "category": "Streaming",
       "goesTo": "subscription",
@@ -4636,6 +4643,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "hbomax",
+      "category": "Streaming",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "ai-consensus"
     },
     {
       "key": "hotstar",
@@ -4657,6 +4671,20 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "joicinema",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "mxplayer",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "netflix",
@@ -4734,6 +4762,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "sonyliv",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "spotify",
