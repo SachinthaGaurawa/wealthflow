@@ -1,5 +1,9 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.7 — 2026-07-21
+
+Improvements and fixes in this release.
+
 ## v7.69.6 — 2026-07-20
 
 Improvements and fixes in this release.
