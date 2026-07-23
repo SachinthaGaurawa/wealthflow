@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 44,
-  "updated": "2026-07-22",
+  "version": 45,
+  "updated": "2026-07-23",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 813,
+  "count": 814,
   "merchants": [
     {
       "key": "bake house",
@@ -1909,6 +1909,13 @@
     },
     {
       "key": "fitnessfirst",
+      "category": "Gym/Fitness",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "goldsgym",
       "category": "Gym/Fitness",
       "goesTo": "subscription",
       "confidence": 0.99,
