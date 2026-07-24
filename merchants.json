@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 50,
+  "version": 51,
   "updated": "2026-07-24",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 824,
+  "count": 827,
   "merchants": [
     {
       "key": "bake house",
@@ -2545,6 +2545,13 @@
       "source": "ai-consensus"
     },
     {
+      "key": "arpi insurance",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "arpico insurance",
       "category": "Insurance",
       "goesTo": "subscription",
@@ -2571,6 +2578,13 @@
       "goesTo": "subscription",
       "confidence": 0.97,
       "source": "ai-consensus"
+    },
+    {
+      "key": "aviva ndb",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "axa",
@@ -3054,6 +3068,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "zenith life",
+      "category": "Insurance",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "4g router",
