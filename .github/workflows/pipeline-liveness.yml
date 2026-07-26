@@ -1,0 +1,168 @@
+name: Pipeline liveness (is the autonomy real?)
+
+# =============================================================================
+# THE ANTIDOTE TO SILENT FAILURE.
+#
+# Every workflow in this repo reported ✅ success for months while the autonomous
+# update system did absolutely nothing. The agent crashed in 40ms (green). The
+# test suite ran zero assertions (green). The consensus reviewer pointed at a
+# file that did not exist (never reached). The version number climbed on merchant
+# data so the app announced updates containing nothing (green).
+#
+# Fixing each of those is necessary but insufficient: the underlying defect was
+# that nothing was watching whether the system worked. This job is that watcher.
+#
+# It runs autonomy/self-check.mjs --strict, which verifies every link in the
+# chain — models reachable, queue readable, tests non-empty, every `node <file>`
+# in every workflow resolving to a real file, the fake-release gate armed and
+# passing its own fixture self-test, guardrails intact, and when the app last
+# genuinely changed.
+#
+# If any link is dead this job FAILS and files a `pipeline-health` issue. A
+# broken autonomous system is now impossible to ignore.
+# =============================================================================
+
+on:
+  schedule:
+    - cron: '17 7 * * *'          # daily, offset off the hour to avoid the rush
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:                        # re-verify whenever the pipeline itself changes
+      - '.github/workflows/**'
+      - 'autonomy/**'
+      - 'policy/**'
+      - 'vitest.config.js'
+      - 'package.json'
+      - 'autonomous-fix-agent.js'
+      - 'consensus-review.mjs'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: pipeline-liveness
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 80          # the "last genuine change" walk reads history
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      # ── 1. the suite must actually run, and be non-empty ──────────────────
+      # `npm test` no longer carries --passWithNoTests, so a suite that matches
+      # nothing fails here instead of reporting a green safety harness.
+      - name: Test suite must be real and green
+        run: npm test
+
+      # ── 2. every link in the autonomy chain ──────────────────────────────
+      - name: Self-check
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          WealthFlow_API_Key: ${{ secrets.WealthFlow_API_Key }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set +e
+          node autonomy/self-check.mjs --strict
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          # The report is written to the step summary by the script itself.
+          node autonomy/self-check.mjs --json > self-check.json
+          exit 0
+
+      # ── 3. a dead pipeline gets an issue, not a shrug ─────────────────────
+      - name: File a health issue if the pipeline is broken
+        if: steps.check.outputs.rc != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh label create pipeline-health --color B60205 \
+            --description "The autonomous pipeline itself is broken" 2>/dev/null || true
+
+          # One open issue at a time — never spam a daily duplicate.
+          OPEN=$(gh issue list --label pipeline-health --state open --json number --jq 'length' 2>/dev/null || echo 0)
+
+          VERDICT=$(node -p "require('./self-check.json').verdict" 2>/dev/null || echo 'self-check could not run')
+
+          # Build the whole body in Node and write it to a file. Assembling
+          # multi-line markdown in shell inside a YAML block scalar is a reliable
+          # way to produce an unparseable workflow.
+          node -e '
+            const fs = require("fs");
+            const r = require("./self-check.json");
+            const icon = { ok: "✅", warn: "⚠️", broken: "❌" };
+            const L = [];
+            L.push("## The autonomous update system is not working", "");
+            L.push("**" + r.verdict + "**", "");
+            L.push("| | Check | Result |", "|---|---|---|");
+            for (const c of r.checks) L.push(`| ${icon[c.status]} | \`${c.id}\` | ${c.summary} |`);
+            L.push("", "### What to do", "");
+            for (const c of r.checks.filter((x) => x.status !== "ok")) L.push(`- **${c.id}** — ${c.detail}`);
+            L.push("", "_Filed because the pipeline reported itself dead. This issue exists so a broken",
+                   "autonomous system can never again look like a healthy one._");
+            L.push("", "---", "_Generated by [Claude Code](https://claude.ai/code)_");
+            fs.writeFileSync("health-body.md", L.join("\n") + "\n");
+          '
+
+          if [ "$OPEN" != "0" ]; then
+            NUM=$(gh issue list --label pipeline-health --state open --json number --jq '.[0].number')
+            echo "updating existing health issue #$NUM"
+            { echo "### Still broken as of $(date -u +%FT%TZ)"; echo; cat health-body.md; } > health-comment.md
+            gh issue comment "$NUM" --body-file health-comment.md
+          else
+            gh issue create --label pipeline-health \
+              --title "Autonomous pipeline is broken: $(echo "$VERDICT" | cut -c1-90)" \
+              --body-file health-body.md
+          fi
+
+      - name: Close the health issue once everything is green again
+        if: steps.check.outputs.rc == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NUM=$(gh issue list --label pipeline-health --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -n "${NUM:-}" ]; then
+            gh issue comment "$NUM" --body "$(printf '### ✅ Recovered\n\nThe self-check now passes on every link in the chain. Closing.\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_')"
+            gh issue close "$NUM" --reason completed
+          fi
+
+      - name: Fail the run if the pipeline is dead
+        if: steps.check.outputs.rc != '0'
+        run: |
+          echo "::error::The autonomous update system cannot currently fix anything. See the pipeline-health issue."
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: self-check
+          path: self-check.json
+          retention-days: 30

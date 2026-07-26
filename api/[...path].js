@@ -30,10 +30,16 @@ const HANDLERS = {
     'ai': () => import('../ai.js'),
     'approve-release': () => import('../approve-release.js'),
     'autonomous-brain': () => import('../autonomous-brain.js'),
+    // Reports whether the autonomous update system can actually fix anything, so
+    // the app can stop showing "All systems operational" while the pipeline is dead.
+    'autonomy-status': () => import('../autonomy-status.js'),
     'classify-charge': () => import('../classify-charge.js'),
     'edenai': () => import('../edenai.js'),
     'feedback': () => import('../feedback.js'),
     'feedback-triage': () => import('../feedback-triage.js'),
+    // The return path: tells the app when a piece of feedback has actually been
+    // fixed and shipped, so the user is no longer reporting into a void.
+    'feedback-status': () => import('../feedback-status.js'),
     'fifo-reconcile': () => import('../fifo-reconcile.js'),
     'fx-rate': () => import('../fx-rate.js'),
     'health': () => import('../health.js'),

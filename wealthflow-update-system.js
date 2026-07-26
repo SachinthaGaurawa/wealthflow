@@ -981,7 +981,7 @@
                     '<button type="button" id="wfFbImgBtn" style="width:100%;padding:11px;background:var(--bg,#060a14);border:1px dashed var(--border2,#1f2638);border-radius:9px;color:var(--text3,#8b95a8);font-size:13px;cursor:pointer;">📎 Attach a screenshot (optional)</button>' +
                     '<div id="wfFbImgPreview" style="display:none;margin-top:8px;position:relative;"></div>' +
                 '</div>' +
-                '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text3,#8b95a8);"><input type="checkbox" id="wfFbDiag" checked> Attach basic diagnostics (version, device) to help fix faster</label>' +
+                '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text3,#8b95a8);line-height:1.5;"><input type="checkbox" id="wfFbDiag" checked style="margin-top:2px;flex-shrink:0;"> <span>Send system diagnosis \u2014 attaches the recorded errors, stack traces, health snapshot and device details so the cause can be found automatically. <strong style="color:var(--text2,#a8b2c4);">Never includes any financial data.</strong></span></label>' +
             '</div>',
             '<div style="display:flex;gap:8px;">' +
                 '<button class="btn btn-ghost" style="flex:1;" onclick="wfUpdate._close(\'wfFeedback\')">Cancel</button>' +
@@ -1018,20 +1018,95 @@
         }
     }
 
+    /*  Collect the REAL diagnostics the "send system diagnosis" tick promises.
+     *
+     *  The tick used to attach only navigator.userAgent, the screen size and the
+     *  language — while the app was already capturing a full crash report
+     *  (_wfCrashReport), a health snapshot (_wfCollectHealth) and a detected-issue
+     *  list (_wfDetectIssues) for the separate "Copy diagnostics" button. Ticking
+     *  the box therefore sent almost nothing useful, which is why reports could
+     *  not be acted on. This gathers what the tick actually claims to send.
+     *
+     *  Size-capped, and financial data is never included: only error messages,
+     *  stack traces, counts and device facts.
+     */
+    function _collectDiagnostics() {
+        var d = {
+            ua: navigator.userAgent,
+            screen: (screen.width + 'x' + screen.height),
+            viewport: (window.innerWidth + 'x' + window.innerHeight),
+            dpr: window.devicePixelRatio || 1,
+            lang: navigator.language,
+            online: navigator.onLine,
+            tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (_) { return null; } })(),
+            standalone: (function () { try { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; } catch (_) { return false; } })(),
+            activePage: (function () { try { var a = document.querySelector('.page.active'); return a ? a.id.replace('page-', '') : ''; } catch (_) { return ''; } })(),
+            domNodes: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })()
+        };
+        // the captured error log — the single most useful thing for a fix
+        try {
+            var log = (typeof window._wfCrashReport === 'function' && window._wfCrashReport()) || [];
+            var build = window.WF_APP_VERSION || CURRENT_VERSION;
+            var fromThis = log.filter(function (e) { return e && e.ver === build; });
+            d.errorSummary = {
+                total: log.length,
+                fromThisBuild: fromThis.length,
+                uniqueMessages: Array.from(new Set(log.map(function (e) { return (e && e.msg) || ''; }).filter(Boolean))).slice(0, 15)
+            };
+            // most recent errors, newest first, trimmed so the payload stays small
+            d.errors = log.slice(-8).reverse().map(function (e) {
+                return {
+                    msg: String((e && e.msg) || '').slice(0, 400),
+                    stack: String((e && e.stack) || '').slice(0, 900),
+                    page: (e && e.page) || null,
+                    ver: (e && e.ver) || null,
+                    at: (e && (e.t || e.when)) || null
+                };
+            });
+        } catch (_) {}
+        try {
+            if (typeof window._wfCollectHealth === 'function') {
+                var h = window._wfCollectHealth();
+                d.health = JSON.parse(JSON.stringify(h)); // strip anything non-serialisable
+            }
+        } catch (_) {}
+        try {
+            if (typeof window._wfDetectIssues === 'function') {
+                var issues = window._wfDetectIssues(d.health, d.errorSummary) || [];
+                d.detectedIssues = issues.slice(0, 12);
+            }
+        } catch (_) {}
+        // hard size cap: an oversized payload is silently dropped by the endpoint,
+        // which would look to the user like their report vanished again
+        try {
+            var s = JSON.stringify(d);
+            if (s.length > 24000) {
+                delete d.health;
+                d.errors = (d.errors || []).slice(0, 3);
+                d._trimmed = true;
+            }
+        } catch (_) {}
+        return d;
+    }
+
     async function _submitFeedback() {
         const type = (document.getElementById('wfFbType') || {}).value || 'other';
         const text = ((document.getElementById('wfFbText') || {}).value || '').trim();
         const diag = !!(document.getElementById('wfFbDiag') || {}).checked;
         if (text.length < 4) { _notify('Please type a little more so we can help.', 'warn'); return; }
+        const diagnostics = diag ? _collectDiagnostics() : null;
         const payload = {
             type, text,
             version: _installedVersion() || CURRENT_VERSION,
             createdAt: new Date().toISOString(),
             uid: (window.currentUser && window.currentUser.uid) || null,
             image: _fbImageData || null,
+            // kept as top-level fields for backwards compatibility with the email
+            // backup, which formats them individually
             ua: diag ? navigator.userAgent : null,
             screen: diag ? (screen.width + 'x' + screen.height) : null,
-            lang: diag ? navigator.language : null
+            lang: diag ? navigator.language : null,
+            diagnostics: diagnostics
         };
         // ALWAYS keep a local copy first, so "Your Feedback" shows it instantly
         // and nothing is ever lost — even if it also goes to the cloud.
@@ -1049,14 +1124,154 @@
                 _markQueuedSent(payload);   // clear the _pending flag for this item
             }
         } catch (_) {}
-        // (2) Email backup for urgent alerts (optional endpoint, fails silently)
+        // (2) TRIAGE — turn this into a GitHub issue so the autonomous pipeline
+        //     can actually work on it.
+        //
+        //     THIS CALL WAS MISSING. /api/feedback-triage has existed all along and
+        //     is the ONLY path by which feedback becomes something the agent can
+        //     see, but no client code ever called it. Feedback went to Firestore
+        //     and an optional email and stopped there, so the "autonomous system
+        //     acts on my feedback" loop was never connected at either end.
+        //
+        //     We remember the issue number so the app can later report back that
+        //     the work is done — see _checkFeedbackCompletions().
+        let issueNumber = null;
+        try {
+            const r = await fetch('/api/feedback-triage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type, text,
+                    version: payload.version,
+                    createdAt: payload.createdAt,
+                    diagnostics: diagnostics
+                })
+            });
+            if (r.ok) {
+                const j = await r.json().catch(() => null);
+                if (j && (j.issue || j.deduped)) {
+                    issueNumber = j.issue || j.deduped;
+                    stored = true;
+                }
+            }
+        } catch (_) { /* offline — the queue below retries */ }
+        if (issueNumber) { payload.issue = issueNumber; _attachIssueToQueued(payload, issueNumber); }
+
+        // (3) Email backup for urgent alerts (optional endpoint, fails silently)
         try {
             await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             stored = true;
         } catch (_) {}
         _fbImageData = null;
         _close('wfFeedback');
-        _notify(stored ? 'Thank you — your feedback was sent and prioritised.' : 'Saved — we\'ll send it automatically when you\'re back online. It already shows in “Your Feedback”.', stored ? 'success' : 'info');
+
+        // Tell the user what will actually happen, not just "thanks".
+        let msg;
+        if (issueNumber) {
+            msg = 'Thank you — this is now queued as work item #' + issueNumber +
+                '. You\'ll see it marked Completed here once the fix ships.';
+        } else if (stored) {
+            msg = 'Thank you — your feedback was saved and prioritised.';
+        } else {
+            msg = 'Saved — we\'ll send it automatically when you\'re back online. It already shows in “Your Feedback”.';
+        }
+        _notify(msg, stored ? 'success' : 'info');
+    }
+
+    /** Record the issue number against the queued copy of this feedback item. */
+    function _attachIssueToQueued(payload, issueNumber) {
+        try {
+            const q = JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]');
+            const key = (payload.text || '') + '|' + (payload.createdAt || '');
+            const upd = q.map(x => ((x.text || '') + '|' + (x.createdAt || '')) === key
+                ? Object.assign({}, x, { issue: issueNumber })
+                : x);
+            localStorage.setItem('wf_feedback_queue', JSON.stringify(upd));
+        } catch (_) {}
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    //  Feedback completion reporting — the user asked for this explicitly:
+    //  "when the system completes what I asked for, it must tell me it's done."
+    //
+    //  Polls /api/feedback-status for the issues this device created, marks the
+    //  matching queued items completed, and shows one clear summary the first
+    //  time each completion is seen.
+    // ───────────────────────────────────────────────────────────────────────
+    async function _checkFeedbackCompletions(opts) {
+        const silent = !!(opts && opts.silent);
+        let q;
+        try { q = JSON.parse(localStorage.getItem('wf_feedback_queue') || '[]'); } catch (_) { return []; }
+        if (!Array.isArray(q) || !q.length) return [];
+
+        // only issues we haven't already announced
+        const pending = q.filter(x => x && x.issue && !x._completedSeen);
+        if (!pending.length) return [];
+
+        let items = [];
+        try {
+            const ids = Array.from(new Set(pending.map(x => x.issue))).slice(0, 25).join(',');
+            const r = await fetch('/api/feedback-status?issues=' + encodeURIComponent(ids), { cache: 'no-store' });
+            if (!r.ok) return [];
+            const j = await r.json().catch(() => null);
+            items = (j && Array.isArray(j.items)) ? j.items : [];
+        } catch (_) { return []; }
+
+        const byNumber = {};
+        items.forEach(i => { if (i && i.number) byNumber[i.number] = i; });
+
+        const finished = [];
+        let changed = false;
+        const upd = q.map(x => {
+            if (!x || !x.issue) return x;
+            const st = byNumber[x.issue];
+            if (!st) return x;
+            const next = Object.assign({}, x, {
+                _status: st.completed ? 'completed' : st.needsHuman ? 'needs-attention' : st.inProgress ? 'in-progress' : 'open',
+                _shippedVersion: st.shippedVersion || null
+            });
+            if (st.completed && !x._completedSeen) {
+                next._completedSeen = true;
+                finished.push({ text: x.text, issue: x.issue, version: st.shippedVersion, type: x.type });
+                changed = true;
+            } else if (next._status !== x._status) {
+                changed = true;
+            }
+            return next;
+        });
+        if (changed) { try { localStorage.setItem('wf_feedback_queue', JSON.stringify(upd)); } catch (_) {} }
+
+        if (finished.length && !silent) _showCompletionPopup(finished);
+        return finished;
+    }
+
+    /** A centred, scrollable, dismissible summary of what just got fixed. */
+    function _showCompletionPopup(finished) {
+        try {
+            const rows = finished.map(f =>
+                '<div style="padding:12px 14px;border:1px solid var(--border2,#1f2638);border-radius:12px;margin-bottom:10px;background:rgba(16,185,129,0.06);">' +
+                    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+                        '<span style="font-size:16px;">✅</span>' +
+                        '<span style="font-weight:800;font-size:13px;color:var(--green,#10b981);">Done' +
+                        (f.version ? ' — shipped in v' + _esc(f.version) : '') + '</span>' +
+                    '</div>' +
+                    '<div style="font-size:13px;color:var(--text,#e6e7eb);line-height:1.5;">' + _esc(String(f.text || '').slice(0, 400)) + '</div>' +
+                    '<div style="font-size:11px;color:var(--text3,#8b95a8);margin-top:6px;">Work item #' + _esc(String(f.issue)) + '</div>' +
+                '</div>'
+            ).join('');
+            if (document.getElementById('wfFbDone')) return;   // never stack popups
+            const ov = document.createElement('div');
+            ov.id = 'wfFbDone';
+            ov.style.cssText = _overlayCss();
+            ov.innerHTML = _sheet(
+                finished.length === 1 ? '✅ Your feedback is done' : '✅ ' + finished.length + ' of your reports are done',
+                'You asked for this — here\'s what changed.',
+                '<div style="max-height:52vh;overflow-y:auto;">' + rows + '</div>',
+                '<button class="btn btn-primary" style="width:100%;" onclick="wfUpdate._close(\'wfFbDone\')">Close</button>'
+            );
+            document.body.appendChild(ov);
+            requestAnimationFrame(() => { ov.style.opacity = '1'; });
+        } catch (_) { /* a popup failure must never break the app */ }
     }
 
     // remove the _pending flag once an item is confirmed sent to the cloud
@@ -1265,8 +1480,34 @@
         simulate: simulateUpdate, setAutoSecurity: setAutoSecurity,
         _clearFbImg: () => { _fbImageData = null; },
         refresh: () => { _refreshDashboardPill(); _injectSettingsCard(); _renderSettingsCard(); },
+        // Feedback completion reporting — exposed so the Settings screen and the
+        // "Your Feedback" list can refresh statuses on demand.
+        checkCompletions: _checkFeedbackCompletions,
+        _collectDiagnostics,
         _close, _closePost, version: CURRENT_VERSION
     };
+
+    /*  Poll for feedback the system has finished.
+     *
+     *  Deliberately gentle: once shortly after launch (so the user sees a
+     *  completion the next time they open the app, which is what they asked for),
+     *  then every 15 minutes while the tab is open, and again whenever they come
+     *  back to it. Each completion is announced exactly once — the _completedSeen
+     *  flag is persisted, so reopening the app does not re-congratulate.
+     */
+    function _startCompletionWatcher() {
+        const run = (silent) => { _checkFeedbackCompletions({ silent: !!silent }).catch(() => {}); };
+        setTimeout(() => run(false), 6000);                    // after the app settles
+        setInterval(() => run(false), 15 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') run(false);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _startCompletionWatcher);
+    } else {
+        _startCompletionWatcher();
+    }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1500));
     else setTimeout(init, 1500);
