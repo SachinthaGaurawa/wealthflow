@@ -32,6 +32,12 @@ jobs:
       - name: Multi-model consensus
         env:
           BASE_REF: ${{ github.base_ref }}
+          # So the board can post its verdict onto the PR. Until now the only
+          # record of a blocking decision was buried in the job log behind ~80
+          # lines of runner output — effectively invisible.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           # Every provider is passed so the router can fail over. Reviewers pin
           # themselves to DIFFERENT providers, which is what makes the board
           # independent rather than one model voting three times.
