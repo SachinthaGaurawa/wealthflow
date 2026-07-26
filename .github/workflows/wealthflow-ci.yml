@@ -81,32 +81,22 @@ jobs:
           echo "has_human_approval=$HAS" >> "$GITHUB_OUTPUT"
           echo "human-approved: $HAS"
 
+      # Merge-base-correct, and it fails rather than guessing. Replaces the
+      # `git fetch --depth=1` + `git diff base...HEAD` pattern that aborted with
+      # "fatal: origin/main...HEAD: no merge base" as soon as main advanced —
+      # which happens hourly here, because merchant-sync pushes to main every hour.
+      - name: Resolve changed files
+        id: changed
+        uses: ./.github/actions/changed-files
+
       - name: Classify changed files
         env:
-          BASE: ${{ github.base_ref }}
           # PRs carrying this label have a human approver and may touch sensitive paths.
           HAS_HUMAN_APPROVAL: ${{ steps.approval.outputs.has_human_approval }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
         run: |
-          set -e
-          
-          # Determine the base for comparison
-          if [ -z "$BASE" ]; then
-            BASE="main"
-          fi
-          
-          # Try to fetch the base branch
-          git fetch origin "$BASE" --depth=1 2>/dev/null || true
-          
-          # Get changed files - try multiple methods
-          if [ -n "$(git rev-parse origin/$BASE 2>/dev/null)" ]; then
-            CHANGED=$(git diff --name-only "origin/$BASE...HEAD")
-          elif [ -n "$(git rev-parse HEAD~1 2>/dev/null)" ]; then
-            CHANGED=$(git diff --name-only HEAD~1...HEAD)
-          else
-            # Fallback: show all files if we can't determine diff
-            CHANGED=$(git diff --name-only --cached)
-          fi
-          
+          set -euo pipefail
+          CHANGED="$CHANGED_FILES"
           echo "Changed files:"; echo "$CHANGED"
 
           # SENSITIVE PATHS — money, auth, security, data rules, the service worker,

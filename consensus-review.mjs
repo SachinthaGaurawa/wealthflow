@@ -97,15 +97,52 @@ export function tally(votes) {
 }
 
 // ── the diff under review ────────────────────────────────────────────────────
+/**
+ * The diff this board reviews, resolved from a real merge base.
+ *
+ * The previous version did:
+ *     git fetch origin <base> --depth=1
+ *     git diff origin/<base>...HEAD
+ *   catch → git diff HEAD~1...HEAD
+ *
+ * A depth-1 fetch has no ancestry, so the three-dot form has no merge base and
+ * aborts with "fatal: no merge base" the moment <base> advances past the branch
+ * point — which happens hourly in this repo, because merchant-sync pushes to main
+ * every hour. The catch then quietly reviewed only `HEAD~1...HEAD`: on a
+ * multi-commit PR the board would vote on the LAST COMMIT ALONE while reporting a
+ * verdict on the whole pull request. A reviewer approving a diff it never saw is
+ * worse than a reviewer that errors.
+ *
+ * Now: deepen (never truncate), require an explicit merge base, and treat "no
+ * merge base" as a hard failure so the caller blocks instead of approving blind.
+ */
 function getDiff() {
     const base = process.env.BASE_REF || 'main';
+    const run = (cmd) => execSync(cmd, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+
+    // Deepen the local history. --unshallow fails on an already-complete repo,
+    // which is harmless — the plain fetch covers that case.
+    try { run(`git fetch --unshallow origin ${base}`); }
+    catch { try { run(`git fetch origin ${base}`); } catch { /* offline; merge-base may still exist locally */ } }
+
+    let mergeBase = '';
+    try { mergeBase = run(`git merge-base origin/${base} HEAD`).trim(); } catch { mergeBase = ''; }
+
+    if (!mergeBase) {
+        console.error(
+            `✗ No merge base between origin/${base} and HEAD, so the true PR diff cannot be determined.\n` +
+            '  Refusing to review a partial diff — a board that approves a diff it never saw is worse than one that errors.'
+        );
+        return '';        // main() treats an empty diff as a block
+    }
+
     try {
-        execSync(`git fetch origin ${base} --depth=1`, { stdio: 'pipe' });
-        return execSync(`git diff origin/${base}...HEAD`, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-    } catch {
-        try {
-            return execSync('git diff HEAD~1...HEAD', { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-        } catch { return ''; }
+        // Two-dot from the merge base is exactly three-dot semantics, without the
+        // failure mode.
+        return run(`git diff ${mergeBase} HEAD`);
+    } catch (e) {
+        console.error('✗ git diff failed:', e.message);
+        return '';
     }
 }
 

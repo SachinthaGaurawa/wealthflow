@@ -1,0 +1,126 @@
+name: Changed files (merge-base correct)
+description: >
+  Resolve the list of files a pull request changes, correctly and loudly.
+  Replaces the `git fetch --depth=1` + `git diff base...HEAD` pattern that was
+  copied into four different places in this repo and is broken in all of them.
+
+# =============================================================================
+# WHY THIS EXISTS
+#
+# Four workflows each did some variant of:
+#     git fetch origin "$BASE" --depth=1
+#     git diff --name-only "origin/$BASE...HEAD"
+#
+# A depth-1 fetch retrieves ONLY the tip commit, with no ancestry. The three-dot
+# form needs a MERGE BASE between the two refs. So the moment `main` advances past
+# the PR's branch point — which happens hourly here, because merchant-sync pushes
+# to main every hour — there is no common ancestor in the local object store and
+# git aborts:
+#     fatal: origin/main...HEAD: no merge base   (exit 128)
+#
+# That is how it failed loudly in wealthflow-ci.yml. The other two were worse:
+# policy-gate.yml and fuzz-gate.yml wrote
+#     git diff --name-only "origin/$BASE...HEAD" 2>/dev/null || git diff --name-only HEAD~1...HEAD
+# so they did not fail at all — they silently fell back to diffing against HEAD~1,
+# which on a multi-commit pull request yields the WRONG file list. A policy gate
+# that quietly evaluates an incomplete diff is more dangerous than one that
+# crashes: it can pass a change to a sensitive path simply because that commit
+# was not the last one.
+#
+# THIS ACTION
+#   1. Asks the GitHub API for the PR's file list. That is authoritative, immune
+#      to every shallow-clone problem, and needs no history at all.
+#   2. Falls back to a genuine merge-base git diff if the API is unavailable.
+#   3. FAILS if it cannot determine the list. It never returns a partial answer
+#      that a caller might mistake for a complete one.
+# =============================================================================
+
+inputs:
+  base-ref:
+    description: Base branch name (e.g. main). Defaults to the PR's base.
+    required: false
+    default: ''
+  pr-number:
+    description: Pull request number. Defaults to the triggering PR.
+    required: false
+    default: ''
+  token:
+    description: Token used for the API lookup.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  files:
+    description: Newline-separated list of changed file paths.
+    value: ${{ steps.resolve.outputs.files }}
+  count:
+    description: Number of changed files.
+    value: ${{ steps.resolve.outputs.count }}
+  source:
+    description: How the list was obtained — "api" or "merge-base".
+    value: ${{ steps.resolve.outputs.source }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve changed files
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        IN_BASE: ${{ inputs.base-ref }}
+        IN_PR: ${{ inputs.pr-number }}
+        EV_BASE: ${{ github.base_ref }}
+        EV_PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -uo pipefail
+        BASE="${IN_BASE:-$EV_BASE}"
+        PR="${IN_PR:-$EV_PR}"
+        FILES=''
+        SOURCE=''
+
+        # ── 1. the authoritative source ────────────────────────────────────
+        if [ -n "${PR:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
+          if FILES=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' 2>/dev/null) \
+             && [ -n "$FILES" ]; then
+            SOURCE=api
+          else
+            FILES=''
+          fi
+        fi
+
+        # ── 2. real merge-base git diff (no --depth=1, no three-dot guessing) ──
+        if [ -z "$FILES" ] && [ -n "${BASE:-}" ]; then
+          # Deepen rather than truncate. --unshallow errors on an already-complete
+          # repo, which is fine — the plain fetch that follows covers both cases.
+          git fetch --unshallow origin "$BASE" 2>/dev/null \
+            || git fetch origin "$BASE" 2>/dev/null \
+            || true
+          MB=$(git merge-base "origin/$BASE" HEAD 2>/dev/null || true)
+          if [ -n "$MB" ]; then
+            # Two-dot from the merge base is exactly what three-dot means, but it
+            # cannot silently produce a different answer when history is odd.
+            FILES=$(git diff --name-only "$MB" HEAD 2>/dev/null || true)
+            [ -n "$FILES" ] && SOURCE=merge-base
+          fi
+        fi
+
+        # ── 3. never guess ─────────────────────────────────────────────────
+        if [ -z "$SOURCE" ]; then
+          echo "::error::Could not determine the changed-file list (base='${BASE:-?}', pr='${PR:-?}')."
+          echo "::error::Refusing to fall back to HEAD~1 — a partial file list would let a gate pass a change it should block."
+          exit 1
+        fi
+
+        COUNT=$(printf '%s\n' "$FILES" | grep -c . || true)
+        echo "Resolved $COUNT changed file(s) via $SOURCE:"
+        printf '%s\n' "$FILES" | sed 's/^/  /'
+
+        {
+          echo "files<<__WF_EOF__"
+          printf '%s\n' "$FILES"
+          echo "__WF_EOF__"
+          echo "count=$COUNT"
+          echo "source=$SOURCE"
+        } >> "$GITHUB_OUTPUT"
