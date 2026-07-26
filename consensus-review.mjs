@@ -228,6 +228,21 @@ function prompt(reviewer, diff, truncated) {
         // future diffs will contain text describing problems. A reviewer that
         // cannot separate "describes a defect" from "is a defect" will block
         // every well-documented change.
+        // ── READ THE DIFF CORRECTLY ───────────────────────────────────────
+        // Second real false positive from this board: it cited
+        //   `HAS_HUMAN_APPROVAL: ${{ contains(github.event.pull_request.labels…) }}`
+        // as evidence of a defect, but that line was a `-` DELETION — the PR
+        // removes it. The reviewer read the old code as the new code and blocked
+        // the very commit that fixed the problem it was describing.
+        'CRITICAL — READ DIFF NOTATION CORRECTLY:',
+        '  - Lines starting with `-` are being DELETED by this PR. They are the OLD',
+        '    state. A defect on a `-` line is being REMOVED — that is a fix, and it',
+        '    is never grounds for FAIL.',
+        '  - Lines starting with `+` are the NEW state. Judge ONLY these.',
+        '  - Unprefixed lines are unchanged context.',
+        '  - Before failing, confirm your evidence line begins with `+`. If it begins',
+        '    with `-`, the PR already fixed it and the verdict is PASS.',
+        '',
         'CRITICAL — JUDGE THE CODE, NOT THE COMMENTS:',
         '  - Comments, docstrings, commit-message text, markdown and workflow',
         '    comments are DOCUMENTATION. They describe intent, history, and bugs',
@@ -241,7 +256,7 @@ function prompt(reviewer, diff, truncated) {
         '    fix, not an introduction of that behaviour.',
         '',
         'Reply with ONE JSON object and nothing else:',
-        '{"verdict":"PASS"|"FAIL","reason":"one sentence","evidence":"the exact executable line that causes it, or empty","concerns":["..."]}',
+        '{"verdict":"PASS"|"FAIL","reason":"one sentence","evidence":"the exact ADDED (+) executable line that causes it, or empty","concerns":["..."]}',
         '',
         'FAIL only for a real defect that would harm the user, their data, or the app\'s',
         'integrity, AND that you can point to in executable code. Style preferences,',

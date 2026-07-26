@@ -18,6 +18,14 @@ import {
 } from '../autonomy/secret-scan.mjs';
 
 // Shapes only — deliberately invalid values, long enough to trip the patterns.
+//
+// EVERY sample is ASSEMBLED at runtime rather than written as a literal. That is
+// not stylistic: this file is scanned by the very scanner it tests. The first
+// version wrote the PEM private-key header out in full, and the scanner correctly
+// flagged it the moment the file became tracked — then flagged the comment that
+// explained the mistake, because that quoted the header too. The scanner was
+// right both times. Keep every sample, and every comment, free of a literal that
+// matches a pattern in SECRET_PATTERNS.
 const SAMPLES = {
     groq: 'gsk_' + 'a1B2c3D4e5'.repeat(5),
     openai: 'sk-' + 'A1b2C3d4E5'.repeat(4),
@@ -28,7 +36,7 @@ const SAMPLES = {
     cohere: 'cohere_' + 'a1B2c3D4e5'.repeat(4),
     cerebras: 'csk-' + 'a1b2c3d4e5'.repeat(5),
     aws: 'AKIA' + 'ABCDEFGHIJKLMNOP',
-    'private-key': '-----BEGIN RSA PRIVATE KEY-----',
+    'private-key': '-----' + 'BEGIN RSA PRIVATE KEY' + '-----',
 };
 
 describe('secret-scan: catches what leaked before', () => {
