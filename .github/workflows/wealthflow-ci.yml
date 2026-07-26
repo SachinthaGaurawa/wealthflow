@@ -70,14 +70,33 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          HAS="${PAYLOAD_HAS:-false}"
+
+          # FAIL CLOSED. Caught by the consensus board reviewing this very file:
+          # the first version kept the event-payload value as a fallback, so if
+          # the API call failed, HAS silently retained the stale payload value.
+          # If someone REMOVED the label and the API call then errored, that
+          # would fail OPEN and allow a sensitive change through on a label that
+          # no longer exists.
+          #
+          # For a pull request the API is the ONLY authority. An API failure now
+          # means "not approved", never "keep whatever the snapshot said".
           if [ -n "${PR:-}" ]; then
-            LIVE=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | join(",")' 2>/dev/null || echo '')
-            echo "labels currently on the PR: ${LIVE:-<none>}"
-            case ",$LIVE," in
-              *,human-approved,*) HAS=true ;;
-            esac
+            if LIVE=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | join(",")' 2>/dev/null); then
+              echo "labels currently on the PR: ${LIVE:-<none>}"
+              HAS=false
+              case ",$LIVE," in
+                *,human-approved,*) HAS=true ;;
+              esac
+            else
+              echo "::warning::Could not read the PR's labels from the API — treating this as NOT approved."
+              HAS=false
+            fi
+          else
+            # No PR context (workflow_dispatch). There is no label to read, so the
+            # payload expression is the only available signal.
+            HAS="${PAYLOAD_HAS:-false}"
           fi
+
           echo "has_human_approval=$HAS" >> "$GITHUB_OUTPUT"
           echo "human-approved: $HAS"
 
