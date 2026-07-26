@@ -8,11 +8,26 @@ name: WealthFlow CI (free)
 on:
   pull_request:
     branches: [main]
+    # `labeled` / `unlabeled` are ESSENTIAL, not cosmetic.
+    #
+    # With the default types (opened, synchronize, reopened) this workflow does not
+    # re-run when a label changes — so adding `human-approved` could never clear the
+    # risk gate below. Worse, RE-RUNNING the existing run does not help either:
+    # a re-run replays the ORIGINAL event payload, in which the label list was still
+    # empty, so `contains(github.event.pull_request.labels.*.name, …)` stays false
+    # forever. The documented escape hatch was unreachable except by pushing a new
+    # commit after the label already existed.
+    #
+    # That is the same failure family as everything else the autonomy work uncovered:
+    # a control that looks present, reports cleanly, and cannot actually be used.
+    # policy-gate.yml already listed these types; this one did not.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch: {}
 
 permissions:
   contents: read
   pull-requests: read
+  issues: read            # the risk gate reads the PR's labels live via the API
 
 jobs:
   test:
@@ -37,11 +52,40 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # Read the label LIVE from the API rather than from github.event.
+      #
+      # The event payload is a snapshot from when the run was queued, so on a re-run
+      # it reports the labels as they were then — not as they are now. Querying the
+      # API means "Re-run failed jobs" works after labelling, which is the obvious
+      # thing to try and previously did nothing.
+      - name: Check for human approval (live, not from the event payload)
+        id: approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          # Fallback to the payload for workflow_dispatch, where there is no PR.
+          PAYLOAD_HAS: ${{ contains(github.event.pull_request.labels.*.name, 'human-approved') }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          HAS="${PAYLOAD_HAS:-false}"
+          if [ -n "${PR:-}" ]; then
+            LIVE=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | join(",")' 2>/dev/null || echo '')
+            echo "labels currently on the PR: ${LIVE:-<none>}"
+            case ",$LIVE," in
+              *,human-approved,*) HAS=true ;;
+            esac
+          fi
+          echo "has_human_approval=$HAS" >> "$GITHUB_OUTPUT"
+          echo "human-approved: $HAS"
+
       - name: Classify changed files
         env:
           BASE: ${{ github.base_ref }}
           # PRs carrying this label have a human approver and may touch sensitive paths.
-          HAS_HUMAN_APPROVAL: ${{ contains(github.event.pull_request.labels.*.name, 'human-approved') }}
+          HAS_HUMAN_APPROVAL: ${{ steps.approval.outputs.has_human_approval }}
         run: |
           set -e
           
