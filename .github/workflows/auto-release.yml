@@ -102,8 +102,12 @@ jobs:
           fi
 
           DUE=no
+          BRAIN_ARMED=no
 
-          # 1) has the brain armed a release?
+          # 1) has the brain armed a release? NOTE: this is now advisory only.
+          #    A brain-armed release with no code change is still a fake release,
+          #    so the substantive gate below is the authority on whether to ship;
+          #    the brain only influences urgency and the release notes.
           if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
             npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
             set +e
@@ -111,12 +115,25 @@ jobs:
             RC=$?
             set -e
             if [ "$RC" = "7" ]; then
-              DUE=yes
-              echo "brain: a release is armed"
+              BRAIN_ARMED=yes
+              echo "brain: a release is armed (advisory — still subject to the substantive gate)"
             fi
           fi
 
-          # 2) otherwise: are there commits since the last release tag?
+          # 2) otherwise: has anything REAL changed since the last release tag?
+          #
+          #    THIS IS THE FIX FOR THE #1 REPORTED BUG. The old check was
+          #    "are there any commits since the last tag?" — and because
+          #    merchant-sync.yml pushes a chore(merchants) commit EVERY HOUR the
+          #    answer was always yes. So this workflow cut v7.69.10 → .11 → .12
+          #    with no functional change at all, the app told the user an update
+          #    was available, they installed a byte-identical app, and correctly
+          #    concluded the update system was lying.
+          #
+          #    autonomy/substantive.cjs answers the right question instead: does
+          #    the diff contain a change that is neither a data/meta file nor a
+          #    pure version-string rewrite? Verified against the real
+          #    v7.69.11..v7.69.12 range, it reports NOT substantive.
           LAST=$(git describe --tags --abbrev=0 2>/dev/null || true)
 
           if [ -z "${LAST:-}" ]; then
@@ -133,18 +150,57 @@ jobs:
             else
               echo "could not read version.json — skipping bootstrap"
             fi
-          elif [ "$DUE" = "no" ]; then
+          else
             N=$(git rev-list "${LAST}..HEAD" --count 2>/dev/null || echo 0)
-            if [ "${N:-0}" -gt 0 ]; then
-              DUE=yes
-              echo "$N new commit(s) since $LAST"
-            else
+            if [ "${N:-0}" -eq 0 ]; then
               echo "no new commits since $LAST"
+              if [ "$BRAIN_ARMED" = "yes" ]; then
+                echo "  (the brain armed a release, but there is literally nothing to ship —"
+                echo "   arming a release does not make one exist.)"
+              fi
+            else
+              echo "$N new commit(s) since $LAST — checking whether any of it is REAL…"
+              set +e
+              node autonomy/substantive.cjs "$LAST" HEAD
+              RC=$?
+              set -e
+              if [ "$RC" = "0" ]; then
+                DUE=yes
+                echo "→ substantive change confirmed; a release is genuinely due."
+              elif [ "$RC" = "3" ]; then
+                echo "→ NOT substantive. Refusing to cut a fake release."
+                echo "  (merchant data and version-string churn do not change the app."
+                echo "   Shipping here is exactly the bug users reported.)"
+                if [ "$BRAIN_ARMED" = "yes" ]; then
+                  echo "  The brain had armed a release; the gate overrides it, because a"
+                  echo "  release with no functional change is fake no matter who asked for it."
+                fi
+              else
+                # The gate itself failed. Do NOT guess — a broken gate must never
+                # silently fall back to "release anyway", which is how the fake
+                # releases happened in the first place.
+                echo "::error::substantive-change gate failed to run (exit $RC). Refusing to release blind."
+                exit 1
+              fi
             fi
           fi
 
           echo "due=$DUE" >> "$GITHUB_OUTPUT"
           echo "release due: $DUE"
+
+          # Make the decision visible in the run summary — no more silent no-ops.
+          {
+            echo "### Release decision: $DUE"
+            echo ""
+            if [ "$DUE" = "yes" ]; then
+              echo "A substantive change was found since \`${LAST:-<no tag>}\`, so a real release is being cut."
+            else
+              echo "Nothing substantive changed since \`${LAST:-<no tag>}\`. **No version bump.**"
+              echo ""
+              echo "This is the fake-release gate doing its job: the version number now only"
+              echo "moves when the app actually changed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Release
         if: steps.due.outputs.due == 'yes'

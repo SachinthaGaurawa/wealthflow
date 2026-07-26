@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
+import { runs } from './fuzz-config.js';
 import {
     isMetaFile, normaliseLine, isVersionOnlyChange, parseUnifiedDiff, classifyDiff,
 } from '../autonomy/substantive.cjs';
@@ -127,7 +128,7 @@ describe('normaliseLine', () => {
     it('never throws on any input', () => {
         fc.assert(fc.property(fc.anything(), (x) => {
             expect(typeof normaliseLine(x)).toBe('string');
-        }), { numRuns: 500 });
+        }), { numRuns: runs(500) });
     });
 });
 
@@ -183,6 +184,6 @@ describe('parseUnifiedDiff', () => {
     it('never throws on arbitrary text', () => {
         fc.assert(fc.property(fc.string({ maxLength: 400 }), (s) => {
             expect(() => parseUnifiedDiff(s)).not.toThrow();
-        }), { numRuns: 300 });
+        }), { numRuns: runs(300) });
     });
 });

@@ -19,6 +19,7 @@ import {
 import { severityOf, roleFor as queueRoleFor, rankIssues, attemptsFrom } from '../autonomy/work-queue.mjs';
 import { signature, isStuck } from '../autonomous-fix-agent.js';
 
+import { runs } from './fuzz-config.js';
 // ── the router ───────────────────────────────────────────────────────────────
 describe('llm-router: key discovery', () => {
     it('finds the Gemini key under this project\'s actual name, WealthFlow_API_Key', () => {
@@ -119,7 +120,7 @@ describe('llm-router: response parsing', () => {
         fc.assert(fc.property(fc.string({ maxLength: 300 }), (s) => {
             expect(() => extractJson(s)).not.toThrow();
             expect(() => stripFences(s)).not.toThrow();
-        }), { numRuns: 500 });
+        }), { numRuns: runs(500) });
     });
 });
 
@@ -163,7 +164,7 @@ describe('agent-swarm: sensitive-path gate (anti toxic-proactivity)', () => {
                     expect(isSensitive(f)).toBe(false);
                 }
             },
-        ), { numRuns: 200 });
+        ), { numRuns: runs(200) });
     });
 
     it('candidateFiles rejects subdirectories, tests and non-JS', () => {
@@ -197,7 +198,7 @@ describe('agent-swarm: model file-pick validation', () => {
         fc.assert(fc.property(fc.string({ maxLength: 120 }), (s) => {
             const r = resolvePick(s, files);
             if (r !== null) expect(files).toContain(r);
-        }), { numRuns: 500 });
+        }), { numRuns: runs(500) });
     });
 });
 
@@ -226,7 +227,7 @@ describe('agent-swarm: security verdict parsing fails closed', () => {
         fc.assert(fc.property(fc.string({ maxLength: 300 }), (s) => {
             const v = parseVerdict(s);
             expect(['PASS', 'FAIL']).toContain(v.verdict);
-        }), { numRuns: 500 });
+        }), { numRuns: runs(500) });
     });
 });
 
@@ -271,7 +272,7 @@ describe('agent-swarm: structural checks catch mangled rewrites', () => {
     it('never throws', () => {
         fc.assert(fc.property(fc.string({ maxLength: 200 }), fc.string({ maxLength: 200 }), (a, b) => {
             expect(() => structuralCheck(a, b)).not.toThrow();
-        }), { numRuns: 300 });
+        }), { numRuns: runs(300) });
     });
 });
 

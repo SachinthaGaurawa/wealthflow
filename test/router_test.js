@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { routeRow, hashRow, classifyStatement } from '../wealthflow-statement-router.js';
 
+import { runs } from './fuzz-config.js';
 // --- shape generators (model REAL statement rows) ---------------------------
 const arbDescription = fc.oneof(
   fc.string({ minLength: 0, maxLength: 200 }),
@@ -57,14 +58,14 @@ describe('routeRow: safety invariants (5,000 random inputs)', () => {
   it('never throws on adversarial input', () => {
     fc.assert(fc.property(arbRow, arbCtx, (row, ctx) => {
       expect(() => routeRow(row, ctx)).not.toThrow();
-    }), { numRuns: 5000 });
+    }), { numRuns: runs(5000) });
   });
 
   it('always returns a valid module name', () => {
     fc.assert(fc.property(arbRow, arbCtx, (row, ctx) => {
       const r = routeRow(row, ctx);
       expect(VALID_MODULES.has(r.module)).toBe(true);
-    }), { numRuns: 5000 });
+    }), { numRuns: runs(5000) });
   });
 
   it('confidence is always a real number in [0, 1]', () => {
@@ -74,7 +75,7 @@ describe('routeRow: safety invariants (5,000 random inputs)', () => {
       expect(Number.isFinite(r.confidence)).toBe(true);
       expect(r.confidence).toBeGreaterThanOrEqual(0);
       expect(r.confidence).toBeLessThanOrEqual(1);
-    }), { numRuns: 5000 });
+    }), { numRuns: runs(5000) });
   });
 
   it('amount in result is always finite and non-negative (money never goes "negative" in a bucket)', () => {
@@ -82,7 +83,7 @@ describe('routeRow: safety invariants (5,000 random inputs)', () => {
       const r = routeRow(row, ctx);
       expect(Number.isFinite(r.fields.amount)).toBe(true);
       expect(r.fields.amount).toBeGreaterThanOrEqual(0);
-    }), { numRuns: 5000 });
+    }), { numRuns: runs(5000) });
   });
 
   it('needsReview flag is consistent with confidence vs threshold', () => {
@@ -90,7 +91,7 @@ describe('routeRow: safety invariants (5,000 random inputs)', () => {
       const r = routeRow(row, ctx);
       const threshold = typeof ctx.reviewThreshold === 'number' ? ctx.reviewThreshold : 0.75;
       expect(r.needsReview).toBe(r.confidence < threshold);
-    }), { numRuns: 5000 });
+    }), { numRuns: runs(5000) });
   });
 });
 
@@ -104,7 +105,7 @@ describe('routeRow: business rules (the original misrouting bug)', () => {
       const r = routeRow({ ...row, drcr: 'DR' }, { statementType: 'bank_account' });
       // Bank-account debits must go to expenses/loans/goal_alloc/subscriptions — never CC buckets.
       expect(['cconetime','ccinstall']).not.toContain(r.module);
-    }), { numRuns: 3000 });
+    }), { numRuns: runs(3000) });
   });
 
   it('a credit-card statement debit lands in a CC bucket (not in plain expenses)', () => {
@@ -119,7 +120,7 @@ describe('routeRow: business rules (the original misrouting bug)', () => {
         // Either CC bucket OR a goal_alloc/loans match — but never plain "expenses"
         expect(r.module).not.toBe('expenses');
       }
-    ), { numRuns: 3000 });
+    ), { numRuns: runs(3000) });
   });
 
   it('a salary credit is recognised as income', () => {
@@ -174,6 +175,6 @@ describe('routeRow: determinism', () => {
       const a = routeRow(row, ctx);
       const b = routeRow(row, ctx);
       expect(a).toEqual(b);
-    }), { numRuns: 1000 });
+    }), { numRuns: runs(1000) });
   });
 });

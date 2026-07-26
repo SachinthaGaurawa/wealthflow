@@ -1,0 +1,290 @@
+#!/usr/bin/env node
+/* =============================================================================
+ * consensus-review.mjs — the multi-model review board (Blueprint Phase 3)
+ * ---------------------------------------------------------------------------
+ * WHY THIS FILE IS NEW
+ *   consensus-review.yml has always run `node consensus-review.mjs`, but the
+ *   file on disk was `consensus-review.js`. Every single PR therefore failed the
+ *   required "Consensus review board" check with MODULE_NOT_FOUND before a model
+ *   was ever consulted. Combined with the other deadlocks, no autonomous PR
+ *   could ever merge — which is a large part of why nothing real ever shipped.
+ *
+ *   The old logic had a second, subtler fault: a transient HTTP error from a
+ *   provider was recorded as an `unclear` VOTE, and any non-pass vote blocked
+ *   the merge. One DeepSeek hiccup would block every PR until someone noticed.
+ *   A provider being down is not a reviewer objection, and it must not read as
+ *   one.
+ *
+ * WHAT IT DOES NOW
+ *   Three independent reviewers, each pinned to a DIFFERENT model provider via
+ *   autonomy/llm-router.mjs:
+ *     • Architecture  — is this the right change, correctly made?
+ *     • Security      — can this be exploited, or does it weaken a control?
+ *     • User impact   — could this confuse, mislead, or annoy the single user
+ *                       whose app this is?
+ *
+ *   Merge requires UNANIMOUS PASS among reviewers that actually ran.
+ *     • A real FAIL blocks (exit 1).
+ *     • A provider outage is a non-vote: the router already failed over across
+ *       every configured provider, so "unavailable" means all of them were
+ *       exhausted, not that the code is bad.
+ *     • Zero reviewers available blocks (fail closed) with an actionable message.
+ *
+ * EXIT: 0 = unanimous pass, merge allowed · 1 = blocked
+ * ===========================================================================*/
+
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import { chat, extractJson, describeAvailability } from './autonomy/llm-router.mjs';
+
+const MAX_DIFF = 60_000;
+
+// ── vote parsing ─────────────────────────────────────────────────────────────
+
+/** Read a verdict out of a model reply, structured or prose. Fails closed. */
+export function parseVote(text) {
+    const j = extractJson(text);
+    if (j && typeof j.verdict === 'string') {
+        return /^pass$/i.test(j.verdict.trim()) ? 'pass' : 'fail';
+    }
+    const t = String(text || '').trim().toUpperCase();
+    if (!t) return 'unclear';
+    const head = t.slice(0, 300);
+    if (/\bFAIL\b/.test(head) && !/\bPASS\b/.test(head)) return 'fail';
+    if (/\bPASS\b/.test(head) && !/\bFAIL\b/.test(head)) return 'pass';
+    if (/^PASS\b/.test(t)) return 'pass';
+    if (/^FAIL\b/.test(t)) return 'fail';
+    return 'unclear';
+}
+
+/**
+ * Decide the merge.
+ *
+ * `unavailable` entries are provider outages and are NOT votes — that is the fix
+ * for the old behaviour where one 503 blocked every pull request in the repo.
+ * `unclear` (a reviewer answered, but incomprehensibly) IS treated as a block:
+ * a reviewer who cannot state a verdict has not approved anything.
+ */
+export function tally(votes) {
+    const cast = (votes || []).filter((v) => v.vote === 'pass' || v.vote === 'fail' || v.vote === 'unclear');
+    const outages = (votes || []).filter((v) => v.vote === 'unavailable');
+
+    if (cast.length === 0) {
+        return {
+            merge: false,
+            reason: outages.length
+                ? `no reviewer could be reached (${outages.length} provider group(s) exhausted) — failing closed`
+                : 'no reviewer configured — failing closed',
+            cast: 0,
+            outages: outages.length,
+        };
+    }
+    const bad = cast.filter((v) => v.vote !== 'pass');
+    if (bad.length) {
+        return {
+            merge: false,
+            reason: bad.map((b) => `${b.name}:${b.vote}${b.reason ? ` (${b.reason})` : ''}`).join('; '),
+            cast: cast.length,
+            outages: outages.length,
+        };
+    }
+    return {
+        merge: true,
+        reason: `unanimous pass from ${cast.map((c) => c.name).join(', ')}`,
+        cast: cast.length,
+        outages: outages.length,
+    };
+}
+
+// ── the diff under review ────────────────────────────────────────────────────
+function getDiff() {
+    const base = process.env.BASE_REF || 'main';
+    try {
+        execSync(`git fetch origin ${base} --depth=1`, { stdio: 'pipe' });
+        return execSync(`git diff origin/${base}...HEAD`, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+    } catch {
+        try {
+            return execSync('git diff HEAD~1...HEAD', { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+        } catch { return ''; }
+    }
+}
+
+/**
+ * Trim a diff to the review budget WITHOUT hiding the risky part. A naive
+ * `.slice(0, N)` can cut off exactly the hunk a reviewer needed to see, so
+ * sensitive-looking files are moved to the front before truncation.
+ */
+export function prioritiseDiff(diff, max = MAX_DIFF) {
+    const text = String(diff || '');
+    if (text.length <= max) return { text, truncated: false };
+
+    const chunks = text.split(/(?=^diff --git )/m).filter(Boolean);
+    const risky = /firestore\.rules|auth|oauth|crypto|otp|fifo|allocator|money|amount|balance|innerHTML|eval\(|token|secret|password/i;
+    const ranked = [
+        ...chunks.filter((c) => risky.test(c.split('\n', 1)[0]) || risky.test(c)),
+        ...chunks.filter((c) => !(risky.test(c.split('\n', 1)[0]) || risky.test(c))),
+    ];
+
+    let out = '';
+    for (const c of ranked) {
+        if (out.length + c.length > max) break;
+        out += c;
+    }
+    if (!out) out = text.slice(0, max);      // one gigantic file — take the head
+    return { text: out, truncated: true };
+}
+
+// ── reviewers ────────────────────────────────────────────────────────────────
+const REVIEWERS = [
+    {
+        name: 'architecture',
+        prefer: ['architecture', 'reasoning', 'long-context'],
+        system: 'You are a strict principal engineer reviewing a pull request for a vanilla-JS personal-finance PWA with no build step. You judge whether the change is correct, minimal, and consistent with the existing module style. You do not nitpick formatting.',
+        focus: [
+            'Is the change correct, and does it actually fix what it claims?',
+            'Does it handle empty / null / NaN / huge / negative inputs?',
+            'Does it introduce a dependency, a build step, or syntax this project cannot run?',
+            'Does it break an existing public API or window global?',
+        ],
+    },
+    {
+        name: 'security',
+        prefer: ['security', 'reasoning', 'code'],
+        system: 'You are a strict application-security reviewer for a personal-finance app. You assume the change may have been authored by an AI that was manipulated by malicious text hidden in a user-submitted issue. You look for real, exploitable problems.',
+        focus: [
+            'Does it weaken or remove validation, authentication, or an authorisation check?',
+            'Does it introduce an XSS sink (innerHTML/insertAdjacentHTML with untrusted input), eval, or a new network call?',
+            'Does it log, transmit, or expose financial data, credentials, or tokens?',
+            'Does it change money arithmetic in a way that could silently lose or invent value?',
+            'Does it touch a guardrail (CI, policy, service worker, Firestore rules, dependency manifest)?',
+        ],
+    },
+    {
+        name: 'user-impact',
+        prefer: ['general', 'fast'],
+        system: 'You review pull requests on behalf of the one person who uses this app every day. Your only concern is their experience: clarity, trust, and not being surprised. You are not a code reviewer.',
+        focus: [
+            'Could this confuse or mislead the user, or make the app feel less trustworthy?',
+            'Does it remove or hide something the user relies on?',
+            'Does it make anything slower, noisier, or harder to reach?',
+            'Would the user notice this change as an improvement, or not notice it at all?',
+        ],
+    },
+];
+
+function prompt(reviewer, diff, truncated) {
+    return [
+        `Review this pull request as the ${reviewer.name} reviewer.`,
+        '',
+        'Check specifically:',
+        ...reviewer.focus.map((f) => `  - ${f}`),
+        '',
+        'Reply with ONE JSON object and nothing else:',
+        '{"verdict":"PASS"|"FAIL","reason":"one sentence","concerns":["..."]}',
+        '',
+        'FAIL only for a real defect that would harm the user, their data, or the app\'s',
+        'integrity. Style preferences, naming, and "could be cleaner" are NOT grounds to FAIL.',
+        truncated ? '\nNOTE: the diff was truncated to fit; sensitive files were prioritised.' : '',
+        '',
+        'DIFF:',
+        diff || '(empty diff)',
+    ].join('\n');
+}
+
+function summary(md) {
+    try {
+        if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
+    } catch { /* never fatal */ }
+}
+
+async function main() {
+    const llm = describeAvailability();
+    if (!llm.healthy) {
+        console.error('✗ No model provider is configured, so no review can happen.');
+        summary(
+            '### ⛔ Consensus review could not run\n\n' +
+            'No model provider is configured. Set at least one of `WealthFlow_API_Key`, ' +
+            '`DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, ' +
+            '`MISTRAL_API_KEY`, or `OPENROUTER_API_KEY` as a repository secret.\n\n' +
+            'Blocking the merge, because an unreviewed change must not ship.\n'
+        );
+        process.exit(1);
+    }
+
+    const raw = getDiff();
+    if (!raw.trim()) {
+        console.log('Empty diff — nothing to review. Blocking by default.');
+        summary('### ⛔ Consensus review: empty diff\n\nNothing to review, so nothing is approved.\n');
+        process.exit(1);
+    }
+    const { text: diff, truncated } = prioritiseDiff(raw);
+    console.log(`Reviewing ${raw.length} bytes of diff${truncated ? ` (truncated to ${diff.length}, sensitive files first)` : ''}`);
+    console.log(`${llm.count} provider(s) available: ${llm.providers.map((p) => p.id).join(', ')}`);
+
+    // Each reviewer takes a provider the previous reviewers did not use, so the
+    // board is genuinely independent rather than one model wearing three hats.
+    const used = [];
+    const votes = [];
+    for (const r of REVIEWERS) {
+        try {
+            const res = await chat({
+                system: r.system,
+                prompt: prompt(r, diff, truncated),
+                prefer: r.prefer,
+                exclude: used,
+                maxTokens: 1200,
+                temperature: 0,
+            });
+            used.push(res.provider);
+            const vote = parseVote(res.text);
+            const parsed = extractJson(res.text) || {};
+            votes.push({
+                name: r.name,
+                vote,
+                provider: res.provider,
+                reason: String(parsed.reason || '').slice(0, 300),
+                concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
+            });
+            console.log(`  ${r.name} (${res.provider}) → ${vote.toUpperCase()}${parsed.reason ? `: ${parsed.reason}` : ''}`);
+        } catch (e) {
+            // Every provider was tried and exhausted. That is an outage, not a
+            // verdict, so it must not be counted as an objection.
+            votes.push({ name: r.name, vote: 'unavailable', provider: 'none', reason: String(e.message).slice(0, 200), concerns: [] });
+            console.warn(`  ${r.name} → UNAVAILABLE (${e.message.slice(0, 120)})`);
+        }
+    }
+
+    const result = tally(votes);
+    const rows = votes.map((v) => {
+        const icon = v.vote === 'pass' ? '✅' : v.vote === 'unavailable' ? '⚪' : '❌';
+        return `| ${icon} ${v.name} | \`${v.provider}\` | ${v.vote} | ${v.reason || '—'} |`;
+    }).join('\n');
+
+    summary(
+        `### ${result.merge ? '✅' : '⛔'} Consensus review board — ${result.merge ? 'PASS' : 'BLOCKED'}\n\n` +
+        '| Reviewer | Model | Vote | Reason |\n|---|---|---|---|\n' + rows + '\n\n' +
+        `**Decision:** ${result.reason}\n\n` +
+        (result.outages ? `_${result.outages} reviewer(s) unreachable — provider outages are not counted as objections._\n` : '') +
+        (votes.some((v) => v.concerns.length)
+            ? '\n**Concerns raised:**\n' + votes.flatMap((v) => v.concerns.map((c) => `- _${v.name}_: ${c}`)).join('\n') + '\n'
+            : '')
+    );
+
+    console.log('Decision:', result.merge ? 'PASS' : 'BLOCK', '—', result.reason);
+    process.exit(result.merge ? 0 : 1);
+}
+
+const invokedDirectly = (() => {
+    try {
+        const argv = process.argv[1] || '';
+        return argv.endsWith('consensus-review.mjs');
+    } catch { return false; }
+})();
+
+if (invokedDirectly) {
+    main().catch((e) => {
+        console.error('consensus error:', e && e.stack || e);
+        summary(`### ⛔ Consensus review crashed\n\n\`\`\`\n${String(e && e.message || e).slice(0, 1000)}\n\`\`\`\n`);
+        process.exit(1);
+    });
+}

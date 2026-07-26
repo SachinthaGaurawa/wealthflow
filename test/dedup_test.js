@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { hashRow, classifyStatement } from '../wealthflow-statement-router.js';
 
+import { runs } from './fuzz-config.js';
 const arbRow = fc.record({
   date:        fc.option(fc.constantFrom('2024-01-15', '2025-06-30', '', '2024-12-31T08:00:00Z')),
   description: fc.string({ maxLength: 100 }),
@@ -30,7 +31,7 @@ describe('hashRow: safety + determinism (2,000 random inputs)', () => {
   it('never throws on adversarial input', async () => {
     await fc.assert(fc.asyncProperty(arbRow, async (row) => {
       await expect(hashRow(row)).resolves.toBeDefined();
-    }), { numRuns: 2000 });
+    }), { numRuns: runs(2000) });
   });
 
   it('returns a 64-char lowercase hex SHA-256 hash, always', async () => {
@@ -38,7 +39,7 @@ describe('hashRow: safety + determinism (2,000 random inputs)', () => {
       const h = await hashRow(row);
       expect(typeof h).toBe('string');
       expect(h).toMatch(/^[0-9a-f]{64}$/);
-    }), { numRuns: 2000 });
+    }), { numRuns: runs(2000) });
   });
 
   it('is deterministic — same row hashes the same every time', async () => {
@@ -48,7 +49,7 @@ describe('hashRow: safety + determinism (2,000 random inputs)', () => {
       const c = await hashRow(row);
       expect(a).toBe(b);
       expect(b).toBe(c);
-    }), { numRuns: 1000 });
+    }), { numRuns: runs(1000) });
   });
 });
 
@@ -133,6 +134,6 @@ describe('classifyStatement: dedup + routing pipeline', () => {
         const result = await classifyStatement({ rows, statementType: 'bank_account' });
         expect(result.length).toBe(rows.length);
       }
-    ), { numRuns: 5 });  // 5 batches × up to 500 rows each = up to 2500 routings
+    ), { numRuns: runs(5) });  // 5 batches × up to 500 rows each = up to 2500 routings
   });
 });
