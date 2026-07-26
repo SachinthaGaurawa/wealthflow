@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 57,
+  "version": 58,
   "updated": "2026-07-26",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 835,
+  "count": 838,
   "merchants": [
     {
       "key": "bake house",
@@ -5058,6 +5058,13 @@
       "source": "seed"
     },
     {
+      "key": "dialog postpaid",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "dialog reload",
       "category": "Telecom",
       "goesTo": "subscription",
@@ -5133,6 +5140,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "hutch postpaid",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "hutchison",
@@ -5213,6 +5227,13 @@
     },
     {
       "key": "mobitel 4g",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "mobitel postpaid",
       "category": "Telecom",
       "goesTo": "subscription",
       "confidence": 0.99,
