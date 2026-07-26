@@ -72,6 +72,37 @@ and `GITHUB_REPO=SachinthaGaurawa/wealthflow`.
 | `AGENT_MAX_ATTEMPTS` | var | Default 3. |
 | `FIREBASE_SERVICE_ACCOUNT` | secret | Optional enrichment only. Its absence can no longer stall anything. |
 
+### ⚠️ Vercel environment variables — REQUIRED after the security fix
+
+Four live provider credentials used to be hardcoded in this repo. They are now
+read from the environment, so these **must** be set in
+**Vercel → Project → Settings → Environment Variables** or the matching endpoints
+return a clear `503` instead of working:
+
+| Variable | Needed by | Notes |
+|---|---|---|
+| `FIREBASE_API_KEY` | `inbox-ack/pull/push.js`, `statement-store/view.js` | The public Firebase Web apiKey. Not a secret, but no longer a literal in the repo. |
+| `ALPHA_VANTAGE_API_KEY` | `market-data.js` | Was an `EMBEDDED_KEY_FALLBACK`. **Rotate it** — the old value is in git history. |
+| `GEMINI_API_KEY` *or* `WealthFlow_API_Key` | `ai-vision.js` | Server-side vision. |
+| `GROQ_API_KEY` | `ai-vision.js` | Vision fallback. **Rotate it** — the old value was served to every browser. |
+
+Each endpoint fails loudly with a named error if its variable is missing, rather
+than issuing requests with `key=undefined`.
+
+### 🔑 Also restrict the Firebase key
+
+The Firebase Web `apiKey` in `index.html` is public by design and cannot be
+hidden — the browser SDK needs it. But the old client vision code also used that
+same key against `generativelanguage.googleapis.com`, which turned a public
+identifier into a **billable** credential. That code is gone; now lock the key
+down so it cannot happen again:
+
+*Google Cloud Console → APIs & Services → Credentials → the Browser key →*
+- **API restrictions:** allow only the Firebase services you actually use.
+  **Do not enable the Generative Language API on this key.**
+- **Application restrictions:** HTTP referrers → your Vercel domain only.
+- Turn on **Firebase App Check** for Firestore and Storage.
+
 ### Verify
 
 Run **Actions → "Pipeline liveness" → Run workflow**. It prints a table and tells

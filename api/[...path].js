@@ -28,6 +28,9 @@ export const config = { maxDuration: 60 }; // Hobby max; covers deep multi-engin
 const HANDLERS = {
     'adobe-pdf-share': () => import('../adobe-pdf-share.js'),
     'ai': () => import('../ai.js'),
+    // Server-side multi-image vision. Exists so the browser never holds a
+    // provider key — it previously shipped two Gemini keys and one Groq key.
+    'ai-vision': () => import('../ai-vision.js'),
     'approve-release': () => import('../approve-release.js'),
     'autonomous-brain': () => import('../autonomous-brain.js'),
     // Reports whether the autonomous update system can actually fix anything, so

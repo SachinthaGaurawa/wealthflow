@@ -55,6 +55,9 @@ const SENSITIVE = [
     /^autonomous-brain\.js$/i,
     /^consensus-review\.(js|mjs)$/i,
     /^HANDLEAISCAN_PATCH\.js$/i,   // a raw patch dump, not a live module
+    /^ai-vision\.js$/i,            // holds provider credentials server-side
+    /^inbox-(ack|pull|push)\.js$/i,
+    /^statement-(store|view)\.js$/i,
 ];
 
 export function isSensitive(p) {

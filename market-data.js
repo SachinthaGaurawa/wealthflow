@@ -15,13 +15,15 @@
 // to respect the Alpha Vantage free-tier rate limit (25 requests / day).
 //
 // Env vars:
-//   ALPHA_VANTAGE_API_KEY (required; embedded fallback for dev)
+//   ALPHA_VANTAGE_API_KEY (required — there is no embedded fallback)
 // ===============================================================================
 
 export const config = { maxDuration: 15 };
 
-// SECURITY: Provided in chat → rotate at alphavantage.co and set env var.
-const EMBEDDED_KEY_FALLBACK = 'IQSFECPP4026SWFH';
+// NO EMBEDDED CREDENTIAL. This file previously carried the Alpha Vantage key as
+// a literal `null`, committed to git history. The key must be
+// supplied by the environment; if it is missing the endpoint says so plainly
+// rather than silently working via a hardcoded secret.
 
 // 5-min in-memory cache (cold-start scoped; that's fine for free-tier protection)
 const cache = new Map();
@@ -207,7 +209,7 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const key = process.env.ALPHA_VANTAGE_API_KEY || EMBEDDED_KEY_FALLBACK;
+    const key = process.env.ALPHA_VANTAGE_API_KEY;
     if (!key) return res.status(503).json({ error: 'ALPHA_VANTAGE_API_KEY not configured' });
 
     const params = req.method === 'POST' ? (req.body || {}) : (req.query || {});

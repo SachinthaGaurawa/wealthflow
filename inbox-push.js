@@ -19,7 +19,26 @@
 export const config = { runtime: 'edge' };
 
 const FIREBASE_PROJECT = process.env.FIREBASE_PROJECT_ID || 'wealthflow-6dffb';
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || 'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4';
+// The Firebase Web apiKey is a public project identifier, not a secret — but it is
+// read from the environment here so no credential-shaped literal lives in the repo.
+// That keeps the CI secret scanner strict: it can reject every AIzaSy... literal
+// outright, instead of needing an allowlist that a real Gemini key could hide behind.
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY;
+
+// Fail loudly, not mysteriously. This value moved from a hardcoded literal to an
+// environment variable; if it is not configured, say so plainly instead of
+// issuing Firestore requests with `key=undefined` and returning a confusing 400.
+function _requireFirebaseKey(res) {
+    if (FIREBASE_API_KEY) return true;
+    const msg = 'FIREBASE_API_KEY is not configured on this deployment. '
+        + 'Set it in Vercel → Project → Settings → Environment Variables. '
+        + '(It is the public Firebase Web apiKey — no longer hardcoded in the repo.)';
+    try {
+        if (res && res.status) { res.status(503).json({ ok: false, error: 'firebase_key_not_configured', detail: msg }); return false; }
+    } catch (_) {}
+    throw new Error(msg);
+}
+
 const FS_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
 
 // Fallback in-memory store for testing only (shared across endpoint modules
@@ -65,6 +84,7 @@ async function fsPut(path, doc) {
 }
 
 export default async function handler(req) {
+    if (!_requireFirebaseKey(res)) return;
     if (req.method !== 'POST') {
         return new Response(JSON.stringify({ ok: false, error: 'POST required' }), {
             status: 405, headers: { 'Content-Type': 'application/json' }

@@ -2910,70 +2910,79 @@
     // Tries several vision engines in order. Returns text, or null only if
     // EVERY engine failed (caller then shows an honest error — never a
     // generic chat reply that ignores the image).
-    var _GEMINI_VISION_KEYS = [
-        'AIzaSyCU6KyYWjUg7Iikf3XdYteCiJnbJ_2ZZCQ',
-        'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4'
-    ];
-    var _GROQ_VISION_KEY = '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';
+    // ── NO PROVIDER KEYS LIVE IN THE BROWSER ───────────────────────────────
+    // This block previously held two Gemini keys and one Groq key as literals.
+    // wealthflow-ai-v4.js is loaded by index.html, so those credentials were
+    // served to every visitor and readable from devtools.
+    //
+    // They were also dead code. `callMultiImageAI` receives an array of
+    // `{ base64, sourceFile, ... }` OBJECTS, but the old `_geminiVision` and
+    // `_groqVision` used each element directly as the image payload:
+    //     images.slice(0, 6).forEach(b64 => parts.push({ inline_data: { data: b64 } }))
+    // so `data` got an object rather than a base64 string and every provider
+    // rejected the request. The cascade always fell through to the backend.
+    //
+    // Both engines are now one call to /api/ai-vision, which holds the keys in
+    // environment variables and extracts `.base64` correctly.
 
-    async function _geminiVision(images, prompt) {
-        var keys = [];
+    async function _serverVision(images, prompt) {
         try {
-            var st = window.DB ? window.DB.getObj('settings', {}) : {};
-            if (st.geminiKey) keys.push(st.geminiKey);
-        } catch (_) {}
-        keys = keys.concat(_GEMINI_VISION_KEYS);
-        var parts = [{ text: prompt }];
-        images.slice(0, 6).forEach(function (b64) {
-            parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
-        });
-        var models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-pro', 'gemini-2.0-flash-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'];
-        for (var k = 0; k < keys.length; k++) {
-            for (var m = 0; m < models.length; m++) {
-                try {
-                    var r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + models[m] + ':generateContent?key=' + keys[k], {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0.2, maxOutputTokens: 8192, topP: 0.95 } })
-                    });
-                    if (r.status === 429 || r.status === 503) continue;     // try next model
-                    if (r.status === 404) continue;                         // model name unavailable
-                    if (r.status === 400 || r.status === 403) break;        // bad/forbidden key → next key
-                    if (!r.ok) continue;
-                    var d = await r.json();
-                    var t = d && d.candidates && d.candidates[0] && d.candidates[0].content &&
-                        d.candidates[0].content.parts && d.candidates[0].content.parts[0] &&
-                        d.candidates[0].content.parts[0].text;
-                    if (t && t.trim()) { console.log('[' + V5 + '] vision via gemini ' + models[m]); return t.trim(); }
-                } catch (e) { console.warn('[' + V5 + '] gemini ' + models[m] + ':', e && e.message); }
+            var r = await fetch(_apiBase() + '/ai-vision', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    images: images.slice(0, 6).map(function (im) {
+                        return (im && typeof im === 'object') ? (im.base64 || '') : String(im || '');
+                    }).filter(Boolean),
+                    prompt: prompt
+                })
+            });
+            if (!r.ok) return null;
+            var d = await r.json();
+            if (d && d.ok && d.text && d.text.trim()) {
+                console.log('[' + V5 + '] vision via server ' + (d.provider || '') + ' ' + (d.model || ''));
+                return d.text.trim();
             }
-        }
+        } catch (e) { console.warn('[' + V5 + '] server vision:', e && e.message); }
         return null;
     }
 
-    async function _groqVision(images, prompt) {
-        // Groq Llama Vision — OpenAI-style messages with image_url data URIs
+    // BRING-YOUR-OWN-KEY: if the user has entered their OWN Gemini key in
+    // Settings, honour it from their own browser. That key is theirs, it never
+    // leaves their device except to Google, and it is not shipped in our source.
+    // This also fixes the `.base64` extraction bug described above.
+    async function _userKeyVision(images, prompt) {
+        var key = null;
         try {
-            var content = [{ type: 'text', text: prompt }];
-            images.slice(0, 5).forEach(function (b64) {
-                content.push({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + b64 } });
-            });
-            var models = ['llama-3.2-90b-vision-preview', 'llama-3.2-11b-vision-preview', 'meta-llama/llama-4-scout-17b-16e-instruct'];
-            for (var i = 0; i < models.length; i++) {
-                try {
-                    var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _GROQ_VISION_KEY },
-                        body: JSON.stringify({ model: models[i], messages: [{ role: 'user', content: content }], temperature: 0.25, max_tokens: 4096 })
-                    });
-                    if (r.status === 429 || r.status === 503) continue;
-                    if (r.status === 404 || r.status === 400) continue;
-                    if (!r.ok) continue;
-                    var d = await r.json();
-                    var t = d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
-                    if (t && t.trim()) { console.log('[' + V5 + '] vision via groq ' + models[i]); return t.trim(); }
-                } catch (e) { console.warn('[' + V5 + '] groq ' + models[i] + ':', e && e.message); }
-            }
-        } catch (e) { console.warn('[' + V5 + '] groq vision:', e && e.message); }
+            var st = window.DB ? window.DB.getObj('settings', {}) : {};
+            key = st && st.geminiKey ? String(st.geminiKey).trim() : null;
+        } catch (_) {}
+        if (!key) return null;
+
+        var parts = [{ text: prompt }];
+        images.slice(0, 6).forEach(function (im) {
+            var b64 = (im && typeof im === 'object') ? im.base64 : im;
+            if (b64) parts.push({ inline_data: { mime_type: 'image/jpeg', data: String(b64) } });
+        });
+        if (parts.length < 2) return null;
+
+        var models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+        for (var m = 0; m < models.length; m++) {
+            try {
+                var r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + models[m] + ':generateContent?key=' + encodeURIComponent(key), {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: parts }], generationConfig: { temperature: 0.2, maxOutputTokens: 8192, topP: 0.95 } })
+                });
+                if (r.status === 429 || r.status === 503 || r.status === 404) continue;
+                if (r.status === 400 || r.status === 403) break;   // their key is bad — stop trying it
+                if (!r.ok) continue;
+                var d = await r.json();
+                var t = d && d.candidates && d.candidates[0] && d.candidates[0].content &&
+                    d.candidates[0].content.parts && d.candidates[0].content.parts[0] &&
+                    d.candidates[0].content.parts[0].text;
+                if (t && t.trim()) { console.log('[' + V5 + '] vision via your own Gemini key (' + models[m] + ')'); return t.trim(); }
+            } catch (e) { console.warn('[' + V5 + '] user-key gemini ' + models[m] + ':', e && e.message); }
+        }
         return null;
     }
 
@@ -2996,14 +3005,14 @@
         if (!images || !images.length) throw new Error('No image data');
         console.log('[' + V5 + '] vision cascade start — ' + images.length + ' image(s), first b64 len=' + (images[0].base64 ? images[0].base64.length : 0));
 
-        // Engine 1: Gemini direct (multi-key, multi-model)
+        // Engine 1: the user's OWN Gemini key, if they entered one in Settings
         if (onProgress) onProgress('🔍 Analysing the image…');
-        var out = await _geminiVision(images, prompt);
+        var out = await _userKeyVision(images, prompt);
         if (out) return out;
 
-        // Engine 2: Groq Llama Vision
+        // Engine 2: server-side vision (/api/ai-vision) — keys stay on the server
         if (onProgress) onProgress('🔎 Cross-checking with a second vision engine…');
-        out = await _groqVision(images, prompt);
+        out = await _serverVision(images, prompt);
         if (out) return out;
 
         // Engine 3: Vercel backend (server-side keys, more providers)
