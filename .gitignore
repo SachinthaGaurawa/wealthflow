@@ -1,0 +1,6 @@
+node_modules/
+package-lock.json
+ai-fix-pr.json
+pr-body.txt
+.vercel
+.DS_Store

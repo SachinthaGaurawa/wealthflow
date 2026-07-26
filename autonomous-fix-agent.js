@@ -1,199 +1,341 @@
-/*  autonomous-fix-agent.js  —  Phase 2 of the autonomous update system
+#!/usr/bin/env node
+/* =============================================================================
+ * autonomous-fix-agent.js — the autonomous maintenance engineer
+ * ---------------------------------------------------------------------------
+ * WHAT WENT WRONG BEFORE (verified, not guessed)
+ *   Actions run 30200095048, step "Run the fix agent":
+ *       started 11:25:45  ·  completed 11:25:45  ·  job conclusion: success
+ *       agent error: Unexpected end of JSON input
+ *   The first thing the old agent did was
+ *       JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+ *   on an unset variable. It threw, exited 78 ("nothing to do"), and because the
+ *   workflow step carried `continue-on-error: true` the run was reported green.
+ *   That has happened every two hours for months. The autonomous update system
+ *   has never, not once, produced a real change.
  *
- *  WHAT IT DOES (run by .github/workflows/autonomous-fix.yml on a schedule):
- *    1. Reads the brain's proposal from Firestore (system/pendingRelease).
- *    2. Asks the FREE Gemini API which existing module file is most relevant.
- *    3. Asks Gemini to produce the corrected full contents of that ONE file.
- *    4. Hard safety gates: never touches sensitive files; the rewritten file must
- *       still parse as valid JS; size is bounded.
- *    5. Writes the file + a PR title/body. The workflow opens a PULL REQUEST labelled
- *       'ai-fix' (NEVER auto-merge) so your CI tests it and YOU review before it ships.
+ *   Three further faults sat behind it, each independently fatal:
+ *     • its only work queue was Firestore, which nothing populated;
+ *     • it asked for GEMINI_API_KEY, while the configured key is WealthFlow_API_Key;
+ *     • it never wrote tests, so policy/wealthflow.rego RULE 3 would have blocked
+ *       100% of its PRs even if it had produced one.
  *
- *  HONEST LIMITS (by design, not by accident):
- *    • It only edits small module .js files — never index.html, money, auth, crypto,
- *      rules, the service worker, deps, or the pipeline itself.
- *    • Free-model fixes are best on simple issues; CI + your review catch the rest.
- *    • It opens at most ONE PR per run.
+ * WHAT THIS VERSION DOES DIFFERENTLY
+ *   1. NO REQUIRED SERVICES. Firebase is optional enrichment. The queue is
+ *      GitHub Issues (free, always present in Actions). Any ONE of ~15 LLM keys
+ *      is enough, with automatic failover between providers.
+ *   2. FAILS LOUDLY. A misconfiguration exits non-zero with a precise reason and
+ *      writes it to the job summary. "Success" now means work happened, or that
+ *      the queue was genuinely empty — never that the agent crashed on startup.
+ *   3. SHIPS A TEST WITH EVERY FIX, so the policy gate is satisfiable honestly.
+ *   4. LEAVES AN AUDIT TRAIL on the issue: which model authored it, which model
+ *      reviewed it, what the verdict was, and how many attempts have been made.
+ *   5. GIVES UP HONESTLY. After MAX_ATTEMPTS, or on repeated identical output,
+ *      it labels the issue `ai-stuck` and asks for a human instead of churning.
  *
- *  ENV: FIREBASE_SERVICE_ACCOUNT, GEMINI_API_KEY, optional GEMINI_MODEL, REPO_DIR.
- *  Exit codes: 0 = a fix was written (open a PR); 78 = nothing to do (neutral).
- */
+ * EXIT CODES
+ *   0  a fix was written (the workflow will validate and open a PR)
+ *   3  nothing to do — queue empty, or no issue could be safely addressed
+ *   1  MISCONFIGURED or a hard failure — the pipeline is broken, tell someone
+ *
+ * ENV
+ *   required: GITHUB_TOKEN (auto in Actions) + GITHUB_REPOSITORY (auto)
+ *             + at least one LLM key (see autonomy/llm-router.mjs)
+ *   optional: FIREBASE_SERVICE_ACCOUNT, AGENT_MAX_ATTEMPTS, AGENT_ISSUE,
+ *             AGENT_DRY_RUN
+ * ===========================================================================*/
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
-// ── sensitive-path gate (mirrors CODEOWNERS / CI risk-gate) ──────────────────
-const SENSITIVE = [
-    /^index\.html$/i, /\.rules$/i, /^firebase\.json$/i, /^vercel\.json$/i,
-    /^package(-lock)?\.json$/i, /^sw\.js$/i,
-    /auth/i, /crypto/i, /fifo-reconcile/i, /allocator/i, /approve-release/i,
-    /release-brain/i, /send-otp/i, /verify-otp/i, /predict-wealth/i, /market-data/i, /fx-rate/i,
-    /^\.github\//i
-];
-export function isSensitive(p) {
-    const f = String(p || '').trim();
-    if (!f) return true;
-    return SENSITIVE.some(re => re.test(f));
+import { describeAvailability } from './autonomy/llm-router.mjs';
+import { runSwarm } from './autonomy/agent-swarm.mjs';
+import * as Q from './autonomy/work-queue.mjs';
+
+const MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
+const DRY = /^(1|true|yes)$/i.test(process.env.AGENT_DRY_RUN || '');
+const REPO_DIR = process.env.REPO_DIR || process.cwd();
+const STATE_DIR = path.join(REPO_DIR, 'autonomy', 'state');
+const OUTPUT = path.join(REPO_DIR, 'ai-fix-pr.json');
+
+function log(...m) { console.log('[agent]', ...m); }
+function fail(msg) {
+    console.error('[agent] ✗ MISCONFIGURED: ' + msg);
+    summary(`### ❌ Autonomous agent could not run\n\n${msg}\n`);
+    process.exit(1);
+}
+function summary(md) {
+    try {
+        if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
+    } catch { /* never fatal */ }
+}
+function output(kv) {
+    try {
+        if (process.env.GITHUB_OUTPUT) {
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,
+                Object.entries(kv).map(([k, v]) => `${k}=${String(v).replace(/\n/g, ' ')}`).join('\n') + '\n');
+        }
+    } catch { /* never fatal */ }
 }
 
-// candidate files the agent MAY edit: small, non-sensitive .js modules at repo root
-export function candidateFiles(allFiles) {
-    return (allFiles || []).filter(f =>
-        /\.js$/i.test(f) && !isSensitive(f) && !f.includes('/') && !/\.test\.js$/i.test(f)
-    );
+/** Stable signature of a produced patch — used to detect "no progress" loops. */
+export function signature(code) {
+    return createHash('sha256').update(String(code || '')).digest('hex').slice(0, 16);
 }
 
-export function pickPrompt(issue, files) {
-    return [
-        'You are a senior engineer triaging a bug in a vanilla-JS web app.',
-        'ISSUE (from user feedback): ' + issue,
-        'Here are the editable source files:',
-        files.map(f => '- ' + f).join('\n'),
-        'Reply with ONLY the single filename from the list above that most likely needs editing to address the issue.',
-        'If none clearly apply, reply with exactly: NONE',
-        'No explanation. Just the filename or NONE.'
-    ].join('\n');
-}
-
-export function fixPrompt(issue, filename, content) {
-    return [
-        'You are a senior engineer fixing a bug in a vanilla-JS web app. Make the SMALLEST safe change.',
-        'ISSUE (from user feedback): ' + issue,
-        'FILE: ' + filename,
-        'CURRENT CONTENTS:',
-        '```javascript',
-        content,
-        '```',
-        'Return ONLY the COMPLETE corrected contents of this file — valid JavaScript, no markdown fences, no commentary.',
-        'Do not add or remove unrelated functionality. Keep the existing style. If you cannot safely fix it, return the file UNCHANGED.'
-    ].join('\n');
-}
-
-// ── stuck-detection (idea adapted from ralphai) ──────────────────────────────
-// AI agents waste tokens (and open junk PRs) when they keep "fixing" an issue they
-// can't actually solve. We stop after MAX_ATTEMPTS, and we stop early if the agent
-// keeps producing the SAME output (no progress) — a fresh attempt that doesn't move
-// is a signal to hand the issue to a human instead of churning.
-export const MAX_ATTEMPTS = 3;
-export function isStuck(proposalForIssue) {
-    const p = proposalForIssue || {};
-    const attempts = Number(p.attempts || 0);
-    if (attempts >= MAX_ATTEMPTS) return { stuck: true, reason: 'max attempts (' + attempts + ') reached' };
-    const sigs = Array.isArray(p.outputSignatures) ? p.outputSignatures : [];
-    // two identical consecutive outputs = no progress
-    if (sigs.length >= 2 && sigs[sigs.length - 1] === sigs[sigs.length - 2]) {
-        return { stuck: true, reason: 'no progress (identical output twice)' };
+/**
+ * Has this agent stopped making progress on an issue?
+ * Two identical outputs in a row means more attempts will not help.
+ */
+export function isStuck({ attempts = 0, signatures = [] } = {}) {
+    if (attempts >= MAX_ATTEMPTS) return { stuck: true, reason: `reached ${attempts}/${MAX_ATTEMPTS} attempts` };
+    if (signatures.length >= 2 && signatures[signatures.length - 1] === signatures[signatures.length - 2]) {
+        return { stuck: true, reason: 'no progress — two identical patches in a row' };
     }
     return { stuck: false };
 }
 
-
-// strip accidental ```fences / language tags the model may add
-export function cleanCode(text) {
-    let t = String(text || '').trim();
-    t = t.replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '');
-    return t.trim();
+/** Per-issue attempt history, kept in-repo so it survives across runs. */
+function statePath(number) { return path.join(STATE_DIR, `issue-${number}.json`); }
+function readState(number) {
+    try { return JSON.parse(fs.readFileSync(statePath(number), 'utf8')); } catch { return { attempts: 0, signatures: [] }; }
 }
-
-// validate the model's file pick is real, in-list, and not sensitive
-export function resolvePickedFile(modelText, files) {
-    const pick = String(modelText || '').trim().split(/\s+/)[0].replace(/[`"']/g, '');
-    if (!pick || /^none$/i.test(pick)) return null;
-    if (!files.includes(pick)) return null;
-    if (isSensitive(pick)) return null;
-    return pick;
-}
-
-// ── Gemini (free tier) ───────────────────────────────────────────────────────
-async function gemini(prompt) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) throw new Error('GEMINI_API_KEY not set');
-    const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key;
-    const r = await fetch(url, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    });
-    if (!r.ok) throw new Error('Gemini HTTP ' + r.status);
-    const data = await r.json();
-    return (((data.candidates || [])[0] || {}).content || {}).parts?.[0]?.text || '';
-}
-
-// JS syntax gate — reject the AI's output if it doesn't parse
-export function isValidJs(code, tmpDir) {
-    const tmp = path.join(tmpDir || '/tmp', '_ai_candidate_' + Date.now() + '.mjs');
+function writeState(number, state) {
     try {
-        fs.writeFileSync(tmp, code);
-        execSync('node --check ' + JSON.stringify(tmp), { stdio: 'pipe' });
-        return true;
-    } catch (_) { return false; }
-    finally { try { fs.unlinkSync(tmp); } catch (_) {} }
-}
-
-async function getProposal() {
-    const admin = (await import('firebase-admin')).default;
-    if (!admin.apps.length) {
-        admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
-    }
-    const doc = await admin.firestore().collection('system').doc('pendingRelease').get();
-    return doc.exists ? doc.data() : null;
+        fs.mkdirSync(STATE_DIR, { recursive: true });
+        fs.writeFileSync(statePath(number), JSON.stringify(state, null, 2) + '\n');
+    } catch (e) { log('could not persist state (non-fatal):', e.message); }
 }
 
 async function main() {
-    const repoDir = process.env.REPO_DIR || process.cwd();
-    const proposal = await getProposal();
-    if (!proposal || !Array.isArray(proposal.proposedChanges) || !proposal.proposedChanges.length) {
-        console.log('No pending proposal with changes. Nothing to do.');
-        process.exit(78);
+    // ── preflight: prove we can actually work, and say so plainly ──────────
+    const llm = describeAvailability();
+    if (!llm.healthy) {
+        fail(
+            'No LLM provider is configured, so no fix can be authored.\n\n' +
+            'Set ANY ONE of these repository secrets and the system starts working:\n' +
+            '`CEREBRAS_API_KEY`, `GROQ_API_KEY`, `WealthFlow_API_Key` (Gemini), `DEEPSEEK_API_KEY`, ' +
+            '`MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `OPENROUTER_API_KEY`, `XAI_API_KEY`, ' +
+            '`FIREWORKS_API_KEY`, `NVIDIA_API_KEY`, `SAMBANOVA_API_KEY`, `GITHUB_MODELS_TOKEN`, ' +
+            '`HUGGINGFACE_API_KEY`, `COHERE_API_KEY`, `ANTHROPIC_API_KEY`.\n\n' +
+            'This exact misconfiguration (a key named `WealthFlow_API_Key` while the agent read ' +
+            '`GEMINI_API_KEY`) is what silently disabled the autonomous update system.'
+        );
     }
-    // pick the top change that is NOT a sensitive-only concern
-    const change = proposal.proposedChanges[0];
-    const issue = (change.action || change.issue || '').slice(0, 600);
-    console.log('Top proposed change:', issue);
+    if (!Q.tokenFrom()) fail('No GITHUB_TOKEN / GH_PAT — the agent cannot read its work queue.');
+    if (!Q.repoFrom()) fail('No GITHUB_REPOSITORY — cannot tell which repo to work on.');
 
-    const allFiles = fs.readdirSync(repoDir);
-    const files = candidateFiles(allFiles);
-    if (!files.length) { console.log('No editable module files found.'); process.exit(78); }
+    log(`${llm.count} LLM provider(s) available: ${llm.providers.map((p) => `${p.id}(${p.via})`).join(', ')}`);
 
-    const pickedRaw = await gemini(pickPrompt(issue, files));
-    const target = resolvePickedFile(pickedRaw, files);
-    if (!target) {
-        console.log('Model selected no safe editable file (or chose a sensitive one). Leaving for human.');
-        process.exit(78);
+    // ── load the queue ──────────────────────────────────────────────────────
+    await Q.ensureCoreLabels().catch((e) => log('label bootstrap skipped:', e.message));
+
+    let queue;
+    try {
+        queue = await Q.loadQueue({ limit: 30 });
+    } catch (e) {
+        fail(`Could not read the work queue: ${e.message}`);
     }
-    console.log('Target file:', target);
 
-    const full = path.join(repoDir, target);
-    const before = fs.readFileSync(full, 'utf8');
-    if (before.length > 60000) { console.log('File too large for a safe free-tier rewrite. Skipping.'); process.exit(78); }
+    const pinned = process.env.AGENT_ISSUE && Number(process.env.AGENT_ISSUE);
+    let candidates = queue.issues;
+    if (pinned) {
+        candidates = candidates.filter((i) => i.number === pinned);
+        if (!candidates.length) fail(`Issue #${pinned} is not in the open, workable queue.`);
+    }
 
-    const after = cleanCode(await gemini(fixPrompt(issue, target, before)));
-    if (!after || after === before.trim()) { console.log('Model returned no change.'); process.exit(78); }
-    if (!isValidJs(after)) { console.log('AI output failed JS syntax check — rejected.'); process.exit(78); }
+    if (!candidates.length) {
+        log('queue is empty — nothing to fix right now.');
+        summary(
+            '### ✅ Autonomous agent ran — queue empty\n\n' +
+            `${llm.count} LLM provider(s) ready. No open, workable issues.\n\n` +
+            'This is a genuine no-op, not a crash: the agent reached the queue and found it clear. ' +
+            'Send feedback in the app, or open an issue, and the next run will pick it up.\n'
+        );
+        output({ have: 'no', reason: 'queue empty' });
+        process.exit(3);
+    }
 
-    fs.writeFileSync(full, after.endsWith('\n') ? after : after + '\n');
-    const pr = {
-        title: 'AI fix: ' + issue.slice(0, 60),
-        body: [
-            '## Autonomous fix (Phase 2) — needs your review',
-            '',
-            'The autonomous system drafted this fix from user feedback.',
-            '',
-            '**Issue:** ' + issue,
-            '**File changed:** `' + target + '`',
-            '**Priority:** ' + (change.priority || 'n/a') + ' · **Reports:** ' + (change.reports || 1),
-            '',
-            '> Drafted by the free Gemini tier. CI has tested it. Please review before merging — ' +
-            'this PR is intentionally NOT auto-merged.'
-        ].join('\n'),
-        file: target
-    };
-    fs.writeFileSync(path.join(repoDir, 'ai-fix-pr.json'), JSON.stringify(pr, null, 2));
-    console.log('Wrote fix to', target, '+ ai-fix-pr.json. Exit 0 → open PR.');
-    process.exit(0);
+    log(`${candidates.length} workable issue(s); ${queue.proposals.length} Firestore proposal(s)`);
+
+    // ── work the highest-priority issue we can actually move ────────────────
+    const skipped = [];
+    for (const issue of candidates) {
+        const number = issue.number;
+        const state = readState(number);
+
+        const stuck = isStuck(state);
+        if (stuck.stuck) {
+            log(`#${number} is stuck (${stuck.reason}) — handing to a human`);
+            if (!DRY) {
+                await Q.addLabels(number, [Q.LABELS.stuck]).catch(() => {});
+                await Q.comment(number,
+                    `### 🛑 Autonomous agent is standing down\n\n` +
+                    `**Reason:** ${stuck.reason}\n\n` +
+                    `I have tried ${state.attempts} time(s) and am not converging on a safe fix. ` +
+                    `Rather than keep churning and opening near-identical pull requests, I am labelling this ` +
+                    `\`${Q.LABELS.stuck}\` so a human can take a look. Remove that label to let me retry.\n` +
+                    FOOTER
+                ).catch(() => {});
+            }
+            skipped.push(`#${number} stuck`);
+            continue;
+        }
+
+        const kind = Q.roleFor(issue);
+        log(`attempting #${number} [${Q.severityOf(issue)}/${kind}]: ${String(issue.title).slice(0, 80)}`);
+
+        let result;
+        try {
+            result = await runSwarm({
+                issue: { number, title: issue.title, body: issue.body, kind },
+                repoDir: REPO_DIR, log,
+            });
+        } catch (e) {
+            // A provider outage is not the agent's fault, but it must be visible.
+            log(`#${number} swarm error: ${e.message}`);
+            skipped.push(`#${number} swarm error: ${e.message.slice(0, 120)}`);
+            continue;
+        }
+
+        if (!result.ok) {
+            log(`#${number} not actionable at stage "${result.stage}": ${result.reason}`);
+            state.attempts += 1;
+            writeState(number, state);
+            if (!DRY) {
+                await Q.comment(number,
+                    `<!-- wf-agent-attempt -->\n` +
+                    `### 🤖 Autonomous attempt ${state.attempts}/${MAX_ATTEMPTS} — no change made\n\n` +
+                    `**Stopped at:** \`${result.stage}\`\n` +
+                    `**Why:** ${result.reason}\n` +
+                    (result.file ? `**File considered:** \`${result.file}\`\n` : '') +
+                    (result.review?.findings?.length ? `\n**Reviewer findings:**\n${result.review.findings.map((f) => `- ${f}`).join('\n')}\n` : '') +
+                    `\nNothing was committed. I will try again on the next scheduled run.\n` +
+                    FOOTER
+                ).catch(() => {});
+            }
+            skipped.push(`#${number} ${result.stage}: ${String(result.reason).slice(0, 100)}`);
+            continue;
+        }
+
+        // ── we have a validated candidate ───────────────────────────────────
+        const sig = signature(result.code);
+        state.attempts += 1;
+        state.signatures = [...(state.signatures || []), sig].slice(-5);
+        writeState(number, state);
+
+        if (DRY) {
+            log(`[dry-run] would write ${result.file} (+${result.testFile || 'no test'})`);
+            output({ have: 'no', reason: 'dry run' });
+            process.exit(3);
+        }
+
+        fs.writeFileSync(path.join(REPO_DIR, result.file),
+            result.code.endsWith('\n') ? result.code : result.code + '\n');
+        log(`wrote ${result.file}`);
+
+        let testWritten = null;
+        if (result.test && result.testFile) {
+            const tp = path.join(REPO_DIR, result.testFile);
+            fs.mkdirSync(path.dirname(tp), { recursive: true });
+            fs.writeFileSync(tp, result.test.endsWith('\n') ? result.test : result.test + '\n');
+            testWritten = result.testFile;
+            log(`wrote ${result.testFile}`);
+        }
+
+        const provs = result.providers || {};
+        const pr = {
+            title: `fix: ${String(issue.title).replace(/^\[(critical|high|medium|low)\]\s*/i, '').slice(0, 68)}`,
+            file: result.file,
+            testFile: testWritten,
+            issue: number,
+            role: result.role,
+            providers: provs,
+            body: [
+                '## Autonomous fix',
+                '',
+                `Closes #${number}`,
+                '',
+                `**Authored by:** ${result.role} agent via \`${provs.author}\``,
+                `**Independently reviewed by:** Agent 5 (Chaos Security) via \`${provs.security || 'unavailable'}\``,
+                `**Security verdict:** ${result.review?.verdict || 'n/a'}${result.review?.reason ? ` — ${result.review.reason}` : ''}`,
+                testWritten
+                    ? `**Proving test:** \`${testWritten}\` written by Agent 4 (QA) via \`${provs.qa}\``
+                    : '**Proving test:** none — this PR needs human review before merge.',
+                '',
+                '### Issue',
+                '> ' + String(issue.title).replace(/\n/g, '\n> '),
+                '',
+                '### Gates already passed before this PR existed',
+                '- Structural check (truncation, placeholders, new `eval`/`innerHTML` sinks, brace balance)',
+                '- `node --check` parse of the rewritten file',
+                '- Independent security review on a different model provider than the author',
+                '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
+                '',
+                '### Still to pass in CI',
+                'Full test suite · multi-model consensus review · OPA/Conftest policy gate · fuzz gate if applicable.',
+                FOOTER,
+            ].join('\n'),
+        };
+        fs.writeFileSync(OUTPUT, JSON.stringify(pr, null, 2) + '\n');
+
+        summary(
+            `### 🤖 Autonomous fix drafted for #${number}\n\n` +
+            `| | |\n|---|---|\n` +
+            `| Issue | #${number} — ${String(issue.title).slice(0, 70)} |\n` +
+            `| Role | ${result.role} |\n` +
+            `| File | \`${result.file}\` |\n` +
+            `| Test | ${testWritten ? `\`${testWritten}\`` : '_none_'} |\n` +
+            `| Author model | \`${provs.author}\` |\n` +
+            `| Reviewer model | \`${provs.security || 'unavailable'}\` |\n` +
+            `| Attempt | ${state.attempts}/${MAX_ATTEMPTS} |\n`
+        );
+
+        if (!DRY) {
+            await Q.addLabels(number, [Q.LABELS.inProgress]).catch(() => {});
+            await Q.comment(number,
+                `<!-- wf-agent-attempt -->\n` +
+                `### 🤖 Fix drafted (attempt ${state.attempts}/${MAX_ATTEMPTS})\n\n` +
+                `I changed \`${result.file}\`${testWritten ? ` and added \`${testWritten}\`` : ''}.\n\n` +
+                `- **Author:** ${result.role} agent via \`${provs.author}\`\n` +
+                `- **Security review:** ${result.review?.verdict} via \`${provs.security || 'unavailable'}\`\n` +
+                `${result.review?.findings?.length ? `- **Noted:** ${result.review.findings.join('; ')}\n` : ''}` +
+                `\nCI will now test it. If everything passes it ships automatically and I will report back here.\n` +
+                FOOTER
+            ).catch(() => {});
+        }
+
+        output({ have: 'yes', file: result.file, test: testWritten || '', issue: String(number), role: result.role });
+        log('done — exit 0 so the workflow validates and ships this');
+        process.exit(0);
+    }
+
+    // ── nothing was actionable ──────────────────────────────────────────────
+    log('no issue could be safely progressed this run');
+    summary(
+        '### ⚠️ Autonomous agent ran but produced no change\n\n' +
+        `Examined ${candidates.length} issue(s):\n\n` +
+        skipped.map((s) => `- ${s}`).join('\n') +
+        '\n\nThis is reported honestly rather than as a success. If the same reason repeats, ' +
+        'the liveness watchdog will open an issue about it.\n'
+    );
+    output({ have: 'no', reason: skipped.slice(0, 3).join(' | ') || 'nothing actionable' });
+    process.exit(3);
 }
 
-// only run main when executed directly (so tests can import the helpers safely)
-const isMain = (() => { try { return path.resolve(process.argv[1] || '') === path.resolve(new URL(import.meta.url).pathname); } catch (_) { return false; } })();
-if (isMain) { main().catch(e => { console.error('agent error:', e.message); process.exit(78); }); }
+const FOOTER = '\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_';
+
+// Only run when executed directly, so the helpers stay unit-testable.
+const invokedDirectly = (() => {
+    try {
+        return process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+    } catch { return false; }
+})();
+
+if (invokedDirectly) {
+    main().catch((e) => {
+        console.error('[agent] ✗ unhandled failure:', e && e.stack || e);
+        summary(`### ❌ Autonomous agent crashed\n\n\`\`\`\n${String(e && e.message || e).slice(0, 1500)}\n\`\`\`\n`);
+        process.exit(1);        // NOT 78 — a crash must never look like success
+    });
+}

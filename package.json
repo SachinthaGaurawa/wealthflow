@@ -10,9 +10,11 @@
   "scripts": {
     "dev": "vercel dev",
     "deploy": "vercel --prod",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "test:watch": "vitest",
-    "test:ci": "vitest run --passWithNoTests --reporter=default"
+    "test:ci": "vitest run --reporter=default",
+    "autonomy:status": "node autonomy/self-check.mjs",
+    "autonomy:agent": "node autonomous-fix-agent.js"
   },
   "keywords": [
     "finance",
