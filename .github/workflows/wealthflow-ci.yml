@@ -8,11 +8,26 @@ name: WealthFlow CI (free)
 on:
   pull_request:
     branches: [main]
+    # `labeled` / `unlabeled` are ESSENTIAL, not cosmetic.
+    #
+    # With the default types (opened, synchronize, reopened) this workflow does not
+    # re-run when a label changes — so adding `human-approved` could never clear the
+    # risk gate below. Worse, RE-RUNNING the existing run does not help either:
+    # a re-run replays the ORIGINAL event payload, in which the label list was still
+    # empty, so `contains(github.event.pull_request.labels.*.name, …)` stays false
+    # forever. The documented escape hatch was unreachable except by pushing a new
+    # commit after the label already existed.
+    #
+    # That is the same failure family as everything else the autonomy work uncovered:
+    # a control that looks present, reports cleanly, and cannot actually be used.
+    # policy-gate.yml already listed these types; this one did not.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch: {}
 
 permissions:
   contents: read
   pull-requests: read
+  issues: read            # the risk gate reads the PR's labels live via the API
 
 jobs:
   test:
@@ -37,32 +52,70 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # Read the label LIVE from the API rather than from github.event.
+      #
+      # The event payload is a snapshot from when the run was queued, so on a re-run
+      # it reports the labels as they were then — not as they are now. Querying the
+      # API means "Re-run failed jobs" works after labelling, which is the obvious
+      # thing to try and previously did nothing.
+      - name: Check for human approval (live, not from the event payload)
+        id: approval
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          # Fallback to the payload for workflow_dispatch, where there is no PR.
+          PAYLOAD_HAS: ${{ contains(github.event.pull_request.labels.*.name, 'human-approved') }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          # FAIL CLOSED. Caught by the consensus board reviewing this very file:
+          # the first version kept the event-payload value as a fallback, so if
+          # the API call failed, HAS silently retained the stale payload value.
+          # If someone REMOVED the label and the API call then errored, that
+          # would fail OPEN and allow a sensitive change through on a label that
+          # no longer exists.
+          #
+          # For a pull request the API is the ONLY authority. An API failure now
+          # means "not approved", never "keep whatever the snapshot said".
+          if [ -n "${PR:-}" ]; then
+            if LIVE=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | join(",")' 2>/dev/null); then
+              echo "labels currently on the PR: ${LIVE:-<none>}"
+              HAS=false
+              case ",$LIVE," in
+                *,human-approved,*) HAS=true ;;
+              esac
+            else
+              echo "::warning::Could not read the PR's labels from the API — treating this as NOT approved."
+              HAS=false
+            fi
+          else
+            # No PR context (workflow_dispatch). There is no label to read, so the
+            # payload expression is the only available signal.
+            HAS="${PAYLOAD_HAS:-false}"
+          fi
+
+          echo "has_human_approval=$HAS" >> "$GITHUB_OUTPUT"
+          echo "human-approved: $HAS"
+
+      # Merge-base-correct, and it fails rather than guessing. Replaces the
+      # `git fetch --depth=1` + `git diff base...HEAD` pattern that aborted with
+      # "fatal: origin/main...HEAD: no merge base" as soon as main advanced —
+      # which happens hourly here, because merchant-sync pushes to main every hour.
+      - name: Resolve changed files
+        id: changed
+        uses: ./.github/actions/changed-files
+
       - name: Classify changed files
         env:
-          BASE: ${{ github.base_ref }}
           # PRs carrying this label have a human approver and may touch sensitive paths.
-          HAS_HUMAN_APPROVAL: ${{ contains(github.event.pull_request.labels.*.name, 'human-approved') }}
+          HAS_HUMAN_APPROVAL: ${{ steps.approval.outputs.has_human_approval }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
         run: |
-          set -e
-          
-          # Determine the base for comparison
-          if [ -z "$BASE" ]; then
-            BASE="main"
-          fi
-          
-          # Try to fetch the base branch
-          git fetch origin "$BASE" --depth=1 2>/dev/null || true
-          
-          # Get changed files - try multiple methods
-          if [ -n "$(git rev-parse origin/$BASE 2>/dev/null)" ]; then
-            CHANGED=$(git diff --name-only "origin/$BASE...HEAD")
-          elif [ -n "$(git rev-parse HEAD~1 2>/dev/null)" ]; then
-            CHANGED=$(git diff --name-only HEAD~1...HEAD)
-          else
-            # Fallback: show all files if we can't determine diff
-            CHANGED=$(git diff --name-only --cached)
-          fi
-          
+          set -euo pipefail
+          CHANGED="$CHANGED_FILES"
           echo "Changed files:"; echo "$CHANGED"
 
           # SENSITIVE PATHS — money, auth, security, data rules, the service worker,

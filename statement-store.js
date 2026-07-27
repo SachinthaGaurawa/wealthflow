@@ -28,7 +28,26 @@ export const config = {
 };
 
 const PROJECT_ID  = 'wealthflow-6dffb';
-const API_KEY     = 'AIzaSyBpIRHoNQJTeMIVYime_oVjBXiQWNH18K4';
+// The Firebase Web apiKey is a public project identifier, not a secret — but it is
+// read from the environment here so no credential-shaped literal lives in the repo.
+// That keeps the CI secret scanner strict: it can reject every AIzaSy... literal
+// outright, instead of needing an allowlist that a real Gemini key could hide behind.
+const API_KEY     = process.env.FIREBASE_API_KEY;
+
+// Fail loudly, not mysteriously. This value moved from a hardcoded literal to an
+// environment variable; if it is not configured, say so plainly instead of
+// issuing Firestore requests with `key=undefined` and returning a confusing 400.
+function _requireFirebaseKey(res) {
+    if (API_KEY) return true;
+    const msg = 'FIREBASE_API_KEY is not configured on this deployment. '
+        + 'Set it in Vercel → Project → Settings → Environment Variables. '
+        + '(It is the public Firebase Web apiKey — no longer hardcoded in the repo.)';
+    try {
+        if (res && res.status) { res.status(503).json({ ok: false, error: 'firebase_key_not_configured', detail: msg }); return false; }
+    } catch (_) {}
+    throw new Error(msg);
+}
+
 const FS_BASE     = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 const APP_URL     = 'https://wealthflow-personal.vercel.app/';
 const MAX_DOC_FS  = 900 * 1024;     // Firestore single-document soft cap
@@ -55,6 +74,7 @@ function wrapHtml(html, name) {
 }
 
 export default async function handler(req, res) {
+    if (!_requireFirebaseKey(res)) return;
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');

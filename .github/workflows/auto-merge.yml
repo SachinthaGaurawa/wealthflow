@@ -1,30 +1,129 @@
 name: Auto-merge safe changes (free)
 
-# When an AI-authored (or any) PR passes ALL required checks AND does not touch a
-# sensitive path, merge it automatically. Sensitive PRs are skipped here and wait
-# for a human (enforced by the risk-gate job + CODEOWNERS review). 100% free.
+# =============================================================================
+# THE THIRD DEADLOCK, FIXED.
+#
+# This workflow used to be gated on `contains(labels.*.name, 'auto-safe')` — but
+# NOTHING in the entire repository ever applied that label. Not the agent, not
+# CI, not a bot. The condition was permanently false, so no pull request could
+# ever auto-merge, and even a perfect autonomous fix would sit forever waiting
+# for a human who was never notified.
+#
+# The `classify` job below applies the label itself, but only after proving the
+# change is genuinely safe:
+#   • it touches no sensitive path (money, auth, crypto, rules, service worker,
+#     dependency manifests, CI, policy, the autonomy engine);
+#   • it stays inside the blast-radius cap;
+#   • it ships with a test.
+#
+# Nothing here can bypass a gate. Branch protection still requires the test
+# suite, the consensus board, and the OPA policy gate to be green, and GitHub's
+# auto-merge only fires once every required check passes. `auto-safe` grants
+# permission to merge WITHOUT WAITING FOR A HUMAN — it does not grant permission
+# to merge while red.
+#
+# SECURITY: `pull_request_target` runs in the context of the base branch, so a
+# fork PR cannot rewrite this logic to label itself. This workflow never checks
+# out PR code; it only reads the changed-file list from the API.
+# =============================================================================
 
 on:
   pull_request_target:
-    types: [labeled, unlabeled, synchronize, opened, reopened]
-  check_suite:
-    types: [completed]
+    types: [opened, reopened, synchronize, labeled, unlabeled]
 
 permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
-  auto-merge:
+  classify:
+    name: Decide whether this change is auto-safe
     runs-on: ubuntu-latest
-    # only consider PRs explicitly marked safe (e.g. by the AI agent or a rule)
-    if: contains(github.event.pull_request.labels.*.name, 'auto-safe')
+    outputs:
+      safe: ${{ steps.decide.outputs.safe }}
+      reason: ${{ steps.decide.outputs.reason }}
     steps:
-      - name: Enable auto-merge (merges automatically once required checks pass)
+      - name: Inspect the changed files via the API
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FILES=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          echo "Changed files:"; echo "$FILES"
+          COUNT=$(echo "$FILES" | grep -c . || true)
+
+          # Must mirror policy/wealthflow.rego and autonomy/agent-swarm.mjs. If the
+          # three ever disagree, the OPA policy gate is the one that actually blocks —
+          # this list only decides whether to skip waiting for a human.
+          SENSITIVE='^(index\.html|sw\.js|.*\.rules|firebase\.json|vercel\.json|package(-lock)?\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|release\.cjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js)$|auth|oauth|crypto|fifo-reconcile|allocator|send-otp|verify-otp|approve-release|release-brain'
+
+          HITS=$(echo "$FILES" | grep -iE "$SENSITIVE" || true)
+          if [ -n "$HITS" ]; then
+            echo "safe=no" >> "$GITHUB_OUTPUT"
+            echo "reason=touches a sensitive path: $(echo "$HITS" | tr '\n' ' ' | cut -c1-200)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Blast radius — a runaway agent or an injection payload is not "safe".
+          LOGIC=$(echo "$FILES" | grep -iE '\.(js|mjs|cjs)$' | grep -viE '(^|/)test/|[._]test\.|\.spec\.' | grep -c . || true)
+          if [ "${LOGIC:-0}" -gt 8 ]; then
+            echo "safe=no" >> "$GITHUB_OUTPUT"
+            echo "reason=changes $LOGIC logic files — too large to merge unattended" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A behavioural change must arrive with a test (same rule as rego RULE 3).
+          if [ "${LOGIC:-0}" -gt 0 ]; then
+            if ! echo "$FILES" | grep -qiE '(^|/)tests?/|[._]test\.[a-z]+$|\.spec\.[a-z]+$'; then
+              echo "safe=no" >> "$GITHUB_OUTPUT"
+              echo "reason=changes logic with no accompanying test" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "safe=yes" >> "$GITHUB_OUTPUT"
+          echo "reason=$COUNT file(s), no sensitive path, test included" >> "$GITHUB_OUTPUT"
+
+      - name: Apply or revoke the auto-safe label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          SAFE: ${{ steps.decide.outputs.safe }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        shell: bash
+        run: |
+          gh label create auto-safe --color 0E8A16 \
+            --description "Validated non-sensitive change — eligible for auto-merge" 2>/dev/null || true
+          if [ "$SAFE" = "yes" ]; then
+            gh pr edit "$PR" --add-label auto-safe
+            echo "### ✅ Marked auto-safe" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh pr edit "$PR" --remove-label auto-safe 2>/dev/null || true
+            echo "### 🖐️ Needs a human" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$REASON" >> "$GITHUB_STEP_SUMMARY"
+
+  auto-merge:
+    name: Enable auto-merge
+    needs: classify
+    if: needs.classify.outputs.safe == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge (GitHub merges once every required check is green)
         uses: peter-evans/enable-pull-request-automerge@v3
         with:
           pull-request-number: ${{ github.event.pull_request.number }}
           merge-method: squash
-      # Branch protection still enforces: required status checks (tests + risk-gate)
-      # and CODEOWNERS review on sensitive paths. So "auto-safe" can never bypass the
-      # gate — if the risk-gate job fails, the merge simply will not happen.
+        # Branch protection remains the real gate: required status checks (tests,
+        # consensus board, policy gate, fuzz gate) plus CODEOWNERS review on
+        # sensitive paths. If any of those fail, the merge simply never happens.

@@ -8,8 +8,18 @@
  *
  *  ENV:
  *    EDENAI_API_KEY                 EdenAI (free tier) for classification
- *    GITHUB_MODELS_TOKEN or GH_PAT  token with `issues:write` on the repo
- *    GITHUB_REPO                    e.g. "SachinthaGaurawa/wealthflow"
+ *    GH_PAT / GITHUB_TOKEN /        token with `issues:write` on the repo
+ *      GITHUB_MODELS_TOKEN          (any one)
+ *    GITHUB_REPO or                 e.g. "SachinthaGaurawa/wealthflow"
+ *      GITHUB_REPOSITORY
+ *
+ *  NOTE ON WHY THIS FILE MATTERED BUT DID NOTHING:
+ *    This endpoint has existed all along and is the ONLY path by which user
+ *    feedback becomes something the autonomous pipeline can act on — but no
+ *    client code ever called it. Feedback went to Firestore plus an optional
+ *    email and stopped there. wealthflow-update-system.js now POSTs here on
+ *    every submission, and remembers the returned issue number so the app can
+ *    report back when the work is finished (see /api/feedback-status).
  *
  *  Safety: input is length-capped and the model output is strictly parsed/validated
  *  (never trusted as code). If EdenAI is unavailable it falls back to a local
@@ -78,10 +88,11 @@ export default async function handler(req, res) {
     if (typeof body === 'string') { try { body = JSON.parse(body); } catch (_) { body = {}; } }
     body = body || {};
     const text = String(body.text || body.feedback || '').trim().slice(0, MAX_LEN);
+    const diagnostics = body.diagnostics && typeof body.diagnostics === 'object' ? body.diagnostics : null;
     if (!text) { return send(res, { ok: false, error: 'no feedback text' }, 400); }
 
-    const repo = process.env.GITHUB_REPO;
-    const token = process.env.GITHUB_MODELS_TOKEN || process.env.GH_PAT;
+    const repo = process.env.GITHUB_REPO || process.env.GITHUB_REPOSITORY;
+    const token = process.env.GH_PAT || process.env.GITHUB_TOKEN || process.env.GITHUB_MODELS_TOKEN;
 
     // classify (EdenAI, with safe local fallback)
     const cls = (await edenClassify(text)) || localClassify(text);
@@ -105,25 +116,92 @@ export default async function handler(req, res) {
     const issueBody = [
         '## Autonomous feedback issue',
         '',
-        '**Type:** ' + cls.type + '  ·  **Severity:** ' + cls.severity,
+        '**Type:** ' + cls.type + '  ·  **Severity:** ' + cls.severity +
+            (body.version ? '  ·  **App version:** ' + String(body.version).slice(0, 20) : ''),
         '',
         '### User feedback',
         '> ' + text.replace(/\n/g, '\n> '),
         '',
-        '_Filed automatically by the feedback triage agent. The autonomous CI/CD pipeline will pick this up._'
-    ].join('\n');
+        // The "send system diagnosis" tick used to attach only the user-agent and
+        // screen size. It now sends the recorded errors, stack traces and health
+        // snapshot, and they are rendered here so the fix agent can read them —
+        // otherwise the diagnostics would be collected and then discarded.
+        diagnosticsSection(diagnostics),
+        '_Filed automatically by the feedback triage agent. The autonomous pipeline picks this up ' +
+        'on the `issues: opened` trigger, so work starts within minutes._'
+    ].filter(Boolean).join('\n');
 
     try {
         const r = await fetch('https://api.github.com/repos/' + repo + '/issues', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'wealthflow-triage' },
-            body: JSON.stringify({ title: title, body: issueBody, labels: [labelType, fp, 'autonomous'] })
+            body: JSON.stringify({ title: title, body: issueBody, labels: [labelType, fp, 'autonomous', 'user-feedback'] })
         });
         const created = await r.json();
         if (r.ok) { out.issue = created.number; } else { out.ok = false; out.error = 'github issue create failed'; out.detail = created && created.message; }
     } catch (e) { out.ok = false; out.error = e.message; }
 
     return send(res, out, out.ok ? 200 : 502);
+}
+
+
+/**
+ * Render the client's diagnostics into readable markdown.
+ * Everything is length-capped: an issue body over 65,536 characters is rejected
+ * by GitHub, which would silently lose the whole report.
+ */
+export function diagnosticsSection(d) {
+    if (!d || typeof d !== 'object') return '';
+    const L = ['### System diagnosis', ''];
+
+    const facts = [
+        ['App page', d.activePage], ['Device', d.ua], ['Screen', d.screen],
+        ['Viewport', d.viewport], ['DPR', d.dpr], ['Language', d.lang],
+        ['Timezone', d.tz], ['Installed as app', d.standalone], ['Online', d.online],
+        ['DOM nodes', d.domNodes],
+    ].filter(([, v]) => v !== undefined && v !== null && v !== '');
+    if (facts.length) {
+        L.push('| | |', '|---|---|');
+        for (const [k, v] of facts) L.push('| ' + k + ' | ' + String(v).slice(0, 200) + ' |');
+        L.push('');
+    }
+
+    if (d.detectedIssues && d.detectedIssues.length) {
+        L.push('**The app detected these problems itself:**', '');
+        for (const i of d.detectedIssues.slice(0, 12)) {
+            const sev = (i && i.severity) ? i.severity.toUpperCase() : 'INFO';
+            const msg = (i && (i.message || i.msg || i.title)) || JSON.stringify(i);
+            L.push('- `' + sev + '` ' + String(msg).slice(0, 300));
+        }
+        L.push('');
+    }
+
+    if (d.errorSummary) {
+        const es = d.errorSummary;
+        L.push('**Error log:** ' + (es.total || 0) + ' total, ' + (es.fromThisBuild || 0) + ' on this build.', '');
+        if (es.uniqueMessages && es.uniqueMessages.length) {
+            for (const m of es.uniqueMessages.slice(0, 10)) L.push('- ' + String(m).slice(0, 250));
+            L.push('');
+        }
+    }
+
+    if (d.errors && d.errors.length) {
+        L.push('<details><summary>Recent errors with stack traces</summary>', '');
+        for (const e of d.errors.slice(0, 6)) {
+            L.push('```', String(e.msg || '').slice(0, 300), String(e.stack || '').slice(0, 800), '```');
+            L.push('_page: ' + (e.page || '?') + ' · build: ' + (e.ver || '?') + '_', '');
+        }
+        L.push('</details>', '');
+    }
+
+    if (d.health) {
+        let h = '';
+        try { h = JSON.stringify(d.health, null, 1).slice(0, 4000); } catch (_) { h = '(unserialisable)'; }
+        L.push('<details><summary>Health snapshot</summary>', '', '```json', h, '```', '</details>', '');
+    }
+
+    if (d._trimmed) L.push('_(diagnostics were trimmed on the device to keep the payload small)_', '');
+    return L.join('\n');
 }
 
 // exported for tests

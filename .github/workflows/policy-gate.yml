@@ -24,16 +24,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Merge-base-correct. The previous inline version was
+      #   git fetch origin "$BASE" --depth=1 || true
+      #   git diff --name-only "origin/$BASE...HEAD" 2>/dev/null || git diff --name-only HEAD~1...HEAD
+      # which SILENTLY fell back to diffing against HEAD~1 whenever the depth-1
+      # fetch left no merge base. On a multi-commit PR that yields the wrong file
+      # list, so this gate could pass a change to a sensitive path merely because
+      # that change was not in the final commit. It now fails instead of guessing.
+      - name: Resolve changed files
+        id: changed
+        uses: ./.github/actions/changed-files
+
       - name: Build PR input for policy evaluation
         env:
-          BASE: ${{ github.base_ref }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         shell: bash
         run: |
-          set -e
-          git fetch origin "$BASE" --depth=1 || true
-          FILES=$(git diff --name-only "origin/$BASE...HEAD" 2>/dev/null || git diff --name-only HEAD~1...HEAD)
-          export FILES_RAW="$FILES"
+          set -euo pipefail
+          export FILES_RAW="${{ steps.changed.outputs.files }}"
           node -e '
             const files=(process.env.FILES_RAW||"").split("\n").filter(Boolean);
             const labels=JSON.parse(process.env.LABELS||"[]");

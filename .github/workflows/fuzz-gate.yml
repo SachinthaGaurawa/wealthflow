@@ -32,14 +32,21 @@ jobs:
         with:
           node-version: '24'
 
+      # Merge-base-correct; see .github/actions/changed-files. The old inline
+      # version silently diffed against HEAD~1 when the depth-1 fetch left no
+      # merge base, which could hide a sensitive-path change from this gate
+      # entirely — the fuzz suite would then never run on it.
+      - name: Resolve changed files
+        id: changed
+        uses: ./.github/actions/changed-files
+
       - name: Detect sensitive-path changes
         id: detect
         env:
-          BASE: ${{ github.base_ref }}
+          FILES: ${{ steps.changed.outputs.files }}
         shell: bash
         run: |
-          git fetch origin "$BASE" --depth=1 || true
-          FILES=$(git diff --name-only "origin/$BASE...HEAD" 2>/dev/null || git diff --name-only HEAD~1...HEAD)
+          set -uo pipefail
           echo "$FILES"
           if echo "$FILES" | grep -E 'firestore\.rules|firebase\.json|auth|oauth|crypto|fifo-reconcile|allocator|send-otp|verify-otp' >/dev/null; then
             echo "sensitive=yes" >> "$GITHUB_OUTPUT"

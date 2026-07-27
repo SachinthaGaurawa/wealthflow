@@ -32,7 +32,31 @@ jobs:
       - name: Multi-model consensus
         env:
           BASE_REF: ${{ github.base_ref }}
+          # So the board can post its verdict onto the PR. Until now the only
+          # record of a blocking decision was buried in the job log behind ~80
+          # lines of runner output — effectively invisible.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Every provider is passed so the router can fail over. Reviewers pin
+          # themselves to DIFFERENT providers, which is what makes the board
+          # independent rather than one model voting three times.
+          #
+          # ANTHROPIC_API_KEY is deliberately absent: Claude authors the fixes in
+          # claude-autonomous.yml, so it must never sit on the panel reviewing its
+          # own work.
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           WealthFlow_API_Key: ${{ secrets.WealthFlow_API_Key }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
         run: node consensus-review.mjs
