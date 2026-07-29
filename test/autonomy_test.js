@@ -430,3 +430,54 @@ describe('agent: stuck detection stops the churn', () => {
         expect(isStuck({}).stuck).toBe(false);
     });
 });
+
+// ── the human override on the consensus board ────────────────────────────────
+// The board's report tells the reader to apply `human-approved` when a FAIL
+// cites no executable line. That advice was UNREACHABLE: nothing read the label
+// and the workflow did not re-run on `labeled`, so one flaky model's
+// evidence-free FAIL blocked a pull request forever — including the nodemailer
+// security patch. These tests pin the escape hatch, and pin that it fails CLOSED.
+describe('consensus: the human-approved override', () => {
+    const OK = (labels) => async () => ({ ok: true, json: async () => labels });
+    const env = { GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r', PR_NUMBER: '10' };
+
+    it('detects the label when present', async () => {
+        const { hasHumanApproval } = await import('../consensus-review.mjs');
+        expect(await hasHumanApproval(env, OK([{ name: 'human-approved' }]))).toBe(true);
+        expect(await hasHumanApproval(env, OK([{ name: 'ai-fix' }, { name: 'human-approved' }]))).toBe(true);
+    });
+
+    it('is case-insensitive but not substring-loose', async () => {
+        const { hasHumanApproval } = await import('../consensus-review.mjs');
+        expect(await hasHumanApproval(env, OK([{ name: 'HUMAN-APPROVED' }]))).toBe(true);
+        expect(await hasHumanApproval(env, OK([{ name: 'not-human-approved-yet' }]))).toBe(false);
+    });
+
+    it('returns false when the label is absent', async () => {
+        const { hasHumanApproval } = await import('../consensus-review.mjs');
+        expect(await hasHumanApproval(env, OK([{ name: 'ai-fix' }]))).toBe(false);
+        expect(await hasHumanApproval(env, OK([]))).toBe(false);
+    });
+
+    it('FAILS CLOSED when the label cannot be verified', async () => {
+        const { hasHumanApproval } = await import('../consensus-review.mjs');
+        // An override we cannot verify is not an override. Each of these must
+        // THROW so the caller blocks, rather than returning a soft `false` that
+        // could later be mistaken for a successful "no label" answer.
+        await expect(hasHumanApproval({}, OK([{ name: 'human-approved' }]))).rejects.toThrow();
+        await expect(hasHumanApproval({ GITHUB_TOKEN: 't' }, OK([]))).rejects.toThrow();
+        await expect(hasHumanApproval(env, async () => ({ ok: false, status: 403 }))).rejects.toThrow(/403/);
+        await expect(hasHumanApproval(env, async () => ({ ok: true, json: async () => ({}) }))).rejects.toThrow(/non-array/);
+        await expect(hasHumanApproval(env, async () => { throw new Error('network down'); })).rejects.toThrow(/network down/);
+    });
+
+    it('does not treat the payload as authoritative (the label race)', async () => {
+        // A payload captured when the run was queued cannot contain a label added
+        // a second later — the exact race that produced stale failures on PR #10.
+        // The lookup must hit the API, so a stale env must not fabricate a pass.
+        const { hasHumanApproval } = await import('../consensus-review.mjs');
+        let called = false;
+        await hasHumanApproval(env, async () => { called = true; return { ok: true, json: async () => [] }; });
+        expect(called).toBe(true);
+    });
+});

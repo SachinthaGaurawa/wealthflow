@@ -10,7 +10,13 @@ name: Consensus review board (Phase 3)
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # `labeled`/`unlabeled` are REQUIRED, not decorative. The board's own report
+    # tells the reader to apply `human-approved` when a FAIL cites no executable
+    # line — but without these triggers the label never re-runs the board, so
+    # that advice was unreachable and an evidence-free FAIL from one flaky model
+    # blocked the pull request forever. Adding a label must be able to change the
+    # outcome, or the label is theatre.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
