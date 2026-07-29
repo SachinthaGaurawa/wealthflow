@@ -275,6 +275,26 @@ function summary(md) {
 }
 
 /** Post the board's verdict onto the PR so the decision is actually visible. */
+/** Does this PR carry the `human-approved` label, read LIVE from the API? */
+export async function hasHumanApproval(env = process.env, fetchImpl = fetch) {
+    const token = env.GITHUB_TOKEN || env.GH_TOKEN;
+    const repo = env.GITHUB_REPOSITORY;
+    const pr = env.PR_NUMBER;
+    // No way to check is not the same as "approved". Refuse rather than guess.
+    if (!token || !repo || !pr) throw new Error('cannot verify labels (missing token/repo/PR)');
+    const r = await fetchImpl(`https://api.github.com/repos/${repo}/issues/${pr}/labels`, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'wealthflow-consensus',
+        },
+    });
+    if (!r.ok) throw new Error(`labels lookup → ${r.status}`);
+    const labels = await r.json();
+    if (!Array.isArray(labels)) throw new Error('labels lookup returned a non-array');
+    return labels.some((l) => String(l?.name || l).toLowerCase() === 'human-approved');
+}
+
 async function postToPr(body) {
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
     const repo = process.env.GITHUB_REPOSITORY;
@@ -404,14 +424,48 @@ async function main() {
             ? '\n**Concerns raised:**\n' + votes.flatMap((v) => v.concerns.map((c) => `- _${v.name}_: ${c}`)).join('\n') + '\n'
             : '');
 
-    summary(report);
+    // ── the human override ──────────────────────────────────────────────────
+    // The report above tells the reader to "apply `human-approved`" when a FAIL
+    // cites no executable line. Until now that advice was UNREACHABLE: nothing
+    // here read the label, and the workflow did not even re-run on `labeled`.
+    // So one flaky model's evidence-free FAIL could permanently block a pull
+    // request — including an urgent security patch — with no way out but pushing
+    // an empty commit. That is the same deadlock as the `auto-safe` label that
+    // nothing ever applied, and advice you cannot act on is worse than none.
+    //
+    // The label is read LIVE from the API rather than from the event payload:
+    // a payload captured when the run was queued does not contain a label added
+    // a second later, which is exactly the race that produced the stale failures
+    // on the nodemailer PR. On any lookup error we FAIL CLOSED — an override we
+    // cannot verify is not an override.
+    let overridden = false;
+    if (!result.merge) {
+        let approved;
+        try {
+            approved = await hasHumanApproval();
+        } catch (e) {
+            console.warn(`human-approved lookup failed (${e.message}) — failing closed.`);
+            approved = false;
+        }
+        if (approved) overridden = true;
+    }
+
+    const finalReport = overridden
+        ? report
+          + '\n> ✅ **Overridden by `human-approved`.** A human reviewed the objection above and accepted the\n'
+          + '> change. The board\'s verdict is preserved on the record rather than erased — an override is a\n'
+          + '> documented decision, not a deleted one.\n'
+        : report;
+
+    summary(finalReport);
     // Put the verdict where a human will actually see it. Until now the only
     // record was buried in the job log behind ~80 lines of runner output, which
     // makes a blocking decision effectively invisible.
-    await postToPr(report);
+    await postToPr(finalReport);
 
-    console.log('Decision:', result.merge ? 'PASS' : 'BLOCK', '—', result.reason);
-    process.exit(result.merge ? 0 : 1);
+    const merge = result.merge || overridden;
+    console.log('Decision:', merge ? (overridden ? 'PASS (human override)' : 'PASS') : 'BLOCK', '—', result.reason);
+    process.exit(merge ? 0 : 1);
 }
 
 const invokedDirectly = (() => {
