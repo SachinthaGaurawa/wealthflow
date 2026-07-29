@@ -97,7 +97,7 @@
         f = f.replace(/(^|\n)[ \t]*[\-•]\s+(.+)/g, '$1<div class="ai-bullet">$2</div>');
 
         // ── numbered list with badge ────────────────────────────────────────────
-        f = f.replace(/(^|\n)[ \t]*(\d{1,2})[.)]\s+(.+)/g, '$1<div class="ai-numbered"><span class="ai-num">$2</span> <span>$3</span></div>');
+        f = f.replace(/(^|\n)[ \t]*(\d{1,3})[.)]\s+(.+)/g, '$1<div class="ai-numbered"><span class="ai-num">$2</span> <span>$3</span></div>');
 
         // ── money highlight (optional) ──────────────────────────────────────────
         if (opts.money !== false) {
