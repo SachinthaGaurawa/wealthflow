@@ -20,11 +20,11 @@ import path from 'node:path';
 let WFFmt;
 
 beforeAll(() => {
-    // Browser IIFE modules resolve a bare `window`; in node, evaluating the
-    // source with an injected `window` param is the most robust load, and needs
-    // no DOM and no dependency.
+    // Load the browser IIFE hermetically: evaluate the source with `window`
+    // injected as a function parameter, so the module's bare `window` reference
+    // resolves through closure. This needs no DOM, no dependency, and — crucially
+    // — never touches globalThis, so it cannot pollute other test files.
     const win = {};
-    globalThis.window = win;
     const src = fs.readFileSync(path.join(process.cwd(), 'wealthflow-format.js'), 'utf8');
     // eslint-disable-next-line no-new-func
     new Function('window', src)(win);
