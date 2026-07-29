@@ -328,28 +328,43 @@ async function main() {
     const votes = [];
     for (const r of REVIEWERS) {
         try {
-            const res = await chat({
-                system: r.system,
-                prompt: prompt(r, diff, truncated),
-                prefer: r.prefer,
-                exclude: used,
-                maxTokens: 1200,
-                temperature: 0,
-            });
+            // Retry on `unclear`. A reviewer that returns an unparseable answer
+            // has NOT objected — it has produced a parse failure, which is
+            // transient. Blocking a merge on one model's garbled reply (while the
+            // other reviewers pass) is a false block; this exact thing blocked the
+            // first real autonomous PR when Gemini returned an unclear verdict.
+            // Re-ask up to twice; only a clear PASS/FAIL ends the loop.
+            let res, vote = 'unclear', parsed = {};
+            for (let attempt = 0; attempt < 3; attempt++) {
+                res = await chat({
+                    system: r.system,
+                    prompt: prompt(r, diff, truncated) + (attempt ? '\n\nReturn STRICTLY the one JSON object described above and nothing else.' : ''),
+                    prefer: r.prefer,
+                    exclude: used,
+                    maxTokens: 1200,
+                    temperature: 0,
+                });
+                vote = parseVote(res.text);
+                parsed = extractJson(res.text) || {};
+                if (vote === 'pass' || vote === 'fail') break;
+                console.log(`  ${r.name} (${res.provider}) → unclear (attempt ${attempt + 1}/3), retrying…`);
+            }
             used.push(res.provider);
-            const vote = parseVote(res.text);
-            const parsed = extractJson(res.text) || {};
             const evidence = String(parsed.evidence || '').slice(0, 300);
+            // After retries, a still-`unclear` reviewer is a parse failure, not an
+            // objection — count it as a non-vote (unavailable) so it neither
+            // blocks nor silently approves. A genuine FAIL always blocks.
+            const finalVote = vote === 'unclear' ? 'unavailable' : vote;
             votes.push({
                 name: r.name,
-                vote,
+                vote: finalVote,
                 provider: res.provider,
-                reason: String(parsed.reason || '').slice(0, 300),
+                reason: String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
                 evidence,
                 concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
             });
-            console.log(`  ${r.name} (${res.provider}) → ${vote.toUpperCase()}${parsed.reason ? `: ${parsed.reason}` : ''}`);
-            if (vote === 'fail') {
+            console.log(`  ${r.name} (${res.provider}) → ${finalVote.toUpperCase()}${parsed.reason ? `: ${parsed.reason}` : ''}`);
+            if (finalVote === 'fail') {
                 // An unsubstantiated FAIL still blocks — we fail closed on security.
                 // But it is flagged loudly, because "FAIL with no citable line" is the
                 // signature of a reviewer reacting to documentation rather than code,

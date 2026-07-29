@@ -103,7 +103,15 @@ export function isAllowed(file, patternId, line) {
 
 /** Mask a secret for safe display — never print the whole thing. */
 export function mask(secret) {
-    const s = String(secret || '');
+    // `String(x)` THROWS on an object with a non-callable toString, e.g.
+    // `String({ toString: {} })` → "Cannot convert object to primitive value".
+    // The property suite caught this via fc.anything(); it is the same class of
+    // crash the fuzz gate found in substantive.cjs::normaliseLine. A display
+    // helper must never be the thing that throws.
+    let s;
+    if (secret == null) s = '';
+    else if (typeof secret === 'string') s = secret;
+    else { try { s = String(secret); } catch (_) { return '***'; } }
     if (s.length <= 12) return '*'.repeat(s.length);
     return `${s.slice(0, 8)}…${'*'.repeat(6)}… (${s.length} chars)`;
 }

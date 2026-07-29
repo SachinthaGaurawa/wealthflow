@@ -137,6 +137,15 @@ describe('secret-scan: safe reporting', () => {
         expect(mask('')).toBe('');
     });
 
+    it('does not throw on an object whose String() coercion throws (fuzz-caught regression)', () => {
+        // String({ toString: {} }) → "Cannot convert object to primitive value".
+        // The property test caught this probabilistically; pin it deterministically.
+        expect(() => mask({ toString: {} })).not.toThrow();
+        expect(() => mask({ toString: null, valueOf: null })).not.toThrow();
+        expect(() => mask(Object.create(null))).not.toThrow();
+        expect(mask({ toString: {} })).toBe('***');
+    });
+
     it('never throws on odd input', () => {
         fc.assert(fc.property(fc.anything(), (x) => {
             expect(() => mask(x)).not.toThrow();

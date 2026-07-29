@@ -16,7 +16,10 @@ import {
 import {
     isSensitive, candidateFiles, resolvePick, parseVerdict, structuralCheck, ROLES, roleFor,
 } from '../autonomy/agent-swarm.mjs';
-import { severityOf, roleFor as queueRoleFor, rankIssues, attemptsFrom } from '../autonomy/work-queue.mjs';
+import {
+    severityOf, roleFor as queueRoleFor, rankIssues, attemptsFrom,
+    claimedIssueOf, isWorkable, LABELS,
+} from '../autonomy/work-queue.mjs';
 import { signature, isStuck } from '../autonomous-fix-agent.js';
 
 import { runs } from './fuzz-config.js';
@@ -347,6 +350,50 @@ describe('work-queue: triage', () => {
             { body: '<!-- wf-agent-attempt -->\nattempt 2' },
         ])).toBe(2);
         expect(attemptsFrom([])).toBe(0);
+    });
+});
+
+// ── dedup: one issue never gets two PRs ───────────────────────────────────────
+// The first live run produced issue #3 → PR #4 AND PR #5, seconds apart. These
+// tests pin the guard that stops the second run from opening a duplicate.
+describe('work-queue: an issue with an open fix PR is not re-worked', () => {
+    it('recovers the issue number from the agent\'s branch name', () => {
+        expect(claimedIssueOf({ head: { ref: 'ai-fix/issue-3-1785302490' } })).toBe(3);
+        expect(claimedIssueOf({ head: { ref: 'ai-fix/issue-42-1699999999' } })).toBe(42);
+        expect(claimedIssueOf({ headRefName: 'ai-fix/issue-7-1' })).toBe(7);   // GraphQL shape
+    });
+
+    it('falls back to a closing keyword in the PR body', () => {
+        expect(claimedIssueOf({ head: { ref: 'feature/manual' }, body: 'Closes #12' })).toBe(12);
+        expect(claimedIssueOf({ head: { ref: 'x' }, body: 'this fixes #8 finally' })).toBe(8);
+        expect(claimedIssueOf({ head: { ref: 'x' }, body: 'resolved #99.' })).toBe(99);
+    });
+
+    it('returns null when a PR references no issue — and never throws', () => {
+        expect(claimedIssueOf({ head: { ref: 'chore/deps' }, body: 'bump' })).toBeNull();
+        expect(claimedIssueOf({})).toBeNull();
+        expect(claimedIssueOf(null)).toBeNull();
+        expect(claimedIssueOf(undefined)).toBeNull();
+    });
+
+    it('never throws on adversarial PR shapes', () => {
+        fc.assert(fc.property(fc.anything(), (pr) => {
+            expect(() => claimedIssueOf(pr)).not.toThrow();
+        }), { numRuns: runs(300) });
+    });
+
+    it('excludes an issue that already has an open fix PR', () => {
+        const claimed = new Set([3]);
+        expect(isWorkable({ number: 3 }, claimed)).toBe(false);   // PR #4/#5 duplicate, blocked
+        expect(isWorkable({ number: 4 }, claimed)).toBe(true);    // an unclaimed issue is fine
+    });
+
+    it('still filters the labels it always did', () => {
+        expect(isWorkable({ number: 1, pull_request: {} })).toBe(false);           // a PR, not an issue
+        expect(isWorkable({ number: 2, labels: [{ name: LABELS.stuck }] })).toBe(false);
+        expect(isWorkable({ number: 5, labels: [{ name: 'auto-rollback' }] })).toBe(false);
+        expect(isWorkable({ number: 6, labels: [{ name: 'wontfix' }] })).toBe(false);
+        expect(isWorkable({ number: 7, labels: [{ name: 'bug' }] })).toBe(true);
     });
 });
 

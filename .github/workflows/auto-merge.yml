@@ -99,15 +99,21 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           SAFE: ${{ steps.decide.outputs.safe }}
           REASON: ${{ steps.decide.outputs.reason }}
+          REPO: ${{ github.repository }}
         shell: bash
         run: |
-          gh label create auto-safe --color 0E8A16 \
+          # `--repo` is REQUIRED here. This job never checks out the repo (it reads
+          # the file list via the API), so gh has no local .git to infer the repo
+          # from and fails with "fatal: not a git repository". The first real
+          # autonomous PR classified correctly (SAFE: yes) but then could not apply
+          # the label for exactly this reason.
+          gh label create auto-safe --repo "$REPO" --color 0E8A16 \
             --description "Validated non-sensitive change — eligible for auto-merge" 2>/dev/null || true
           if [ "$SAFE" = "yes" ]; then
-            gh pr edit "$PR" --add-label auto-safe
+            gh pr edit "$PR" --repo "$REPO" --add-label auto-safe
             echo "### ✅ Marked auto-safe" >> "$GITHUB_STEP_SUMMARY"
           else
-            gh pr edit "$PR" --remove-label auto-safe 2>/dev/null || true
+            gh pr edit "$PR" --repo "$REPO" --remove-label auto-safe 2>/dev/null || true
             echo "### 🖐️ Needs a human" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
