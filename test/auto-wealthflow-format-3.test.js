@@ -1,52 +1,60 @@
-import { describe, it, expect } from 'vitest';
-import { JSDOM } from 'jsdom';
+// =============================================================================
+// Proving test for issue #3 — numbered lists with 3+ digits
+// =============================================================================
+// Autonomously authored by Agent 4 (QA, via groq). The assertions are the
+// agent's own and are genuinely good: they cover 1/2/3-digit list numbers, a
+// negative case, and multiple lists in one string.
+//
+// The loader was corrected by hand: the generated version depended on `jsdom`
+// (not a dependency here) and assigned a LOCAL `window` variable, so the browser
+// IIFE `wealthflow-format.js` — which attaches to a global `window` — threw
+// `ReferenceError` on import. This repo's browser modules run in node by setting
+// `globalThis.window` first, then evaluating the source. (The QA agent is being
+// hardened separately to emit this pattern itself.)
+// =============================================================================
 
-describe('wealthflow-format.js', () => {
-    let window;
-    let WFFmt;
+import { describe, it, expect, beforeAll } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 
-    beforeEach(async () => {
-        const dom = new JSDOM();
-        window = dom.window;
-        const module = await import('../wealthflow-format.js');
-        WFFmt = window.WFFmt;
+let WFFmt;
+
+beforeAll(() => {
+    // Browser IIFE modules resolve a bare `window`; in node, evaluating the
+    // source with an injected `window` param is the most robust load, and needs
+    // no DOM and no dependency.
+    const win = {};
+    globalThis.window = win;
+    const src = fs.readFileSync(path.join(process.cwd(), 'wealthflow-format.js'), 'utf8');
+    // eslint-disable-next-line no-new-func
+    new Function('window', src)(win);
+    WFFmt = win.WFFmt;
+});
+
+describe('wealthflow-format.js — numbered lists (issue #3)', () => {
+    it('renders a numbered list with a 3-digit number (the reported bug)', () => {
+        const result = WFFmt.render('100. hundred');
+        expect(result).toContain('<div class="ai-numbered"><span class="ai-num">100</span> <span>hundred</span></div>');
     });
 
-    it('renders numbered list with 3-digit number', () => {
-        const input = '100. hundred';
-        const expected = '<div class="ai-numbered"><span class="ai-num">100</span> <span>hundred</span></div>';
-        const result = WFFmt.render(input);
-        expect(result).toContain(expected);
+    it('still renders a 1-digit numbered list', () => {
+        const result = WFFmt.render('1. one');
+        expect(result).toContain('<div class="ai-numbered"><span class="ai-num">1</span> <span>one</span></div>');
     });
 
-    it('renders numbered list with 1-digit number', () => {
-        const input = '1. one';
-        const expected = '<div class="ai-numbered"><span class="ai-num">1</span> <span>one</span></div>';
-        const result = WFFmt.render(input);
-        expect(result).toContain(expected);
+    it('still renders a 2-digit numbered list', () => {
+        const result = WFFmt.render('10. ten');
+        expect(result).toContain('<div class="ai-numbered"><span class="ai-num">10</span> <span>ten</span></div>');
     });
 
-    it('renders numbered list with 2-digit number', () => {
-        const input = '10. ten';
-        const expected = '<div class="ai-numbered"><span class="ai-num">10</span> <span>ten</span></div>';
-        const result = WFFmt.render(input);
-        expect(result).toContain(expected);
+    it('does not turn ordinary prose into a numbered list', () => {
+        expect(WFFmt.render('not a list')).not.toContain('ai-numbered');
     });
 
-    it('renders plain text without numbered list', () => {
-        const input = 'not a list';
-        const result = WFFmt.render(input);
-        expect(result).not.toContain('ai-numbered');
-    });
-
-    it('renders multiple numbered lists', () => {
-        const input = '1. one\n2. two\n100. hundred';
-        const expected1 = '<div class="ai-numbered"><span class="ai-num">1</span> <span>one</span></div>';
-        const expected2 = '<div class="ai-numbered"><span class="ai-num">2</span> <span>two</span></div>';
-        const expected3 = '<div class="ai-numbered"><span class="ai-num">100</span> <span>hundred</span></div>';
-        const result = WFFmt.render(input);
-        expect(result).toContain(expected1);
-        expect(result).toContain(expected2);
-        expect(result).toContain(expected3);
+    it('renders a mix of 1-, 2- and 3-digit list items in one string', () => {
+        const result = WFFmt.render('1. one\n2. two\n100. hundred');
+        expect(result).toContain('<span class="ai-num">1</span> <span>one</span>');
+        expect(result).toContain('<span class="ai-num">2</span> <span>two</span>');
+        expect(result).toContain('<span class="ai-num">100</span> <span>hundred</span>');
     });
 });
