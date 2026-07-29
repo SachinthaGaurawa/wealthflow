@@ -549,7 +549,12 @@
         function row(key, label, desc, dep, extra) {
             return '<div class="wfntf-set-row' + (dep ? ' wfntf-dep' : '') + '">' +
                 '<div class="setting-info"><div class="setting-label">' + label + '</div><div class="setting-desc">' + desc + '</div>' + (extra || '') + '</div>' +
-                '<button type="button" id="wfntfTgl_' + key + '" class="wfntf-switch" role="switch" aria-checked="false" onclick="WFNotif.toggleSetting(\'' + key + '\',this)"></button>' +
+                // aria-label reuses the visible label. The switch already carried
+                // role="switch" and aria-checked, so a screen reader announced its
+                // STATE but never what it controlled — "switch, on", nine times in
+                // a row. The button has no text of its own (the knob is drawn with
+                // CSS ::after), so without this there is nothing to announce.
+                '<button type="button" id="wfntfTgl_' + key + '" class="wfntf-switch" role="switch" aria-checked="false" aria-label="' + esc(label) + '" onclick="WFNotif.toggleSetting(\'' + key + '\',this)"></button>' +
                 '</div>';
         }
         card.innerHTML =
