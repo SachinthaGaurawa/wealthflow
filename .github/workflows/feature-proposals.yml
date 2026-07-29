@@ -1,0 +1,120 @@
+name: Feature proposals — ideas only, never code
+
+# =============================================================================
+# THE ONE PART OF THE PIPELINE THAT DOES NOT DECIDE ANYTHING.
+#
+# Every other automated job here answers a question that has a right answer:
+# is this CVE real, does this button call a function that exists, did anything
+# substantive change since the last release. Each carries evidence a machine can
+# check, which is what makes it safe to act on automatically.
+#
+# "Should WealthFlow have feature X?" has no such answer. A model asked for
+# feature ideas will always produce fluent, plausible ones — that is what it is
+# for — and they will pass CI, because tests prove a thing WORKS, never that it
+# was WANTED. Wired to auto-merge, that drifts the app one reasonable-sounding
+# addition at a time away from the one its owner actually built.
+#
+# So this job's only power is to OPEN AN ISSUE. It cannot write code, cannot
+# open a pull request, cannot merge. A proposal becomes work only when the owner
+# adds `approved-feature`, and autonomy/work-queue.mjs::isWorkable refuses to
+# pick up a proposal that lacks it. The owner keeps strategic control; the
+# machine takes the labour once a direction is chosen.
+#
+# WEEKLY, NOT DAILY
+#   Ideas are not urgent, and an idea generator running every night produces an
+#   inbox. An inbox you stop reading is indistinguishable from a system that
+#   proposes nothing, so the cadence is deliberately slow and the module caps
+#   itself at 2 undecided proposals regardless.
+# =============================================================================
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'          # Mondays 09:00 UTC — once a week, start of week
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Draft a proposal and print it, but file nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: wealthflow-proposals
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Draft at most one proposal
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Any one provider is enough; the router fails over on its own.
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          WealthFlow_API_Key: ${{ secrets.WealthFlow_API_Key }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
+          GITHUB_MODELS_TOKEN: ${{ secrets.GITHUB_MODELS_TOKEN }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          node -e '
+            import("./autonomy/propose.mjs").then(async (m) => {
+              const dry = process.env.DRY_RUN === "true";
+              const r = await m.proposeOnce({ dryRun: dry });
+              const fs = await import("node:fs");
+              let md;
+              if (r.filed) {
+                console.log("proposed #" + r.filed.number + ": " + r.filed.title);
+                md = "### 💡 Proposal filed\n\n#" + r.filed.number + " — " + r.filed.title
+                   + "\n\nNothing will be built from it unless you add `approved-feature`.\n";
+              } else {
+                // Declining is a SUCCESS, not a failure. A generator that must
+                // produce something every week produces filler.
+                console.log("no proposal this run: " + r.reason);
+                md = "### 💡 No proposal this run\n\n" + r.reason + "\n";
+                if (r.proposal) md += "\n<details><summary>dry-run draft</summary>\n\n```json\n"
+                   + JSON.stringify(r.proposal, null, 2) + "\n```\n</details>\n";
+              }
+              if (process.env.GITHUB_STEP_SUMMARY) {
+                try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + "\n"); } catch (e) {}
+              }
+            }).catch((e) => {
+              // The least important job on the schedule must never be the one
+              // that turns the Actions tab red.
+              console.warn("proposer error (non-fatal): " + e.message);
+            });
+          '
+
+      - name: Prove the containment rules still hold
+        run: npx vitest run test/propose_test.js

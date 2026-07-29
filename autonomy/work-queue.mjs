@@ -204,6 +204,16 @@ export function isWorkable(issue, claimed = new Set()) {
     if (labels.includes('auto-rollback')) return false;   // needs a human, by design
     if (labels.includes('wontfix')) return false;
     if (claimed.has(issue.number)) return false;          // already has an open fix PR
+
+    // A machine-authored feature proposal is an IDEA, not work. Building it
+    // without the owner's approval would turn propose-then-approve into
+    // propose-then-build-anyway, which is the entire thing the design exists to
+    // prevent: every other detector answers a question with a right answer,
+    // while "should this app have feature X?" is a judgement only the owner can
+    // make. The `approved-feature` label is that judgement, and nothing else
+    // substitutes for it.
+    if (labels.includes('feature-proposal') && !labels.includes('approved-feature')) return false;
+
     return true;
 }
 
