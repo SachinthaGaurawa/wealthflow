@@ -31,13 +31,49 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { installFirebaseStub } from './firebase-stub.mjs';
 
+/** An explicit Chromium path, if the caller pinned one. Empty means "find it". */
+export const CHROME = process.env.WF_CHROME || '';
+
 /**
- * The pre-installed Chromium. Pinned by path on purpose: this environment ships
- * browser build 1194, the installed Playwright expects a newer one, and
- * `playwright install` is not available. Resolving the binary beats failing.
+ * Launch Chromium wherever it actually lives.
+ *
+ * The first version hardcoded `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`,
+ * which exists in THIS sandbox and nowhere else. On a GitHub runner the launch
+ * would have thrown, the sweep's own error handling would have swallowed it, and
+ * discovery would have reported "no UI findings" every single day — a feature
+ * that looks alive and never runs. That is the exact failure this pipeline was
+ * built to eliminate, so resolution is now attempted in order:
+ *
+ *   1. WF_CHROME, if the caller pinned one
+ *   2. Playwright's own resolution — correct after `playwright install chromium`
+ *   3. whatever `chromium*` build is actually present under the browsers path
+ *
+ * If all three fail the error is rethrown. A sweep that cannot open a browser
+ * must say so, not quietly report a clean bill of health.
  */
-export const CHROME = process.env.WF_CHROME
-    || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+export async function launchChromium(opts = {}) {
+    const attempts = [];
+    if (CHROME) attempts.push(CHROME);
+    attempts.push(null);                       // let Playwright resolve it
+    const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '/opt/pw-browsers';
+    try {
+        for (const d of fs.readdirSync(root)) {
+            if (!/^chromium/.test(d)) continue;
+            for (const rel of ['chrome-linux/chrome', 'chrome-linux/headless_shell', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+                const p = path.join(root, d, rel);
+                if (fs.existsSync(p)) attempts.push(p);
+            }
+        }
+    } catch { /* no browsers dir — options 1 and 2 may still work */ }
+
+    let lastErr;
+    for (const executablePath of attempts) {
+        try {
+            return await chromium.launch(executablePath ? { ...opts, executablePath } : opts);
+        } catch (e) { lastErr = e; }
+    }
+    throw new Error(`could not launch Chromium (tried ${attempts.length} location(s)): ${lastErr && lastErr.message}`);
+}
 
 const MIME = {
     '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
@@ -190,7 +226,7 @@ export async function completeOnboarding(page, { pin = '123456', budgetMs = 4500
  */
 export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true } = {}) {
     const server = await serveRepo(repoDir);
-    const browser = await chromium.launch({ executablePath: CHROME, headless });
+    const browser = await launchChromium({ headless });
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 
     const pageErrors = [];

@@ -73,6 +73,16 @@ jobs:
         continue-on-error: true
         run: npm ci || npm install
 
+      # Without a browser the UI sweep cannot run, and its own error handling
+      # would report "no UI findings" every single day — a detector that looks
+      # alive and never executes. That is precisely the failure this pipeline
+      # exists to prevent, so the browser is installed explicitly rather than
+      # left to chance. `continue-on-error` keeps a bad browser build from
+      # taking down dependency and markup scanning, which need no browser.
+      - name: Install Chromium (for the runtime UI sweep)
+        continue-on-error: true
+        run: npx playwright install --with-deps chromium
+
       - name: Scan for provable defects
         id: scan
         env:
