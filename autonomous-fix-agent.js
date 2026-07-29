@@ -141,7 +141,26 @@ async function main() {
     let candidates = queue.issues;
     if (pinned) {
         candidates = candidates.filter((i) => i.number === pinned);
-        if (!candidates.length) fail(`Issue #${pinned} is not in the open, workable queue.`);
+        if (!candidates.length) {
+            // The `issues:` trigger pins this run to the issue that fired it, so
+            // an `opened` and a `labeled` event on the SAME issue both land here.
+            // If the first already opened a fix PR, this run must NOT open a
+            // duplicate — that is exactly how issue #3 got PR #4 AND PR #5. An
+            // already-handled issue is a genuine no-op, not a misconfiguration.
+            const claimed = await Q.issuesWithOpenFixPr().catch(() => new Set());
+            if (claimed.has(pinned)) {
+                log(`#${pinned} already has an open fix PR — not opening a duplicate.`);
+                summary(
+                    `### ✅ Issue #${pinned} is already being handled\n\n` +
+                    'An autonomous fix PR for this issue is already open. This run stopped ' +
+                    'rather than open a second PR for the same issue (the duplicate that the ' +
+                    'first live run produced). This is a no-op, not a failure.\n'
+                );
+                output({ have: 'no', reason: 'issue already has an open fix PR' });
+                process.exit(3);
+            }
+            fail(`Issue #${pinned} is not in the open, workable queue.`);
+        }
     }
 
     if (!candidates.length) {

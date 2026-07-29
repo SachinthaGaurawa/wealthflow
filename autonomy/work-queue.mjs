@@ -132,21 +132,79 @@ export function rankIssues(issues) {
  * Excludes anything already marked stuck (a human owns it) or a rollback alert.
  */
 export async function fetchOpenWork({ env = process.env, limit = 30 } = {}) {
-    const issues = await gh(`/issues?state=open&per_page=${Math.min(100, limit)}&sort=created&direction=asc`, { env });
-    const list = (issues || []).filter((i) => {
-        if (i.pull_request) return false;                 // PRs come back from this endpoint too
-        const labels = (i.labels || []).map((l) => String(l.name || l).toLowerCase());
-        if (labels.includes(LABELS.stuck)) return false;
-        if (labels.includes('auto-rollback')) return false;  // needs a human, by design
-        if (labels.includes('wontfix')) return false;
-        return true;
-    });
+    const [issues, claimed] = await Promise.all([
+        gh(`/issues?state=open&per_page=${Math.min(100, limit)}&sort=created&direction=asc`, { env }),
+        issuesWithOpenFixPr({ env }),
+    ]);
+    const list = (issues || []).filter((i) => isWorkable(i, claimed));
     return rankIssues(list);
 }
 
 /** Attempt count, read from the agent's own trail of comments. */
 export function attemptsFrom(comments) {
     return (comments || []).filter((c) => /<!--\s*wf-agent-attempt\s*-->/.test(String(c.body || ''))).length;
+}
+
+/**
+ * The issue number a pull request is already handling, or null.
+ *
+ * The agent names its branches `ai-fix/issue-<n>-<timestamp>`, so the issue
+ * number is recoverable from the head ref alone — no body parsing, no guessing.
+ * A closing keyword in the body (`Closes #12`) is the fallback for hand-named
+ * branches. Pure and total: never throws, whatever shape `pr` is.
+ */
+export function claimedIssueOf(pr) {
+    const ref = String(pr?.head?.ref || pr?.headRefName || '');
+    const m = ref.match(/^ai-fix\/issue-(\d+)-/);
+    if (m) return Number(m[1]);
+    const body = String(pr?.body || '');
+    const cm = body.match(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/i);
+    return cm ? Number(cm[1]) : null;
+}
+
+/**
+ * Issue numbers that ALREADY have an open autonomous fix PR.
+ *
+ * WHY THIS EXISTS
+ *   The first live run produced issue #3 → PR #4 AND PR #5, seconds apart. Two
+ *   workflow runs (an `issues: opened` and an `issues: labeled` event on the
+ *   same issue) were serialised by the concurrency group, but NOTHING stopped
+ *   the second one from redoing the work and opening a duplicate PR — there was
+ *   no check for an already-open PR. This set is that check.
+ *
+ * Never throws: a dedup lookup that failed would be a poor reason to stall the
+ * whole queue, so on any API error it returns an empty set (fail-open here is
+ * correct — the worst case is the pre-existing duplicate behaviour, not a hang).
+ */
+export async function issuesWithOpenFixPr({ env = process.env } = {}) {
+    const claimed = new Set();
+    let prs;
+    try {
+        prs = await gh('/pulls?state=open&per_page=100', { env });
+    } catch {
+        return claimed;
+    }
+    for (const pr of prs || []) {
+        const n = claimedIssueOf(pr);
+        if (n != null) claimed.add(n);
+    }
+    return claimed;
+}
+
+/**
+ * Is this issue eligible for the agent to pick up? Pure, so the filter is
+ * testable without touching the network. `claimed` is the set from
+ * issuesWithOpenFixPr — an issue that already has an open fix PR is NOT
+ * workable, or the agent opens a second PR for one issue.
+ */
+export function isWorkable(issue, claimed = new Set()) {
+    if (!issue || issue.pull_request) return false;   // PRs come back from /issues too
+    const labels = (issue.labels || []).map((l) => String(l.name || l).toLowerCase());
+    if (labels.includes(LABELS.stuck)) return false;
+    if (labels.includes('auto-rollback')) return false;   // needs a human, by design
+    if (labels.includes('wontfix')) return false;
+    if (claimed.has(issue.number)) return false;          // already has an open fix PR
+    return true;
 }
 
 export async function issueComments(number, { env = process.env } = {}) {
