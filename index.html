@@ -9284,25 +9284,14 @@ Keep total under 200 words. No markdown, no asterisks.`;
         }
         window._fallbackSingleImageVision = _fallbackSingleImageVision;
 
-        // CC One-Time AI Scan helpers (v7.4.7) — self-contained overlay
-        // inside the CC modal so the scan UI doesn't clash with the
-        // global expense scanner that uses #aiScanOverlay.
-        function _showCcotScanOverlay(stage, detail, pct) {
-            try {
-                const ov = document.getElementById('ccotAiScanOverlay');
-                if (!ov) return;
-                ov.style.display = 'flex';
-                const s = document.getElementById('ccotAiScanStage');     if (s) s.textContent = stage;
-                const d = document.getElementById('ccotAiScanDetail');    if (d) d.textContent = detail;
-                const b = document.getElementById('ccotAiScanBar');       if (b) b.style.width = (pct || 0) + '%';
-            } catch (_) {}
-        }
-        function _hideCcotScanOverlay() {
-            try {
-                const ov = document.getElementById('ccotAiScanOverlay');
-                if (ov) ov.style.display = 'none';
-            } catch (_) {}
-        }
+        // REMOVED (v7.69.15) — _showCcotScanOverlay / _hideCcotScanOverlay.
+        // They drove a "#ccotAiScanOverlay" progress panel for the CC One-Time
+        // AI scan, but that markup was never added to the document and neither
+        // function was ever called. Both read four ids that exist nowhere
+        // (#ccotAiScanOverlay/Stage/Detail/Bar), and both were fully
+        // null-guarded, so the dead code was invisible rather than noisy.
+        // The CC scan uses the global #aiScanOverlay, which does exist.
+        // If a modal-local progress panel is wanted later, add the markup first.
 
         // Bank-picker dialog used by the CCOT AI scan flow. Returns
         // the selected bank string (or null on cancel) via a Promise.
