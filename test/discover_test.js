@@ -245,3 +245,79 @@ describe('discover: never files the same finding twice', () => {
         expect(found.has(fp)).toBe(true);
     });
 });
+
+// ── performance detectors ────────────────────────────────────────────────────
+// These exist because "make it fast" is unactionable without a measurement.
+// The hard part is NOT measuring — it is refusing to report the measurements
+// that are really about the machine doing the measuring.
+describe('discover: performance findings are structural, never wall-clock', () => {
+    it('renders a render-blocking-external finding with the offending hosts', () => {
+        const f = {
+            kind: 'render-blocking-external',
+            severity: 'medium',
+            scripts: ['https://cdn.example.com/a.js', 'https://cdn.example.com/b.js'],
+            total: 7,
+        };
+        const issue = renderIssue(f);
+        expect(issue.title).toMatch(/2 third-party scripts block first paint/);
+        expect(issue.body).toContain('https://cdn.example.com/a.js');
+        expect(issue.body).toMatch(/ui-sweep\.mjs/);            // reproducible
+        expect(issue.labels).toContain('ui/ux');
+    });
+
+    it('explains the resilience angle, not just the speed one', () => {
+        // A third-party blocking script is a single point of failure: this repo
+        // has already seen `Chart is not defined` when cdnjs was unreachable.
+        const issue = renderIssue({
+            kind: 'render-blocking-external', severity: 'medium',
+            scripts: ['https://cdnjs.cloudflare.com/x.js'], total: 1,
+        });
+        expect(issue.body).toMatch(/ad blocker|unreachable|outage/i);
+    });
+
+    it('renders a large-dom finding with the count and the threshold rationale', () => {
+        const issue = renderIssue({ kind: 'large-dom', severity: 'low', count: 2534, depth: 12 });
+        expect(issue.title).toMatch(/2534 DOM elements/);
+        expect(issue.body).toMatch(/1,500/);                    // states the threshold
+        expect(issue.body).toMatch(/budget phone|low-end/i);    // says who actually feels it
+    });
+
+    it('fingerprints a perf finding stably, so it is filed once', () => {
+        const key = ['https://b.js', 'https://a.js'].slice().sort().join('|');
+        expect(fingerprint('render-blocking-external', key))
+            .toBe(fingerprint('render-blocking-external', key));
+        expect(fingerprint('large-dom', 'dom-element-count'))
+            .not.toBe(fingerprint('render-blocking-external', key));
+    });
+});
+
+// -- the source file must stay mergeable -------------------------------------
+describe('discover: the source file is text, not binary', () => {
+    it('contains no control bytes', () => {
+        // fingerprint() separates kind from key with a NUL -- the right choice,
+        // since it is the one byte that cannot appear in either part. But it was
+        // written as a LITERAL NUL, so git classified this file as BINARY and
+        // refused to 3-way merge it.
+        //
+        // That blocked PR #15 outright, and before that it silently ate PR #16's
+        // wiring during a local merge: one side was taken wholesale, no conflict
+        // markers appeared, and the whole suite stayed green because the dropped
+        // code lived in a file whose own tests kept passing.
+        //
+        // The separator is unchanged; only its SPELLING is. A unicode escape
+        // hashes to the same bytes while leaving the file plain text.
+        const raw = fs.readFileSync('autonomy/discover.mjs', 'latin1');
+        const control = raw.match(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g) || [];
+        expect(control, control.length + ' control byte(s) make git treat this file as binary').toHaveLength(0);
+    });
+
+    it('still fingerprints exactly as already-filed issues were stamped', () => {
+        // Issue #9 carries 05b9f55352b265f0. Change the separator and every
+        // previously filed finding stops deduping and is raised all over again.
+        expect(fingerprint('dep-vuln', 'nodemailer')).toBe('05b9f55352b265f0');
+    });
+
+    it('keeps kind and key unambiguously separated', () => {
+        expect(fingerprint('a', 'bc')).not.toBe(fingerprint('ab', 'c'));
+    });
+});

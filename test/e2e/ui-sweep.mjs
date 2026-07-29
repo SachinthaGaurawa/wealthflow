@@ -140,6 +140,40 @@ function collectDom() {
     return out;
 }
 
+
+/**
+ * Performance facts that do not depend on the machine running the sweep.
+ *
+ * WALL-CLOCK TIMINGS ARE DELIBERATELY NOT REPORTED. This sandbox has no egress,
+ * so every CDN request times out and domContentLoaded lands around 2.3s here
+ * while being far faster in production. Filing that would be reporting the CI
+ * environment, not the app — the same mistake as reporting "Chart is not
+ * defined" when cdnjs is simply unreachable. Timings are collected for context
+ * and clearly marked advisory; only structural facts become findings.
+ */
+function collectPerf() {
+    const nav = performance.getEntriesByType('navigation')[0] || {};
+    const scripts = [...document.querySelectorAll('script[src]')];
+    // A classic <script src> with neither defer nor async blocks the parser.
+    const blocking = scripts.filter((s) => !s.defer && !s.async && (s.type || '') !== 'module');
+    const external = blocking.filter((s) => /^(https?:)?\/\//i.test(s.getAttribute('src') || ''));
+    let maxDepth = 0;
+    const walk = (el, d) => { if (d > maxDepth) maxDepth = d; for (const c of el.children) walk(c, d + 1); };
+    try { walk(document.body, 0); } catch { /* pathological DOM */ }
+    return {
+        domElements: document.querySelectorAll('*').length,
+        maxDomDepth: maxDepth,
+        scriptsTotal: scripts.length,
+        renderBlocking: blocking.map((s) => s.getAttribute('src')).filter(Boolean),
+        renderBlockingExternal: external.map((s) => s.getAttribute('src')).filter(Boolean),
+        advisoryTimings: {
+            domContentLoadedMs: Math.round(nav.domContentLoadedEventEnd || 0),
+            loadEventMs: Math.round(nav.loadEventEnd || 0),
+            note: 'advisory only — this sandbox has no network, so these are not app-representative',
+        },
+    };
+}
+
 /** Walk the sidebar so the sweep sees more than the landing view. */
 async function visitSections(page) {
     const visited = [];
@@ -192,6 +226,7 @@ export async function runSweep({ repoDir = process.cwd() } = {}) {
         }
         const sections = await visitSections(app.page);
         const dom = await app.page.evaluate(collectDom);
+        const perf = await app.page.evaluate(collectPerf);
         const realConsoleErrors = app.consoleErrors.filter((e) => !ENV_NOISE.test(e));
         const failed = app.failedRequests || [];
         const realPageErrors = app.pageErrors.filter((e) => !isMissingVendorGlobal(e, failed));
@@ -200,6 +235,7 @@ export async function runSweep({ repoDir = process.cwd() } = {}) {
             gates: app.gates,
             sections,
             ...dom,
+            perf,
             pageErrors: realPageErrors,
             consoleErrors: realConsoleErrors,
             offlineVendorErrors: vendorGlobals,
