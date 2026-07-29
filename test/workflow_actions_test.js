@@ -1,0 +1,106 @@
+// =============================================================================
+// WealthFlow Shadow Test Harness — GitHub Actions runtimes
+// =============================================================================
+// GitHub deprecated the Node 20 runtime and began force-running node20 actions
+// on node24, emitting a warning on every job. A warning is easy to scroll past,
+// which is exactly the problem: when the forced fallback is eventually removed,
+// the actions stop working and the whole pipeline stops with them.
+//
+// Bumping the versions once fixes today. This file is what stops it coming back:
+// a copy-pasted `actions/checkout@v4` from any tutorial would reintroduce the
+// deprecation silently, and nothing else in CI would object.
+//
+// The floors below are not guesses — each was read from the action's own
+// action.yml `runs.using` field:
+//   actions/checkout@v7        -> node24
+//   actions/setup-node@v6      -> node24
+//   actions/upload-artifact@v7 -> node24
+//   step-security/harden-runner@v2 -> node24   (already fine, left alone)
+//   peter-evans/enable-pull-request-automerge@v3 -> composite (no runtime)
+// =============================================================================
+
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const DIRS = ['.github/workflows', '.github/actions'];
+
+/** Every workflow / composite-action YAML in the repository. */
+function actionFiles() {
+    const out = [];
+    const walk = (dir) => {
+        let entries = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            const p = path.join(dir, e.name);
+            if (e.isDirectory()) walk(p);
+            else if (/\.ya?ml$/.test(e.name)) out.push(p);
+        }
+    };
+    for (const d of DIRS) walk(d);
+    return out;
+}
+
+/** Every `uses:` reference, with the file and line that declares it. */
+function usesRefs() {
+    const refs = [];
+    for (const file of actionFiles()) {
+        const lines = fs.readFileSync(file, 'utf8').split('\n');
+        lines.forEach((line, i) => {
+            const m = /^\s*(?:-\s*)?uses:\s*([^\s#]+)/.exec(line);
+            if (m) refs.push({ file, line: i + 1, ref: m[1] });
+        });
+    }
+    return refs;
+}
+
+/** Minimum major version that runs on node24, per each action's action.yml. */
+const NODE24_FLOOR = {
+    'actions/checkout': 7,
+    'actions/setup-node': 6,
+    'actions/upload-artifact': 7,
+};
+
+describe('workflows: no action is left on the deprecated Node 20 runtime', () => {
+    const refs = usesRefs();
+
+    it('finds the workflows at all (guards against a vacuous pass)', () => {
+        // Every assertion below iterates `refs`. An empty list would make them
+        // all trivially true, which is the failure mode this whole project keeps
+        // running into: green because nothing was examined.
+        expect(refs.length).toBeGreaterThan(15);
+        expect(actionFiles().length).toBeGreaterThan(10);
+    });
+
+    it.each(Object.entries(NODE24_FLOOR))('uses %s at v%i or newer', (action, floor) => {
+        const stale = refs
+            .filter((r) => r.ref.startsWith(`${action}@v`))
+            .map((r) => ({ ...r, major: Number(/@v(\d+)/.exec(r.ref)?.[1] ?? 0) }))
+            .filter((r) => r.major < floor);
+        const detail = stale.map((r) => `${r.file}:${r.line} ${r.ref}`).join('\n');
+        expect(stale, `these still target the deprecated node20 runtime:\n${detail}`).toHaveLength(0);
+    });
+
+    it('pins every third-party action to a version, never a moving branch', () => {
+        // `@main` silently changes what runs in CI, which for a pipeline that can
+        // merge its own pull requests is a supply-chain risk, not a convenience.
+        const unpinned = refs.filter((r) =>
+            !r.ref.startsWith('./')                       // local composite action
+            && !/@(v?\d[\w.-]*|[0-9a-f]{40})$/.test(r.ref));
+        const detail = unpinned.map((r) => `${r.file}:${r.line} ${r.ref}`).join('\n');
+        expect(unpinned, `unpinned action reference(s):\n${detail}`).toHaveLength(0);
+    });
+
+    it('keeps setup-node asking for Node 24 explicitly', () => {
+        // The action's own runtime and the Node it INSTALLS are different things.
+        // Bumping to v6 fixes the former; this pins the latter, so the scripts
+        // still run on the version they were written and tested against.
+        const versions = new Set();
+        for (const file of actionFiles()) {
+            for (const m of fs.readFileSync(file, 'utf8').matchAll(/node-version:\s*'?"?([\d.x]+)/g)) {
+                versions.add(m[1]);
+            }
+        }
+        expect([...versions]).toEqual(['24']);
+    });
+});
