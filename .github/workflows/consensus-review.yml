@@ -25,6 +25,22 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+    # Run on code changes always, but on a LABEL change only when the label is
+    # one the board's verdict actually depends on.
+    #
+    # WHY: adding `labeled`/`unlabeled` above made the human-approved escape
+    # hatch reachable, but it also meant EVERY label change re-ran the full
+    # three-model board. auto-merge.yml adds and removes `auto-safe` on its own
+    # runs, so a single pull request re-reviewed an unchanged diff five times —
+    # fifteen model calls to reach the identical verdict, on free-tier quota that
+    # the rest of the pipeline also depends on.
+    #
+    # `human-approved` still re-runs the board, because that label is exactly
+    # what can flip a BLOCK into a pass. Every other label is irrelevant to the
+    # verdict, so re-reviewing for it buys nothing.
+    if: >-
+      github.event.action != 'labeled' && github.event.action != 'unlabeled'
+      || github.event.label.name == 'human-approved'
     steps:
       - uses: step-security/harden-runner@v2
         with:
