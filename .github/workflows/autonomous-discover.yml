@@ -1,0 +1,92 @@
+name: Autonomous discovery — find the work (free)
+
+# =============================================================================
+# THE MISSING HALF OF THE AUTONOMOUS SYSTEM.
+#
+# The fix pipeline was proven end-to-end: issue #3 → agent fix → independent
+# review on a different provider → consensus board → policy gate → auto-merge,
+# with no human touching the code. But it only ever moved when a HUMAN filed an
+# issue. Nobody files issues. So the queue sat empty, the agent woke every two
+# hours, found nothing, exited "success", and the only thing landing on main was
+# merchant data and version bumps.
+#
+# That is why the repository looked like "only the version number goes up". The
+# engine was alive and idling — not broken, but not autonomous either. A system
+# that waits to be told what to do is a tool, not an agent.
+#
+# This workflow closes that gap: it goes LOOKING for defects, proves each one,
+# and files it. The first run found a HIGH-severity SMTP-injection + TLS
+# validation CVE chain in `nodemailer` — a PRODUCTION dependency behind the live
+# OTP login path. Nothing had ever looked.
+#
+# WHY THE DETECTORS ARE DETERMINISTIC
+#   No model is asked "what is wrong with this code?". That yields confident
+#   fiction, floods the queue, and burns the fix pipeline on imaginary bugs.
+#   Every finding here is machine-provable and ships with the command that
+#   reproduces it. Models are for FIXING; evidence decides WHAT gets fixed.
+#
+# HOW THE HANDOFF WORKS (and why it is not an `issues:` trigger)
+#   Issues opened with the built-in GITHUB_TOKEN deliberately do NOT trigger
+#   other workflows — GitHub blocks that to prevent recursive automation. So this
+#   workflow does not try to poke the fix agent. It does not need to: the fix
+#   agent already runs on its own 2-hourly schedule and reads the queue, so
+#   anything filed here is picked up within one cycle, automatically.
+# =============================================================================
+
+on:
+  schedule:
+    - cron: '0 4 * * *'          # daily 04:00 UTC, two hours before the release job
+  workflow_dispatch:
+    inputs:
+      file:
+        description: 'File the findings as issues (unchecked = report only)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: wealthflow-discover
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # `npm audit` needs the dependency tree, but a failing install must not
+      # silence the other detectors, so this step is allowed to be imperfect.
+      - name: Install deps (for the vulnerability audit)
+        continue-on-error: true
+        run: npm ci || npm install
+
+      - name: Scan for provable defects
+        id: scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.file }}" = "true" ]; then
+            node autonomy/discover.mjs --file
+          else
+            node autonomy/discover.mjs
+          fi
+
+      # The scanner is itself code, and code that decides what the pipeline works
+      # on is exactly the code most worth testing.
+      - name: Prove the scanner still behaves
+        run: npx vitest run test/discover_test.js
