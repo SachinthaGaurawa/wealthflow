@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
+import fs from 'node:fs';
 import { runs } from './fuzz-config.js';
 import {
     parseAudit, resolveLocalAsset, findBrokenAssets, findUnguardedJsonParse,
@@ -145,6 +146,29 @@ describe('discover: comments are not evidence', () => {
             'export function fine() { return 1; }',
         ].join('\n');
         expect(findUnguardedJsonParse(src, 'x.js')).toHaveLength(0);
+    });
+
+    it('survives a regex literal holding unbalanced quotes (desync regression)', () => {
+        // The character-by-character tokeniser died here: this regex has an ODD
+        // number of double quotes, so it read the first as a string opener and
+        // never recovered — every later `//` looked like string content, and the
+        // scanner reported its own docs as unguarded parses. Found when discover
+        // flagged discover.mjs itself.
+        const src = [
+            'const re = /(?:src|href)\\s*=\\s*"([^"]+\\.(?:js|mjs))"/gi;',
+            '// JSON.parse(process.env.SECRET) mentioned only in a comment',
+            'export const ok = 1;',
+        ].join('\n');
+        const out = stripComments(src);
+        expect(out).not.toMatch(/JSON\.parse/);              // the comment is gone
+        expect(out).toMatch(/export const ok = 1;/);         // real code survives
+        expect(findUnguardedJsonParse(src, 'x.js')).toHaveLength(0);
+    });
+
+    it('does not flag this repository\'s own detector source', () => {
+        // Self-consistency: the scanner must not file bugs against itself.
+        const src = fs.readFileSync('autonomy/discover.mjs', 'utf8');
+        expect(findUnguardedJsonParse(src, 'autonomy/discover.mjs')).toHaveLength(0);
     });
 
     it('never throws on adversarial source', () => {
