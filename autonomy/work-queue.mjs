@@ -238,6 +238,27 @@ export async function createIssue({ title, body, labels = [], env = process.env 
 }
 
 /**
+ * Every issue, OPEN AND CLOSED, for deduplication by the discovery scanner.
+ *
+ * Deliberately NOT the search API: `/search/issues` is served from an index that
+ * lags writes by seconds-to-minutes, so a scanner running back-to-back would not
+ * see what it just filed and would file it again. Listing is authoritative and
+ * immediate. Closed issues count too — a closed finding was handled or declined,
+ * and re-opening that decision every 6 hours is exactly the churn this pipeline
+ * is supposed to eliminate.
+ */
+export async function allIssues({ env = process.env, pages = 5 } = {}) {
+    const out = [];
+    for (let p = 1; p <= pages; p++) {
+        const batch = await gh(`/issues?state=all&per_page=100&page=${p}`, { env });
+        if (!batch || !batch.length) break;
+        out.push(...batch);
+        if (batch.length < 100) break;
+    }
+    return out;
+}
+
+/**
  * Ensure a label exists before it is applied — GitHub 422s on unknown labels
  * when creating an issue, which is a silent-failure trap in the old code.
  */
