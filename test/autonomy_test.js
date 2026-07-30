@@ -8,9 +8,10 @@
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
+import { REVIEWERS } from '../consensus-review.mjs';
 
 import {
-    PROVIDERS, keyFor, availableProviders, describeAvailability, orderFor,
+    PROVIDERS, keyFor, availableProviders, describeAvailability, orderFor, assignProviders,
     stripFences, extractJson,
 } from '../autonomy/llm-router.mjs';
 import {
@@ -93,6 +94,105 @@ describe('llm-router: ordering and independence', () => {
 
     it('restricts to an explicit allow-list', () => {
         expect(orderFor({ only: ['deepseek'], env }).map((p) => p.id)).toEqual(['deepseek']);
+    });
+});
+
+describe('llm-router: parallel lane assignment (the Promise.all trap)', () => {
+    // Four providers configured, three reviewers — the normal case.
+    const env = { GROQ_API_KEY: 'k', DEEPSEEK_API_KEY: 'k', WealthFlow_API_Key: 'k', CEREBRAS_API_KEY: 'k' };
+
+    it('uses the REAL board composition (guards against a vacuous pass)', () => {
+        // Asserting against invented roles is how a lane bug ships: a made-up
+        // `prefer` list can satisfy every test here while the shipped reviewers
+        // collide over one specialist model.
+        expect(REVIEWERS).toHaveLength(3);
+        expect(REVIEWERS.map((r) => r.name)).toEqual(['architecture', 'security', 'user-impact']);
+        for (const r of REVIEWERS) expect(Array.isArray(r.prefer) && r.prefer.length).toBeTruthy();
+    });
+
+    it('gives every reviewer a DIFFERENT provider', () => {
+        // The whole point. Wrapping the old sequential loop in Promise.all would have
+        // started every lane with an empty `exclude`, so every reviewer would have
+        // taken the top-ranked provider — one model wearing three hats, while the
+        // report still showed three independent green ticks.
+        const lanes = assignProviders(REVIEWERS, { env });
+        const primaries = lanes.map((l) => l.primary);
+        expect(primaries.every(Boolean)).toBe(true);
+        expect(new Set(primaries).size).toBe(REVIEWERS.length);
+    });
+
+    it('returns lanes in declaration order, since callers zip by index', () => {
+        const lanes = assignProviders(REVIEWERS, { env });
+        expect(lanes.map((l) => l.role.name)).toEqual(REVIEWERS.map((r) => r.name));
+    });
+
+    it('lands each reviewer on a model that has one of its preferred strengths', () => {
+        const lanes = assignProviders(REVIEWERS, { env });
+        for (const l of lanes) {
+            const p = PROVIDERS.find((x) => x.id === l.primary);
+            const hit = p.strengths.some((s) => l.role.prefer.includes(s));
+            expect(hit, `${l.role.name} got ${l.primary} (${p.strengths}) for prefer=${l.role.prefer}`).toBe(true);
+        }
+    });
+
+    it('gives a scarce specialist to the reviewer that needs it most, not the first in the list', () => {
+        // Only two providers, and deepseek is the ONLY one with 'security'. Claiming in
+        // declaration order would hand it to `architecture` for a single matching
+        // strength ('reasoning') and leave the security reviewer on a model with none
+        // of its strengths. Regret-ordered claiming puts it where it counts.
+        const lanes = assignProviders(REVIEWERS, { env: { DEEPSEEK_API_KEY: 'k', GROQ_API_KEY: 'k' } });
+        const sec = lanes.find((l) => l.role.name === 'security');
+        expect(sec.primary).toBe('deepseek');
+    });
+
+    it('keeps fallback sets DISJOINT so a retry cannot steal another lane\'s provider', () => {
+        // A lane retrying after an outage must not land on the provider another
+        // reviewer is mid-request on — that would silently recreate the shared-model
+        // problem at exactly the moment nobody is watching.
+        const lanes = assignProviders(REVIEWERS, { env });
+        const seen = new Set();
+        for (const l of lanes) {
+            for (const f of l.fallbacks) {
+                expect(seen.has(f), `${f} was dealt to two lanes`).toBe(false);
+                seen.add(f);
+            }
+        }
+    });
+
+    it('never deals a primary as somebody else\'s fallback', () => {
+        const lanes = assignProviders(REVIEWERS, { env });
+        const primaries = new Set(lanes.map((l) => l.primary));
+        for (const l of lanes) {
+            for (const f of l.fallbacks) expect(primaries.has(f)).toBe(false);
+        }
+    });
+
+    it('degrades honestly when there are fewer providers than reviewers', () => {
+        // One key configured. Two reviewers MUST come back with no provider rather
+        // than tripling up on the only model available — three votes from one model is
+        // worse than one honest vote, because it is trusted three times as much.
+        const lanes = assignProviders(REVIEWERS, { env: { GROQ_API_KEY: 'k' } });
+        expect(lanes.filter((l) => l.primary)).toHaveLength(1);
+        expect(lanes.filter((l) => !l.primary)).toHaveLength(2);
+        for (const l of lanes) expect(l.fallbacks).toEqual([]);
+    });
+
+    it('returns a lane per role with no keys at all, and claims nothing', () => {
+        const lanes = assignProviders(REVIEWERS, { env: {} });
+        expect(lanes).toHaveLength(3);
+        expect(lanes.every((l) => l.primary === null)).toBe(true);
+    });
+
+    it('is deterministic — the same environment deals the same lanes', () => {
+        const a = assignProviders(REVIEWERS, { env });
+        const b = assignProviders(REVIEWERS, { env });
+        expect(a.map((l) => [l.primary, l.fallbacks])).toEqual(b.map((l) => [l.primary, l.fallbacks]));
+    });
+
+    it('never throws on an empty or malformed role list', () => {
+        expect(assignProviders([], { env })).toEqual([]);
+        expect(() => assignProviders(null, { env })).not.toThrow();
+        expect(() => assignProviders([{}, null], { env })).not.toThrow();
     });
 });
 

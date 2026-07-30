@@ -216,6 +216,88 @@ export function orderFor({ prefer = [], exclude = [], only = [], env = process.e
     return [...list].sort((a, b) => score(b) - score(a));
 }
 
+/**
+ * Deal each role its OWN provider, decided UP FRONT, so a set of roles can run
+ * concurrently without losing independence.
+ *
+ * WHY THIS EXISTS — the trap in "just run the reviewers in parallel"
+ *   The review board picks providers with `exclude: used`, appending each
+ *   reviewer's provider as it goes. That makes reviewer 3's choice depend on
+ *   reviewers 1 and 2, which is exactly why the board loop is sequential.
+ *
+ *   Wrapping that loop in Promise.all does NOT parallelise it — it breaks it.
+ *   Every lane would start with an empty `exclude`, so every lane would take the
+ *   highest-ranked provider available, and all three reviewers would run on the
+ *   SAME model. The board would still print three green ticks. It would be one
+ *   model wearing three hats: faster, and worse, with nothing in the report to
+ *   show it happened. A fake consensus is more dangerous than an honest
+ *   sequential one, because it is trusted more.
+ *
+ *   So assignment happens first and stays deterministic: roles claim distinct
+ *   primaries in order, then the providers nobody claimed are dealt out as
+ *   per-lane fallbacks. The round-robin deal matters — it keeps the fallback
+ *   sets DISJOINT, so a retry inside one lane can never grab the provider
+ *   another lane is about to use.
+ *
+ *   Fewer providers than roles is a real state (one key configured, most of the
+ *   list unset) and it degrades honestly: the unclaimed roles get `primary:
+ *   null` and their callers record them as non-votes. Running them anyway on a
+ *   shared model is the one thing this must never do.
+ *
+ * @param {Array<{name?:string, prefer?:string[]}>} roles
+ * @returns {Array<{role:object, primary:string|null, fallbacks:string[]}>}
+ */
+export function assignProviders(roles, { env = process.env } = {}) {
+    const list = Array.isArray(roles) ? roles : [];
+    const avail = availableProviders(env);
+    const taken = [];
+    const primaries = new Array(list.length).fill(null);
+
+    // Roles claim in order of REGRET, not in the order they happen to be declared.
+    //
+    // Claiming in declaration order lets whoever is listed first outbid a role that
+    // needed the provider more. Concretely, with only deepseek and groq configured,
+    // `architecture` (which lists 'reasoning') would take deepseek for a single
+    // matching strength, leaving the SECURITY reviewer — the one reviewer whose
+    // judgement is least substitutable — on a model with none of its strengths.
+    //
+    // Regret is how much a role loses by waiting: its best available score minus its
+    // second best. The role that loses most goes first, so a specialist model lands
+    // with the reviewer who can least do without it. Ties break on declaration order,
+    // because a board whose composition varies run to run cannot be reasoned about
+    // when a verdict is disputed.
+    const scoreFor = (role, p) => {
+        const prefer = (role && role.prefer) || [];
+        return p.strengths.reduce((s, t) => s + (prefer.includes(t) ? 1 : 0), 0);
+    };
+    const regretOf = (role) => {
+        const scores = avail.map((p) => scoreFor(role, p)).sort((a, b) => b - a);
+        return (scores[0] || 0) - (scores[1] || 0);
+    };
+    const claimOrder = list
+        .map((role, i) => ({ i, regret: regretOf(role) }))
+        .sort((a, b) => (b.regret - a.regret) || (a.i - b.i))
+        .map((x) => x.i);
+
+    for (const i of claimOrder) {
+        const role = list[i];
+        const order = orderFor({ prefer: (role && role.prefer) || [], exclude: taken, env });
+        const primary = order[0] || null;
+        if (primary) taken.push(primary.id);
+        primaries[i] = primary ? primary.id : null;
+    }
+
+    // Returned in DECLARATION order — callers zip lanes to roles by index.
+    const lanes = list.map((role, i) => ({ role, primary: primaries[i] }));
+
+    const spare = avail.filter((p) => !taken.includes(p.id)).map((p) => p.id);
+    return lanes.map((lane, i) => ({
+        ...lane,
+        // Round-robin, so lane i and lane j never share a fallback.
+        fallbacks: list.length ? spare.filter((_, j) => j % list.length === i) : [],
+    }));
+}
+
 // ── request builders ─────────────────────────────────────────────────────────
 
 function buildOpenAI(provider, key, { system, prompt, maxTokens, temperature }) {

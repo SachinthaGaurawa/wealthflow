@@ -35,7 +35,7 @@
 
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
-import { chat, extractJson, describeAvailability } from './autonomy/llm-router.mjs';
+import { chat, extractJson, describeAvailability, assignProviders } from './autonomy/llm-router.mjs';
 
 const MAX_DIFF = 60_000;
 
@@ -172,7 +172,10 @@ export function prioritiseDiff(diff, max = MAX_DIFF) {
 }
 
 // ── reviewers ────────────────────────────────────────────────────────────────
-const REVIEWERS = [
+// Exported so the lane-assignment tests can assert against the REAL board
+// composition rather than invented roles — an artificial role list can pass while
+// the shipped one silently downgrades the security reviewer.
+export const REVIEWERS = [
     {
         name: 'architecture',
         prefer: ['architecture', 'reasoning', 'long-context'],
@@ -268,6 +271,88 @@ function prompt(reviewer, diff, truncated) {
     ].join('\n');
 }
 
+/**
+ * Run ONE reviewer in its own lane, on the provider(s) reserved for it.
+ *
+ * Never throws: every failure mode becomes an `unavailable` vote. That
+ * distinction is load-bearing — a provider being down is not a reviewer
+ * objection, and recording it as one would block every pull request on someone
+ * else's outage. (An earlier version of this file did exactly that: one DeepSeek
+ * hiccup read as a non-pass vote and blocked the merge.)
+ *
+ * Providers are tried in the order the lane was dealt — its primary first, then
+ * only its OWN reserved fallbacks — so a retry here can never take a provider
+ * another reviewer is running on.
+ */
+export async function runReviewer(lane, diff, truncated, chatImpl = chat) {
+    const r = lane.role;
+    const candidates = [lane.primary, ...lane.fallbacks].filter(Boolean);
+    if (!candidates.length) {
+        console.warn(`  ${r.name} → UNAVAILABLE (no provider left to assign)`);
+        return { name: r.name, vote: 'unavailable', provider: 'none', reason: 'no provider available for this reviewer', concerns: [] };
+    }
+
+    let lastErr = null;
+    for (const pid of candidates) {
+        try {
+            // Retry on `unclear`. A reviewer that returns an unparseable answer has
+            // NOT objected — it produced a parse failure, which is transient.
+            // Blocking a merge on one model's garbled reply while the others pass is
+            // a false block; this exact thing blocked the first real autonomous PR
+            // when Gemini returned an unclear verdict. Only a clear PASS/FAIL ends it.
+            let res, vote = 'unclear', parsed = {};
+            for (let attempt = 0; attempt < 3; attempt++) {
+                res = await chatImpl({
+                    system: r.system,
+                    prompt: prompt(r, diff, truncated) + (attempt ? '\n\nReturn STRICTLY the one JSON object described above and nothing else.' : ''),
+                    only: [pid],          // pinned to this lane — never another reviewer's model
+                    maxTokens: 1200,
+                    temperature: 0,
+                });
+                vote = parseVote(res.text);
+                parsed = extractJson(res.text) || {};
+                if (vote === 'pass' || vote === 'fail') break;
+                console.log(`  ${r.name} (${res.provider}) → unclear (attempt ${attempt + 1}/3), retrying…`);
+            }
+
+            const evidence = String(parsed.evidence || '').slice(0, 300);
+            // Still `unclear` after the retries is a parse failure, not an objection:
+            // count it as a non-vote so it neither blocks nor silently approves.
+            const finalVote = vote === 'unclear' ? 'unavailable' : vote;
+            console.log(`  ${r.name} (${res.provider}) → ${finalVote.toUpperCase()}${parsed.reason ? `: ${parsed.reason}` : ''}`);
+            if (finalVote === 'fail') {
+                // An unsubstantiated FAIL still blocks — we fail closed on security.
+                // But it is flagged loudly: "FAIL with no citable line" is the signature
+                // of a reviewer reacting to prose rather than behaviour, and the human
+                // needs to see that instantly to decide on an override.
+                console.log(evidence
+                    ? `      evidence: ${evidence}`
+                    : '      ⚠ NO EXECUTABLE EVIDENCE CITED — likely a reaction to comments/prose, not behaviour.');
+            }
+            return {
+                name: r.name,
+                vote: finalVote,
+                provider: res.provider,
+                reason: String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
+                evidence,
+                concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
+            };
+        } catch (e) {
+            // This provider is down. Move to the next one reserved for THIS lane.
+            lastErr = e;
+            console.warn(`  ${r.name} (${pid}) unreachable — ${String(e.message).slice(0, 100)}`);
+        }
+    }
+
+    return {
+        name: r.name,
+        vote: 'unavailable',
+        provider: 'none',
+        reason: String(lastErr ? lastErr.message : 'every reserved provider failed').slice(0, 200),
+        concerns: [],
+    };
+}
+
 function summary(md) {
     try {
         if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
@@ -342,64 +427,26 @@ async function main() {
     console.log(`Reviewing ${raw.length} bytes of diff${truncated ? ` (truncated to ${diff.length}, sensitive files first)` : ''}`);
     console.log(`${llm.count} provider(s) available: ${llm.providers.map((p) => p.id).join(', ')}`);
 
-    // Each reviewer takes a provider the previous reviewers did not use, so the
-    // board is genuinely independent rather than one model wearing three hats.
-    const used = [];
-    const votes = [];
-    for (const r of REVIEWERS) {
-        try {
-            // Retry on `unclear`. A reviewer that returns an unparseable answer
-            // has NOT objected — it has produced a parse failure, which is
-            // transient. Blocking a merge on one model's garbled reply (while the
-            // other reviewers pass) is a false block; this exact thing blocked the
-            // first real autonomous PR when Gemini returned an unclear verdict.
-            // Re-ask up to twice; only a clear PASS/FAIL ends the loop.
-            let res, vote = 'unclear', parsed = {};
-            for (let attempt = 0; attempt < 3; attempt++) {
-                res = await chat({
-                    system: r.system,
-                    prompt: prompt(r, diff, truncated) + (attempt ? '\n\nReturn STRICTLY the one JSON object described above and nothing else.' : ''),
-                    prefer: r.prefer,
-                    exclude: used,
-                    maxTokens: 1200,
-                    temperature: 0,
-                });
-                vote = parseVote(res.text);
-                parsed = extractJson(res.text) || {};
-                if (vote === 'pass' || vote === 'fail') break;
-                console.log(`  ${r.name} (${res.provider}) → unclear (attempt ${attempt + 1}/3), retrying…`);
-            }
-            used.push(res.provider);
-            const evidence = String(parsed.evidence || '').slice(0, 300);
-            // After retries, a still-`unclear` reviewer is a parse failure, not an
-            // objection — count it as a non-vote (unavailable) so it neither
-            // blocks nor silently approves. A genuine FAIL always blocks.
-            const finalVote = vote === 'unclear' ? 'unavailable' : vote;
-            votes.push({
-                name: r.name,
-                vote: finalVote,
-                provider: res.provider,
-                reason: String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
-                evidence,
-                concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
-            });
-            console.log(`  ${r.name} (${res.provider}) → ${finalVote.toUpperCase()}${parsed.reason ? `: ${parsed.reason}` : ''}`);
-            if (finalVote === 'fail') {
-                // An unsubstantiated FAIL still blocks — we fail closed on security.
-                // But it is flagged loudly, because "FAIL with no citable line" is the
-                // signature of a reviewer reacting to documentation rather than code,
-                // and the human needs to see that instantly to decide on an override.
-                console.log(evidence
-                    ? `      evidence: ${evidence}`
-                    : '      ⚠ NO EXECUTABLE EVIDENCE CITED — likely a reaction to comments/prose, not behaviour.');
-            }
-        } catch (e) {
-            // Every provider was tried and exhausted. That is an outage, not a
-            // verdict, so it must not be counted as an objection.
-            votes.push({ name: r.name, vote: 'unavailable', provider: 'none', reason: String(e.message).slice(0, 200), concerns: [] });
-            console.warn(`  ${r.name} → UNAVAILABLE (${e.message.slice(0, 120)})`);
-        }
+    // Providers are dealt to the reviewers BEFORE any of them runs, so the board
+    // can run concurrently and still be genuinely independent. See
+    // assignProviders() for why wrapping the old sequential loop in Promise.all
+    // would have collapsed all three reviewers onto one model while still
+    // printing three green ticks.
+    const lanes = assignProviders(REVIEWERS);
+    for (const lane of lanes) {
+        console.log(`  ${lane.role.name} → ${lane.primary || 'NO PROVIDER'}${lane.fallbacks.length ? ` (fallbacks: ${lane.fallbacks.join(', ')})` : ''}`);
     }
+
+    // allSettled, not all: one lane throwing must not cancel the others' verdicts.
+    const started = Date.now();
+    const settled = await Promise.allSettled(lanes.map((lane) => runReviewer(lane, diff, truncated)));
+    const votes = settled.map((s, i) => s.status === 'fulfilled'
+        ? s.value
+        // runReviewer already converts an outage into an `unavailable` vote, so
+        // reaching here means it threw for some other reason. Still a non-vote:
+        // a bug in this file is not a reviewer objection.
+        : { name: lanes[i].role.name, vote: 'unavailable', provider: 'none', reason: `reviewer crashed: ${String(s.reason && s.reason.message).slice(0, 160)}`, concerns: [] });
+    console.log(`Board finished in ${((Date.now() - started) / 1000).toFixed(1)}s (${lanes.length} reviewers in parallel)`);
 
     const result = tally(votes);
     const rows = votes.map((v) => {
