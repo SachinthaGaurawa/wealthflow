@@ -12,6 +12,8 @@ import fc from 'fast-check';
 import { routeRow, hashRow, classifyStatement } from '../wealthflow-statement-router.js';
 
 import { runs } from './fuzz-config.js';
+import fsMod from 'node:fs';
+import { loadParser } from './statement-fixtures.mjs';
 // --- shape generators (model REAL statement rows) ---------------------------
 const arbDescription = fc.oneof(
   fc.string({ minLength: 0, maxLength: 200 }),
@@ -176,5 +178,115 @@ describe('routeRow: determinism', () => {
       const b = routeRow(row, ctx);
       expect(a).toEqual(b);
     }), { numRuns: runs(1000) });
+  });
+});
+
+// ============================================================================
+// 4. THE PARSER → ROUTER CONTRACT
+// ============================================================================
+// This module reads `row.description` and `row.type`. The parser that produces
+// its input emits `narration` and `direction`. Nothing was broken in production,
+// because nothing loads this file — index.html loads plain scripts and this is an
+// ES module — but that is a latent trap, not a safe state. Wired in as it was,
+// every parsed row would have arrived with `description === undefined`, and:
+//
+//   • desc would be '', tripping the "unreadable vendor" clamp to confidence 0.4
+//     — under the 0.75 threshold, so EVERY row flagged needsReview;
+//   • `row.type` is not a field the parser emits, so `direction()` fell through
+//     to its last line and returned 'debit' for everything. A salary credit would
+//     have been filed as an expense;
+//   • bestNameMatch() got undefined, so loan and savings-target allocation could
+//     never fire at all.
+//
+// These tests wire the two modules together for real, so the contract is checked
+// rather than assumed. Testing each module alone is exactly how a field-name
+// mismatch survives a green suite.
+// ============================================================================
+describe('parser → router: the field-name contract', () => {
+  const P = loadParser(fsMod);
+  const parse = (text) => P.parseStatementText(text);
+
+  it('routes a salary credit as income from the parser\'s own field names', () => {
+    // Straight parser output. No renaming, no adapter — if the router cannot read
+    // it, this fails.
+    const rows = parse(
+      '01/07/2026 OPENING BALANCE 100,000.00\n'
+      + '03/07/2026 SALARY JULY 250,000.00 350,000.00\n'
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].direction).toBe('credit');   // the parser resolved it from the balance
+    const r = routeRow(rows[0], { statementType: 'bank_account' });
+    expect(r.fields.dir).toBe('credit');        // ...and the router must not lose it
+    expect(r.module).toBe('income');
+  });
+
+  it('reads the narration, so merchant patterns still match', () => {
+    const rows = parse(
+      '01/07/2026 OPENING BALANCE 100,000.00\n'
+      + '02/07/2026 NETFLIX MONTHLY 1,490.00 98,510.00\n'
+    );
+    const r = routeRow(rows[0], { statementType: 'bank_account' });
+    expect(r.module).toBe('subscriptions');
+    expect(r.fields.desc).toBe('NETFLIX MONTHLY');
+  });
+
+  it('does not clamp a parsed row to the unreadable-vendor confidence', () => {
+    // The symptom that would have made the whole import unusable: an empty
+    // description trips the `desc.length < 3` guard and clamps confidence to 0.4.
+    const rows = parse(
+      '01/07/2026 OPENING BALANCE 100,000.00\n'
+      + '02/07/2026 CARGILLS FOOD CITY 3,120.00 96,880.00\n'
+    );
+    const r = routeRow(rows[0], { statementType: 'bank_account' });
+    expect(r.confidence).toBeGreaterThan(0.4);
+    expect(r.confidence).toBe(0.7);              // the generic-expense score
+
+    // NOTE, and deliberately asserted rather than glossed over: 0.7 is below the
+    // DEFAULT 0.75 threshold, so an ordinary bank expense is flagged needsReview
+    // no matter how cleanly it parsed. That is pre-existing router behaviour and
+    // is NOT what this change is about — but a review flag that fires on the most
+    // common case carries no information, and I have reported it separately
+    // rather than altering routing behaviour inside a field-name fix.
+    expect(r.needsReview).toBe(true);
+    expect(routeRow(rows[0], { statementType: 'bank_account', reviewThreshold: 0.7 }).needsReview).toBe(false);
+  });
+
+  it('still allocates a loan repayment matched by name', () => {
+    const rows = parse(
+      '01/07/2026 OPENING BALANCE 100,000.00\n'
+      + '02/07/2026 TOYOTA LEASE INSTALMENT 45,000.00 55,000.00\n'
+    );
+    const r = routeRow(rows[0], { loans: [{ id: 'l1', name: 'Toyota Lease' }] });
+    expect(r.module).toBe('loans');
+    expect(r.allocation.id).toBe('l1');
+  });
+
+  it('carries the parser\'s uncertainty into needsReview', () => {
+    // A statement with no running balance: the parser had to assume the direction
+    // and says so. The router's confidence is about the CATEGORY and knows nothing
+    // of that, so without propagation an unverified row could route at 0.9.
+    const rows = parse('02/07/2026 NETFLIX MONTHLY 1,490.00\n');
+    expect(rows[0].directionSource).toBe('assumed');
+    expect(rows[0].needsReview).toBe(true);
+    const r = routeRow(rows[0], { statementType: 'credit_card' });
+    expect(r.needsReview).toBe(true);
+  });
+
+  it('gives two different transactions two different dedup hashes', async () => {
+    // hashRow() also read `description`, so every parsed row hashed with an empty
+    // narration slot. Two unrelated charges on the same date for the same amount
+    // would collide, and the second would be silently dropped as a duplicate.
+    const [a, b] = parse(
+      '02/07/2026 UBER RIDE COLOMBO 1,250.00\n'
+      + '02/07/2026 KEELLS SUPER 1,250.00\n'
+    );
+    expect(await hashRow(a)).not.toBe(await hashRow(b));
+  });
+
+  it('an explicit description still wins over narration', () => {
+    // Rows from the email/manual paths carry `description`. They must be unaffected.
+    const r = routeRow({ description: 'SALARY CREDIT', narration: 'IGNORE ME', amount: 1000, drcr: 'CR' }, {});
+    expect(r.fields.desc).toBe('SALARY CREDIT');
+    expect(r.module).toBe('income');
   });
 });
