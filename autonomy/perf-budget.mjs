@@ -42,7 +42,9 @@ export const BUDGETS = {
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     moduleCount: 45,             // measured 43
     scriptTags: 48,              // measured 47
-    renderBlockingScripts: 7,    // measured 7 — see the note in check()
+    renderBlockingScripts: 6,    // was 7; Chart.js deferred, so the ceiling comes down
+                                 // with it. A ratchet that is not tightened after an
+                                 // improvement quietly permits the improvement to be undone.
 };
 
 /** Bytes of a file, or 0 if it is not there. */
@@ -55,8 +57,8 @@ function bytes(file) {
  *
  * A tag is non-blocking if it carries `defer`, `async`, or `type="module"`
  * (modules are deferred by definition). Everything else halts parsing until it
- * has been fetched and executed — and four of the seven here are third-party,
- * so the first paint waits on someone else's CDN.
+ * has been fetched and executed — and four of the six here are third-party, so
+ * the first paint waits on someone else's CDN.
  */
 export function renderBlocking(html) {
     const tags = String(html || '').match(/<script\b[^>]*\bsrc\s*=[^>]*>/gi) || [];

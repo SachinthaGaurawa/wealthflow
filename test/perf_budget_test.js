@@ -2,8 +2,9 @@
 // WealthFlow Shadow Test Harness — the payload budget
 // =============================================================================
 // Measured: index.html is 1,508 KB, the 43 modules add 1,202 KB, and 2.7 MB
-// leaves the server before the app is usable. Seven script tags block the first
-// paint, five of them third-party — so first paint waits on someone else's CDN.
+// leaves the server before the app is usable. Six script tags block the first
+// paint, four of them third-party — so first paint waits on someone else's CDN.
+// (It was seven until Chart.js was deferred; see the last block in this file.)
 //
 // WHY THESE ARE CEILINGS AND NOT TARGETS
 // None of that is fixable in one pull request, and there is no build step to
@@ -20,6 +21,7 @@
 // =============================================================================
 
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
 import { measure, check, renderBlocking, BUDGETS } from '../autonomy/perf-budget.mjs';
 
 describe('the payload is measured, not assumed', () => {
@@ -125,5 +127,69 @@ describe('the gate can actually fail', () => {
             if (typeof value !== 'number' || value === 0) continue;
             expect(limit / value, `${key}: ceiling ${limit} is too loose for ${value}`).toBeLessThan(1.05);
         }
+    });
+});
+
+// =============================================================================
+// Chart.js: off the critical path, and survivable when it never arrives
+// =============================================================================
+// Chart.js was render-blocking (199 KB on the critical path) AND every use of it
+// but one was unguarded. The two facts compounded: when the CDN is blocked or
+// slow, `new Chart` throws, and because the throw is uncaught it ABORTS
+// renderDash — so every stat, table and total BELOW the chart silently never
+// renders. The user sees a half-built dashboard and no error.
+//
+// That was not hypothetical. The runtime sweep reported it on every run
+// (`renderPage error: ReferenceError: Chart is not defined`) and the sandbox's
+// lack of egress is an exact simulation of a blocked CDN. After the guards:
+// application console errors 1 -> 0, and the DOM grew 3,687 -> 3,698 elements,
+// because the rest of the dashboard now renders.
+//
+// A guard is worth more than the chart it skips: skipping costs a chart, throwing
+// costs the page.
+// =============================================================================
+describe('Chart.js loading and resilience', () => {
+    const html = () => fs.readFileSync('index.html', 'utf8');
+
+    it('is deferred, so it no longer blocks the first paint', () => {
+        const tag = /<script\b[^>]*chart\.umd\.min\.js[^>]*>/i.exec(html());
+        expect(tag, 'the Chart.js script tag has moved or been renamed').toBeTruthy();
+        expect(tag[0]).toMatch(/\bdefer\b/);
+    });
+
+    it('still loads before every app module, so ordering is unchanged', () => {
+        // `defer` preserves document order, so this only holds while the Chart tag
+        // sits above the deferred wealthflow-*.js tags. If someone moves it below
+        // them, Chart would execute after the code that uses it.
+        const t = html();
+        const chartAt = t.search(/<script\b[^>]*chart\.umd\.min\.js/i);
+        const firstDeferredApp = t.search(/<script\s+src="wealthflow-[^"]*"\s+defer/i);
+        expect(chartAt).toBeGreaterThan(0);
+        expect(firstDeferredApp).toBeGreaterThan(0);
+        expect(chartAt).toBeLessThan(firstDeferredApp);
+    });
+
+    it('guards EVERY construction site against Chart being absent', () => {
+        // Structural, not a count: for each `new Chart(`, look back for a
+        // `typeof Chart` guard. A bare count would pass if someone added a new
+        // unguarded site next to a guarded one.
+        //
+        // The 40-line window is a heuristic — two of the real guards sit 26 and 28
+        // lines above their construction site, and a window tight enough to be
+        // exact would need to understand JS scope. It is only worth trusting
+        // because it was verified to FAIL when a guard is actually removed; a
+        // proximity check nobody has tried to defeat is not a check.
+        const lines = html().split('\n');
+        const unguarded = [];
+        lines.forEach((line, i) => {
+            if (!/new Chart\s*\(/.test(line)) return;
+            const window = lines.slice(Math.max(0, i - 40), i + 1).join('\n');
+            if (!/typeof Chart\s*[!=]==?\s*['"]undefined['"]/.test(window)) unguarded.push(i + 1);
+        });
+        expect(unguarded, `unguarded new Chart() at line(s): ${unguarded.join(', ')}`).toEqual([]);
+    });
+
+    it('has more than one construction site, so the check is not vacuous', () => {
+        expect((html().match(/new Chart\s*\(/g) || []).length).toBeGreaterThanOrEqual(4);
     });
 });
