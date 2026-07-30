@@ -210,7 +210,7 @@ async function visitSections(page) {
  * whose URL mentions that name actually failed. A genuine typo'd identifier is
  * still reported, because no failed request will match it.
  */
-function isMissingVendorGlobal(message, failedUrls) {
+export function isMissingVendorGlobal(message, failedUrls) {
     const m = /^(?:Uncaught )?ReferenceError: (\w+) is not defined/.exec(message)
         || /^(\w+) is not defined/.exec(message);
     if (!m) return false;
