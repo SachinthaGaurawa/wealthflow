@@ -1,0 +1,174 @@
+// =============================================================================
+// WealthFlow Shadow Test Harness — the review board runs in parallel
+// =============================================================================
+// The board used to run its three reviewers one at a time. Making them
+// concurrent sounds like a one-line change to Promise.all, and that one line
+// would have broken the board while making it look faster.
+//
+// The old loop chose providers with `exclude: used`, appending each reviewer's
+// provider as it went — so reviewer 3's choice depended on reviewers 1 and 2.
+// Under Promise.all every lane starts with an empty `exclude`, so every lane
+// takes the highest-ranked provider and ALL THREE REVIEWERS RUN ON THE SAME
+// MODEL. The report still prints three independent green ticks. That is a fake
+// consensus, and a fake consensus is more dangerous than an honest sequential
+// one, because it is trusted more.
+//
+// So providers are dealt up front (autonomy/llm-router.mjs::assignProviders,
+// covered in autonomy_test.js) and the lanes then fan out. This file covers the
+// fan-out itself:
+//
+//   • the lanes really are concurrent — asserted by observing that all three
+//     requests are IN FLIGHT before any of them resolves, not by timing, which
+//     is flaky on a shared CI runner;
+//   • a reviewer is pinned to its own provider and can only fall back onto
+//     providers reserved for it;
+//   • every failure mode still becomes a non-vote rather than an objection,
+//     because a provider outage must never block a merge.
+// =============================================================================
+
+import { describe, it, expect } from 'vitest';
+import { runReviewer, tally, REVIEWERS } from '../consensus-review.mjs';
+
+const ROLE = REVIEWERS[0];
+const PASS = JSON.stringify({ verdict: 'pass', reason: 'looks fine', evidence: '', concerns: [] });
+
+/**
+ * A chat stub that records what it was asked and answers on command.
+ *
+ * `answer` is a STRING (the reply body) or a function returning a full response.
+ * The distinction matters: an earlier version of this helper wrapped anything
+ * non-function in `{ text: answer }`, so passing a response-shaped object
+ * produced `{ text: { text: … } }`. parseVote then stringified an object to
+ * "[object Object]", read it as unclear, and the unclear-retry test passed for
+ * entirely the wrong reason.
+ */
+function stubChat(answer) {
+    const calls = [];
+    const fn = async (opts) => {
+        calls.push({ only: opts.only, prompt: opts.prompt });
+        if (typeof answer === 'function') return answer(opts, calls.length);
+        if (typeof answer !== 'string') throw new TypeError('stubChat: pass a string reply or a function');
+        return { text: answer, provider: opts.only[0] };
+    };
+    fn.calls = calls;
+    return fn;
+}
+
+describe('review board: the lanes actually run concurrently', () => {
+    it('has all three requests in flight before any of them resolves', () => {
+        // The real assertion of this change, and deliberately NOT a timing test:
+        // "finished in under Nms" is flaky on a shared runner and would be quietly
+        // disabled the first time it flapped. Instead the stub refuses to resolve
+        // until it has seen all three calls, so the test can only pass if the lanes
+        // overlap. Under the old sequential loop this would deadlock and time out.
+        let inFlight = 0;
+        let maxInFlight = 0;
+        let release;
+        const gate = new Promise((r) => { release = r; });
+
+        const chatImpl = async (opts) => {
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            if (inFlight === 3) release();      // everyone is here — let them go
+            await gate;
+            inFlight--;
+            return { text: PASS, provider: opts.only[0] };
+        };
+
+        const lanes = REVIEWERS.map((role, i) => ({ role, primary: `p${i}`, fallbacks: [] }));
+        return Promise.all(lanes.map((l) => runReviewer(l, 'diff', false, chatImpl)))
+            .then((votes) => {
+                expect(maxInFlight).toBe(3);
+                expect(votes.map((v) => v.vote)).toEqual(['pass', 'pass', 'pass']);
+                expect(tally(votes).merge).toBe(true);
+            });
+    });
+});
+
+describe('review board: a lane stays inside its own provider allocation', () => {
+    it('asks its assigned primary, and nobody else, on success', async () => {
+        const chatImpl = stubChat(PASS);
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: ['groq'] }, 'diff', false, chatImpl);
+        expect(chatImpl.calls).toHaveLength(1);
+        expect(chatImpl.calls[0].only).toEqual(['deepseek']);
+        expect(vote.provider).toBe('deepseek');
+        expect(vote.vote).toBe('pass');
+    });
+
+    it('falls back only onto the providers reserved for it', async () => {
+        // A retry must never land on a provider another reviewer is mid-request on —
+        // that would recreate the shared-model problem at exactly the moment nobody
+        // is watching.
+        const chatImpl = stubChat((opts) => {
+            if (opts.only[0] === 'deepseek') throw new Error('503 upstream');
+            return { text: PASS, provider: opts.only[0] };
+        });
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: ['mistral'] }, 'diff', false, chatImpl);
+        expect(chatImpl.calls.map((c) => c.only[0])).toEqual(['deepseek', 'mistral']);
+        expect(vote.provider).toBe('mistral');
+        expect(vote.vote).toBe('pass');
+    });
+
+    it('records a non-vote — never an objection — when every reserved provider is down', async () => {
+        // Load-bearing. An earlier version of this file counted a provider error as a
+        // non-pass vote, so one DeepSeek hiccup blocked every pull request in the repo.
+        const chatImpl = stubChat(() => { throw new Error('everything is on fire'); });
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: ['groq'] }, 'diff', false, chatImpl);
+        expect(vote.vote).toBe('unavailable');
+        expect(chatImpl.calls).toHaveLength(2);
+        // An outage alongside a real pass must not block.
+        expect(tally([vote, { name: 'security', vote: 'pass' }]).merge).toBe(true);
+    });
+
+    it('does not call a model at all when no provider was assigned', async () => {
+        // The honest degradation path: fewer providers than reviewers. Running anyway
+        // would mean sharing another reviewer's model.
+        const chatImpl = stubChat(PASS);
+        const vote = await runReviewer({ role: ROLE, primary: null, fallbacks: [] }, 'diff', false, chatImpl);
+        expect(chatImpl.calls).toHaveLength(0);
+        expect(vote.vote).toBe('unavailable');
+        expect(vote.provider).toBe('none');
+    });
+});
+
+describe('review board: verdict handling is unchanged by the parallel rewrite', () => {
+    it('re-asks an unclear reply on the SAME provider, then accepts the verdict', async () => {
+        // A garbled reply is a parse failure, not an objection. Retrying must not
+        // wander onto another lane's provider.
+        const chatImpl = stubChat((opts, n) => ({
+            text: n === 1 ? 'I am not sure what to say here' : PASS,
+            provider: opts.only[0],
+        }));
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: ['groq'] }, 'diff', false, chatImpl);
+        expect(chatImpl.calls.map((c) => c.only[0])).toEqual(['deepseek', 'deepseek']);
+        expect(vote.vote).toBe('pass');
+    });
+
+    it('treats a reply that is still unclear after three attempts as a non-vote', async () => {
+        const chatImpl = stubChat('mumble');
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: [] }, 'diff', false, chatImpl);
+        expect(chatImpl.calls).toHaveLength(3);
+        expect(vote.vote).toBe('unavailable');
+        expect(vote.reason).toMatch(/no parseable verdict/);
+    });
+
+    it('a real FAIL blocks, and carries its reason and evidence through', async () => {
+        const chatImpl = stubChat(JSON.stringify({ verdict: 'fail', reason: 'removes a null check', evidence: 'line 42', concerns: ['npe'] }));
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: [] }, 'diff', false, chatImpl);
+        expect(vote.vote).toBe('fail');
+        expect(vote.reason).toBe('removes a null check');
+        expect(vote.evidence).toBe('line 42');
+        expect(tally([vote]).merge).toBe(false);
+    });
+
+    it('never throws, whatever a provider returns', async () => {
+        for (const answer of [null, undefined, {}, { text: null }, { text: '' }, { text: '{'.repeat(50) }]) {
+            const chatImpl = stubChat(() => answer);
+            // A crash here would take down the whole board, so a malformed reply must
+            // be absorbed into a vote object rather than propagated.
+            const vote = await runReviewer({ role: ROLE, primary: 'p', fallbacks: [] }, 'diff', false, chatImpl)
+                .catch((e) => ({ vote: 'THREW: ' + e.message }));
+            expect(['pass', 'fail', 'unavailable']).toContain(vote.vote);
+        }
+    });
+});
