@@ -29,7 +29,11 @@ name: Auto-merge safe changes (free)
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, labeled, unlabeled]
+    # `ready_for_review` matters: auto-merge cannot be enabled while a PR is a
+    # draft, so without it a draft that is later marked ready would never get
+    # auto-merge enabled at all — the classify job would have run once, back when
+    # merging was still impossible.
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
 
 permissions:
   contents: write
@@ -122,7 +126,18 @@ jobs:
   auto-merge:
     name: Enable auto-merge
     needs: classify
-    if: needs.classify.outputs.safe == 'yes'
+    # A DRAFT pull request cannot have auto-merge enabled. GitHub answers the
+    # mutation with `GraphQL: Pull Request is still a draft (mergePullRequest)`
+    # and the step exits 1 — so before this guard, every auto-safe draft turned
+    # this job red. That is worse than it sounds: a check that fails every time
+    # teaches you to scroll past red X's, and the next red one that actually
+    # matters gets scrolled past too.
+    #
+    # A draft says "not ready to merge", so waiting is the correct behaviour, not
+    # a limitation to work around. `ready_for_review` is on the trigger list so
+    # taking the PR out of draft runs this immediately — nothing needs re-running
+    # by hand.
+    if: needs.classify.outputs.safe == 'yes' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - name: Enable auto-merge (GitHub merges once every required check is green)
