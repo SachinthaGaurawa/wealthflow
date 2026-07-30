@@ -26095,6 +26095,22 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     t._subName = routed.subName || '';
                     t._subPhone = routed.subPhone || '';
                     t._review = !!routed.needsReview;     // AI is unsure → ask the user
+                    // The text parser's own uncertainty counts too. It computes
+                    // whether a row's amount was confirmed by the statement's running
+                    // balance and whether money-in vs money-out was verified or merely
+                    // assumed — then forwarded both, and nothing read them. So a row
+                    // whose direction was a guess looked exactly as trustworthy as one
+                    // the bank's own arithmetic confirmed.
+                    if (t._needsReview) {
+                        t._review = true;
+                        if (!t._reviewWhy) {
+                            t._reviewWhy = t._directionSource === 'assumed'
+                                ? 'this statement prints no running balance, so money-in vs money-out was assumed'
+                                : (t._directionSource === 'keyword'
+                                    ? 'money-in vs money-out was read from the wording, not from a balance'
+                                    : 'the amount could not be checked against a balance');
+                        }
+                    }
                     t._chequeType = routed.chequeType || '';
                     t._chequeNo = routed.chequeNo || '';
                     // ── v7.59.0 — Sri Lanka Merchant Intelligence (window.WFMerchants):
@@ -26206,7 +26222,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);${t._review ? 'background:rgba(245,166,35,.07);box-shadow:inset 3px 0 0 var(--accent,#f5a623);' : ''}">
                     <td style="padding:6px 6px;"><input type="checkbox" class="_ccr_keep" ${t._keep ? 'checked' : ''}></td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${t.date || ''}" style="width:130px;font-size:12px;"></td>
-                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — AI wasn\'t sure</div>' : ''}</td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — ' + String(t._reviewWhy || 'AI wasn\'t sure').replace(/[<>&]/g, '') + '</div>' : ''}</td>
                     <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select></td>
                     <td style="padding:6px 6px;">
                         ${_acctType === 'bank_account'
