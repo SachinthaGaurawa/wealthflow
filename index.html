@@ -6064,7 +6064,7 @@
                 financial data from your devices and the cloud. <b style="color:var(--green);">Your Master PIN and
                     Settings will be kept safe.</b> Enter your PIN to confirm.</p>
             <div class="fg"><label class="fl">Master PIN *</label><input class="fi auth-numpad-only" id="fr_pin"
-                    type="password" inputmode="numeric" maxlength="6" placeholder="••••••"
+                    type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="••••••"
                     style="letter-spacing: 4px; font-family:var(--mono); text-align:center; font-size:24px;"></div>
             <div class="auth-err" id="fr_err"></div>
             <div class="md-ftr" id="fr_action_btns">
@@ -6599,15 +6599,15 @@
                 all devices. Changing it will <b style="color:var(--accent);">sign out all other active sessions</b> for
                 security.</p>
             <div class="fg"><label class="fl">Current PIN *</label><input class="fi auth-numpad-only" id="cp_current"
-                    type="password" inputmode="numeric" maxlength="6" placeholder="Enter current 6-digit PIN"
+                    type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="Enter current 6-digit PIN"
                     style="letter-spacing: 6px; font-family:var(--mono); text-align:center; font-size:22px; padding:14px;">
             </div>
             <div class="fg"><label class="fl">New PIN *</label><input class="fi auth-numpad-only" id="cp_new"
-                    type="password" inputmode="numeric" maxlength="6" placeholder="Enter new 6-digit PIN"
+                    type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="Enter new 6-digit PIN"
                     style="letter-spacing: 6px; font-family:var(--mono); text-align:center; font-size:22px; padding:14px;">
             </div>
             <div class="fg"><label class="fl">Confirm New PIN *</label><input class="fi auth-numpad-only"
-                    id="cp_confirm" type="password" inputmode="numeric" maxlength="6" placeholder="Re-enter new PIN"
+                    id="cp_confirm" type="password" autocomplete="off" inputmode="numeric" maxlength="6" placeholder="Re-enter new PIN"
                     style="letter-spacing: 6px; font-family:var(--mono); text-align:center; font-size:22px; padding:14px;">
             </div>
             <div class="auth-err" id="cp_err"></div>
@@ -25035,7 +25035,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         </div>
                         <div style="padding:8px 0 14px;font-size:13px;color:var(--text2);">${reason}</div>
                         <div class="fg">
-                            <input class="fi" id="_vp_pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                            <input class="fi" id="_vp_pin" type="password" autocomplete="off" inputmode="numeric" pattern="[0-9]*" maxlength="6"
                                 placeholder="Enter your 6-digit PIN" autofocus
                                 style="font-family:var(--mono);font-size:22px;letter-spacing:8px;text-align:center;">
                         </div>
