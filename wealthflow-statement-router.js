@@ -42,11 +42,40 @@ function toNumber(a) {
   return isNaN(n) ? 0 : n;
 }
 
+// The narration field, whatever the producer called it.
+//
+// WHY THIS EXISTS: wealthflow-statement-parser.js emits `narration`, and this
+// module only ever read `description`. Nothing was broken today because nothing
+// in index.html loads this file — it is an ES module and the app loads plain
+// scripts — but that made it a loaded gun rather than a safe one. Wired in as
+// it was, EVERY parsed row would arrive with `description === undefined`, so:
+//
+//   • desc would be '', which trips the "unreadable vendor" guard at the bottom
+//     of routeRow() and clamps confidence to 0.4 — below the 0.75 threshold, so
+//     every single row would be flagged needsReview;
+//   • no subscription, fee, fuel or cash-advance pattern could ever match, so
+//     every card charge would fall to the generic 'purchase' branch;
+//   • bestNameMatch() would match no savings target and no loan, so automatic
+//     loan and goal allocation would silently never fire.
+//
+// Reading both names costs one function call and removes the trap.
+function descOf(row) {
+  if (!row) return '';
+  return row.description != null && row.description !== '' ? row.description : (row.narration || '');
+}
+
 // credit (money in) vs debit (money out)
 function direction(row) {
+  // The parser's own conclusion comes first: it is derived from the statement's
+  // running balance (opening + amount = closing), which is stronger evidence than
+  // any wording match below. Ignoring it — as this function did — threw away the
+  // one signal that is actually verified and fell through to `row.type`, which
+  // the parser does not emit, so every row defaulted to 'debit'. A salary credit
+  // would have been filed as an expense.
+  if (row.direction) return /^cr/i.test(row.direction) ? 'credit' : 'debit';
   if (row.drcr) return /cr/i.test(row.drcr) ? 'credit' : 'debit';
   if (typeof row.amount === 'number' && row.amount < 0) return 'credit'; // some statements sign CR negative
-  const d = norm(row.description);
+  const d = norm(descOf(row));
   if (RE.refund.test(d) || RE.salary.test(d)) return 'credit';
   return row.type === 'credit' ? 'credit' : 'debit';
 }
@@ -81,12 +110,13 @@ function isCreditCardRow(row, ctx) {
 
 // ── the core router for ONE row ─────────────────────────────────────────────
 export function routeRow(row, ctx = {}) {
-  const desc = norm(row.description);
+  const rawDesc = descOf(row);
+  const desc = norm(rawDesc);
   const amount = Math.abs(toNumber(row.amount));
   const dir = direction(row);
   const onCard = isCreditCardRow(row, ctx);
-  const targetHit = bestNameMatch(row.description, ctx.targets);
-  const loanHit   = bestNameMatch(row.description, ctx.loans);
+  const targetHit = bestNameMatch(rawDesc, ctx.targets);
+  const loanHit   = bestNameMatch(rawDesc, ctx.loans);
 
   let module, tabLabel, confidence, subtype = null, allocation = null;
 
@@ -121,11 +151,16 @@ export function routeRow(row, ctx = {}) {
   if (!desc || desc === 'unreadable vendor' || desc.length < 3) confidence = Math.min(confidence, 0.4);
 
   const threshold = typeof ctx.reviewThreshold === 'number' ? ctx.reviewThreshold : 0.75;
+  // An upstream doubt must survive routing. The parser flags a row whose
+  // direction it had to assume (a statement printing no running balance) or read
+  // from wording; the router's own confidence is about the CATEGORY and knows
+  // nothing of that, so without this an unverified row could route with 0.9.
+  const upstreamDoubt = row.needsReview === true || (row.direction !== undefined && !row.direction);
   return {
     module, tabLabel, subtype, allocation,
     confidence: Math.round(confidence * 100) / 100,
-    needsReview: confidence < threshold,
-    fields: { date: row.date, desc: row.description, amount, ref: row.ref || null, dir },
+    needsReview: confidence < threshold || upstreamDoubt,
+    fields: { date: row.date, desc: rawDesc, amount, ref: row.ref || null, dir },
   };
 }
 
@@ -136,7 +171,7 @@ export async function hashRow(row, ctx = {}) {
     Math.round(Math.abs(toNumber(row.amount)) * 100),
     row.card_last4 || ctx.card_last4 || 'n/a',
     String(row.ref || '').toUpperCase(),
-    norm(row.description).slice(0, 40),
+    norm(descOf(row)).slice(0, 40),
   ].join('|');
   if (typeof crypto !== 'undefined' && crypto.subtle) {
     const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(tuple));
