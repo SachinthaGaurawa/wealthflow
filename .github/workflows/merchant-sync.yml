@@ -11,7 +11,7 @@ name: Merchant List Sync (WealthFlow)
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '40 */6 * * *'
   workflow_dispatch: {}
   push:
     paths:

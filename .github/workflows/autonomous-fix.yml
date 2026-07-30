@@ -34,7 +34,7 @@ name: Autonomous fix agent (free)
 
 on:
   schedule:
-    - cron: '0 */2 * * *'        # every 2h — see NOTE ON ACTIONS MINUTES below
+    - cron: '25 */6 * * *'       # every 6h — see NOTE ON ACTIONS MINUTES below
   issues:
     types: [opened, reopened, labeled]
   workflow_dispatch:

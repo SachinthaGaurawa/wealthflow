@@ -12,8 +12,24 @@ name: Health watchdog + auto-rollback (free)
 #            VERCEL_ORG_ID, VERCEL_PROJECT_ID  (from `vercel link` / project settings)
 
 on:
+  # DEPLOY-TRIGGERED FIRST, cron second.
+  #
+  # This workflow exists to roll back a bad deployment. A bad deployment happens
+  # when something is deployed — which is an EVENT this repo already receives, not
+  # something that needs discovering by polling. Probing every five minutes was
+  # paying 8,928 billable minutes a month (4.5x the entire free-tier allowance) to
+  # re-learn information that arrives for free, and it was still SLOWER to react
+  # than this: a deploy at 12:01 waited until 12:05 to be checked.
+  #
+  # The job below is guarded to production successes only, so the preview deploy on
+  # every pull-request push creates a run whose single job is skipped — and a
+  # skipped job bills nothing.
+  deployment_status:
   schedule:
-    - cron: '*/5 * * * *'      # every 5 min (GitHub may delay on free tier — fine)
+    # Safety net for failures that no deploy caused: an expired certificate, a
+    # provider outage, a DNS change. Six-hourly, offset off the hour because
+    # GitHub delays schedules that bunch on :00 for everyone at once.
+    - cron: '10 */6 * * *'
   workflow_dispatch: {}
 
 permissions:
@@ -26,6 +42,23 @@ concurrency:
 
 jobs:
   watch:
+    # THE COST GUARD. `deployment_status` fires for every deployment this repo
+    # receives, and Vercel builds a PREVIEW for every pull-request push — so
+    # without this filter the trigger above would have replaced one expensive cron
+    # with something worse: a probe of production on every push, several times per
+    # PR, most of them reporting on a deployment that is not even live.
+    #
+    # A job skipped by this `if` never starts a runner, so it bills NOTHING. The
+    # workflow run appears in the Actions tab as skipped, at zero cost, and only a
+    # successful PRODUCTION deployment actually spends a minute — which is exactly
+    # the moment a rollback is worth checking for.
+    #
+    # A scheduled or manual run has no `deployment_status` payload, so both fields
+    # are empty and the first clause carries it.
+    if: >-
+      github.event_name != 'deployment_status'
+      || (github.event.deployment_status.state == 'success'
+          && github.event.deployment_status.environment == 'Production')
     runs-on: ubuntu-latest
     steps:
       - name: Probe health (twice, 60s apart) and decide
