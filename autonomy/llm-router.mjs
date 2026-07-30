@@ -401,7 +401,16 @@ async function callProvider(provider, opts) {
         const raw = await r.text();
         if (!r.ok) {
             // Truncate: provider errors can echo the whole prompt back.
-            throw new Error(`${provider.id}: HTTP ${r.status} ${raw.slice(0, 300)}`);
+            const err = new Error(`${provider.id}: HTTP ${r.status} ${raw.slice(0, 300)}`);
+            // Structured, so callers classify on a status code rather than by
+            // regex-matching an error string that every provider words differently.
+            // Retry-After is the provider telling us its own quota window — the only
+            // authoritative number available, and it used to be thrown away.
+            err.status = r.status;
+            err.rateLimited = r.status === 429;
+            const ra = Number(r.headers.get('retry-after'));
+            err.retryAfterSec = Number.isFinite(ra) && ra > 0 ? Math.min(ra, 24 * 3600) : 0;
+            throw err;
         }
         let data;
         try { data = JSON.parse(raw); } catch { throw new Error(`${provider.id}: non-JSON response`); }
@@ -430,6 +439,10 @@ export async function chat(o) {
     const {
         prompt, system, maxTokens = 8192, temperature = 0.1,
         prefer = [], exclude = [], only = [], timeoutMs, env = process.env,
+        // Reported once per provider attempt, so a caller can keep a budget ledger
+        // without this module doing file I/O or knowing what a ledger is.
+        // Never allowed to break a call: see the try/catch at each call site.
+        onAttempt = null,
     } = o || {};
     if (!prompt || !String(prompt).trim()) throw new Error('chat(): prompt is required');
 
@@ -442,13 +455,26 @@ export async function chat(o) {
         );
     }
 
+    const report = (info) => {
+        // A reporting hook must never be able to fail a request that succeeded.
+        if (typeof onAttempt !== 'function') return;
+        try { onAttempt(info); } catch { /* observation is best-effort by design */ }
+    };
+
     const attempts = [];
     for (const provider of order) {
         try {
             const res = await callProvider(provider, { prompt, system, maxTokens, temperature, timeoutMs, env });
+            report({ provider: provider.id, outcome: 'ok', retryAfterSec: 0 });
             return { ...res, attempts };
         } catch (e) {
             attempts.push({ provider: provider.id, error: String(e && e.message || e).slice(0, 300) });
+            report({
+                provider: provider.id,
+                outcome: e && e.rateLimited ? 'rate_limited' : 'error',
+                retryAfterSec: (e && e.retryAfterSec) || 0,
+                status: (e && e.status) || 0,
+            });
             // eslint-disable-next-line no-console
             console.warn(`[llm-router] ${provider.id} failed → trying next: ${e && e.message}`);
         }

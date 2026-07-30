@@ -37,7 +37,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import * as Q from './work-queue.mjs';
-import { chat, extractJson, describeAvailability } from './llm-router.mjs';
+import { chat, extractJson, describeAvailability, orderFor } from './llm-router.mjs';
+import * as Budget from './provider-budget.mjs';
 
 /** Label marking an issue as a machine-authored idea awaiting judgement. */
 export const PROPOSAL_LABEL = 'feature-proposal';
@@ -187,12 +188,20 @@ export function renderProposal(p) {
  * Never throws: a proposer that breaks the scheduled run would cost more than
  * it is worth, and it is the least important job on the schedule.
  */
-export async function proposeOnce({ env = process.env, repoDir = process.cwd(), dryRun = false } = {}) {
+export async function proposeOnce({
+    env = process.env, repoDir = process.cwd(), dryRun = false,
+    // Injected so the background-lane decision can be tested. Without this the
+    // queue read happens first and fails in any sandbox, so a test would never
+    // reach the reservation guard below and would pass for the wrong reason —
+    // the same trap as a wiring test whose regex also matched the function
+    // definition it was meant to prove was called.
+    queue = Q, chatImpl = chat, budget = Budget,
+} = {}) {
     const avail = describeAvailability(env);
     if (!avail.healthy) return { filed: null, reason: 'no LLM provider configured' };
 
     let issues = [];
-    try { issues = await Q.allIssues({ env }); } catch { return { filed: null, reason: 'could not read the queue' }; }
+    try { issues = await queue.allIssues({ env }); } catch { return { filed: null, reason: 'could not read the queue' }; }
 
     const waiting = openProposalCount(issues);
     if (waiting >= MAX_OPEN_PROPOSALS) {
@@ -202,18 +211,46 @@ export async function proposeOnce({ env = process.env, repoDir = process.cwd(), 
     const { modules, sections } = appContext(repoDir);
     const feedback = await recentFeedback({ env });
 
+    // ── BACKGROUND LANE ─────────────────────────────────────────────────────
+    // Drafting a feature idea is the least important thing this pipeline does, and
+    // it shares a free-tier quota with the consensus board on your pull requests.
+    // So it runs on the providers left AFTER the critical reservation, and if that
+    // set is empty it declines rather than borrowing one. A weekly idea that waits
+    // a week costs nothing; a security review with no provider left blocks a merge
+    // or silently does not happen.
+    let ledger = budget.loadLedger();
+    const ranked = orderFor({ env });
+    const allowed = budget.availableFor({
+        lane: budget.LANES.BACKGROUND, ranked, ledger, now: Date.now(),
+    });
+    if (!allowed.length) {
+        return {
+            filed: null,
+            reason: `no background provider available — ${budget.RESERVE_FOR_CRITICAL} reserved for pull-request review`
+                + `${Object.keys(ledger.cooldowns || {}).length ? ' and some are rate-limited' : ''}`,
+        };
+    }
+
     let reply;
     try {
-        reply = await chat({
+        reply = await chatImpl({
             system: SYSTEM,
             prompt: buildPrompt({ modules, sections, feedback }),
             env,
+            only: allowed,          // never a provider the critical path is holding
             maxTokens: 900,
             temperature: 0.4,   // ideas need a little room; verdicts do not
+            onAttempt: (info) => {
+                ledger = budget.record(ledger, { ...info, lane: budget.LANES.BACKGROUND });
+            },
         });
     } catch (e) {
+        // Spend is recorded even on failure: a rate limit is exactly the thing the
+        // ledger needs to remember, and it is only learned by being refused.
+        budget.saveLedger(ledger);
         return { filed: null, reason: `model unavailable: ${e.message}` };
     }
+    budget.saveLedger(ledger);
 
     const p = parseProposal(reply?.text ?? reply);
     if (!p) return { filed: null, reason: 'the model declined to propose anything, or returned nothing usable' };
