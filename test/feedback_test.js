@@ -17,7 +17,11 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { runs } from './fuzz-config.js';
 import { parseIssueList, versionFromComments, summarise } from '../feedback-status.js';
-import { diagnosticsSection, localClassify, fingerprint, LABELS } from '../feedback-triage.js';
+import fs from 'node:fs';
+import {
+    diagnosticsSection, localClassify, fingerprint, LABELS,
+    imageSection, IMAGE_MARKER, IMAGE_BUDGET,
+} from '../feedback-triage.js';
 
 describe('feedback-status: issue list parsing', () => {
     it('parses a normal comma list', () => {
@@ -186,5 +190,127 @@ describe('feedback-triage: classification', () => {
             expect(() => localClassify(s)).not.toThrow();
             expect(() => fingerprint(s)).not.toThrow();
         }), { numRuns: runs(400) });
+    });
+});
+
+
+// ── attached screenshots (the silently discarded payload) ────────────────────
+// The client has always captured a screenshot, downscaled it to 900px and sent
+// it as `image`. feedback-triage.js never read the field, so every screenshot a
+// user attached was transmitted and thrown away on arrival — the AI never saw a
+// single one. These tests pin the field being read AND the safety limits, since
+// an oversized body is rejected by GitHub outright and would lose the whole
+// report, not merely the picture.
+describe('feedback: an attached screenshot reaches the agent', () => {
+    const b64 = (n) => 'A'.repeat(n);
+    const png = (n = 400) => 'data:image/png;base64,' + b64(n);
+
+    it('embeds a valid inline image, with a marker the agent can find', () => {
+        const out = imageSection(png());
+        expect(out).toContain(IMAGE_MARKER);
+        expect(out).toContain('data:image/png;base64,');
+        expect(out).toMatch(/### Screenshot/);
+    });
+
+    it('accepts png, jpeg and webp', () => {
+        for (const t of ['png', 'jpeg', 'jpg', 'webp']) {
+            expect(imageSection('data:image/' + t + ';base64,' + b64(200)), t).toContain(IMAGE_MARKER);
+        }
+    });
+
+    it('emits nothing at all when no image was attached', () => {
+        expect(imageSection('')).toBe('');
+        expect(imageSection(null)).toBe('');
+        expect(imageSection(undefined)).toBe('');
+    });
+
+    it('REFUSES a remote URL or an SVG rather than pasting it into the issue', () => {
+        // An autonomous agent later reads this body. A remote URL is an
+        // exfiltration vector and an SVG can carry script, so neither is
+        // embedded just because it arrived in an image field.
+        for (const bad of [
+            'https://evil.example.com/x.png',
+            'data:image/svg+xml;base64,' + b64(50),
+            'data:text/html;base64,' + b64(50),
+            'javascript:alert(1)',
+            'data:image/png;base64,not*valid*base64!',
+        ]) {
+            const out = imageSection(bad);
+            expect(out, bad).not.toContain(IMAGE_MARKER);
+            expect(out, bad).not.toContain(bad);
+        }
+    });
+
+    it('REFUSES an oversized image instead of truncating it', () => {
+        // Half a base64 string is not an image. Truncating would spend a vision
+        // call to discover that, and an over-length body loses the whole report.
+        const out = imageSection(png(IMAGE_BUDGET + 5000));
+        expect(out).not.toContain(IMAGE_MARKER);
+        expect(out).toMatch(/exceeds/i);
+        expect(out).toMatch(/Firestore/);          // says where the full copy is
+    });
+
+    it('keeps the budget well inside GitHub\'s 65,536-character body limit', () => {
+        expect(IMAGE_BUDGET).toBeLessThan(65536 - 15000);
+    });
+
+    it('never throws on adversarial input', () => {
+        fc.assert(fc.property(fc.anything(), (x) => {
+            expect(() => imageSection(x)).not.toThrow();
+        }), { numRuns: runs(300) });
+    });
+
+    it('is actually wired into the handler, not merely exported', () => {
+        // The original bug was a function that existed conceptually and was
+        // never called. Asserting the export alone would not have caught it.
+        const src = fs.readFileSync('feedback-triage.js', 'utf8');
+        expect(src).toMatch(/body\.image/);                 // the field is read
+
+        // Assert the CALL SITE, not just the name. The first version of this
+        // test matched /imageSection\(image\)/ — which also matches the
+        // `export function imageSection(image) {` DEFINITION, so deleting the
+        // call left the test passing. A test that cannot fail is worse than no
+        // test, because it reports safety that is not there.
+        expect(src, 'imageSection is defined but never called from the issue body')
+            .toMatch(/^\s*imageSection\(image\),\s*$/m);
+
+        // And it must sit inside the issue-body array, next to the section it
+        // belongs beside — not merely somewhere in the file.
+        const body = src.slice(src.indexOf('const issueBody'), src.indexOf('.filter(Boolean)'));
+        expect(body).toMatch(/diagnosticsSection\(diagnostics\)/);
+        expect(body).toMatch(/imageSection\(image\)/);
+    });
+});
+
+// ── browser password prompts (claim: "randomly asks for a new password") ─────
+describe('app: no markup that invites a browser password prompt', () => {
+    const html = fs.readFileSync('index.html', 'utf8');
+
+    it('has no account-password flow at all', () => {
+        // The app authenticates with Google plus a local 6-digit PIN. There is no
+        // password to set, so any prompt for one comes from the browser.
+        for (const api of ['sendPasswordResetEmail', 'updatePassword', 'createUserWithEmailAndPassword']) {
+            expect(html, api).not.toContain(api);
+        }
+    });
+
+    it('marks every masked PIN input autocomplete="off"', () => {
+        // WHY THE PROMPT APPEARED: five inputs used type="password" with no
+        // autocomplete attribute. Browsers treat a bare password field — and
+        // especially an adjacent new/confirm pair like cp_new/cp_confirm — as a
+        // credential form, and offer "Save password?" or the strong-password
+        // generator. Nothing in this repo ever contained the words "new
+        // password"; the text came from Chrome, triggered by our own markup.
+        const inputs = html.match(/<input[^>]*type="password"[^>]*>/gs) || [];
+        expect(inputs.length).toBeGreaterThan(0);
+        for (const tag of inputs) {
+            expect(tag, `missing autocomplete: ${tag.slice(0, 140)}`).toMatch(/autocomplete="off"/);
+        }
+    });
+
+    it('never uses autocomplete="new-password", which INVITES the generator', () => {
+        // The intuitive "fix" is the exact opposite of one: new-password is the
+        // value that asks Chrome to offer a generated password.
+        expect(html).not.toMatch(/autocomplete="new-password"/);
     });
 });

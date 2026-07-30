@@ -89,6 +89,9 @@ export default async function handler(req, res) {
     body = body || {};
     const text = String(body.text || body.feedback || '').trim().slice(0, MAX_LEN);
     const diagnostics = body.diagnostics && typeof body.diagnostics === 'object' ? body.diagnostics : null;
+    // The client has always sent this; nothing here ever read it, so every
+    // screenshot a user attached was transmitted and then thrown away.
+    const image = typeof body.image === 'string' ? body.image : '';
     if (!text) { return send(res, { ok: false, error: 'no feedback text' }, 400); }
 
     const repo = process.env.GITHUB_REPO || process.env.GITHUB_REPOSITORY;
@@ -127,6 +130,10 @@ export default async function handler(req, res) {
         // snapshot, and they are rendered here so the fix agent can read them —
         // otherwise the diagnostics would be collected and then discarded.
         diagnosticsSection(diagnostics),
+        // A screenshot shows what the user was actually looking at, which is
+        // often the whole report. It goes after the diagnosis so the readable
+        // parts come first and the base64 is last.
+        imageSection(image),
         '_Filed automatically by the feedback triage agent. The autonomous pipeline picks this up ' +
         'on the `issues: opened` trigger, so work starts within minutes._'
     ].filter(Boolean).join('\n');
@@ -144,6 +151,78 @@ export default async function handler(req, res) {
     return send(res, out, out.ok ? 200 : 502);
 }
 
+
+/** Marker the fix agent looks for to find an attached screenshot. */
+export const IMAGE_MARKER = 'wf-feedback-image';
+
+/**
+ * Characters of the 65,536-byte issue body reserved for an attached screenshot.
+ *
+ * GitHub REJECTS a body over 65,536 characters outright, so an oversized image
+ * would not merely fail to attach — it would lose the entire report, text and
+ * diagnostics included. The budget leaves ample room for the feedback, the
+ * diagnosis table and the stack traces.
+ */
+export const IMAGE_BUDGET = 44000;
+
+/**
+ * Render an attached screenshot so the fix agent can actually see it.
+ *
+ * THE BUG THIS FIXES
+ *   The client has always captured a screenshot, downscaled it to 900px, and
+ *   sent it as `image` in the payload — the attach button, the preview and the
+ *   remove control are all there and all work. This endpoint simply never read
+ *   the field. The image was transmitted on every report and discarded on
+ *   arrival, so the AI genuinely never saw a single screenshot: the one piece of
+ *   evidence that shows what the user was actually looking at.
+ *
+ * WHY THE IMAGE IS EMBEDDED AS A DATA URL RATHER THAN A MARKDOWN IMAGE
+ *   GitHub does not render `data:` URIs in markdown, so `![](data:image/…)`
+ *   would display nothing however well-formed. The purpose here is machine
+ *   consumption: the fix agent reads the issue BODY as text, extracts this
+ *   block, and can pass it to the vision endpoint. It stays inside <details> so
+ *   a human reading the issue is not scrolled past 40,000 characters of base64,
+ *   and the note explains how to view it.
+ */
+export function imageSection(image) {
+    const src = typeof image === 'string' ? image.trim() : '';
+    if (!src) return '';
+
+    // Only real, self-contained raster data. Anything else — a remote URL, an
+    // SVG (which can carry script), a malformed prefix — is refused rather than
+    // pasted into an issue body that an autonomous agent will later read.
+    if (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(src)) {
+        return ['### Screenshot', '', '_An attachment was sent but was not a valid inline PNG/JPEG/WebP, so it was not attached._', ''].join('\n');
+    }
+
+    const approxKb = Math.round((src.length * 3) / 4 / 1024);
+    if (src.length > IMAGE_BUDGET) {
+        // Refusing beats truncating: half a base64 string is not an image, and
+        // silently attaching a corrupt one wastes a vision call to learn that.
+        return [
+            '### Screenshot',
+            '',
+            `_A screenshot was attached (~${approxKb} KB) but exceeds the ${Math.round(IMAGE_BUDGET / 1024)} KB that fits in a GitHub issue body alongside the report, so it was not embedded. The full copy is in the Firestore \`feedback\` document._`,
+            '',
+        ].join('\n');
+    }
+
+    return [
+        '### Screenshot',
+        '',
+        `_Attached by the user (~${approxKb} KB). Paste the data URL below into a browser address bar to view it._`,
+        '',
+        `<!-- ${IMAGE_MARKER} -->`,
+        '<details><summary>Screenshot data URL (for the fix agent\'s vision pass)</summary>',
+        '',
+        '```',
+        src,
+        '```',
+        '',
+        '</details>',
+        '',
+    ].join('\n');
+}
 
 /**
  * Render the client's diagnostics into readable markdown.
