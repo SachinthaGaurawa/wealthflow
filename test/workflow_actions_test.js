@@ -104,3 +104,48 @@ describe('workflows: no action is left on the deprecated Node 20 runtime', () =>
         expect([...versions]).toEqual(['24']);
     });
 });
+
+// =============================================================================
+// Auto-merge must not try to merge a draft
+// =============================================================================
+// GitHub refuses to enable auto-merge on a draft pull request — the mutation
+// answers `GraphQL: Pull Request is still a draft (mergePullRequest)` and the
+// step exits 1. Since PRs here are opened as drafts, every auto-safe change
+// turned the "Enable auto-merge" job red.
+//
+// The damage is not the red X itself, it is what a permanently-red check does to
+// the person reading it: a job that fails every single time teaches you to scroll
+// past red, and then the one that actually matters gets scrolled past too. This is
+// the same vacuous-signal failure as a test suite that runs no tests — it looks
+// like a gate and reports nothing.
+//
+// Two halves, both required, so this is asserted as two separate facts:
+//   • the job is skipped while the PR is a draft;
+//   • `ready_for_review` is a trigger, so undrafting enables auto-merge without
+//     anyone re-running a job by hand.
+// =============================================================================
+describe('auto-merge: never attempts a draft', () => {
+    const yml = fs.readFileSync('.github/workflows/auto-merge.yml', 'utf8');
+
+    it('reads the workflow at all (guards against a vacuous pass)', () => {
+        expect(yml.length).toBeGreaterThan(500);
+        expect(yml).toMatch(/name:\s*Enable auto-merge/);
+    });
+
+    it('guards the auto-merge job on the PR not being a draft', () => {
+        // Anchored to the `if:` line rather than searching the whole file, so a
+        // mention of "draft" in a comment cannot satisfy this.
+        const guard = /^\s*if:\s*needs\.classify\.outputs\.safe == 'yes'\s*&&\s*github\.event\.pull_request\.draft == false\s*$/m;
+        expect(yml, 'the Enable auto-merge job must skip drafts').toMatch(guard);
+    });
+
+    it('re-runs when a draft is marked ready for review', () => {
+        const types = /pull_request_target:[\s\S]*?types:\s*\[([^\]]+)\]/.exec(yml);
+        expect(types, 'could not find the pull_request_target trigger types').toBeTruthy();
+        const list = types[1].split(',').map((s) => s.trim());
+        expect(list).toContain('ready_for_review');
+        // Without this the classify job would only ever have run while merging was
+        // impossible, so auto-merge would never be enabled for that PR.
+        expect(list).toContain('synchronize');
+    });
+});
