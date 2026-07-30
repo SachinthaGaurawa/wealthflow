@@ -1107,7 +1107,14 @@
                     var _parsedH = {
                         transactions: _htx.map(function (r) {
                             var d = String(r.date || ''); var m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); if (m) d = m[3] + '-' + m[2] + '-' + m[1];
-                            return { date: d, description: r.narration, type: /cash advance|atm|cash withdraw/i.test(r.narration) ? 'cash_advance' : 'purchase', amount: r.amount, direction: r.direction };
+                            return {
+                                date: d, description: r.narration,
+                                type: /cash advance|atm|cash withdraw/i.test(r.narration) ? 'cash_advance' : 'purchase',
+                                amount: r.amount, direction: r.direction,
+                                _balanceVerified: !!r.balanceVerified,
+                                _needsReview: r.needsReview !== undefined ? !!r.needsReview : !r.valid,
+                                _directionSource: r.directionSource || ''
+                            };
                         }),
                         card_last4: '', currency: 'LKR', statement_period: ''
                     };
@@ -1149,7 +1156,15 @@
                     return;
                 }
                 if (_res && _res.text && window.WFStatementParser.hasTextLayer(_res.text)) {
-                    var _rows = window.WFStatementParser.parseStatementText(_res.text);
+                    // parseStatement() also returns the whole-statement reconciliation
+                    // (opening + credits − debits = closing). Guarded because a
+                    // service worker can still be serving an older cached copy of the
+                    // parser, which would only have parseStatementText().
+                    var _pres = typeof window.WFStatementParser.parseStatement === 'function'
+                        ? window.WFStatementParser.parseStatement(_res.text)
+                        : { rows: window.WFStatementParser.parseStatementText(_res.text) || [], reconciliation: { ok: null } };
+                    var _rows = _pres.rows || [];
+                    var _rc = _pres.reconciliation || { ok: null };
                     if (_rows && _rows.length) {
                         var _toISO = function (d) { var m = String(d).match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? (m[3] + '-' + m[2] + '-' + m[1]) : (d || ''); };
                         var _cardTok = (_res.text.match(/\d{6}[xX*]+\d{4}/) || [''])[0];
@@ -1161,7 +1176,12 @@
                                     type: /cash advance|atm|cash withdraw/i.test(r.narration) ? 'cash_advance' : 'purchase',
                                     amount: r.amount,
                                     direction: r.direction,
-                                    _balanceVerified: r.valid
+                                    // These were collapsed into `valid` before, which
+                                    // meant a row whose direction was merely inferred
+                                    // was presented as balance-verified.
+                                    _balanceVerified: !!r.balanceVerified,
+                                    _needsReview: r.needsReview !== undefined ? !!r.needsReview : !r.valid,
+                                    _directionSource: r.directionSource || ''
                                 };
                             }),
                             card_last4: (_cardTok.match(/\d{4}$/) || [''])[0],
@@ -1169,7 +1189,15 @@
                             statement_period: (_res.text.match(/Statement Period[:\s]*([\d/]+\s*-\s*[\d/]+)/i) || [])[1] || ''
                         };
                         if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
-                        if (typeof window.notify === 'function') window.notify('✅ Read ' + _rows.length + ' transactions directly from the PDF — high accuracy.', 'success');
+                        // Say what was actually verified. "High accuracy" was printed
+                        // unconditionally before, including for statements the parser
+                        // could not check at all.
+                        if (typeof window.notify === 'function') {
+                            var _n = '✅ Read ' + _rows.length + ' transactions directly from the PDF';
+                            if (_rc.ok === true) window.notify(_n + ' — every amount checks out against the statement\'s own balance.', 'success');
+                            else if (_rc.ok === false) window.notify(_n + ', but they don\'t add up to the closing balance (off by ' + Math.abs(_rc.difference) + '). Please check the list before saving.', 'warn');
+                            else window.notify(_n + '. This statement prints no running balance, so please confirm the amounts.', 'success');
+                        }
                         window._showCCReviewModal(_parsed, ccotBank || 'Bank Statement');
                         inputEl.value = '';
                         return;
