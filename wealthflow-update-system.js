@@ -52,7 +52,61 @@
     const LS_AUTOSEC = 'wf_auto_security';    // user opted in to auto-install security updates
 
     function _esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-    function _notify(m,t){try{if(typeof window.notify==='function')window.notify(m,t||'info');}catch(_){}}
+    // A message the user must actually see. The original swallowed everything: if
+    // window.notify was not a function it did nothing at all, silently, so every
+    // diagnostic this file produces could be invisible while the code "worked".
+    // The fallback is deliberately dumb — a fixed banner built from scratch — so
+    // it cannot itself depend on the app being healthy.
+    function _notify(m, t) {
+        try { if (typeof window.notify === 'function') { window.notify(m, t || 'info'); return; } } catch (_) {}
+        try { (t === 'warn' ? console.warn : console.log)('[wfUpdate] ' + m); } catch (_) {}
+        try {
+            var n = document.createElement('div');
+            n.setAttribute('role', 'status');
+            n.textContent = String(m);
+            n.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:2147483647;'
+                + 'max-width:90vw;padding:12px 18px;border-radius:12px;font:14px/1.4 system-ui,sans-serif;'
+                + 'color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.35);background:'
+                + (t === 'warn' ? '#b45309' : t === 'success' ? '#15803d' : '#1f2937');
+            document.body.appendChild(n);
+            setTimeout(function () { try { n.remove(); } catch (_) {} }, 7000);
+        } catch (_) {}
+    }
+
+    /**
+     * Bound a promise so a stalled one can never own the critical path.
+     *
+     * WHY: Firestore's add() resolves only on SERVER acknowledgement. Offline or
+     * unreachable, the write lands in the local cache and the returned promise
+     * stays pending FOREVER — it never rejects, so try/catch cannot save you and
+     * `await` simply stops the function dead. That is the difference between an
+     * error you can see and a button that does nothing.
+     */
+    function _withTimeout(promise, ms, label) {
+        var timer;
+        return Promise.race([
+            Promise.resolve(promise).then(
+                function (v) { clearTimeout(timer); return v; },
+                function (e) { clearTimeout(timer); throw e; }
+            ),
+            new Promise(function (_, reject) {
+                timer = setTimeout(function () {
+                    reject(new Error((label || 'operation') + ' timed out after ' + Math.round(ms / 1000) + 's'));
+                }, ms);
+            })
+        ]);
+    }
+
+    /** fetch that cannot hang forever. An abort surfaces as a normal rejection. */
+    function _fetchWithTimeout(url, opts, ms) {
+        var ac = null;
+        try { if (typeof AbortController !== 'undefined') ac = new AbortController(); } catch (_) {}
+        var o = ac ? Object.assign({}, opts, { signal: ac.signal }) : opts;
+        return _withTimeout(fetch(url, o), ms, url).catch(function (e) {
+            try { if (ac) ac.abort(); } catch (_) {}
+            throw e;
+        });
+    }
     function _cmp(a,b){const pa=String(a).split('.').map(Number),pb=String(b).split('.').map(Number);for(let i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return 1;if((pa[i]||0)<(pb[i]||0))return -1;}return 0;}
 
     // ── Built-in changelog for the current version. The manifest can override
@@ -1089,7 +1143,43 @@
         return d;
     }
 
+    /**
+     * The click handler for "Send feedback".
+     *
+     * THE BUG THIS WRAPPER EXISTS TO END: the button did nothing. No request, no
+     * toast, no error, modal still open. In an `async` click handler that is what
+     * BOTH failure modes look like — a synchronous throw becomes an unhandled
+     * rejection nobody sees, and an `await` on a promise that never settles just
+     * stops. Neither prints anything. From the outside they are indistinguishable
+     * from a dead event listener, which is why the listener was the first suspect.
+     *
+     * So the work is wrapped: the button reports that it is working the moment it
+     * is pressed, every failure ends in a visible message, and the control is
+     * always returned to the user even when something below goes wrong.
+     */
     async function _submitFeedback() {
+        const btn = document.getElementById('wfFbSend');
+        if (btn && btn.getAttribute('data-sending') === '1') return;   // ignore double-taps
+        const restore = () => {
+            if (!btn) return;
+            btn.removeAttribute('data-sending');
+            btn.disabled = false;
+            btn.textContent = 'Send feedback';
+        };
+        if (btn) { btn.setAttribute('data-sending', '1'); btn.disabled = true; btn.textContent = 'Sending…'; }
+        try {
+            await _doSubmitFeedback();
+        } catch (err) {
+            // Previously invisible. An async handler that throws prints nothing to
+            // the page and the user is left clicking a button that looks inert.
+            try { console.error('[feedback] submit failed:', err); } catch (_) {}
+            _notify('Could not send your feedback: ' + String((err && err.message) || err).slice(0, 200), 'warn');
+        } finally {
+            restore();
+        }
+    }
+
+    async function _doSubmitFeedback() {
         const type = (document.getElementById('wfFbType') || {}).value || 'other';
         const text = ((document.getElementById('wfFbText') || {}).value || '').trim();
         const diag = !!(document.getElementById('wfFbDiag') || {}).checked;
@@ -1118,12 +1208,30 @@
         try {
             if (window.db && window.firebase && firebase.firestore) {
                 const uid = payload.uid || 'anon';
-                await window.db.collection('feedback').add(Object.assign({}, payload, { uid,
-                    _ts: firebase.firestore.FieldValue.serverTimestamp() }));
+                // BOUNDED, and this is the line that made the button do nothing.
+                //
+                // Firestore's add() promise resolves only when the SERVER
+                // acknowledges the write. If the SDK cannot reach the backend —
+                // offline, blocked, expired auth, exhausted quota — the write is
+                // applied to the local cache immediately and the promise stays
+                // PENDING FOREVER. It never rejects, so the catch below cannot
+                // help, and `await` on it halts this function permanently: no
+                // POST is ever issued, no toast is ever shown, the modal never
+                // closes. An unbounded await on a third-party SDK had been
+                // sitting on the critical path of the submit.
+                //
+                // The report is already in localStorage and sessionStorage above,
+                // so abandoning this write loses nothing — the queue retries it.
+                await _withTimeout(
+                    window.db.collection('feedback').add(Object.assign({}, payload, { uid,
+                        _ts: firebase.firestore.FieldValue.serverTimestamp() })),
+                    8000, 'Firestore write');
                 stored = true;
                 _markQueuedSent(payload);   // clear the _pending flag for this item
             }
-        } catch (_) {}
+        } catch (e) {
+            try { console.warn('[feedback] Firestore copy skipped:', (e && e.message) || e); } catch (_) {}
+        }
         // (2) TRIAGE — turn this into a GitHub issue so the autonomous pipeline
         //     can actually work on it.
         //
@@ -1138,7 +1246,7 @@
         let issueNumber = null;
         let triageError = null;
         try {
-            const r = await fetch('/api/feedback-triage', {
+            const r = await _fetchWithTimeout('/api/feedback-triage', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1154,7 +1262,11 @@
                     // absent, for the second time in the same feature.
                     image: payload.image || null
                 })
-            });
+                // Generous, because this endpoint classifies the report and calls
+                // the GitHub API before answering — but finite, so a stalled
+                // request ends in a message rather than a button that never
+                // comes back.
+            }, 30000);
             // Read the body on EVERY status, then decide from BOTH the status and
             // the body — see _readTriageResponse for why the body alone is not
             // enough to tell success from failure.
@@ -1183,7 +1295,8 @@
         //     stored = true counted a 404 or a 500 as "saved" — the same mistake in
         //     miniature.
         try {
-            const rf = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const rf = await _fetchWithTimeout('/api/feedback',
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, 10000);
             if (rf && rf.ok) stored = true;
         } catch (_) {}
         _fbImageData = null;
@@ -1584,6 +1697,9 @@
         // that only read the source, because the logic was inline in an async
         // submit handler that needed a DOM, a network and Firebase to run.
         _readTriageResponse, _feedbackMessage,
+        // Exposed because the failure they prevent — a promise that never settles
+        // — cannot be caught by any test that only reads the source.
+        _withTimeout, _fetchWithTimeout, _submitFeedback,
         _close, _closePost, version: CURRENT_VERSION
     };
 
