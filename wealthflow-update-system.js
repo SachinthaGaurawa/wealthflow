@@ -1201,7 +1201,7 @@
      *   That is what it was, and it trusted the endpoint to name its own failures.
      *   The endpoint does — but it is not the only thing that answers this URL:
      *
-     *     • api/[...path].js replies `{ error: 'Unknown endpoint' }` (404) or
+     *     • api/router.js replies `{ error: 'Unknown endpoint' }` (404) or
      *       `{ error: 'Endpoint runtime crash' }` (500) — JSON, but with no
      *       `reason` field;
      *     • a platform-level failure (a function that fails to boot, a body over
