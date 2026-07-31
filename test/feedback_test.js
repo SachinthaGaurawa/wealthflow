@@ -571,7 +571,23 @@ describe('feedback client: success is proven, never assumed', () => {
 // ── the screenshot has to travel WITH the report ─────────────────────────────
 describe('feedback client: the attached screenshot reaches triage', () => {
     const src = fs.readFileSync('wealthflow-update-system.js', 'utf8');
-    const call = src.slice(src.indexOf("fetch('/api/feedback-triage'"), src.indexOf("if (issueNumber) { payload.issue"));
+
+    // Anchor on the URL, not on the calling function's NAME. The first version
+    // sliced from "fetch('/api/feedback-triage'" — so wrapping that call in
+    // _fetchWithTimeout() moved the anchor, indexOf returned -1, and the slice
+    // silently produced '' which matches nothing. Both assertions below then
+    // failed for a reason that had nothing to do with what they test. A test
+    // whose subject can vanish without the test saying so is the same hazard as
+    // a test that cannot fail, one step removed.
+    const start = src.indexOf("'/api/feedback-triage'");
+    const end = src.indexOf('if (issueNumber) { payload.issue');
+    const call = src.slice(start, end);
+
+    it('found the triage call site (guards against slicing nothing)', () => {
+        expect(start, 'the /api/feedback-triage call site was not found at all').toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        expect(call.length).toBeGreaterThan(50);
+    });
 
     it('sends `image` in the triage POST body', () => {
         // feedback-triage.js renders body.image into the issue so the fix agent can
