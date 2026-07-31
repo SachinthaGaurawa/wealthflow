@@ -321,3 +321,78 @@ describe('discover: the source file is text, not binary', () => {
         expect(fingerprint('a', 'bc')).not.toBe(fingerprint('ab', 'c'));
     });
 });
+
+// =============================================================================
+// img-missing-alt: it filed six issues for zero real defects
+// =============================================================================
+// Issues #21, #22, #33, #34, #35 and #36 were all "[MEDIUM] Image without alt
+// text in index.html". After fixing this detector the true count is ZERO — every
+// one of them was a false positive, and they came from two independent bugs:
+//
+//  1. THE FINGERPRINT WAS A POSITION. The key was `index.html#<n>` where n
+//     counted un-alt'd images in document order. Add an alt to one image and
+//     every image after it shifts down, gets a new fingerprint, and is re-filed
+//     as a brand-new finding.
+//
+//  2. IT SCANNED JAVASCRIPT AS HTML. index.html is 1.5 MB and mostly inline
+//     <script>, so `/<img\b[^>]*>/` matched inside string literals, template
+//     literals and REGEX SOURCE — one finding was literally a fragment of a
+//     regex.
+//
+// A scanner that manufactures duplicates is worse than one that stays quiet: it
+// buries its own true findings and teaches the reader to skip the label. This
+// project already learned that lesson once — a static pass over index.html gave
+// 21 UI findings of which ~17 were false, which is why the runtime sweep exists.
+// =============================================================================
+describe('img-missing-alt: identity, not position', () => {
+    it('keys on the image, so unrelated edits do not re-file it', () => {
+        const before = findImagesMissingAlt('<img src="a.png"><img src="b.png">');
+        const after = findImagesMissingAlt('<img src="a.png" alt="A"><img src="b.png">');
+        // b.png moved from second to first. Its fingerprint must not change.
+        const bBefore = before.find((f) => f.key.includes('b.png'));
+        const bAfter = after.find((f) => f.key.includes('b.png'));
+        expect(bBefore).toBeTruthy();
+        expect(bAfter).toBeTruthy();
+        expect(bAfter.key).toBe(bBefore.key);
+        expect(after).toHaveLength(1);
+    });
+
+    it('reports one finding for the same image used twice', () => {
+        // Two identical images missing alt are one fix, not two issues.
+        expect(findImagesMissingAlt('<img src="x.png"><img src="x.png">')).toHaveLength(1);
+    });
+
+    it('does NOT scan inside <script> — that is where the false positives came from', () => {
+        const html = [
+            '<script>',
+            "  const re = /<img|<div)/i;",
+            '  el.innerHTML = `<img src="${userPhoto}">`;',
+            '</script>',
+        ].join('\n');
+        expect(findImagesMissingAlt(html)).toEqual([]);
+    });
+
+    it('does NOT scan inside <style>', () => {
+        expect(findImagesMissingAlt('<style>/* <img> */</style>')).toEqual([]);
+    });
+
+    it('still finds a genuinely un-alt\'d image in real markup', () => {
+        // The check that keeps the two exclusions above from turning this detector
+        // into one that can never report anything.
+        const found = findImagesMissingAlt('<script>var x=1;</script><img src="real.png"><p>hi</p>');
+        expect(found).toHaveLength(1);
+        expect(found[0].key).toContain('real.png');
+    });
+
+    it('still respects alt and aria-hidden', () => {
+        expect(findImagesMissingAlt('<img src="a.png" alt="A">')).toEqual([]);
+        expect(findImagesMissingAlt('<img src="a.png" aria-hidden="true">')).toEqual([]);
+    });
+
+    it('finds nothing in the real index.html, because there is nothing to find', () => {
+        // Asserted explicitly: six issues were filed against this file and the true
+        // count is zero.
+        const html = fs.readFileSync('index.html', 'utf8');
+        expect(findImagesMissingAlt(html)).toEqual([]);
+    });
+});

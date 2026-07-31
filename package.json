@@ -56,7 +56,7 @@
   "devDependencies": {
     "fast-check": "^3.19.0",
     "playwright": "^1.62.0",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "uuid": "^11.0.0"
