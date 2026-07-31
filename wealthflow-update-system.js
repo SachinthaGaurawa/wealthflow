@@ -1136,6 +1136,7 @@
         //     We remember the issue number so the app can later report back that
         //     the work is done — see _checkFeedbackCompletions().
         let issueNumber = null;
+        let triageError = null;
         try {
             const r = await fetch('/api/feedback-triage', {
                 method: 'POST',
@@ -1147,12 +1148,22 @@
                     diagnostics: diagnostics
                 })
             });
-            if (r.ok) {
-                const j = await r.json().catch(() => null);
-                if (j && (j.issue || j.deduped)) {
-                    issueNumber = j.issue || j.deduped;
-                    stored = true;
-                }
+            // Read the body on EVERY status. The endpoint's whole job is to say
+            // why it could not file, and a `if (r.ok)` guard throws that away —
+            // which is half of how a dropped report used to look successful.
+            const j = await r.json().catch(() => null);
+            if (r.ok && j && (j.issue || j.deduped)) {
+                issueNumber = j.issue || j.deduped;
+                stored = true;
+            } else if (j && j.reason) {
+                // The server filed nothing and said why. Surfacing that is the
+                // difference between "we lost your report" and "we kept it and
+                // here is what needs fixing".
+                triageError = String(j.reason).slice(0, 300);
+                try {
+                    console.warn('[feedback] not filed:', j.error || 'unknown', j.reason,
+                        j.configured ? '(configured: repo=' + j.configured.repo + ' token=' + j.configured.token + ')' : '');
+                } catch (_) {}
             }
         } catch (_) { /* offline — the queue below retries */ }
         if (issueNumber) { payload.issue = issueNumber; _attachIssueToQueued(payload, issueNumber); }
@@ -1170,12 +1181,17 @@
         if (issueNumber) {
             msg = 'Thank you — this is now queued as work item #' + issueNumber +
                 '. You\'ll see it marked Completed here once the fix ships.';
+        } else if (triageError) {
+            // The report is SAFE — it is in the local queue and in Firestore — but it
+            // did not become a tracked work item, and saying "prioritised" here would
+            // be the same false confirmation this whole change exists to remove.
+            msg = 'Saved, but it could not be filed as a work item yet: ' + triageError;
         } else if (stored) {
             msg = 'Thank you — your feedback was saved and prioritised.';
         } else {
             msg = 'Saved — we\'ll send it automatically when you\'re back online. It already shows in “Your Feedback”.';
         }
-        _notify(msg, stored ? 'success' : 'info');
+        _notify(msg, triageError ? 'warn' : (stored ? 'success' : 'info'));
     }
 
     /** Record the issue number against the queued copy of this feedback item. */
