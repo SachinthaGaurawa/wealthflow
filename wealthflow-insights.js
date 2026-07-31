@@ -83,12 +83,15 @@
                 if (d > 20 && overdueDays > 0 && overdueDays <= 25) {
                     out.push({ sev: 'critical', kind: 'card_overdue', card: k, title: label + ' is OVERDUE',
                         body: money(outstanding) + ' was due on the ' + c.dueDay + ' — ' + overdueDays + ' day(s) ago.',
-                        action: 'Pay it now', amount: outstanding });
+                        // `cconetime` is where the unpaid charges this figure is
+                        // summed from actually live (see `charges` above), so it
+                        // is the page where the debt can be settled.
+                        action: 'Pay it now', go: 'cconetime', amount: outstanding });
                 } else if (d <= 5) {
                     out.push({ sev: d <= 2 ? 'critical' : 'high', kind: 'card_due', card: k,
                         title: label + ' due in ' + d + ' day' + (d === 1 ? '' : 's'),
                         body: money(outstanding) + ' outstanding · due on the ' + c.dueDay + '.',
-                        action: 'Pay before ' + due.toDateString().slice(4, 10), amount: outstanding });
+                        action: 'Pay before ' + due.toDateString().slice(4, 10), go: 'cconetime', amount: outstanding });
                 } else if (d <= 10) {
                     out.push({ sev: 'medium', kind: 'card_due_soon', card: k,
                         title: label + ' due in ' + d + ' days',
@@ -306,7 +309,12 @@
                        src.length + ' entries live on the Investments page, which is excluded on purpose so the same money is not counted twice. ' +
                        'Import a statement with your salary or credits, or add them on the Income page.')
                     : 'It counts money actually RECEIVED. Import a statement containing your credits, or add them on the Income page.',
-                action: 'Add your income', amount: spent });
+                // `incRecv` is the sidebar's "Income" page and the store this
+                // insight counts. NOT `income` — that is "Investments", the store
+                // deliberately excluded above, which is precisely where sending
+                // the user would fail to change the number they are complaining
+                // about. Issue #46 is this button.
+                action: 'Add your income', go: 'incRecv', amount: spent });
         }
         return out;
     }
@@ -774,8 +782,22 @@
             '<div class="wfx-ic" style="color:' + t[0] + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg></div>' +
             '<div style="min-width:0"><div class="wfx-t">' + esc(it.title) + '</div>' +
             (it.body ? '<div class="wfx-b">' + esc(it.body) + '</div>' : '') +
-            (it.action ? (it.fix
-                ? '<button type="button" class="wfx-a wfx-fix" data-fix="' + esc(it.fix) + '" style="color:' + t[0] + ';border:1px solid ' + t[2] + ';cursor:pointer;background:rgba(255,255,255,.06)">' + esc(it.action) + '</button>'
+            // A call to action must BE one. This used to emit a <button> only when
+            // the insight carried a `fix`; everything else became
+            // `<div class="wfx-a">`, which wears the same class and the same tone
+            // colour as the working control and does absolutely nothing. Three of
+            // the four actions in this file were that div — the user filed issue
+            // #46 about one of them ("'Add your income' button please fix that").
+            //
+            // `go` (navigate somewhere) now counts as a target alongside `fix`
+            // (repair something in place). The plain-text branch survives only as
+            // a defensive fallback; the test suite asserts no insight reaches it,
+            // because a label that looks pressable and is not is the actual defect.
+            (it.action ? (it.fix || it.go
+                ? '<button type="button" class="wfx-a wfx-fix"'
+                    + (it.fix ? ' data-fix="' + esc(it.fix) + '"' : '')
+                    + (it.go ? ' data-go="' + esc(it.go) + '"' : '')
+                    + ' style="color:' + t[0] + ';border:1px solid ' + t[2] + ';cursor:pointer;background:rgba(255,255,255,.06)">' + esc(it.action) + '</button>'
                 : '<div class="wfx-a" style="color:' + t[0] + '">' + esc(it.action) + '</div>') : '') +
             '</div></div>';
     }
@@ -804,6 +826,18 @@
             el.querySelectorAll('.wfx-fix').forEach(function (b) {
                 b.onclick = function () {
                     var f = b.getAttribute('data-fix');
+                    var g = b.getAttribute('data-go');
+                    // Navigation is the whole purpose of the button for a `go`
+                    // insight. If the app cannot navigate, SAY so — a control that
+                    // silently no-ops is indistinguishable from the dead div this
+                    // replaced, and would reintroduce the same complaint.
+                    if (g) {
+                        if (typeof W.showPage === 'function') {
+                            try { W.showPage(g); return; } catch (_) {}
+                        }
+                        try { W.notify && W.notify('Could not open that page — please use the sidebar.', 'warn'); } catch (_) {}
+                        return;
+                    }
                     if (f === 'mergeSubs') {
                         var r = mergeDuplicateSubs();
                         try { W.notify && W.notify(r.removed ? ('Merged ' + r.groups + ' duplicate subscription(s) — ' + r.removed + ' removed, no history lost.') : 'Nothing to merge.', r.removed ? 'success' : 'info'); } catch (_) {}
