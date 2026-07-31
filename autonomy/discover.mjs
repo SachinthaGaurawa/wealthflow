@@ -284,17 +284,55 @@ export function findUnguardedJsonParse(source, file) {
 // ─────────────────────────────────────────────────────────────────────────────
 export function findImagesMissingAlt(html, file = 'index.html') {
     const out = [];
+    const seen = new Set();
+
+    // SCAN MARKUP, NOT SCRIPT.
+    //
+    // index.html is 1.5 MB and is mostly inline <script>. Running an HTML regex
+    // over the whole file matched `<img` inside JavaScript string literals,
+    // template literals and REGEX SOURCE — findings like
+    //   `<img|<div)/i.test(text) || /style="[^"]*object-fit:cover/i…`
+    // which is a regex, not an image. Those were filed as real accessibility
+    // defects.
+    //
+    // This is the same lesson this project already learned once: a static pass
+    // over index.html produced 21 UI findings of which ~17 were false, which is
+    // why the runtime sweep exists. Script and style blocks are removed first so
+    // the regex only ever sees markup.
+    const markup = String(html || '')
+        .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
+        .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '');
+
     const re = /<img\b[^>]*>/gi;
     let m;
-    let n = 0;
-    while ((m = re.exec(String(html || ''))) !== null) {
+    while ((m = re.exec(markup)) !== null) {
         const tag = m[0];
         if (/\balt\s*=/i.test(tag)) continue;
         if (/\baria-hidden\s*=\s*"true"/i.test(tag)) continue;   // decorative, correctly hidden
-        n += 1;
+
+        // IDENTITY, NOT POSITION.
+        //
+        // The key was `${file}#${n}` where n counted un-alt'd images in document
+        // order. That is a position in a sequence that CHANGES: add an alt to one
+        // image and every image after it shifts down, gets a new fingerprint, and
+        // is re-filed as a brand-new finding. It produced issues #21, #22, #33,
+        // #34, #35 and #36 — six open issues for a handful of images, from a
+        // detector whose whole job is to make real problems visible.
+        //
+        // A scanner that manufactures duplicates is worse than one that stays
+        // quiet: it buries its own true findings, and the reader learns to skip
+        // the label. The src is what a person would use to identify the image, so
+        // it is what the fingerprint uses too.
+        const src = (/\bsrc\s*=\s*["']([^"']+)["']/i.exec(tag) || [, ''])[1];
+        const ident = (src || tag.replace(/\s+/g, ' ').trim()).slice(0, 120);
+
+        // Two identical images missing alt are ONE fix, not two issues.
+        if (seen.has(ident)) continue;
+        seen.add(ident);
+
         out.push({
             kind: 'img-missing-alt',
-            key: `${file}#${n}`,
+            key: `${file}#${ident}`,
             severity: 'medium',
             file,
             snippet: tag.slice(0, 160),
