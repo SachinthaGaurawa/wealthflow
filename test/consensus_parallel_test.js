@@ -172,3 +172,118 @@ describe('review board: verdict handling is unchanged by the parallel rewrite', 
         }
     });
 });
+
+// =============================================================================
+// PER-SHA DEDUPE — stop the board re-reviewing a diff it already passed
+// =============================================================================
+// Measured on PR #32: five board runs fired on the IDENTICAL head SHA inside
+// three and a half minutes, every one triggered by a `pull_request` event, every
+// one reaching the same verdict. At ~2 billable Actions minutes and three provider
+// calls per run that is ~10 minutes and ~15 calls spent to learn nothing — and it
+// is very likely what exhausted sambanova, making the 429s that cost us the
+// architecture reviewer partly self-inflicted.
+//
+// The head SHA alone is NOT sufficient identity. The board reviews
+// `merge-base(base, HEAD)..HEAD`, so the effective diff also changes when the base
+// branch moves — and merchant-sync pushes to main on a schedule. A verdict keyed
+// on the head alone could skip reviewing a diff that genuinely changed underneath
+// it, which would turn an optimisation into a hole. The stamp carries both ends.
+// =============================================================================
+import { stampFor, alreadyPassed, BOARD_STAMP } from '../consensus-review.mjs';
+
+const ENV = { GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r', PR_NUMBER: '1' };
+const reply = (comments) => async () => ({ ok: true, json: async () => comments });
+
+describe('board dedupe: identity of what was reviewed', () => {
+    it('stamps BOTH ends of the diff, not just the head', () => {
+        const s = stampFor('a'.repeat(40), 'b'.repeat(40));
+        expect(s).toContain(BOARD_STAMP);
+        expect(s).toContain('head=' + 'a'.repeat(40));
+        expect(s).toContain('base=' + 'b'.repeat(40));
+    });
+
+    it('is stable, so the same diff produces the same stamp', () => {
+        expect(stampFor('abc', 'def')).toBe(stampFor('abc', 'def'));
+    });
+
+    it('never throws on missing pieces', () => {
+        for (const [h, b] of [[null, null], [undefined, 'x'], ['', '']]) {
+            expect(() => stampFor(h, b)).not.toThrow();
+        }
+    });
+});
+
+describe('board dedupe: reusing a verdict', () => {
+    const PASSED = { body: '### ✅ Consensus review board — PASS\n\n' + stampFor('head1', 'base1') };
+
+    it('reuses a PASS recorded for this exact diff', async () => {
+        const got = await alreadyPassed({ headSha: 'head1', mergeBase: 'base1', env: ENV, fetchImpl: reply([PASSED]) });
+        expect(got).toBe(true);
+    });
+
+    it('does NOT reuse when the base moved under an unchanged head', async () => {
+        // The case that makes head-only keying unsafe: same commit, different diff.
+        const got = await alreadyPassed({ headSha: 'head1', mergeBase: 'base2', env: ENV, fetchImpl: reply([PASSED]) });
+        expect(got).toBe(false);
+    });
+
+    it('does NOT reuse a BLOCKED verdict', async () => {
+        // Load-bearing. Treating a stored block as a reason to exit 0 would convert
+        // a cost optimisation into a way to merge a change the board objected to.
+        const blocked = { body: '### ⛔ Consensus review board — BLOCKED\n\n' + stampFor('head1', 'base1') };
+        expect(await alreadyPassed({ headSha: 'head1', mergeBase: 'base1', env: ENV, fetchImpl: reply([blocked]) })).toBe(false);
+    });
+
+    it('does NOT reuse an unstamped historical comment', async () => {
+        const old = { body: '### ✅ Consensus review board — PASS\n\n(no stamp: posted before dedupe existed)' };
+        expect(await alreadyPassed({ headSha: 'head1', mergeBase: 'base1', env: ENV, fetchImpl: reply([old]) })).toBe(false);
+    });
+
+    it('runs the board rather than skipping it when the lookup fails', async () => {
+        // Failing to dedupe wastes two minutes. Wrongly skipping a review does not
+        // cost two minutes, so every error path here must answer "no".
+        const cases = [
+            async () => ({ ok: false, json: async () => [] }),
+            async () => ({ ok: true, json: async () => ({ message: 'not an array' }) }),
+            async () => { throw new Error('network'); },
+        ];
+        for (const fetchImpl of cases) {
+            expect(await alreadyPassed({ headSha: 'head1', mergeBase: 'base1', env: ENV, fetchImpl })).toBe(false);
+        }
+    });
+
+    it('answers no when the environment lacks a token, repo or PR', async () => {
+        for (const env of [{}, { GITHUB_TOKEN: 't' }, { GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r' }]) {
+            expect(await alreadyPassed({ headSha: 'head1', mergeBase: 'base1', env, fetchImpl: reply([PASSED]) })).toBe(false);
+        }
+    });
+});
+
+describe('board: a rate-limited provider is not handed to a reviewer', () => {
+    const env = { GROQ_API_KEY: 'k', DEEPSEEK_API_KEY: 'k', WealthFlow_API_Key: 'k', CEREBRAS_API_KEY: 'k' };
+
+    it('skips providers the caller reports as unavailable', async () => {
+        // Three separate runs lost the architecture reviewer to a sambanova 429:
+        // a wasted call, then an "unavailable" non-vote that silently reduced a
+        // three-reviewer board to two.
+        const { assignProviders } = await import('../autonomy/llm-router.mjs');
+        const lanes = assignProviders(REVIEWERS, { env, unavailable: ['deepseek'] });
+        for (const l of lanes) {
+            expect(l.primary).not.toBe('deepseek');
+            expect(l.fallbacks).not.toContain('deepseek');
+        }
+    });
+
+    it('still gives every reviewer a distinct provider after a skip', async () => {
+        const { assignProviders } = await import('../autonomy/llm-router.mjs');
+        const lanes = assignProviders(REVIEWERS, { env, unavailable: ['cerebras'] });
+        const primaries = lanes.map((l) => l.primary).filter(Boolean);
+        expect(new Set(primaries).size).toBe(primaries.length);
+    });
+
+    it('degrades honestly when skipping leaves too few', async () => {
+        const { assignProviders } = await import('../autonomy/llm-router.mjs');
+        const lanes = assignProviders(REVIEWERS, { env, unavailable: ['cerebras', 'groq', 'gemini'] });
+        expect(lanes.filter((l) => l.primary).length).toBe(1);
+    });
+});

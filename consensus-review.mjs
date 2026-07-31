@@ -35,7 +35,8 @@
 
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
-import { chat, extractJson, describeAvailability, assignProviders } from './autonomy/llm-router.mjs';
+import { chat, extractJson, describeAvailability, assignProviders, orderFor } from './autonomy/llm-router.mjs';
+import * as Budget from './autonomy/provider-budget.mjs';
 
 const MAX_DIFF = 60_000;
 
@@ -127,22 +128,24 @@ function getDiff() {
 
     let mergeBase = '';
     try { mergeBase = run(`git merge-base origin/${base} HEAD`).trim(); } catch { mergeBase = ''; }
+    let headSha = '';
+    try { headSha = run('git rev-parse HEAD').trim(); } catch { headSha = ''; }
 
     if (!mergeBase) {
         console.error(
             `✗ No merge base between origin/${base} and HEAD, so the true PR diff cannot be determined.\n` +
             '  Refusing to review a partial diff — a board that approves a diff it never saw is worse than one that errors.'
         );
-        return '';        // main() treats an empty diff as a block
+        return { text: '', mergeBase: '', headSha };   // main() treats an empty diff as a block
     }
 
     try {
         // Two-dot from the merge base is exactly three-dot semantics, without the
         // failure mode.
-        return run(`git diff ${mergeBase} HEAD`);
+        return { text: run(`git diff ${mergeBase} HEAD`), mergeBase, headSha };
     } catch (e) {
         console.error('✗ git diff failed:', e.message);
-        return '';
+        return { text: '', mergeBase, headSha };
     }
 }
 
@@ -284,7 +287,7 @@ function prompt(reviewer, diff, truncated) {
  * only its OWN reserved fallbacks — so a retry here can never take a provider
  * another reviewer is running on.
  */
-export async function runReviewer(lane, diff, truncated, chatImpl = chat) {
+export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null) {
     const r = lane.role;
     const candidates = [lane.primary, ...lane.fallbacks].filter(Boolean);
     if (!candidates.length) {
@@ -308,6 +311,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat) {
                     only: [pid],          // pinned to this lane — never another reviewer's model
                     maxTokens: 1200,
                     temperature: 0,
+                    onAttempt,            // feeds the budget ledger; never fails the call
                 });
                 vote = parseVote(res.text);
                 parsed = extractJson(res.text) || {};
@@ -380,6 +384,61 @@ export async function hasHumanApproval(env = process.env, fetchImpl = fetch) {
     return labels.some((l) => String(l?.name || l).toLowerCase() === 'human-approved');
 }
 
+// ── per-SHA dedupe ───────────────────────────────────────────────────────────
+/**
+ * Stamp identifying EXACTLY what was reviewed.
+ *
+ * Measured on PR #32: five board runs fired on the identical head SHA inside
+ * three and a half minutes, all triggered by `pull_request` events, all reaching
+ * the same verdict. Each run costs ~2 billable Actions minutes and three provider
+ * calls, so that was ~10 minutes and ~15 calls for zero new information — and it
+ * is very likely why sambanova began returning 429 to the architecture reviewer,
+ * making the rate limiting partly self-inflicted.
+ *
+ * The head SHA alone is NOT sufficient identity. This board reviews
+ * `merge-base(base, HEAD)..HEAD`, so the effective diff also changes when the base
+ * branch moves — and merchant-sync pushes to main on a schedule. Reusing a verdict
+ * keyed only on the head SHA could therefore skip reviewing a diff that genuinely
+ * changed underneath it. The stamp carries BOTH ends.
+ */
+export const BOARD_STAMP = 'wf-board';
+
+export function stampFor(headSha, mergeBase) {
+    return `<!-- ${BOARD_STAMP} head=${String(headSha || '').slice(0, 40)} base=${String(mergeBase || '').slice(0, 40)} -->`;
+}
+
+/**
+ * Has this exact diff already been PASSED by the board?
+ *
+ * Only a pass is reusable. A previous block must be re-run rather than reused: if
+ * the reviewers objected, the correct behaviour is to object again, and treating a
+ * stored FAIL as a reason to exit 0 would turn a dedupe optimisation into a way to
+ * merge a blocked change.
+ *
+ * Any error reading the comments returns false, so the board simply runs. Failing
+ * to dedupe wastes two minutes; wrongly skipping a review does not.
+ */
+export async function alreadyPassed({ headSha, mergeBase, env = process.env, fetchImpl = fetch } = {}) {
+    const token = env.GITHUB_TOKEN || env.GH_TOKEN;
+    const repo = env.GITHUB_REPOSITORY;
+    const pr = env.PR_NUMBER;
+    if (!token || !repo || !pr || !headSha) return false;
+    const stamp = stampFor(headSha, mergeBase);
+    try {
+        const r = await fetchImpl(`https://api.github.com/repos/${repo}/issues/${pr}/comments?per_page=100`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'wealthflow-consensus' },
+        });
+        if (!r.ok) return false;
+        const comments = await r.json();
+        if (!Array.isArray(comments)) return false;
+        return comments.some((c) => {
+            const body = String((c && c.body) || '');
+            // Both conditions required: the same diff AND a pass.
+            return body.includes(stamp) && /Consensus review board — PASS/.test(body);
+        });
+    } catch { return false; }
+}
+
 async function postToPr(body) {
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
     const repo = process.env.GITHUB_REPOSITORY;
@@ -417,7 +476,19 @@ async function main() {
         process.exit(1);
     }
 
-    const raw = getDiff();
+    const { text: raw, mergeBase, headSha } = getDiff();
+
+    // Reuse a PASS already recorded for this exact diff. Five runs fired on one
+    // unchanged SHA on PR #32 within three and a half minutes; re-asking three
+    // models a question they have already answered spends quota and Actions
+    // minutes to learn nothing, and is very likely what exhausted sambanova.
+    if (await alreadyPassed({ headSha, mergeBase })) {
+        const msg = `Already reviewed and passed for head ${String(headSha).slice(0, 7)} `
+            + `on base ${String(mergeBase).slice(0, 7)} — reusing that verdict instead of re-asking.`;
+        console.log(msg);
+        summary(`### ✅ Consensus review board — PASS (reused)\n\n${msg}\n`);
+        process.exit(0);
+    }
     if (!raw.trim()) {
         console.log('Empty diff — nothing to review. Blocking by default.');
         summary('### ⛔ Consensus review: empty diff\n\nNothing to review, so nothing is approved.\n');
@@ -432,14 +503,28 @@ async function main() {
     // assignProviders() for why wrapping the old sequential loop in Promise.all
     // would have collapsed all three reviewers onto one model while still
     // printing three green ticks.
-    const lanes = assignProviders(REVIEWERS);
+    // Skip providers that told us to go away. Three separate runs lost the
+    // architecture reviewer to a sambanova 429 — a wasted call followed by an
+    // "unavailable" non-vote, which quietly reduces a three-reviewer board to two.
+    let ledger = Budget.loadLedger();
+    const cooling = orderFor({ env: process.env })
+        .map((p) => p.id)
+        .filter((id) => Budget.cooldownUntil(ledger, id, Date.now()));
+    if (cooling.length) console.log(`  skipping rate-limited provider(s): ${cooling.join(', ')}`);
+    const lanes = assignProviders(REVIEWERS, { unavailable: cooling });
     for (const lane of lanes) {
         console.log(`  ${lane.role.name} → ${lane.primary || 'NO PROVIDER'}${lane.fallbacks.length ? ` (fallbacks: ${lane.fallbacks.join(', ')})` : ''}`);
     }
 
     // allSettled, not all: one lane throwing must not cancel the others' verdicts.
     const started = Date.now();
-    const settled = await Promise.allSettled(lanes.map((lane) => runReviewer(lane, diff, truncated)));
+    const recordAttempt = (info) => {
+        ledger = Budget.record(ledger, { ...info, lane: Budget.LANES.CRITICAL });
+    };
+    const settled = await Promise.allSettled(lanes.map((lane) => runReviewer(lane, diff, truncated, chat, recordAttempt)));
+    // Persist even when the board blocks: a 429 is precisely what the next run
+    // needs to remember, and it is only ever learned by being refused.
+    Budget.saveLedger(ledger);
     const votes = settled.map((s, i) => s.status === 'fulfilled'
         ? s.value
         // runReviewer already converts an outage into an `unavailable` vote, so
@@ -508,7 +593,7 @@ async function main() {
     // Put the verdict where a human will actually see it. Until now the only
     // record was buried in the job log behind ~80 lines of runner output, which
     // makes a blocking decision effectively invisible.
-    await postToPr(finalReport);
+    await postToPr(finalReport + '\n' + stampFor(headSha, mergeBase));
 
     const merge = result.merge || overridden;
     console.log('Decision:', merge ? (overridden ? 'PASS (human override)' : 'PASS') : 'BLOCK', '—', result.reason);
