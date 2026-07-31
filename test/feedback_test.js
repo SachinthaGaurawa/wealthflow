@@ -430,7 +430,7 @@ describe('feedback-triage: no false confirmations', () => {
 //
 // The check it used was `else if (j && j.reason)`, which trusts the endpoint to
 // name its own failure. The endpoint does — but it is not the only thing that
-// answers that URL. api/[...path].js returns `{ error: 'Unknown endpoint' }` and
+// answers that URL. api/router.js returns `{ error: 'Unknown endpoint' }` and
 // `{ error: 'Endpoint runtime crash' }` with no `reason` at all, and a
 // platform-level failure returns an HTML page, so `r.json()` rejects and there is
 // no body to read. Each of those matched neither branch, left `triageError` null,

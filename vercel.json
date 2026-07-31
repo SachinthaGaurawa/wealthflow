@@ -142,7 +142,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "destination": "/api/router?path=$1"
     },
     {
       "source": "/sw.js",
