@@ -21,6 +21,8 @@
  *       GH_PAT / GITHUB_TOKEN / GITHUB_MODELS_TOKEN.
  */
 
+import { resolveRepo } from './github-repo.js';
+
 const MAX_ISSUES = 25;
 
 function send(res, body, status = 200) {
@@ -108,7 +110,7 @@ export default async function handler(req, res) {
     if (!numbers.length) return send(res, { ok: true, items: [] });
 
     const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
-    const repo = env.GITHUB_REPO || env.GITHUB_REPOSITORY;
+    const repo = resolveRepo(env);
     const token = env.GH_PAT || env.GITHUB_TOKEN || env.GITHUB_MODELS_TOKEN;
     if (!repo || !token) {
         // Be explicit rather than silently returning "nothing completed" — a

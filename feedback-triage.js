@@ -26,6 +26,8 @@
  *  keyword classifier so a feedback item is NEVER lost.
  */
 
+import { resolveRepo } from './github-repo.js';
+
 const MAX_LEN = 2000;
 
 const LABELS = { bug: 'bug', crash: 'bug', ui: 'ui/ux', feature: 'enhancement', security: 'security', other: 'triage' };
@@ -92,7 +94,7 @@ export default async function handler(req, res) {
     // The client has always sent this; nothing here ever read it, so every
     // screenshot a user attached was transmitted and then thrown away.
     const image = typeof body.image === 'string' ? body.image : '';
-    const repo = process.env.GITHUB_REPO || process.env.GITHUB_REPOSITORY;
+    const repo = resolveRepo();
     const token = process.env.GH_PAT || process.env.GITHUB_TOKEN || process.env.GITHUB_MODELS_TOKEN;
 
     // Booleans only — never a value, never a prefix, never a length. Enough to tell

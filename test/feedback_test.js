@@ -331,7 +331,11 @@ describe('app: no markup that invites a browser password prompt', () => {
 // everything green.
 // =============================================================================
 describe('feedback-triage: no false confirmations', () => {
-    const KEYS = ['GITHUB_REPO', 'GITHUB_REPOSITORY', 'GH_PAT', 'GITHUB_TOKEN', 'GITHUB_MODELS_TOKEN', 'EDENAI_API_KEY'];
+    const KEYS = ['GITHUB_REPO', 'GITHUB_REPOSITORY', 'GH_PAT', 'GITHUB_TOKEN', 'GITHUB_MODELS_TOKEN', 'EDENAI_API_KEY',
+        // resolveRepo() now also falls back to these, so a machine that happens to
+        // have them set (any Vercel context) must not make "not configured" tests
+        // find a repo. Cleared here to keep the config-gap assertions hermetic.
+        'VERCEL_GIT_REPO_OWNER', 'VERCEL_GIT_REPO_SLUG'];
     const call = async (env) => {
         // Save and restore KEY BY KEY. Assigning `process.env = {...}` replaces
         // Node's special env object with a plain one, which breaks things far away
