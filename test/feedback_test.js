@@ -370,14 +370,44 @@ describe('feedback-triage: no false confirmations', () => {
         expect(onlyRepo.body.reason).not.toMatch(/GITHUB_REPO/);
     });
 
-    it('reports what is configured WITHOUT exposing any value', async () => {
+    it('reports what is configured WITHOUT exposing any secret value', async () => {
         const { body } = await call({ GITHUB_REPO: 'o/r', GH_PAT: 'ghp_supersecretvalue' });
-        expect(body.configured).toEqual({ repo: true, token: true });
-        // The diagnostic must never become the leak. No value, no prefix, no length.
+        expect(body.configured.repo).toBe(true);
+        expect(body.configured.token).toBe(true);
+
+        // THE LINE THAT MATTERS. The diagnostic must never become the leak: no
+        // token value, no prefix of one, no length of one — anywhere in the body.
         const json = JSON.stringify(body);
         expect(json).not.toContain('ghp_supersecretvalue');
         expect(json).not.toContain('supersecret');
-        expect(json).not.toContain('o/r'.repeat(1) + '"'); // repo name only where it belongs
+        expect(json).not.toContain('ghp_');
+        expect(json).not.toContain(String('ghp_supersecretvalue'.length));
+    });
+
+    it('names the token\'s VARIABLE, never its value, so a 404 is diagnosable', async () => {
+        // The three token variables are not interchangeable: GITHUB_MODELS_TOKEN is
+        // issued for model inference and carries no repository permission at all,
+        // so it produces a 404 on every issue creation while `token: true` reports
+        // success. Saying which variable was used is the difference between a fact
+        // and a guess — and a variable NAME is not a credential.
+        const models = await call({ GITHUB_REPO: 'o/r', GITHUB_MODELS_TOKEN: 'ghs_modelsonly' });
+        expect(models.body.configured.tokenSource).toBe('GITHUB_MODELS_TOKEN');
+        expect(JSON.stringify(models.body)).not.toContain('ghs_modelsonly');
+
+        // GH_PAT wins when several are present, and the report says so.
+        const both = await call({ GITHUB_REPO: 'o/r', GH_PAT: 'ghp_a', GITHUB_MODELS_TOKEN: 'ghs_b' });
+        expect(both.body.configured.tokenSource).toBe('GH_PAT');
+    });
+
+    it('reports the repo it will act on, and whether that string is even usable', async () => {
+        const ok = await call({ GITHUB_REPO: 'o/r', GH_PAT: 't' });
+        expect(ok.body.configured.repoName).toBe('o/r');
+        expect(ok.body.configured.repoLooksValid).toBe(true);
+
+        // A malformed repo produces a 404 that looks exactly like a permissions
+        // problem. Saying the string is unusable stops that hunt before it starts.
+        const bad = await call({ GITHUB_REPO: 'not-a-repo', GH_PAT: 't' });
+        expect(bad.body.configured.repoLooksValid).toBe(false);
     });
 
     it('still classifies the feedback even when it cannot file it', async () => {
@@ -421,7 +451,9 @@ describe('feedback-triage: no false confirmations', () => {
         for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
 
         expect(status).toBe(400);
-        expect(body.configured).toEqual({ repo: false, token: false });
+        expect(body.configured.repo).toBe(false);
+        expect(body.configured.token).toBe(false);
+        expect(body.configured.tokenSource).toBeNull();
     });
 });
 
