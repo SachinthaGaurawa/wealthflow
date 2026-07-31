@@ -97,20 +97,50 @@ export default async function handler(req, res) {
     const repo = process.env.GITHUB_REPO || process.env.GITHUB_REPOSITORY;
     const token = process.env.GH_PAT || process.env.GITHUB_TOKEN || process.env.GITHUB_MODELS_TOKEN;
 
+    // Booleans only — never a value, never a prefix, never a length. Enough to tell
+    // "the deployment has no token" apart from "the token is wrong" from a browser,
+    // without turning a diagnostic into a credential leak.
+    out.configured = { repo: !!repo, token: !!token };
+
     // classify (EdenAI, with safe local fallback)
     const cls = (await edenClassify(text)) || localClassify(text);
     out.classification = cls;
 
     if (!repo || !token) {
-        out.note = 'classified, but GITHUB_REPO / token not set — issue not created';
-        return send(res, out, 200);
+        // THE SILENT DROP THIS ENDPOINT USED TO PERFORM.
+        //
+        // It returned HTTP 200 with ok:true and a `note` nobody read, so the app
+        // showed a success confirmation for a request that created nothing. A
+        // user's bug report was accepted, classified, and dropped — and every
+        // signal available said it worked.
+        //
+        // Reporting success for work not done is the failure this project keeps
+        // finding in itself: a test job that ran no tests and exited 0, an
+        // auto-merge gate keyed to a label nothing applied, a schedule six times
+        // over its allowance. Machinery present, signal absent, everything green.
+        //
+        // 503 is deliberate: the request was valid and the server is simply not
+        // configured to fulfil it. That is a server-side gap the caller can neither
+        // cause nor fix by retrying, and it must never read as success.
+        out.ok = false;
+        out.error = 'not_configured';
+        const missing = [];
+        if (!repo) missing.push('GITHUB_REPO');
+        if (!token) missing.push('a GitHub token');
+        out.reason = 'This deployment cannot file issues: ' + missing.join(' and ')
+            + ' is missing from the server environment. Your feedback was saved locally and will be retried.';
+        return send(res, out, 503);
     }
 
     // de-dup: if an open issue with the same fingerprint label exists, comment instead of duplicating
     const fp = fingerprint(text);
     const existing = await githubGet(repo, token, '/issues?state=open&labels=' + encodeURIComponent(fp));
     if (Array.isArray(existing) && existing.length) {
+        // NOT a drop: this feedback is already tracked by an open issue, so the
+        // user's report is represented. Named explicitly so it can never be
+        // confused with the not-configured case above.
         out.deduped = existing[0].number;
+        out.reason = 'Already tracked by issue #' + existing[0].number + '.';
         return send(res, out, 200);
     }
 
@@ -145,8 +175,25 @@ export default async function handler(req, res) {
             body: JSON.stringify({ title: title, body: issueBody, labels: [labelType, fp, 'autonomous', 'user-feedback'] })
         });
         const created = await r.json();
-        if (r.ok) { out.issue = created.number; } else { out.ok = false; out.error = 'github issue create failed'; out.detail = created && created.message; }
-    } catch (e) { out.ok = false; out.error = e.message; }
+        if (r.ok) {
+            out.issue = created.number;
+            out.reason = 'Filed as issue #' + created.number + '.';
+        } else {
+            out.ok = false;
+            out.error = 'github_create_failed';
+            out.status = r.status;
+            out.detail = (created && created.message) || '';
+            // 401/403 means the token exists but cannot write here — a different
+            // problem from a missing token, and one `configured` alone cannot show.
+            out.reason = r.status === 401 || r.status === 403
+                ? 'The GitHub token is present but not authorised to create issues on ' + repo + '.'
+                : 'GitHub refused to create the issue (HTTP ' + r.status + '): ' + String(out.detail).slice(0, 160);
+        }
+    } catch (e) {
+        out.ok = false;
+        out.error = 'network';
+        out.reason = 'Could not reach GitHub: ' + String(e.message).slice(0, 160);
+    }
 
     return send(res, out, out.ok ? 200 : 502);
 }

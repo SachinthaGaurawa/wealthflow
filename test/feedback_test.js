@@ -18,7 +18,7 @@ import fc from 'fast-check';
 import { runs } from './fuzz-config.js';
 import { parseIssueList, versionFromComments, summarise } from '../feedback-status.js';
 import fs from 'node:fs';
-import {
+import handler, {
     diagnosticsSection, localClassify, fingerprint, LABELS,
     imageSection, IMAGE_MARKER, IMAGE_BUDGET,
 } from '../feedback-triage.js';
@@ -312,5 +312,83 @@ describe('app: no markup that invites a browser password prompt', () => {
         // The intuitive "fix" is the exact opposite of one: new-password is the
         // value that asks Chrome to offer a generated password.
         expect(html).not.toMatch(/autocomplete="new-password"/);
+    });
+});
+
+// =============================================================================
+// The endpoint must never report success for work it did not do
+// =============================================================================
+// A real bug report — "Add your income button please fix that. Urgently fix that
+// issue." — was submitted, classified, and dropped. Every signal said it worked:
+// the server returned HTTP 200 with ok:true and a `note` nobody read, and the
+// client checked only for an issue number and ignored everything else. Both ends
+// conspired to look successful.
+//
+// That is this project's signature failure, now found for the fourth time: a test
+// job that ran no tests and exited 0; an auto-merge gate keyed to a label nothing
+// applied; a schedule six times over its allowance; and now a feedback endpoint
+// that accepts a report and files nothing. Machinery present, signal absent,
+// everything green.
+// =============================================================================
+describe('feedback-triage: no false confirmations', () => {
+    const KEYS = ['GITHUB_REPO', 'GITHUB_REPOSITORY', 'GH_PAT', 'GITHUB_TOKEN', 'GITHUB_MODELS_TOKEN', 'EDENAI_API_KEY'];
+    const call = async (env) => {
+        // Save and restore KEY BY KEY. Assigning `process.env = {...}` replaces
+        // Node's special env object with a plain one, which breaks things far away
+        // from here — the first version of this helper did that and made an
+        // unrelated test read an empty file.
+        const saved = {};
+        for (const k of KEYS) saved[k] = process.env[k];
+        for (const k of KEYS) { if (k in env) process.env[k] = env[k]; else delete process.env[k]; }
+        let status = 0; let body = null;
+        const res = {
+            setHeader() {},
+            status(c) { status = c; return this; },
+            json(o) { body = o; return this; },
+        };
+        await handler({ body: { text: 'the Add your income button is broken' } }, res);
+        for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+        return { status, body };
+    };
+
+    it('refuses to claim success when it has no repo or token', async () => {
+        const { status, body } = await call({});
+        expect(status).toBe(503);
+        expect(body.ok).toBe(false);
+        expect(body.error).toBe('not_configured');
+        expect(body.reason).toMatch(/GITHUB_REPO/);
+        expect(body.reason).toMatch(/saved locally/i);
+    });
+
+    it('names which half is missing, so the fix is obvious', async () => {
+        const onlyRepo = await call({ GITHUB_REPO: 'o/r' });
+        expect(onlyRepo.body.reason).toMatch(/GitHub token/i);
+        expect(onlyRepo.body.reason).not.toMatch(/GITHUB_REPO/);
+    });
+
+    it('reports what is configured WITHOUT exposing any value', async () => {
+        const { body } = await call({ GITHUB_REPO: 'o/r', GH_PAT: 'ghp_supersecretvalue' });
+        expect(body.configured).toEqual({ repo: true, token: true });
+        // The diagnostic must never become the leak. No value, no prefix, no length.
+        const json = JSON.stringify(body);
+        expect(json).not.toContain('ghp_supersecretvalue');
+        expect(json).not.toContain('supersecret');
+        expect(json).not.toContain('o/r'.repeat(1) + '"'); // repo name only where it belongs
+    });
+
+    it('still classifies the feedback even when it cannot file it', async () => {
+        // The classification is useful on the retry, so a config gap must not
+        // discard the work already done.
+        const { body } = await call({});
+        expect(body.classification).toBeTruthy();
+        expect(['bug', 'crash', 'ui', 'feature', 'security', 'other']).toContain(body.classification.type);
+    });
+
+    it('rejects an empty report with 400, not a silent 200', async () => {
+        let status = 0; let body = null;
+        const res = { setHeader() {}, status(c) { status = c; return this; }, json(o) { body = o; return this; } };
+        await handler({ body: { text: '   ' } }, res);
+        expect(status).toBe(400);
+        expect(body.ok).toBe(false);
     });
 });
