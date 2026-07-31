@@ -1145,53 +1145,132 @@
                     type, text,
                     version: payload.version,
                     createdAt: payload.createdAt,
-                    diagnostics: diagnostics
+                    diagnostics: diagnostics,
+                    // The screenshot has to come WITH the report. feedback-triage.js
+                    // renders `body.image` into the issue so the fix agent can look at
+                    // what the user was looking at — but this call never sent the
+                    // field, so that renderer received '' on every real submission and
+                    // the picture went only to Firestore. Machinery present, signal
+                    // absent, for the second time in the same feature.
+                    image: payload.image || null
                 })
             });
-            // Read the body on EVERY status. The endpoint's whole job is to say
-            // why it could not file, and a `if (r.ok)` guard throws that away —
-            // which is half of how a dropped report used to look successful.
+            // Read the body on EVERY status, then decide from BOTH the status and
+            // the body — see _readTriageResponse for why the body alone is not
+            // enough to tell success from failure.
             const j = await r.json().catch(() => null);
-            if (r.ok && j && (j.issue || j.deduped)) {
-                issueNumber = j.issue || j.deduped;
-                stored = true;
-            } else if (j && j.reason) {
-                // The server filed nothing and said why. Surfacing that is the
-                // difference between "we lost your report" and "we kept it and
-                // here is what needs fixing".
-                triageError = String(j.reason).slice(0, 300);
+            const verdict = _readTriageResponse(r.status, j);
+            issueNumber = verdict.issue;
+            triageError = verdict.reason;
+            if (issueNumber) stored = true;
+            if (triageError) {
                 try {
-                    console.warn('[feedback] not filed:', j.error || 'unknown', j.reason,
-                        j.configured ? '(configured: repo=' + j.configured.repo + ' token=' + j.configured.token + ')' : '');
+                    console.warn('[feedback] not filed:', 'HTTP ' + r.status, (j && j.error) || 'unknown', triageError,
+                        (j && j.configured) ? '(configured: repo=' + j.configured.repo + ' token=' + j.configured.token + ')' : '');
                 } catch (_) {}
             }
-        } catch (_) { /* offline — the queue below retries */ }
+        } catch (e) {
+            // A request that never completed is still a report that was not filed.
+            // Swallowing it silently is precisely how an unreachable endpoint came
+            // back as "saved and prioritised" whenever Firestore had already
+            // succeeded a few lines above.
+            triageError = _readTriageResponse(0, null, e).reason;
+        }
         if (issueNumber) { payload.issue = issueNumber; _attachIssueToQueued(payload, issueNumber); }
 
         // (3) Email backup for urgent alerts (optional endpoint, fails silently)
+        //     `fetch` only rejects on a network failure, so awaiting it and setting
+        //     stored = true counted a 404 or a 500 as "saved" — the same mistake in
+        //     miniature.
         try {
-            await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-            stored = true;
+            const rf = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            if (rf && rf.ok) stored = true;
         } catch (_) {}
         _fbImageData = null;
         _close('wfFeedback');
 
         // Tell the user what will actually happen, not just "thanks".
-        let msg;
-        if (issueNumber) {
-            msg = 'Thank you — this is now queued as work item #' + issueNumber +
-                '. You\'ll see it marked Completed here once the fix ships.';
-        } else if (triageError) {
-            // The report is SAFE — it is in the local queue and in Firestore — but it
-            // did not become a tracked work item, and saying "prioritised" here would
-            // be the same false confirmation this whole change exists to remove.
-            msg = 'Saved, but it could not be filed as a work item yet: ' + triageError;
-        } else if (stored) {
-            msg = 'Thank you — your feedback was saved and prioritised.';
-        } else {
-            msg = 'Saved — we\'ll send it automatically when you\'re back online. It already shows in “Your Feedback”.';
+        const said = _feedbackMessage({ issue: issueNumber, reason: triageError, stored: stored });
+        _notify(said.msg, said.tone);
+    }
+
+    /**
+     * Decide what a /api/feedback-triage response actually means.
+     *
+     * WHY THIS IS NOT AN INLINE `if (j && j.reason)` ANY MORE
+     *   That is what it was, and it trusted the endpoint to name its own failures.
+     *   The endpoint does — but it is not the only thing that answers this URL:
+     *
+     *     • api/[...path].js replies `{ error: 'Unknown endpoint' }` (404) or
+     *       `{ error: 'Endpoint runtime crash' }` (500) — JSON, but with no
+     *       `reason` field;
+     *     • a platform-level failure (a function that fails to boot, a body over
+     *       the size limit, a gateway timeout) replies with HTML, so `r.json()`
+     *       rejects and `j` is null.
+     *
+     *   In every one of those cases the old check matched nothing, `triageError`
+     *   stayed null, and the ladder below fell through to "saved and prioritised".
+     *   The false confirmation this feature exists to remove, reintroduced one
+     *   layer up from where it was fixed.
+     *
+     *   So the rule is inverted: SUCCESS must be proven — a 2xx carrying an issue
+     *   number. Everything else is a failure, and a failure that cannot explain
+     *   itself still has to say what it knows.
+     *
+     * @param {number} status  HTTP status, or 0 if the request never completed.
+     * @param {object|null} body  Parsed JSON body, or null if it was not JSON.
+     * @param {Error} [err]  The thrown error, when status is 0.
+     */
+    function _readTriageResponse(status, body, err) {
+        const j = body && typeof body === 'object' ? body : null;
+        if (status >= 200 && status < 300 && j && (j.issue || j.deduped)) {
+            return { issue: j.issue || j.deduped, reason: null };
         }
-        _notify(msg, triageError ? 'warn' : (stored ? 'success' : 'info'));
+        // The endpoint's own explanation, when there is one, is the best answer:
+        // it knows whether the token is missing, unauthorised, or GitHub refused.
+        if (j && j.reason) return { issue: null, reason: String(j.reason).slice(0, 300) };
+
+        const detail = (j && (j.error || j.detail))
+            ? ' (' + String(j.error || j.detail).slice(0, 120) + ')' : '';
+        if (!status) {
+            if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+                return { issue: null, reason: 'you appear to be offline. It will be filed automatically once you are back online.' };
+            }
+            return { issue: null, reason: 'the server could not be reached (' + String((err && err.message) || 'network error').slice(0, 120) + ').' };
+        }
+        if (status === 404) {
+            return { issue: null, reason: 'the triage endpoint is not available on this deployment (HTTP 404)' + detail + '.' };
+        }
+        return { issue: null, reason: 'the server answered HTTP ' + status + ' without saying why' + detail + '.' };
+    }
+
+    /**
+     * The words the user sees. Pure, so a test can prove which one they get.
+     *
+     * There is deliberately no branch left that says "prioritised". Nothing here
+     * can know that a report was prioritised unless it became a work item, and
+     * claiming it anyway is the exact thing the user caught us doing.
+     */
+    function _feedbackMessage(s) {
+        if (s && s.issue) {
+            return {
+                msg: 'Thank you — this is now queued as work item #' + s.issue +
+                    '. You\'ll see it marked Completed here once the fix ships.',
+                tone: 'success',
+            };
+        }
+        if (s && s.reason) {
+            // The report is SAFE — it is in the local queue and usually in Firestore
+            // too — but it did not become a tracked work item, and that difference
+            // is the whole point of saying anything at all.
+            return { msg: 'Saved, but it could not be filed as a work item yet: ' + s.reason, tone: 'warn' };
+        }
+        return {
+            msg: (s && s.stored)
+                ? 'Saved — it already shows in “Your Feedback”.'
+                : 'Saved — we\'ll send it automatically when you\'re back online. It already shows in “Your Feedback”.',
+            tone: 'info',
+        };
     }
 
     /** Record the issue number against the queued copy of this feedback item. */
@@ -1500,6 +1579,11 @@
         // "Your Feedback" list can refresh statuses on demand.
         checkCompletions: _checkFeedbackCompletions,
         _collectDiagnostics,
+        // Exposed so the test harness can prove which words a given server
+        // response produces. The bug these replace was invisible to every test
+        // that only read the source, because the logic was inline in an async
+        // submit handler that needed a DOM, a network and Firebase to run.
+        _readTriageResponse, _feedbackMessage,
         _close, _closePost, version: CURRENT_VERSION
     };
 

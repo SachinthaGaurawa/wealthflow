@@ -98,7 +98,10 @@ export default async function handler(req, res) {
 
     var load = HANDLERS[name];
     if (!load) {
-        return res.status(404).json({ error: 'Unknown endpoint', endpoint: name });
+        return res.status(404).json({
+            error: 'Unknown endpoint', endpoint: name,
+            reason: 'this deployment has no /api/' + name + ' endpoint.',
+        });
     }
 
     try {
@@ -107,19 +110,28 @@ export default async function handler(req, res) {
             mod = await load();
         } catch (importErr) {
             console.error(`[api-router] Module import missing for ${name}:`, importErr);
-            return res.status(500).json({ error: 'Endpoint file not bundled by Vercel', endpoint: name, detail: importErr.message });
+            return res.status(500).json({
+                error: 'Endpoint file not bundled by Vercel', endpoint: name, detail: importErr.message,
+                reason: 'the ' + name + ' endpoint was not included in this build.',
+            });
         }
 
         var fn = mod && (mod.default || mod.handler || mod);
         if (typeof fn !== 'function') {
-            return res.status(500).json({ error: 'Endpoint has no valid export handler', endpoint: name });
+            return res.status(500).json({
+                error: 'Endpoint has no valid export handler', endpoint: name,
+                reason: 'the ' + name + ' endpoint is deployed but exports no handler.',
+            });
         }
-        
+
         return await fn(req, res);
     } catch (err) {
         console.error('[api-router] ' + name + ' failed:', err && err.stack || err);
         if (!res.headersSent) {
-            res.status(500).json({ error: 'Endpoint runtime crash', endpoint: name, detail: String(err && err.message || err) });
+            res.status(500).json({
+                error: 'Endpoint runtime crash', endpoint: name, detail: String(err && err.message || err),
+                reason: 'the ' + name + ' endpoint crashed while handling the request.',
+            });
         }
     }
 }

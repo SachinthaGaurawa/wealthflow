@@ -391,4 +391,196 @@ describe('feedback-triage: no false confirmations', () => {
         expect(status).toBe(400);
         expect(body.ok).toBe(false);
     });
+
+    it('gives every non-2xx a `reason` the app can show verbatim', async () => {
+        // The client displays `reason` and nothing else. A failure shape without
+        // one is a failure the user cannot be told about.
+        let status = 0; let body = null;
+        const res = { setHeader() {}, status(c) { status = c; return this; }, json(o) { body = o; return this; } };
+        await handler({ body: { text: '   ' } }, res);
+        expect(status).not.toBe(200);
+        expect(typeof body.reason).toBe('string');
+        expect(body.reason.length).toBeGreaterThan(0);
+    });
+
+    it('answers "can this deployment file at all?" without filing anything', async () => {
+        // An empty POST is a zero-side-effect health check: no issue is created,
+        // no GitHub call is made, and the answer comes back anyway. Without this,
+        // the only way to find out whether the environment is configured was to
+        // submit a real bug report and watch it vanish.
+        let status = 0; let body = null;
+        const res = { setHeader() {}, status(c) { status = c; return this; }, json(o) { body = o; return this; } };
+        const saved = {};
+        for (const k of KEYS) saved[k] = process.env[k];
+        for (const k of KEYS) delete process.env[k];
+        await handler({ body: {} }, res);
+        for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+
+        expect(status).toBe(400);
+        expect(body.configured).toEqual({ repo: false, token: false });
+    });
+});
+
+// =============================================================================
+// The client cannot fall through to a success message. Ever.
+// =============================================================================
+// The fix above made the SERVER honest, and the app was still showing "Thank you
+// — your feedback was saved and prioritised." for a report that was filed
+// nowhere. The server was not the one lying any more; the client was.
+//
+// The check it used was `else if (j && j.reason)`, which trusts the endpoint to
+// name its own failure. The endpoint does — but it is not the only thing that
+// answers that URL. api/[...path].js returns `{ error: 'Unknown endpoint' }` and
+// `{ error: 'Endpoint runtime crash' }` with no `reason` at all, and a
+// platform-level failure returns an HTML page, so `r.json()` rejects and there is
+// no body to read. Each of those matched neither branch, left `triageError` null,
+// and dropped straight through to the success string.
+//
+// Same defect, one layer up from where it was fixed. So the rule is now inverted
+// — success must be PROVEN — and these tests enumerate the failure shapes rather
+// than trusting the next one to look like the last.
+// =============================================================================
+describe('feedback client: success is proven, never assumed', () => {
+    // Load the real browser IIFE with a stub global bag: the two functions under
+    // test are pure, but they live in a file that expects a DOM, so evaluating
+    // the shipped source is the only way to test what actually runs.
+    const wf = (() => {
+        const noop = () => {};
+        const win = {};
+        const el = () => ({ style: {}, classList: { add: noop, remove: noop }, appendChild: noop, setAttribute: noop });
+        const doc = {
+            readyState: 'complete', addEventListener: noop, getElementById: () => null,
+            querySelector: () => null, querySelectorAll: () => [], createElement: el,
+            body: { appendChild: noop }, head: { appendChild: noop },
+        };
+        const store = { getItem: () => null, setItem: noop, removeItem: noop };
+        new Function(
+            'window', 'document', 'console', 'localStorage', 'sessionStorage', 'navigator',
+            'setTimeout', 'setInterval', 'fetch', 'screen', 'location',
+            fs.readFileSync('wealthflow-update-system.js', 'utf8'),
+        )(win, doc, { log: noop, warn: noop, error: noop }, store, store,
+            { onLine: true, userAgent: 'test' }, noop, noop, noop, { width: 1, height: 1 },
+            { href: 'http://localhost/', reload: noop });
+        return win.wfUpdate;
+    })();
+
+    const read = (status, body, err) => wf._readTriageResponse(status, body, err);
+    const said = (status, body) => wf._feedbackMessage({
+        issue: read(status, body).issue, reason: read(status, body).reason, stored: true,
+    });
+
+    it('loaded the shipped module (guards against a vacuous pass)', () => {
+        expect(typeof wf._readTriageResponse).toBe('function');
+        expect(typeof wf._feedbackMessage).toBe('function');
+    });
+
+    it('reports a filed issue as a work item', () => {
+        expect(read(200, { ok: true, issue: 42 }).issue).toBe(42);
+        expect(said(200, { ok: true, issue: 42 }).msg).toMatch(/work item #42/);
+    });
+
+    it('treats an already-tracked duplicate as filed, not as a failure', () => {
+        expect(read(200, { ok: true, deduped: 7 }).issue).toBe(7);
+    });
+
+    it('shows the endpoint\'s own reason when it gives one', () => {
+        const m = said(503, { ok: false, error: 'not_configured', reason: 'GITHUB_REPO is missing.' });
+        expect(m.msg).toMatch(/GITHUB_REPO is missing/);
+        expect(m.tone).toBe('warn');
+    });
+
+    // ── the shapes that used to slip through ────────────────────────────────
+    const silent = [
+        ['router 404, no reason field', 404, { error: 'Unknown endpoint', endpoint: 'feedback-triage' }],
+        ['router 500, no reason field', 500, { error: 'Endpoint runtime crash', endpoint: 'feedback-triage' }],
+        ['not-bundled 500, no reason field', 500, { error: 'Endpoint file not bundled by Vercel' }],
+        ['an HTML error page (body unparseable)', 500, null],
+        ['a gateway timeout with no body', 504, null],
+        ['a payload rejected as too large', 413, null],
+        ['200 with an empty body', 200, {}],
+        ['200 that says ok but filed nothing', 200, { ok: true }],
+    ];
+
+    it.each(silent)('never claims success for %s', (_name, status, body) => {
+        const v = read(status, body);
+        expect(v.issue).toBeFalsy();
+        expect(typeof v.reason).toBe('string');
+        expect(v.reason.length).toBeGreaterThan(0);
+
+        const m = said(status, body);
+        expect(m.tone).toBe('warn');
+        expect(m.msg).toMatch(/could not be filed as a work item/);
+    });
+
+    it('names the status code, so an unexplained failure is still diagnosable', () => {
+        expect(read(502, null).reason).toMatch(/502/);
+        expect(read(404, null).reason).toMatch(/404/);
+    });
+
+    it('a request that never completed is a failure, not a silence', () => {
+        // This is the case `catch (_) {}` used to swallow entirely. With Firestore
+        // already succeeding, the swallow is what produced the success toast.
+        const v = read(0, null, new Error('Failed to fetch'));
+        expect(v.issue).toBeFalsy();
+        expect(v.reason).toMatch(/could not be reached/);
+    });
+
+    it('cannot produce "saved and prioritised" for ANY state', () => {
+        // The exact string the user reported seeing. Nothing in this app can know
+        // a report was prioritised unless it became a work item, so no combination
+        // of inputs may produce it — and if it ever appears on screen again, that
+        // can only be stale cached JS, which is itself the diagnosis.
+        fc.assert(fc.property(
+            fc.option(fc.integer({ min: 1, max: 9999 }), { nil: null }),
+            fc.option(fc.string({ maxLength: 80 }), { nil: null }),
+            fc.boolean(),
+            (issue, reason, stored) => {
+                expect(wf._feedbackMessage({ issue, reason, stored }).msg)
+                    .not.toMatch(/prioriti[sz]ed/i);
+            },
+        ), { numRuns: runs(300) });
+    });
+
+    it('only ever calls something a success when an issue number backs it', () => {
+        fc.assert(fc.property(
+            fc.option(fc.integer({ min: 1, max: 9999 }), { nil: null }),
+            fc.option(fc.string({ maxLength: 80 }), { nil: null }),
+            fc.boolean(),
+            (issue, reason, stored) => {
+                const m = wf._feedbackMessage({ issue, reason, stored });
+                if (m.tone === 'success') expect(issue).toBeTruthy();
+            },
+        ), { numRuns: runs(300) });
+    });
+
+    it('never throws, whatever the server returns', () => {
+        fc.assert(fc.property(fc.integer({ min: 0, max: 599 }), fc.anything(), (status, body) => {
+            expect(() => read(status, body)).not.toThrow();
+            const v = read(status, body);
+            // The invariant, stated once: an outcome is either a filed issue or a
+            // stated reason. There is no third state, and no silence.
+            expect(Boolean(v.issue) !== Boolean(v.reason)).toBe(true);
+        }), { numRuns: runs(400) });
+    });
+});
+
+// ── the screenshot has to travel WITH the report ─────────────────────────────
+describe('feedback client: the attached screenshot reaches triage', () => {
+    const src = fs.readFileSync('wealthflow-update-system.js', 'utf8');
+    const call = src.slice(src.indexOf("fetch('/api/feedback-triage'"), src.indexOf("if (issueNumber) { payload.issue"));
+
+    it('sends `image` in the triage POST body', () => {
+        // feedback-triage.js renders body.image into the issue so the fix agent can
+        // see it. That renderer, its size budget and its data-URL validation were
+        // all built and tested — and the call site never sent the field, so it
+        // received '' on every real submission. The tests above proved the
+        // renderer worked; none of them proved anything ever reached it.
+        expect(call).toMatch(/image:\s*payload\.image/);
+    });
+
+    it('still sends the text, type and diagnostics alongside it', () => {
+        expect(call).toMatch(/\btype\b/);
+        expect(call).toMatch(/\btext\b/);
+        expect(call).toMatch(/diagnostics:\s*diagnostics/);
+    });
 });
