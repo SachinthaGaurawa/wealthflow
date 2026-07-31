@@ -26,7 +26,7 @@
  *  keyword classifier so a feedback item is NEVER lost.
  */
 
-import { resolveRepo } from './github-repo.js';
+import { resolveRepo, resolveToken, isValidRepo } from './github-repo.js';
 
 const MAX_LEN = 2000;
 
@@ -95,7 +95,7 @@ export default async function handler(req, res) {
     // screenshot a user attached was transmitted and then thrown away.
     const image = typeof body.image === 'string' ? body.image : '';
     const repo = resolveRepo();
-    const token = process.env.GH_PAT || process.env.GITHUB_TOKEN || process.env.GITHUB_MODELS_TOKEN;
+    const { token, source: tokenSource } = resolveToken();
 
     // Booleans only — never a value, never a prefix, never a length. Enough to tell
     // "the deployment has no token" apart from "the token is wrong" from a browser,
@@ -105,7 +105,18 @@ export default async function handler(req, res) {
     // files nothing, creates nothing, and answers the one question that otherwise
     // needs a real bug report to ask — is this deployment able to file at all?
     // A zero-side-effect health check for the whole pipeline.
-    out.configured = { repo: !!repo, token: !!token };
+    // `repoName` and `tokenSource` are diagnostics, not credentials: one is the
+    // repository slug (already public in the deployment's git metadata) and the
+    // other is a VARIABLE NAME. Neither is a value, a prefix, or a length. They
+    // are here because "HTTP 404: Not Found" on its own is unactionable — it
+    // cannot distinguish a malformed repo string from a token that is not
+    // authorised, and guessing between the two is what cost several rounds.
+    out.configured = {
+        repo: !!repo, token: !!token,
+        repoName: repo || null,
+        repoLooksValid: repo ? isValidRepo(repo) : null,
+        tokenSource: tokenSource,
+    };
 
     // Every non-2xx this endpoint returns carries a `reason` the app can show the
     // user verbatim. This one was the exception, which meant an empty report was
@@ -198,11 +209,15 @@ export default async function handler(req, res) {
             out.error = 'github_create_failed';
             out.status = r.status;
             out.detail = (created && created.message) || '';
-            // 401/403 means the token exists but cannot write here — a different
-            // problem from a missing token, and one `configured` alone cannot show.
-            out.reason = r.status === 401 || r.status === 403
-                ? 'The GitHub token is present but not authorised to create issues on ' + repo + '.'
-                : 'GitHub refused to create the issue (HTTP ' + r.status + '): ' + String(out.detail).slice(0, 160);
+            if (r.status === 401 || r.status === 403) {
+                // The token exists but cannot write here — a different problem
+                // from a missing token, and one `configured` alone cannot show.
+                out.reason = 'The GitHub token is present but not authorised to create issues on ' + repo + '.';
+            } else if (r.status === 404) {
+                out.reason = await explain404(repo, token, tokenSource, out);
+            } else {
+                out.reason = 'GitHub refused to create the issue (HTTP ' + r.status + '): ' + String(out.detail).slice(0, 160);
+            }
         }
     } catch (e) {
         out.ok = false;
@@ -213,6 +228,70 @@ export default async function handler(req, res) {
     return send(res, out, out.ok ? 200 : 502);
 }
 
+
+/**
+ * Turn GitHub's most ambiguous status into a specific instruction.
+ *
+ * WHY A 404 HERE MEANS FOUR DIFFERENT THINGS
+ *   GitHub deliberately answers 404 — never 403 — when a token is not authorised
+ *   for a repository, so that private repository names cannot be probed by
+ *   watching status codes. The consequence is that ONE status covers:
+ *
+ *     a) the repo string is malformed, so the URL points nowhere;
+ *     b) the repository genuinely does not exist;
+ *     c) the token is valid but has no access to THIS repository
+ *        (the usual cause: a fine-grained PAT whose "Repository access" list
+ *        does not include it, or GITHUB_MODELS_TOKEN, which is issued for model
+ *        inference and carries no repository permission at all);
+ *     d) the repository exists and is readable, but Issues are disabled.
+ *
+ *   "GitHub refused to create the issue (HTTP 404): Not Found" is true and
+ *   useless. One extra GET separates (c) from (d) and names the fix, and the
+ *   shape of the repo string separates (a) before any request is made.
+ *
+ * Never throws: a diagnosis that fails must not replace a real error with a
+ * crash, so every path still returns a usable sentence.
+ */
+export async function explain404(repo, token, tokenSource, out) {
+    const where = 'https://github.com/settings/personal-access-tokens';
+    if (!isValidRepo(repo)) {
+        return 'the repository is configured as "' + String(repo).slice(0, 80)
+            + '", which is not a valid owner/name pair, so the GitHub URL points nowhere.';
+    }
+    let probe = null;
+    try {
+        probe = await fetch('https://api.github.com/repos/' + repo, {
+            headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'User-Agent': 'wealthflow-triage' },
+        });
+    } catch (_) { /* fall through to the generic answer below */ }
+
+    if (probe && probe.ok) {
+        let meta = null;
+        try { meta = await probe.json(); } catch (_) {}
+        if (meta && meta.has_issues === false) {
+            if (out) out.diagnosis = 'issues_disabled';
+            return 'Issues are turned off for ' + repo
+                + '. Enable them in the repository\'s Settings → General → Features → Issues.';
+        }
+        if (out) out.diagnosis = 'token_cannot_write_issues';
+        return 'the token can read ' + repo + ' but may not create issues on it. Grant it the '
+            + '"Issues: Read and write" permission (fine-grained PAT) or the `repo` scope (classic), at ' + where + '.';
+    }
+
+    if (probe && (probe.status === 404 || probe.status === 401 || probe.status === 403)) {
+        if (out) out.diagnosis = 'token_cannot_see_repo';
+        return 'the token cannot see ' + repo + ' at all — GitHub answers 404 rather than 403 for an '
+            + 'unauthorised repository. The token in use came from ' + (tokenSource || 'an unknown variable')
+            + (tokenSource === 'GITHUB_MODELS_TOKEN'
+                ? ', which is a GitHub Models inference token and carries NO repository permission — set GH_PAT instead.'
+                : '. Check that this token lists ' + repo + ' under Repository access and grants "Issues: Read and write", at ' + where + '.');
+    }
+
+    if (out) out.diagnosis = 'unknown_404';
+    return 'GitHub returned 404 for ' + repo + ' and the follow-up check was inconclusive. '
+        + 'The token came from ' + (tokenSource || 'an unknown variable')
+        + '; verify it lists that repository under Repository access with "Issues: Read and write".';
+}
 
 /** Marker the fix agent looks for to find an attached screenshot. */
 export const IMAGE_MARKER = 'wf-feedback-image';
