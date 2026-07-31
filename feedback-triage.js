@@ -92,15 +92,28 @@ export default async function handler(req, res) {
     // The client has always sent this; nothing here ever read it, so every
     // screenshot a user attached was transmitted and then thrown away.
     const image = typeof body.image === 'string' ? body.image : '';
-    if (!text) { return send(res, { ok: false, error: 'no feedback text' }, 400); }
-
     const repo = process.env.GITHUB_REPO || process.env.GITHUB_REPOSITORY;
     const token = process.env.GH_PAT || process.env.GITHUB_TOKEN || process.env.GITHUB_MODELS_TOKEN;
 
     // Booleans only — never a value, never a prefix, never a length. Enough to tell
     // "the deployment has no token" apart from "the token is wrong" from a browser,
     // without turning a diagnostic into a credential leak.
+    //
+    // Computed BEFORE the empty-text check on purpose: a POST with no text now
+    // files nothing, creates nothing, and answers the one question that otherwise
+    // needs a real bug report to ask — is this deployment able to file at all?
+    // A zero-side-effect health check for the whole pipeline.
     out.configured = { repo: !!repo, token: !!token };
+
+    // Every non-2xx this endpoint returns carries a `reason` the app can show the
+    // user verbatim. This one was the exception, which meant an empty report was
+    // rejected in a shape the client had nothing to display.
+    if (!text) {
+        out.ok = false;
+        out.error = 'no_text';
+        out.reason = 'the report arrived with no text in it.';
+        return send(res, out, 400);
+    }
 
     // classify (EdenAI, with safe local fallback)
     const cls = (await edenClassify(text)) || localClassify(text);
