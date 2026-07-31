@@ -247,9 +247,15 @@ export function orderFor({ prefer = [], exclude = [], only = [], env = process.e
  * @param {Array<{name?:string, prefer?:string[]}>} roles
  * @returns {Array<{role:object, primary:string|null, fallbacks:string[]}>}
  */
-export function assignProviders(roles, { env = process.env } = {}) {
+export function assignProviders(roles, { env = process.env, unavailable = [] } = {}) {
     const list = Array.isArray(roles) ? roles : [];
-    const avail = availableProviders(env);
+    // Providers the caller knows are spent. Handing a reviewer a provider that is
+    // already returning 429 costs a wasted call and then loses the reviewer to an
+    // "unavailable" non-vote — which is exactly what happened three times to the
+    // architecture reviewer on sambanova. The caller owns the ledger; this module
+    // only needs the answer.
+    const skip = new Set((unavailable || []).filter(Boolean));
+    const avail = availableProviders(env).filter((p) => !skip.has(p.id));
     const taken = [];
     const primaries = new Array(list.length).fill(null);
 
@@ -281,7 +287,7 @@ export function assignProviders(roles, { env = process.env } = {}) {
 
     for (const i of claimOrder) {
         const role = list[i];
-        const order = orderFor({ prefer: (role && role.prefer) || [], exclude: taken, env });
+        const order = orderFor({ prefer: (role && role.prefer) || [], exclude: [...taken, ...skip], env });
         const primary = order[0] || null;
         if (primary) taken.push(primary.id);
         primaries[i] = primary ? primary.id : null;
