@@ -22,6 +22,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { cronsIn } from '../autonomy/actions-budget.mjs';
 
 const DIRS = ['.github/workflows', '.github/actions'];
 
@@ -147,5 +148,54 @@ describe('auto-merge: never attempts a draft', () => {
         // Without this the classify job would only ever have run while merging was
         // impossible, so auto-merge would never be enabled for that PR.
         expect(list).toContain('synchronize');
+    });
+});
+
+// =============================================================================
+// The preview-sync workflow must not become a privilege-escalation hole
+// =============================================================================
+// It exists so ONE Vercel preview URL can be whitelisted in Firebase once,
+// instead of a new domain per branch forever. The risk is in how it is built:
+// `pull_request_target` runs with a WRITE token in the base repository's context,
+// so checking out the pull request there would execute a contributor's code with
+// that token in scope. That is the classic Actions escalation, and it is exactly
+// the shape a well-meaning "just check out and push" implementation takes.
+//
+// This job moves a ref through the API and never checks out the PR. These tests
+// pin that, because the unsafe version is the more obvious one to write.
+// =============================================================================
+describe('preview-sync: safe by construction', () => {
+    const yml = fs.readFileSync('.github/workflows/preview-sync.yml', 'utf8');
+
+    it('reads the workflow at all (guards against a vacuous pass)', () => {
+        expect(yml.length).toBeGreaterThan(500);
+        expect(yml).toMatch(/refs\/heads\/preview/);
+    });
+
+    it('NEVER checks out the pull request', () => {
+        // The single assertion that matters. With pull_request_target in the
+        // trigger list, any checkout of PR code puts a write token next to code the
+        // repository owner has not read.
+        expect(yml).not.toMatch(/actions\/checkout/);
+    });
+
+    it('only responds to the preview label, not to every label change', () => {
+        // This repo churns `auto-safe` and `human-approved` constantly; without the
+        // filter every one of those would redeploy the preview.
+        expect(yml).toMatch(/github\.event\.label\.name == 'preview'/);
+    });
+
+    it('has no schedule, so it costs nothing against the monthly budget', () => {
+        expect(cronsIn(yml)).toEqual([]);
+    });
+
+    it('refuses to deploy a closed pull request', () => {
+        expect(yml).toMatch(/Refusing to deploy a closed pull request/);
+    });
+
+    it('force-updates the ref, because a preview is a pointer and not history', () => {
+        // Successive previews are unrelated commits; a fast-forward push would fail
+        // on the second one and the workflow would look broken.
+        expect(yml).toMatch(/force=true/);
     });
 });
