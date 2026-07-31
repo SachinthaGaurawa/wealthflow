@@ -29,6 +29,7 @@ import { chromium } from 'playwright';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import fsSync from 'node:fs';
 import { installFirebaseStub } from './firebase-stub.mjs';
 
 /** An explicit Chromium path, if the caller pinned one. Empty means "find it". */
@@ -224,6 +225,30 @@ export async function completeOnboarding(page, { pin = '123456', budgetMs = 4500
  * Returns everything the sweep needs, plus the console/page errors observed —
  * an uncaught exception during boot is itself a finding.
  */
+/**
+ * Serve the real Chart.js in place of the CDN copy, when a local one exists.
+ *
+ * The sandbox cannot reach cdnjs (the egress proxy denies it), so every sweep used
+ * to report `Chart is not defined` and every chart went unrendered. That noise had
+ * to be excused by name, which is a filter — and a filter is always a small lie
+ * about what was actually observed.
+ *
+ * npm IS reachable here, so `npm install chart.js@4.4.1` puts a byte-identical copy
+ * of the library on disk and this route hands it to the page. The sweeps then
+ * exercise the charting code for real rather than skipping past it.
+ *
+ * Optional by design: with no local copy the route is not installed and everything
+ * behaves exactly as before, so the harness still runs on a machine that has not
+ * installed it.
+ */
+export async function installChartJs(page, file = 'node_modules/chart.js/dist/chart.umd.js') {
+    let body;
+    try { body = fsSync.readFileSync(file, 'utf8'); } catch { return false; }
+    await page.route('**/cdnjs.cloudflare.com/**/Chart.js/**', (route) =>
+        route.fulfill({ status: 200, contentType: 'application/javascript', body }));
+    return true;
+}
+
 export async function bootApp({ repoDir = process.cwd(), pin = '123456', headless = true } = {}) {
     const server = await serveRepo(repoDir);
     const browser = await launchChromium({ headless });
@@ -240,11 +265,12 @@ export async function bootApp({ repoDir = process.cwd(), pin = '123456', headles
     page.on('requestfailed', (r) => { try { failedRequests.push(r.url()); } catch { /* ignore */ } });
 
     await installFirebaseStub(page);
+    const chartServed = await installChartJs(page);
     await page.goto(server.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     const gates = await completeOnboarding(page, { pin });
 
     return {
-        page, browser, server, gates, pageErrors, consoleErrors, failedRequests,
+        page, browser, server, gates, pageErrors, consoleErrors, failedRequests, chartServed,
         text: await visibleText(page),
         close: async () => { await browser.close(); await server.close(); },
     };

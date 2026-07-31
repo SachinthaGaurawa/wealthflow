@@ -234,7 +234,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -20465,7 +20465,12 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const ctxC = $('dashChart');
             if (dashChartInst) dashChartInst.destroy();
-            if (ctxC) {
+            // A blocked or slow CDN must not take the dashboard with it. Without
+            // this guard `new Chart` throws, and because the throw is uncaught it
+            // ABORTS renderDash — so every stat, table and total BELOW the chart
+            // silently never renders. Skipping the chart costs a chart; throwing
+            // costs the whole page.
+            if (ctxC && typeof Chart !== 'undefined') {
                 dashChartInst = new Chart(ctxC, {
                     type: 'line',
                     data: {
@@ -20483,7 +20488,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             DB.get('expenses').filter(e => e.month.startsWith(year)).forEach(e => { catMap[e.cat] = (catMap[e.cat] || 0) + e.amount; });
             const pCtx = $('dashPie');
             if (dashPieInst) dashPieInst.destroy();
-            if (pCtx) {
+            if (pCtx && typeof Chart !== 'undefined') {
                 dashPieInst = new Chart(pCtx, {
                     type: 'doughnut',
                     data: {
@@ -23730,7 +23735,7 @@ Be direct and use real numbers. Avoid generic advice.`;
         let debtDemoChartInst = null;
         function drawDebtDemoChart(baseHist, avHist, snHist) {
             const chartEl = $('debtDemoChart');
-            if(!chartEl) return;
+            if (!chartEl || typeof Chart === 'undefined') return;
             if(debtDemoChartInst) {
                 debtDemoChartInst.destroy();
             }
@@ -24186,7 +24191,7 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
             // Draw chart with confidence-cone bands
             const chartEl = $('mcChart');
             if (mcChartInst) mcChartInst.destroy();
-            if (chartEl) {
+            if (chartEl && typeof Chart !== 'undefined') {
                 mcChartInst = new Chart(chartEl, {
                     type: 'line',
                     data: {
