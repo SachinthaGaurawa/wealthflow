@@ -1,0 +1,122 @@
+name: Sync a PR to the stable preview branch
+
+# =============================================================================
+# ONE PREVIEW URL, WHITELISTED ONCE.
+#
+# THE PROBLEM
+#   Vercel's preview hostname is `<project>-git-<branch>-<scope>.vercel.app`, so
+#   it changes with EVERY branch name. Firebase Authentication rejects OAuth from
+#   any domain not on its Authorized Domains list, and that list has no wildcard
+#   for arbitrary subdomains. So signing in to review a change on a preview
+#   requires adding a new domain to Firebase by hand, per branch, forever — a
+#   process that will be skipped on exactly the busy day it matters, and one that
+#   silently accumulates stale entries in an auth allowlist, which is not a place
+#   where clutter is harmless.
+#
+# THE FIX
+#   Because the hostname is derived from the branch name, a FIXED branch name
+#   gives a FIXED hostname. This workflow points a long-lived `preview` branch at
+#   any pull request on demand, so exactly one domain —
+#     wealthflow-git-preview-<scope>.vercel.app
+#   — ever needs to be authorised, once.
+#
+# WHY IT NEVER CHECKS OUT THE PULL REQUEST
+#   The obvious implementation is `pull_request_target` + checkout the PR head +
+#   push. That combination is the classic GitHub Actions privilege-escalation
+#   hole: `pull_request_target` runs with a WRITE token in the base repository's
+#   context, and checking out PR code there executes an author's code with that
+#   token in scope.
+#
+#   This job never checks out the pull request and never runs its code. It moves a
+#   ref with one API call, so the most a malicious PR could achieve is having its
+#   own commit deployed to a preview URL — which is what a preview is for, and is
+#   already true of the per-branch preview it gets anyway.
+#
+# COST
+#   No schedule, so it contributes nothing to the monthly Actions projection
+#   (autonomy/actions-budget.mjs). One job, only when you ask for it.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Pull request number to put on the preview URL'
+        required: true
+        type: string
+  # Adding the `preview` label to a PR does the same thing, so it can be done
+  # from the PR page without opening the Actions tab.
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: write          # to move the preview ref
+  pull-requests: read
+
+concurrency:
+  # One preview at a time, and a newer request wins: the branch can only point at
+  # one commit, so an older queued sync would just fight the newer one.
+  group: preview-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Point the preview branch at this PR
+    # For the label trigger, only the `preview` label counts. Without this the job
+    # would run on every label change on every PR — including the `human-approved`
+    # and `auto-safe` churn this repo generates constantly.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.label.name == 'preview'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move refs/heads/preview to the PR head
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.inputs.pr || github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PR:-}" ]; then
+            echo "::error::No pull request number was supplied."
+            exit 1
+          fi
+
+          # Read the head SHA from the API. Never checks out or executes PR code.
+          SHA=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+          STATE=$(gh api "repos/$REPO/pulls/$PR" --jq '.state')
+          TITLE=$(gh api "repos/$REPO/pulls/$PR" --jq '.title')
+
+          if [ "$STATE" != "open" ]; then
+            echo "::error::PR #$PR is $STATE. Refusing to deploy a closed pull request to the preview URL."
+            exit 1
+          fi
+
+          echo "PR #$PR ($TITLE) → $SHA"
+
+          # Force-update, because the preview branch is a POINTER, not history.
+          # Successive previews are unrelated commits and a fast-forward would fail
+          # on the second one.
+          if gh api "repos/$REPO/git/refs/heads/preview" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/heads/preview" -f sha="$SHA" -F force=true >/dev/null
+            echo "moved existing preview ref"
+          else
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/preview" -f sha="$SHA" >/dev/null
+            echo "created the preview ref"
+          fi
+
+          {
+            echo "### 🔎 Preview updated"
+            echo ""
+            echo "PR #$PR → \`${SHA:0:7}\`"
+            echo ""
+            echo "Vercel will rebuild the **preview** branch. The URL is stable, so it only"
+            echo "needs authorising in Firebase once:"
+            echo ""
+            echo '```'
+            echo "Firebase Console → Authentication → Settings → Authorized domains"
+            echo "add:  wealthflow-git-preview-<your-vercel-scope>.vercel.app"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
