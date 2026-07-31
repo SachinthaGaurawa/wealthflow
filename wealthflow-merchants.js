@@ -212,6 +212,72 @@
     }
 
     // ── the classifier ─────────────────────────────────────────────────────────
+    // ── what KIND of money-in is this? ───────────────────────────────────────
+    // Matched against both forms: `nd` keeps single spaces ("cash back"), `gd`
+    // glues everything ("cashback"), and bank narrations use either.
+    var CREDIT_RE = {
+        refund: [/\b(refunds?|refunded|reversals?|reversed|charge ?backs?|cash ?backs?|rebates?|reimburse(?:d|ment)?s?)\b/,
+            /(refund|reversal|chargeback|cashback|rebate|reimbursement)/],
+        transfer: [/\b(own account|self transfer|internal transfer|inter account|transfer from (?:my|own)|acct transfer)\b/,
+            /(ownaccount|selftransfer|internaltransfer|interaccount)/],
+        loan_in: [/\b(loan (?:disburse\w*|drawdown|proceeds)|disbursements?|od drawdown)\b/,
+            /(loandisburse|loandrawdown|disbursement)/],
+        salary: [/\b(salary|salaries|payroll|wages|stipend|pension|gratuity|bonus)\b/,
+            /(salary|payroll)/],
+        ret: [/\b(dividends?|interest credit|coupon|maturity|redemption|profit credit)\b/,
+            /(dividend|interestcredit|maturity|redemption)/],
+    };
+
+    function _hit(kind, nd, gd) {
+        var p = CREDIT_RE[kind];
+        return p[0].test(nd) || p[1].test(gd);
+    }
+
+    /**
+     * Resolve a credit. Returns the same shape as classify().
+     *
+     * `creditKind` is added for callers that want the distinction (the Income
+     * Provenance proposal builds directly on it). `goesTo` stays inside the set
+     * the rest of the app already understands — null means "I decline", which
+     * refine() already treats as "keep WFRoute's answer".
+     */
+    function creditKind(nd, gd, out) {
+        // Money coming BACK, in any of its shapes. Checked before earnings so a
+        // line like "SALARY OVERPAYMENT REVERSAL" reads as the reversal it is.
+        if (_hit('refund', nd, gd)) {
+            out.creditKind = 'refund'; out.confidence = 0.9; out.matched = 'credit:refund';
+            out.reason = 'money returned (refund/reversal/cashback) — it reduces the original expense, it is not income';
+            return out;
+        }
+        if (_hit('transfer', nd, gd)) {
+            out.creditKind = 'internal_transfer'; out.confidence = 0.9; out.matched = 'credit:transfer';
+            out.reason = 'transfer between your own accounts — the same money, not new money';
+            return out;
+        }
+        if (_hit('loan_in', nd, gd)) {
+            out.creditKind = 'loan_drawdown'; out.confidence = 0.85; out.matched = 'credit:loan';
+            out.reason = 'loan drawdown — borrowed, not earned';
+            return out;
+        }
+        if (_hit('salary', nd, gd)) {
+            out.creditKind = 'salary'; out.goesTo = 'income'; out.category = 'Salary';
+            out.type = 'earning'; out.confidence = 0.92; out.matched = 'credit:salary';
+            out.reason = 'salary/payroll credit → Income';
+            return out;
+        }
+        if (_hit('ret', nd, gd)) {
+            out.creditKind = 'investment_return'; out.goesTo = 'income'; out.category = 'Investment Return';
+            out.type = 'earning'; out.confidence = 0.88; out.matched = 'credit:return';
+            out.reason = 'investment return (dividend/interest/maturity) → Income';
+            return out;
+        }
+        // Nothing identified it. Refusing to guess is the point: asserting
+        // "income" here is what made every refund look like earnings.
+        out.creditKind = 'unknown'; out.confidence = 0;
+        out.reason = 'money in, but nothing in the text says what kind — not assumed to be income';
+        return out;
+    }
+
     function classify(desc, direction) {
         var raw = String(desc || '');
         var nd = norm(raw), gd = glue(raw);
@@ -219,8 +285,29 @@
         var out = { goesTo: null, category: null, type: 'purchase', subName: '', subPhone: '', confidence: 0, matched: '', reason: '' };
         if (!nd) return out;
 
-        // 1) money IN → income (the tab decides; category left to income logic)
-        if (dir === 'credit') { out.goesTo = 'income'; out.confidence = 0.6; out.reason = 'credit → income'; return out; }
+        // 1) money IN — but WHICH money in?
+        //
+        // This rule used to be `credit → income, confidence 0.6, return`, ahead of
+        // every other check. Money arriving is not the same as money earned:
+        //
+        //   · a refund returns money already recorded as an expense;
+        //   · a reversal cancels a charge that is also in the data;
+        //   · a transfer between your own accounts is the same money, twice;
+        //   · a loan drawdown is borrowed, not earned.
+        //
+        // Counting any of those as income overstates it. The blanket rule did not
+        // corrupt imports today — refine() discards anything under 0.85 confidence
+        // and this scored 0.6 — but it IS the answer analyze() shows the user, and
+        // it is this module's documented public contract, so it was wrong in the
+        // open and one gate-change away from being wrong in the data.
+        //
+        // Now: say income when something actually says income, decline otherwise.
+        // Declining is already the safe contract — a null goesTo makes refine()
+        // defer to WFRoute/AI, which is exactly where an unidentified credit
+        // belongs. The scores are deliberate: salary clears the 0.85 gate so a
+        // real salary is finally ROUTED, where the old blanket 0.6 was both too
+        // eager to claim income and too weak to ever be used.
+        if (dir === 'credit') return creditKind(nd, gd, out);
 
         // 2) bank fee / levy → Expenses · Bank Charges (wins over merchant words)
         if (isFee(nd, gd) && !/dialog|mobitel|insurance|netflix|spotify/.test(nd)) {
