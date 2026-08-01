@@ -44,9 +44,14 @@ export const BUDGETS = {
     // intended and approved, so the ceiling moves to the newly measured value
     // with the same ~1.7% headroom the original carried — it is NOT slackened
     // to buy room for future drift.
-    totalJsBytes: 1_285_000,     // measured 1,263,464 across 44 modules
+    totalJsBytes: 1_315_000,     // measured 1,292,064 across 47 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
-    moduleCount: 45,             // measured 43
+    // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
+    // alone because it had not yet failed, on the principle that lifting a
+    // ceiling still holding is pre-emptive slackening. It has now genuinely
+    // fired — the Data Health and Crash Forensics modules (#53, #54) take the
+    // count to 47 — so it moves, once, to the measured value.
+    moduleCount: 48,             // measured 47
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -54,7 +59,7 @@ export const BUDGETS = {
     // deliberately NOT touched, because it did not fail and raising a ceiling
     // that is still holding is the pre-emptive slackening this file exists to
     // prevent.
-    scriptTags: 50,              // measured 49
+    scriptTags: 52,              // measured 51
     renderBlockingScripts: 6,    // was 7; Chart.js deferred, so the ceiling comes down
                                  // with it. A ratchet that is not tightened after an
                                  // improvement quietly permits the improvement to be undone.
