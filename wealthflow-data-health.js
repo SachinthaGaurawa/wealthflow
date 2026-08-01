@@ -109,8 +109,25 @@
         }
 
         out.totalBytes = out.records.bytes + out.tombstones.bytes;
+
+        // Share OF THE RECORDS AND THEIR MARKERS — not of everything stored.
+        //
+        // The first version reported this as "% of your stored data", and on a
+        // real device it read 70.4% while the markers were 15.2 KB against
+        // 2,574 KB of actual storage: 0.6%. Overstated by roughly 100x, on a
+        // diagnostic whose entire purpose is replacing an unverified claim with
+        // a measured one. A number that sounds authoritative and measures
+        // something other than what it says is the same defect as "Harmless",
+        // wearing a percentage.
         out.sharePct = out.totalBytes > 0
             ? Math.round((out.tombstones.bytes / out.totalBytes) * 1000) / 10 : 0;
+
+        // The honest headline figure, when the caller knows what the device
+        // actually holds. Null rather than a guess when it does not.
+        var total = typeof (o.totalStorageBytes) === 'number' && o.totalStorageBytes > 0 ? o.totalStorageBytes : null;
+        out.totalStorageBytes = total;
+        out.sharePctOfStorage = total
+            ? Math.round((out.tombstones.bytes / total) * 1000) / 10 : null;
         out.ratio = out.records.count > 0
             ? Math.round((out.tombstones.count / out.records.count) * 10) / 10 : null;
         return out;
@@ -128,7 +145,10 @@
         var t = m.tombstones;
         var kb = Math.round(t.bytes / 1024 * 10) / 10;
         var head = t.count + ' deletion marker' + (t.count === 1 ? '' : 's') + ', ' + kb + ' KB';
-        var share = m.sharePct ? ' (' + m.sharePct + '% of your stored data)' : '';
+        // Say precisely what the percentage is OF. See measure() for why.
+        var share = m.sharePctOfStorage != null
+            ? ' (' + m.sharePctOfStorage + '% of everything this device stores)'
+            : (m.sharePct ? ' (' + m.sharePct + '% of your records and their markers)' : '');
 
         if (t.count === 0) return { level: 'ok', text: 'No deletion markers.' };
 
