@@ -316,6 +316,13 @@
          only calls the detector at classify time, so order is not load-critical.
          window.WFIncomeProvenance -->
     <script src="wealthflow-income-provenance.js" defer></script>
+    <!-- #48 Import Review Queue — sorts parsed rows by the evidence they arrived
+         with, so a row whose direction was ASSUMED stops looking identical to
+         one the bank's running balance confirmed to the cent. Reads only fields
+         the parser and router already emit; changes neither. Corrections are
+         written back to WFMerchants' learned store, so accuracy compounds.
+         window.WFImportReview -->
+    <script src="wealthflow-import-review.js" defer></script>
     <!-- v7.11.0 — Persistent "ask-me-later" review queue. When the AI genuinely
          can't be sure, the item waits here (encrypted, across sessions) and the
          user is prompted on their next visit. Resolving teaches wfMemory.
