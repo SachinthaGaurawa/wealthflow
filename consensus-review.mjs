@@ -89,13 +89,41 @@ export function tally(votes) {
             outages: outages.length,
         };
     }
+    // Every reviewer that COULD be reached passed. Whether that is the whole
+    // board is a separate question, and conflating the two is what let a
+    // two-reviewer result be reported as "unanimous pass".
+    //
+    // A lane lost to a provider outage is not an objection — failing closed on
+    // it would reinstate the old bug where one 503 blocked every pull request.
+    // But it is not an approval either, and `merge: true` with an ignored
+    // `outages` count is a review gate silently failing open: the architecture
+    // reviewer vanished four times to a sambanova 429 and every one of those
+    // pull requests reported a clean pass.
+    //
+    // So a degraded board no longer decides on its own. It reports honestly and
+    // defers to the human-approved label — the signature this repository already
+    // uses everywhere a machine may not proceed alone.
+    const missing = outages.map((o) => o.name);
+    const degraded = outages.length > 0;
+    const sharedLanes = cast.filter((c) => c.shared).map((c) => c.name);
+
     return {
-        merge: true,
-        reason: `unanimous pass from ${cast.map((c) => c.name).join(', ')}`,
+        merge: !degraded,
+        degraded,
+        missing,
+        shared: sharedLanes,
+        reason: degraded
+            ? `${cast.length} of ${cast.length + outages.length} reviewers voted and all passed, but ${missing.join(', ')} could not be reached — not a full board`
+            : `unanimous pass from ${cast.map((c) => c.name).join(', ')}`
+                + (sharedLanes.length ? ` (${sharedLanes.join(', ')} ran on a shared provider)` : ''),
         cast: cast.length,
         outages: outages.length,
     };
 }
+
+// NOTE: hasHumanApproval() already exists further down this file and is used by
+// main()'s override path. A degraded board reuses it rather than adding a second
+// reader — one definition of "a human signed this off", not two that can drift.
 
 // ── the diff under review ────────────────────────────────────────────────────
 /**
@@ -289,7 +317,13 @@ function prompt(reviewer, diff, truncated) {
  */
 export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null) {
     const r = lane.role;
-    const candidates = [lane.primary, ...lane.fallbacks].filter(Boolean);
+    // Own providers first, then — only once those are exhausted — providers
+    // reserved by other lanes. A verdict reached on a shared provider is marked
+    // as such, because a board that quietly stops being independent is the same
+    // silent degradation as a board that quietly loses a reviewer.
+    const ownProviders = [lane.primary, ...(lane.fallbacks || [])].filter(Boolean);
+    const sharedProviders = (lane.shared || []).filter(Boolean);
+    const candidates = [...ownProviders, ...sharedProviders];
     if (!candidates.length) {
         console.warn(`  ${r.name} → UNAVAILABLE (no provider left to assign)`);
         return { name: r.name, vote: 'unavailable', provider: 'none', reason: 'no provider available for this reviewer', concerns: [] };
@@ -337,6 +371,11 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 name: r.name,
                 vote: finalVote,
                 provider: res.provider,
+                // True when this lane had to borrow a provider another lane also
+                // used. The verdict still counts — a shared reviewer beats no
+                // reviewer — but it is no longer fully independent, and the board
+                // says so rather than presenting it as three separate opinions.
+                shared: sharedProviders.includes(pid),
                 reason: String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
                 evidence,
                 concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
@@ -542,11 +581,28 @@ async function main() {
 
     const unsubstantiated = votes.filter((v) => v.vote === 'fail' && !v.evidence);
 
+    // A board missing a reviewer is not the same as a board that objected, and
+    // labelling both "BLOCKED" would train the reader to treat a real FAIL as
+    // routine provider flakiness.
+    const headline = result.merge ? '✅ Consensus review board — PASS'
+        : result.degraded ? '⚠️ Consensus review board — INCOMPLETE'
+            : '⛔ Consensus review board — BLOCKED';
+
     const report =
-        `### ${result.merge ? '✅' : '⛔'} Consensus review board — ${result.merge ? 'PASS' : 'BLOCKED'}\n\n` +
+        `### ${headline}\n\n` +
         '| Reviewer | Model | Vote | Reason | Evidence |\n|---|---|---|---|---|\n' + rows + '\n\n' +
         `**Decision:** ${result.reason}\n\n` +
-        (result.outages ? `_${result.outages} reviewer(s) unreachable — provider outages are not counted as objections._\n` : '') +
+        (result.outages
+            ? `\n> ⚠️ **${result.outages} reviewer(s) unreachable — this board is INCOMPLETE.**\n`
+              + `> A provider outage is not an objection, so nothing here disagreed with the change.\n`
+              + '> But nothing reviewed it from that angle either, and a gate that did not run must not\n'
+              + '> report a pass. Re-run once the provider recovers, or apply `human-approved` to accept\n'
+              + `> the change on a ${result.cast}-reviewer board.\n`
+            : '') +
+        (result.shared && result.shared.length
+            ? `\n> ℹ️ ${result.shared.join(', ')} ran on a provider another reviewer also used — its verdict\n`
+              + '> counts, but it is not fully independent of the others.\n'
+            : '') +
         (unsubstantiated.length
             ? `\n> ⚠️ **${unsubstantiated.length} FAIL vote(s) cited no executable line.** That is the signature of a reviewer\n` +
               '> reacting to comments or documentation rather than to behaviour. Check the reason above before\n' +
@@ -582,12 +638,16 @@ async function main() {
         if (approved) overridden = true;
     }
 
-    const finalReport = overridden
-        ? report
-          + '\n> ✅ **Overridden by `human-approved`.** A human reviewed the objection above and accepted the\n'
-          + '> change. The board\'s verdict is preserved on the record rather than erased — an override is a\n'
-          + '> documented decision, not a deleted one.\n'
-        : report;
+    const finalReport = !overridden ? report
+        : report + (result.degraded
+            // No objection was raised here — the board simply was not whole. Calling
+            // that "overriding an objection" would misdescribe what the human signed.
+            ? '\n> ✅ **Accepted by `human-approved`.** A human accepted the change on an incomplete\n'
+              + `> board. ${result.missing.join(', ')} never voted; that is recorded here rather than\n`
+              + '> smoothed over, so the gap is visible if this change is ever questioned.\n'
+            : '\n> ✅ **Overridden by `human-approved`.** A human reviewed the objection above and accepted the\n'
+              + '> change. The board\'s verdict is preserved on the record rather than erased — an override is a\n'
+              + '> documented decision, not a deleted one.\n');
 
     summary(finalReport);
     // Put the verdict where a human will actually see it. Until now the only

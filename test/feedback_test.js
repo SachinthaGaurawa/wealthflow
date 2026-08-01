@@ -636,3 +636,133 @@ describe('feedback client: the attached screenshot reaches triage', () => {
         expect(call).toMatch(/diagnostics:\s*diagnostics/);
     });
 });
+
+// =============================================================================
+// The final sweep — four gaps the loop still had
+// =============================================================================
+// Found by auditing the pipeline end-to-end after it was declared working. The
+// loop was stable for the path we exercised; these are the paths we never did.
+// =============================================================================
+import { reconcile } from '../feedback-triage.js';
+
+/** The shipped client IIFE, loaded the same way as the suite above. */
+const wfClient = (() => {
+    const noop = () => {};
+    const win = {};
+    const el = () => ({ style: {}, classList: { add: noop, remove: noop }, appendChild: noop, setAttribute: noop });
+    const doc = {
+        readyState: 'complete', addEventListener: noop, getElementById: () => null,
+        querySelector: () => null, querySelectorAll: () => [], createElement: el,
+        body: { appendChild: noop }, head: { appendChild: noop },
+    };
+    const store = { getItem: () => null, setItem: noop, removeItem: noop };
+    new Function(
+        'window', 'document', 'console', 'localStorage', 'sessionStorage', 'navigator',
+        'setTimeout', 'setInterval', 'fetch', 'screen', 'location',
+        fs.readFileSync('wealthflow-update-system.js', 'utf8'),
+    )(win, doc, { log: noop, warn: noop, error: noop }, store, store,
+        { onLine: true, userAgent: 'test' }, noop, noop, noop, { width: 1, height: 1 },
+        { href: 'http://localhost/', reload: noop });
+    return win.wfUpdate;
+})();
+
+describe('feedback: the user\'s own classification is not discarded', () => {
+    it('honours the type picked in the dropdown over a guess from prose', () => {
+        // THE REGRESSION, from the real report: type "Bug report", body
+        // "…please fix that. Urgently fix that issue. Critical issue." filed as
+        // [LOW] feature, because localClassify tests the feature pattern
+        // (add|please|…) and "please" matched first. The dropdown value was
+        // sent on every submission and read by nothing.
+        const out = reconcile(localClassify('Add your income button please fix that'), { type: 'bug' });
+        expect(out.type).toBe('bug');
+        expect(out.declared).toBe(true);
+    });
+
+    it('raises severity when the user says it is urgent', () => {
+        // "critical" and "urgently" appeared nowhere in the classifier at all.
+        const out = reconcile({ type: 'feature', severity: 'low' },
+            { text: 'Urgently fix that issue. Critical issue.' });
+        expect(out.severity).toBe('high');
+        expect(out.urgentWords).toBe(true);
+    });
+
+    it('reaches critical only for a crash or a security report', () => {
+        expect(reconcile({ type: 'crash', severity: 'low' }, { text: 'critical' }).severity).toBe('critical');
+        expect(reconcile({ type: 'ui', severity: 'low' }, { text: 'critical' }).severity).toBe('high');
+    });
+
+    it('never LOWERS a severity the classifier already found', () => {
+        const out = reconcile({ type: 'security', severity: 'critical' }, { text: 'no urgency words here' });
+        expect(out.severity).toBe('critical');
+    });
+
+    it('leaves an unrecognised dropdown value alone', () => {
+        expect(reconcile({ type: 'bug', severity: 'high' }, { type: 'other' }).type).toBe('bug');
+    });
+
+    it('the handler actually applies it', () => {
+        const src = fs.readFileSync('feedback-triage.js', 'utf8');
+        expect(src).toMatch(/reconcile\(\(await edenClassify\(text\)\) \|\| localClassify\(text\), body\)/);
+    });
+});
+
+describe('feedback: a fingerprint must identify ONE report', () => {
+    it('does not collide two different reports that open the same way', () => {
+        // Stopwords made the fingerprint mostly filler — "the please fix that
+        // issue" opens half of all reports — so a second, unrelated complaint
+        // was silently folded into the first's issue and the user was told it
+        // had been filed. Losing a distinct report is the worst outcome here.
+        const a = fingerprint('please fix that issue with the income page chart');
+        const b = fingerprint('please fix that issue with the statement import parser');
+        expect(a).not.toBe(b);
+    });
+
+    it('still matches a genuine re-report of the same thing', () => {
+        expect(fingerprint('the reports page is blank')).toBe(fingerprint('The Reports Page is blank!'));
+    });
+
+    it('refuses to dedupe when too little is left to identify anything', () => {
+        // Two generic words cannot distinguish reports, so this must never match
+        // — filing a duplicate is far cheaper than losing a real report.
+        expect(fingerprint('please fix')).not.toBe(fingerprint('please fix'));
+    });
+});
+
+describe('feedback client: a duplicate is not reported as a new filing', () => {
+    it('says "already tracked", not "now queued"', () => {
+        const v = wfClient._readTriageResponse(200, { ok: true, deduped: 12 });
+        expect(v.issue).toBe(12);
+        expect(v.deduped).toBe(true);
+        expect(wfClient._feedbackMessage(v).msg).toMatch(/already tracked as work item #12/);
+    });
+
+    it('still says "now queued" for a genuinely new issue', () => {
+        const v = wfClient._readTriageResponse(200, { ok: true, issue: 13 });
+        expect(v.deduped).toBe(false);
+        expect(wfClient._feedbackMessage(v).msg).toMatch(/now queued as work item #13/);
+    });
+});
+
+describe('feedback client: an offline report still becomes a work item', () => {
+    const src = fs.readFileSync('wealthflow-update-system.js', 'utf8');
+    const flush = src.slice(src.indexOf('async function _flushQueuedFeedback'), src.indexOf('function _overlayCss'));
+
+    it('the flush files to triage, not only to Firestore', () => {
+        // THE HOLE. The flush wrote to Firestore, marked the item sent, and
+        // stopped — so a report submitted while offline never became a work
+        // item. Exactly the bug #40 fixed on the online path, surviving in the
+        // one path nobody tested, under a message promising the opposite.
+        expect(flush.length).toBeGreaterThan(200);
+        expect(flush).toMatch(/\/api\/feedback-triage/);
+    });
+
+    it('only clears _pending once it has actually been filed', () => {
+        // Clearing on the Firestore write alone would mark an unfiled report as
+        // delivered and never retry it.
+        expect(flush).toMatch(/if \(filed\) \{ p\._pending = false/);
+    });
+
+    it('bounds the Firestore write so one stalled item cannot hang the flush', () => {
+        expect(flush).toMatch(/_withTimeout\(/);
+    });
+});

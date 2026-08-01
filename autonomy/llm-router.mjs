@@ -297,11 +297,30 @@ export function assignProviders(roles, { env = process.env, unavailable = [] } =
     const lanes = list.map((role, i) => ({ role, primary: primaries[i] }));
 
     const spare = avail.filter((p) => !taken.includes(p.id)).map((p) => p.id);
-    return lanes.map((lane, i) => ({
-        ...lane,
-        // Round-robin, so lane i and lane j never share a fallback.
-        fallbacks: list.length ? spare.filter((_, j) => j % list.length === i) : [],
-    }));
+    return lanes.map((lane, i) => {
+        // Round-robin, so lane i and lane j never share a reserved fallback.
+        const fallbacks = list.length ? spare.filter((_, j) => j % list.length === i) : [];
+
+        // LAST RESORT — providers reserved by OTHER lanes.
+        //
+        // Exclusivity is what makes three reviewers three opinions rather than
+        // one opinion printed three times, so it is preserved as the strong
+        // preference above. But with three lanes and three providers there are
+        // no spares at all, and a single 429 then leaves a lane with NOTHING —
+        // which is exactly how the architecture reviewer was lost to sambanova
+        // four separate times, reducing a three-reviewer board to two.
+        //
+        // A shared reviewer is worse than an independent one. No reviewer at
+        // all is worse than both. This tier is offered only after a lane has
+        // exhausted everything of its own, and callers must mark a verdict
+        // reached on it as shared — trading a visible degradation for an
+        // invisible one would be no fix.
+        const shared = avail
+            .map((p) => p.id)
+            .filter((id) => id !== lane.primary && !fallbacks.includes(id));
+
+        return { ...lane, fallbacks, shared };
+    });
 }
 
 // ── request builders ─────────────────────────────────────────────────────────

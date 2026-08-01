@@ -116,8 +116,20 @@ describe('review board: a lane stays inside its own provider allocation', () => 
         const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: ['groq'] }, 'diff', false, chatImpl);
         expect(vote.vote).toBe('unavailable');
         expect(chatImpl.calls).toHaveLength(2);
-        // An outage alongside a real pass must not block.
-        expect(tally([vote, { name: 'security', vote: 'pass' }]).merge).toBe(true);
+
+        // An outage is still not an OBJECTION — it never becomes a fail, and
+        // that is the part this test has always protected.
+        const t = tally([vote, { name: 'security', vote: 'pass' }]);
+        expect(t.reason).not.toMatch(/fail/i);
+
+        // But it no longer counts as a full board either. This assertion used to
+        // read `merge === true`, which is the fail-open the architecture lane
+        // slipped through four times: every reviewer that could be reached
+        // passed, so the board reported a clean "unanimous pass" while one of
+        // three had not voted at all. A degraded board now defers to the
+        // human-approved label rather than deciding by itself.
+        expect(t.merge).toBe(false);
+        expect(t.degraded).toBe(true);
     });
 
     it('does not call a model at all when no provider was assigned', async () => {
@@ -285,5 +297,119 @@ describe('board: a rate-limited provider is not handed to a reviewer', () => {
         const { assignProviders } = await import('../autonomy/llm-router.mjs');
         const lanes = assignProviders(REVIEWERS, { env, unavailable: ['cerebras', 'groq', 'gemini'] });
         expect(lanes.filter((l) => l.primary).length).toBe(1);
+    });
+});
+
+// =============================================================================
+// A review gate that silently fails open
+// =============================================================================
+// The architecture reviewer was lost to a sambanova 429 on four separate runs.
+// Each time the board printed "✅ PASS — unanimous pass from security,
+// user-impact" and the pull request merged. Two things were wrong with that:
+//
+//   · "unanimous" described a board that was two-thirds present;
+//   · `tally()` counted the outage into `outages` and then ignored it when
+//     deciding `merge`, so a review gate that had not reviewed reported a pass.
+//
+// Failing CLOSED on an outage is not the answer either — that was the original
+// bug, where one 503 blocked every pull request in the repo. So a degraded
+// board now decides nothing on its own: it reports honestly and defers to
+// `human-approved`, the signature this repository already uses everywhere a
+// machine may not proceed alone.
+// =============================================================================
+import { assignProviders } from '../autonomy/llm-router.mjs';
+
+describe('board: a degraded board does not decide by itself', () => {
+    const pass = (name) => ({ name, vote: 'pass', provider: 'p', reason: '' });
+    const out = (name) => ({ name, vote: 'unavailable', provider: 'none', reason: 'HTTP 429' });
+
+    it('does not call a two-reviewer result unanimous', () => {
+        const t = tally([pass('security'), pass('user-impact'), out('architecture')]);
+        expect(t.reason).not.toMatch(/unanimous/);
+        expect(t.reason).toMatch(/2 of 3 reviewers voted/);
+    });
+
+    it('names which reviewer was missing', () => {
+        expect(tally([pass('security'), out('architecture')]).missing).toEqual(['architecture']);
+    });
+
+    it('refuses to merge on its own when a lane never voted', () => {
+        // THE REGRESSION. Every one of the four sambanova runs looked like this.
+        expect(tally([pass('security'), pass('user-impact'), out('architecture')]).merge).toBe(false);
+    });
+
+    it('still merges when the whole board voted', () => {
+        const t = tally([pass('security'), pass('user-impact'), pass('architecture')]);
+        expect(t.merge).toBe(true);
+        expect(t.degraded).toBe(false);
+        expect(t.reason).toMatch(/unanimous/);
+    });
+
+    it('an outage is never converted into an objection', () => {
+        // The property the original test protected, and which must survive: a
+        // provider being down is not a reviewer disagreeing.
+        const t = tally([pass('security'), out('architecture')]);
+        expect(t.reason).not.toMatch(/fail/i);
+        expect(t.outages).toBe(1);
+    });
+
+    it('a real FAIL still blocks, and is reported as a FAIL not a degradation', () => {
+        const t = tally([pass('security'), { name: 'architecture', vote: 'fail', reason: 'removes a null check' }]);
+        expect(t.merge).toBe(false);
+        expect(t.reason).toMatch(/removes a null check/);
+    });
+
+    it('still fails closed when nothing could be reached at all', () => {
+        expect(tally([out('security'), out('architecture')]).merge).toBe(false);
+    });
+});
+
+describe('board: a lane borrows rather than dying', () => {
+    const ENV3 = { DEEPSEEK_API_KEY: 'a', GROQ_API_KEY: 'b', MISTRAL_API_KEY: 'c' };
+
+    it('offers other lanes\' providers once a lane has exhausted its own', () => {
+        // With three lanes and three providers there are no spares at all, so
+        // before this a single 429 left a lane with NOTHING. Independence stays
+        // the preference — primaries and reserved fallbacks come first — but a
+        // shared reviewer beats no reviewer.
+        const lanes = assignProviders(REVIEWERS, { env: ENV3 });
+        for (const lane of lanes) {
+            expect(lane.shared.length, `${lane.role.name} has no last resort`).toBeGreaterThan(0);
+            expect(lane.shared).not.toContain(lane.primary);
+        }
+    });
+
+    it('never offers a provider the ledger says is rate-limited', () => {
+        const lanes = assignProviders(REVIEWERS, { env: ENV3, unavailable: ['deepseek'] });
+        for (const lane of lanes) {
+            expect(lane.shared).not.toContain('deepseek');
+            expect(lane.primary).not.toBe('deepseek');
+        }
+    });
+
+    it('marks a verdict reached on a borrowed provider as shared', async () => {
+        // Trading a visible degradation for an invisible one would be no fix.
+        const chatImpl = stubChat(PASS);
+        const vote = await runReviewer(
+            { role: ROLE, primary: null, fallbacks: [], shared: ['groq'] }, 'diff', false, chatImpl,
+        );
+        expect(vote.vote).toBe('pass');
+        expect(vote.shared).toBe(true);
+    });
+
+    it('does NOT mark a verdict reached on the lane\'s own provider', async () => {
+        const chatImpl = stubChat(PASS);
+        const vote = await runReviewer({ role: ROLE, primary: 'deepseek', fallbacks: [], shared: ['groq'] }, 'diff', false, chatImpl);
+        expect(vote.shared).toBe(false);
+    });
+
+    it('says so in the decision when a lane had to borrow', () => {
+        const t = tally([
+            { name: 'security', vote: 'pass' },
+            { name: 'architecture', vote: 'pass', shared: true },
+        ]);
+        expect(t.merge).toBe(true);
+        expect(t.shared).toEqual(['architecture']);
+        expect(t.reason).toMatch(/shared provider/);
     });
 });
