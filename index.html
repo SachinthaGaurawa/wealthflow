@@ -323,6 +323,16 @@
          written back to WFMerchants' learned store, so accuracy compounds.
          window.WFImportReview -->
     <script src="wealthflow-import-review.js" defer></script>
+    <!-- #53 Data Health — measures the deletion markers instead of asserting they
+         are harmless. READ-ONLY: it prunes nothing. The compaction engine was
+         deliberately not built until the numbers justify it. window.WFDataHealth -->
+    <script src="wealthflow-data-health.js" defer></script>
+    <!-- #54 Crash Forensics — reconciles wf_error_log (JS errors) with
+         wf_crash_log (sessions killed without a clean exit; an iOS renderer kill
+         runs no JS handler, so it can only appear in the second), and records
+         whether the service worker actually registered. Reads only; files
+         nothing. window.WFCrashForensics -->
+    <script src="wealthflow-crash-forensics.js" defer></script>
     <!-- v7.11.0 — Persistent "ask-me-later" review queue. When the AI genuinely
          can't be sure, the item waits here (encrypted, across sessions) and the
          user is prompted on their next visit. Resolving teaches wfMemory.
@@ -7501,8 +7511,22 @@
                 // ── Data integrity ──
                 if (typeof d.missingId === 'number' && d.missingId > 0)
                     add('warn', 'data', d.missingId + ' record(s) have no id.', 'Records without an id cannot be merged cleanly across devices — re-saving them assigns an id.');
-                if (typeof d.tombstones === 'number' && d.tombstones > 300)
-                    add('info', 'data', 'High number of deletion markers (' + d.tombstones + ').', 'Harmless — they are pruned automatically after 100 days.');
+                // #53 — this used to assert "Harmless — they are pruned
+                // automatically after 100 days." That states a mechanism and
+                // infers a conclusion; it never measured anything. WFDataHealth
+                // measures (read-only, it prunes nothing) and the verdict quotes
+                // the numbers it came from — including the case the assertion
+                // could never have caught: markers already PAST the 100-day
+                // expiry and still present, because the prune only runs when a
+                // key is read.
+                if (typeof d.tombstones === 'number' && d.tombstones > 300) {
+                    let _tv = null;
+                    try {
+                        if (window.WFDataHealth) _tv = window.WFDataHealth.verdict(window.WFDataHealth.measure());
+                    } catch (_) { _tv = null; }
+                    if (_tv && _tv.measured) add(_tv.level === 'ok' ? 'info' : _tv.level, 'data', 'Deletion markers', _tv.text);
+                    else add('info', 'data', 'High number of deletion markers (' + d.tombstones + ').', 'They are pruned automatically after 100 days.');
+                }
                     
                     // v7.66.0 — CRASHES. An iOS renderer crash kills the process before any JS error
                     // handler runs, so "totalErrors: 0" was true AND useless. WFStability marks a
@@ -21698,10 +21722,30 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 const reg = await navigator.serviceWorker.register('/sw.js');
                 console.log('[SW] Service Worker registered');
+                // Clear any previous failure: a device that recovers must stop
+                // claiming it is degraded. (#54)
+                try { window.WFCrashForensics && window.WFCrashForensics.noteServiceWorker(true); } catch (_) {}
                 return reg;
             } catch (err) {
-                console.warn('[SW] Registration failed:', err.message);
-                return null;
+                // #54 — this used to be a console.warn and a `null` that no
+                // caller distinguished from success. When it happens the app
+                // silently loses offline access, install-to-home-screen, push
+                // notifications and the skipWaiting update path, and says
+                // nothing. A real device reported "Script /sw.js load failed"
+                // in its own log and the app never mentioned it.
+                //
+                // Retry once first: a transient network failure at boot
+                // otherwise costs the entire PWA layer until the next launch.
+                try {
+                    const retry = await navigator.serviceWorker.register('/sw.js');
+                    console.log('[SW] Service Worker registered on retry');
+                    try { window.WFCrashForensics && window.WFCrashForensics.noteServiceWorker(true); } catch (_) {}
+                    return retry;
+                } catch (err2) {
+                    console.warn('[SW] Registration failed:', err2.message);
+                    try { window.WFCrashForensics && window.WFCrashForensics.noteServiceWorker(false, err2.message); } catch (_) {}
+                    return null;
+                }
             }
         }
 
