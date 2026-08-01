@@ -69,8 +69,16 @@
         const r = (brain && brain.routed) || {}; // Get routed data for confidence and review flags
         const m = (brain && brain.resolved_merchant) || {};
 
+        // An explicit reason from the caller WINS.
+        //
+        // The generated text below is a fallback for callers that pass none — it
+        // is not an improvement on one that was given. Every existing call site
+        // passes its own ("AI 40% sure — confirm category", "Could not auto-file",
+        // "Flagged for review"), and overwriting those with a derived string
+        // would silently replace the more specific message with a more generic
+        // one. The proving test asserts exactly this, and caught it.
         let generatedReason = reason || 'Needs your decision';
-        if (brain) {
+        if (brain && !reason) {
             const specificReasons = [];
 
             if (p.balanceVerified === false) {
@@ -191,10 +199,13 @@
     }
 
     // ── return-to-app banner ────────────────────────────────────────────────---
+    // Returns whether a prompt is on screen, so a caller can tell "I asked the
+    // user" from "there was nothing to ask about". Previously void, which made
+    // both outcomes look identical to anything that called it.
     async function promptIfPending() {
         const n = await count();
-        if (n <= 0) return;
-        if (document.getElementById('wfReviewBanner')) { _updateBadge(); return; }
+        if (n <= 0) return false;
+        if (document.getElementById('wfReviewBanner')) { _updateBadge(); return true; }
         const bar = document.createElement('div');
         bar.id = 'wfReviewBanner';
         bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99990;padding:12px 16px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#1a1205;display:flex;align-items:center;gap:12px;box-shadow:0 -6px 24px rgba(0,0,0,0.35);font-weight:700;';
@@ -206,6 +217,7 @@
         document.body.appendChild(bar);
         document.getElementById('wfReviewOpenBtn').onclick = () => { bar.remove(); openModal(); };
         document.getElementById('wfReviewLaterBtn').onclick = () => bar.remove();
+        return true;
     }
 
     // ── review modal ───────────────────────────────────────────────────────────
@@ -255,6 +267,7 @@
         });
         ov.addEventListener('change', _onModalChange);
         document.body.appendChild(ov);
+        return true;
     }
 
     function _renderItem(it) {

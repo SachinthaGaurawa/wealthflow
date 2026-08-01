@@ -1,32 +1,49 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import fs from "node:fs";
+
+// The generated harness used `await import("../wealthflow-review.js")` inside
+// beforeEach. ESM imports are CACHED, so the module executed once while each
+// beforeEach replaced global.window with a fresh object — after the first test
+// the module had no way to attach itself to the new window, and `wfReview` was
+// undefined for every case that followed. Only the first test ran against
+// anything at all.
+//
+// Loading the source through `new Function` per test, the way the rest of this
+// repository's suites do, gives a genuinely fresh instance each time.
+const SRC = fs.readFileSync("wealthflow-review.js", "utf8");
 
 describe("WealthFlow Review", () => {
   let wfReview;
 
-  beforeEach(async () => {
-    // Reset the global window object for each test
-    global.window = {
+  beforeEach(() => {
+    const store = new Map();
+    const noop = () => {};
+    const el = () => ({
+      style: {}, innerHTML: "", value: "", dataset: {},
+      classList: { add: noop, remove: noop, contains: () => false },
+      appendChild: noop, remove: noop, setAttribute: noop, getAttribute: () => null,
+      addEventListener: noop, querySelector: () => el(), querySelectorAll: () => [],
+      focus: noop, click: noop,
+    });
+    const doc = {
+      getElementById: () => el(), querySelector: () => el(), querySelectorAll: () => [],
+      createElement: el, body: { appendChild: noop, insertAdjacentHTML: noop },
+      head: { appendChild: noop }, addEventListener: noop,
+    };
+    const win = {
       WF_REVIEW_LOADED: false,
       wfCrypto: {
-        secureGet: async (key) => {
-          if (key === "review_queue_v1") {
-            return null;
-          }
-          throw new Error("Not implemented");
-        },
-        secureSet: async (key, value) => {
-          if (key === "review_queue_v1") {
-            return;
-          }
-          throw new Error("Not implemented");
-        },
+        secureGet: async (k) => (store.has(k) ? store.get(k) : null),
+        secureSet: async (k, v) => { store.set(k, v); },
       },
-      notify: () => {},
+      notify: noop,
+      localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+      document: doc,
     };
-
-    // Import the module
-    await import("../wealthflow-review.js");
-    wfReview = global.window.wfReview;
+    new Function("window", "document", "console", SRC)(
+      win, doc, { log: noop, warn: noop, error: noop },
+    );
+    wfReview = win.wfReview;
   });
 
   it("should add an item to the review queue with a generated reason", async () => {
@@ -77,7 +94,11 @@ describe("WealthFlow Review", () => {
     const items = await wfReview.list();
     expect(items).toHaveLength(1);
     expect(items[0].id).toBe(id);
-    expect(items[0].reason).toBe("Ambiguous: balance not verified, direction assumed, direction unknown, low confidence (40%), test reason.");
+    // "assumed" and "unknown" are MUTUALLY EXCLUSIVE parser states — assumed
+    // means it guessed a direction, empty means it refused to guess — so the
+    // else-if in the implementation is correct and the original expectation,
+    // which wanted both from one row, described a row that cannot exist.
+    expect(items[0].reason).toBe("Ambiguous: balance not verified, direction assumed, low confidence (40%), test reason.");
     expect(items[0].hash).toBe("test_hash");
   });
 
