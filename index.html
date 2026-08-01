@@ -316,13 +316,6 @@
          only calls the detector at classify time, so order is not load-critical.
          window.WFIncomeProvenance -->
     <script src="wealthflow-income-provenance.js" defer></script>
-    <!-- #48 Import Review Queue — sorts parsed rows by the evidence they arrived
-         with, so a row whose direction was ASSUMED stops looking identical to
-         one the bank's running balance confirmed to the cent. Reads only fields
-         the parser and router already emit; changes neither. Corrections are
-         written back to WFMerchants' learned store, so accuracy compounds.
-         window.WFImportReview -->
-    <script src="wealthflow-import-review.js" defer></script>
     <!-- #53 Data Health — measures the deletion markers instead of asserting they
          are harmless. READ-ONLY: it prunes nothing. The compaction engine was
          deliberately not built until the numbers justify it. window.WFDataHealth -->
