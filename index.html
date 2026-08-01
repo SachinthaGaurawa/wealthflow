@@ -309,6 +309,13 @@
          classifier (mobile→Telecom sub, insurer→Insurance sub, supermarket→Groceries,
          bank fee→Bank Charges) with self-learning + self-verification. window.WFMerchants -->
     <script src="wealthflow-merchants.js" defer></script>
+    <!-- #47 Income Provenance — decides which credits COUNT as income and shows
+         the arithmetic. Detection lives in WFMerchants (what kind of credit is
+         this); the policy lives here (does that kind count, and why). Loaded
+         after it so the pairing is obvious; both are deferred, and provenance
+         only calls the detector at classify time, so order is not load-critical.
+         window.WFIncomeProvenance -->
+    <script src="wealthflow-income-provenance.js" defer></script>
     <!-- v7.11.0 — Persistent "ask-me-later" review queue. When the AI genuinely
          can't be sure, the item waits here (encrypted, across sessions) and the
          user is prompted on their next visit. Resolving teaches wfMemory.

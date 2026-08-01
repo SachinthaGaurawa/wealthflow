@@ -38,7 +38,13 @@ import path from 'node:path';
  */
 export const BUDGETS = {
     htmlBytes: 1_560_000,        // measured 1,544,365
-    totalJsBytes: 1_250_000,     // measured 1,230,401 across 43 modules
+    // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
+    // The ratchet did its job: it caught wealthflow-income-provenance.js, the
+    // module for the accepted Income Provenance proposal (#47). That growth is
+    // intended and approved, so the ceiling moves to the newly measured value
+    // with the same ~1.7% headroom the original carried — it is NOT slackened
+    // to buy room for future drift.
+    totalJsBytes: 1_285_000,     // measured 1,263,464 across 44 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     moduleCount: 45,             // measured 43
     scriptTags: 48,              // measured 47
