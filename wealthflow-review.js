@@ -63,14 +63,47 @@
         await _load();
         // de-dup the review queue itself (don't ask twice about the same hash)
         if (brain && brain.hash && _items.some(it => it.hash === brain.hash)) return null;
+
         const f = (brain && brain.routed && brain.routed.suggested_fields) || {};
         const p = (brain && brain.parsed) || {};
+        const r = (brain && brain.routed) || {}; // Get routed data for confidence and review flags
         const m = (brain && brain.resolved_merchant) || {};
+
+        let generatedReason = reason || 'Needs your decision';
+        if (brain) {
+            const specificReasons = [];
+
+            if (p.balanceVerified === false) {
+                specificReasons.push('balance not verified');
+            }
+            if (p.directionSource === 'assumed') {
+                specificReasons.push('direction assumed');
+            } else if (p.direction === '') { // Explicitly check for empty string direction
+                specificReasons.push('direction unknown');
+            }
+            if (r.confidence != null && r.confidence < 0.5) { // Example threshold for "low confidence"
+                specificReasons.push(`low confidence (${(r.confidence * 100).toFixed(0)}%)`);
+            }
+            // If the router explicitly set a reason for review, add it.
+            if (r.reviewReason && typeof r.reviewReason === 'string' && r.reviewReason.length > 0) {
+                specificReasons.push(r.reviewReason);
+            }
+
+            if (specificReasons.length > 0) {
+                // Filter out duplicates and join them for a concise message
+                const uniqueReasons = [...new Set(specificReasons)].join(', ');
+                generatedReason = `Ambiguous: ${uniqueReasons}.`;
+            } else if (p.needsReview === true || r.needsReview === true) {
+                // Fallback for cases where needsReview is true but no specific reason was caught above.
+                generatedReason = 'Ambiguous: requires manual review.';
+            }
+        }
+
         const item = {
             id: _uid(),
             hash: brain && brain.hash || null,
             brain,
-            reason: reason || 'Needs your decision',
+            reason: generatedReason, // Use the generated reason
             merchant: m.name || p.raw_merchant || 'Unknown',
             amount: f.amount != null ? f.amount : p.amount,
             currency: p.currency || 'LKR',
@@ -175,7 +208,7 @@
         document.getElementById('wfReviewLaterBtn').onclick = () => bar.remove();
     }
 
-    // ── review modal ────────────────────────────────────────────────────────---
+    // ── review modal ───────────────────────────────────────────────────────────
     const CATS_BY_MODULE = {
         expenses: ['Food & Groceries', 'Dining', 'Transport', 'Fuel', 'Utilities', 'Telecom', 'Healthcare', 'Education', 'Entertainment', 'Subscriptions', 'Shopping', 'Shopping (Fashion)', 'Electronics & Tech', 'Shopping (Home)', 'Insurance', 'Rent', 'Personal Care', 'Kids & Family', 'Pets', 'Travel', 'Charity', 'Government', 'Banking', 'Other'],
         income: ['Salary', 'Business', 'Transfer In', 'Interest', 'Refund', 'Rent Income', 'Gift', 'Stock Dividend', 'Unit Trust', 'Treasury/Bond', 'Crypto', 'Forex/Trading', 'Fixed Deposit', 'Other Income'],
