@@ -297,10 +297,58 @@
     function income() {
         var out = [], recv = arr('incomeRecv'), src = arr('income'), exp = arr('expenses');
         var y = new Date().getFullYear();
-        var got = recv.filter(function (r) { return String(r && (r.date || r.month) || '').slice(0, 4) === String(y); })
+        // Income Provenance (#47). The figure is DERIVED now: only credits that
+        // something positively identified as earnings count, and every exclusion
+        // carries a reason. The old sum added every row in the store — which
+        // would have inflated the total the moment statement import began
+        // writing here, because a refund and a transfer between your own
+        // accounts both look like money arriving.
+        //
+        // If the module has not loaded this falls back to the previous sum, so
+        // the failure mode is "unchanged", never "silently zero".
+        var deriv = null, got = null;
+        try {
+            if (W.WFIncomeProvenance && typeof W.WFIncomeProvenance.derive === 'function') {
+                deriv = W.WFIncomeProvenance.derive(recv, { year: y });
+                got = deriv.total;
+            }
+        } catch (_) { deriv = null; got = null; }
+        if (got === null) {
+            got = recv.filter(function (r) { return String(r && (r.date || r.month) || '').slice(0, 4) === String(y); })
                       .reduce(function (t, r) { return t + num(r.amount); }, 0);
+        }
         var spent = exp.filter(function (r) { return String(r && r.date || '').slice(0, 4) === String(y); })
                        .reduce(function (t, r) { return t + num(r.combinedTotal || r.amount); }, 0);
+
+        // Money arrived and was deliberately NOT counted. Saying so is the whole
+        // point of the feature: an unexplained total is what made a correct
+        // number indistinguishable from a broken one in issue #46.
+        if (deriv && deriv.excludedTotal > 0) {
+            var parts = [];
+            Object.keys(deriv.byKind).forEach(function (k) {
+                var s = deriv.byKind[k];
+                if (s.counts || !s.n) return;
+                var meta = (W.WFIncomeProvenance.KINDS || {})[k] || {};
+                parts.push(s.n + ' × ' + (meta.label || k).toLowerCase());
+            });
+            out.push({ sev: 'low', kind: 'income_excluded',
+                title: money(deriv.excludedTotal) + ' arrived but is not counted as income',
+                body: 'Made up of ' + parts.join(', ') + '. Refunds give back money already recorded as an expense, '
+                    + 'and a transfer between your own accounts is the same money moving — counting either would '
+                    + 'show it twice. Your income figure is ' + money(got) + '.',
+                action: 'See the breakdown', go: 'incRecv', amount: deriv.excludedTotal });
+        }
+
+        // Credits nothing could identify. Left out rather than guessed at, and
+        // surfaced so the user can decide instead of the app inventing an answer.
+        if (deriv && deriv.needsReview > 0) {
+            out.push({ sev: 'medium', kind: 'income_review',
+                title: deriv.needsReview + ' credit' + (deriv.needsReview === 1 ? '' : 's') + ' could not be identified',
+                body: 'Nothing in the description says what kind of money this is, so it was left out of your income '
+                    + 'rather than assumed to be earnings. Open the Income page to say what it was.',
+                action: 'Review them', go: 'incRecv', amount: 0 });
+        }
+
         if (got === 0 && spent > 0) {
             out.push({ sev: 'high', kind: 'income_zero',
                 title: 'Year income reads zero, against ' + money(spent) + ' of spending',
