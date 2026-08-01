@@ -63,14 +63,55 @@
         await _load();
         // de-dup the review queue itself (don't ask twice about the same hash)
         if (brain && brain.hash && _items.some(it => it.hash === brain.hash)) return null;
+
         const f = (brain && brain.routed && brain.routed.suggested_fields) || {};
         const p = (brain && brain.parsed) || {};
+        const r = (brain && brain.routed) || {}; // Get routed data for confidence and review flags
         const m = (brain && brain.resolved_merchant) || {};
+
+        // An explicit reason from the caller WINS.
+        //
+        // The generated text below is a fallback for callers that pass none — it
+        // is not an improvement on one that was given. Every existing call site
+        // passes its own ("AI 40% sure — confirm category", "Could not auto-file",
+        // "Flagged for review"), and overwriting those with a derived string
+        // would silently replace the more specific message with a more generic
+        // one. The proving test asserts exactly this, and caught it.
+        let generatedReason = reason || 'Needs your decision';
+        if (brain && !reason) {
+            const specificReasons = [];
+
+            if (p.balanceVerified === false) {
+                specificReasons.push('balance not verified');
+            }
+            if (p.directionSource === 'assumed') {
+                specificReasons.push('direction assumed');
+            } else if (p.direction === '') { // Explicitly check for empty string direction
+                specificReasons.push('direction unknown');
+            }
+            if (r.confidence != null && r.confidence < 0.5) { // Example threshold for "low confidence"
+                specificReasons.push(`low confidence (${(r.confidence * 100).toFixed(0)}%)`);
+            }
+            // If the router explicitly set a reason for review, add it.
+            if (r.reviewReason && typeof r.reviewReason === 'string' && r.reviewReason.length > 0) {
+                specificReasons.push(r.reviewReason);
+            }
+
+            if (specificReasons.length > 0) {
+                // Filter out duplicates and join them for a concise message
+                const uniqueReasons = [...new Set(specificReasons)].join(', ');
+                generatedReason = `Ambiguous: ${uniqueReasons}.`;
+            } else if (p.needsReview === true || r.needsReview === true) {
+                // Fallback for cases where needsReview is true but no specific reason was caught above.
+                generatedReason = 'Ambiguous: requires manual review.';
+            }
+        }
+
         const item = {
             id: _uid(),
             hash: brain && brain.hash || null,
             brain,
-            reason: reason || 'Needs your decision',
+            reason: generatedReason, // Use the generated reason
             merchant: m.name || p.raw_merchant || 'Unknown',
             amount: f.amount != null ? f.amount : p.amount,
             currency: p.currency || 'LKR',
@@ -158,10 +199,13 @@
     }
 
     // ── return-to-app banner ────────────────────────────────────────────────---
+    // Returns whether a prompt is on screen, so a caller can tell "I asked the
+    // user" from "there was nothing to ask about". Previously void, which made
+    // both outcomes look identical to anything that called it.
     async function promptIfPending() {
         const n = await count();
-        if (n <= 0) return;
-        if (document.getElementById('wfReviewBanner')) { _updateBadge(); return; }
+        if (n <= 0) return false;
+        if (document.getElementById('wfReviewBanner')) { _updateBadge(); return true; }
         const bar = document.createElement('div');
         bar.id = 'wfReviewBanner';
         bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99990;padding:12px 16px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#1a1205;display:flex;align-items:center;gap:12px;box-shadow:0 -6px 24px rgba(0,0,0,0.35);font-weight:700;';
@@ -173,9 +217,10 @@
         document.body.appendChild(bar);
         document.getElementById('wfReviewOpenBtn').onclick = () => { bar.remove(); openModal(); };
         document.getElementById('wfReviewLaterBtn').onclick = () => bar.remove();
+        return true;
     }
 
-    // ── review modal ────────────────────────────────────────────────────────---
+    // ── review modal ───────────────────────────────────────────────────────────
     const CATS_BY_MODULE = {
         expenses: ['Food & Groceries', 'Dining', 'Transport', 'Fuel', 'Utilities', 'Telecom', 'Healthcare', 'Education', 'Entertainment', 'Subscriptions', 'Shopping', 'Shopping (Fashion)', 'Electronics & Tech', 'Shopping (Home)', 'Insurance', 'Rent', 'Personal Care', 'Kids & Family', 'Pets', 'Travel', 'Charity', 'Government', 'Banking', 'Other'],
         income: ['Salary', 'Business', 'Transfer In', 'Interest', 'Refund', 'Rent Income', 'Gift', 'Stock Dividend', 'Unit Trust', 'Treasury/Bond', 'Crypto', 'Forex/Trading', 'Fixed Deposit', 'Other Income'],
@@ -222,6 +267,7 @@
         });
         ov.addEventListener('change', _onModalChange);
         document.body.appendChild(ov);
+        return true;
     }
 
     function _renderItem(it) {
