@@ -32,6 +32,43 @@ const MAX_LEN = 2000;
 
 const LABELS = { bug: 'bug', crash: 'bug', ui: 'ui/ux', feature: 'enhancement', security: 'security', other: 'triage' };
 
+/** What the user actually picked in the Send Feedback dropdown. */
+const DECLARED = { bug: 'bug', crash: 'crash', ui: 'ui', feature: 'feature', security: 'security', other: null };
+
+/** Words that mean "this is not low priority", whoever wrote them. */
+const URGENT_RE = /\b(critical|urgent|urgently|asap|immediately|emergency|severe|blocker|blocking|unusable|data loss|lost my|can'?t use)\b/i;
+
+const SEV_RANK = { low: 0, medium: 1, high: 2, critical: 3 };
+
+/**
+ * Reconcile what the user DECLARED with what the text suggests.
+ *
+ * The dropdown value was sent by the client on every submission and read by
+ * nothing. A real report — type "Bug report", body "…please fix that. Urgently
+ * fix that issue. Critical issue." — was filed as [LOW] feature, because
+ * localClassify tests the feature pattern (add|please|…) and the word "please"
+ * matched before anything else was considered. The words "critical" and
+ * "urgently" appeared nowhere in the classifier at all.
+ *
+ * So: a declared type beats a guessed one, because the person filing knows what
+ * they meant; and explicit urgency raises severity whatever the type, because
+ * someone writing "critical" is not filing a low-priority idea.
+ */
+function reconcile(cls, body) {
+    const out = { type: cls.type, severity: cls.severity, summary: cls.summary };
+    const declared = DECLARED[String((body && body.type) || '').toLowerCase().replace(/\s*report$/, '')];
+    if (declared) { out.type = declared; out.declared = true; }
+
+    const text = String((body && (body.text || body.feedback)) || '');
+    if (URGENT_RE.test(text)) {
+        // "high", not "critical": the user's own words raise it, but only a
+        // security or crash signal earns the top band automatically.
+        const floor = (out.type === 'security' || out.type === 'crash') ? 'critical' : 'high';
+        if ((SEV_RANK[out.severity] || 0) < SEV_RANK[floor]) { out.severity = floor; out.urgentWords = true; }
+    }
+    return out;
+}
+
 // local fallback classifier (used if EdenAI is unreachable) — keeps feedback flowing
 function localClassify(text) {
     const t = (text || '').toLowerCase();
@@ -72,8 +109,25 @@ async function edenClassify(text) {
     } catch (_) { return null; }
 }
 
+/**
+ * Words that carry no information about WHICH report this is. Keeping them made
+ * the fingerprint mostly stopwords: "the please fix that issue" is the opening
+ * of half the reports anyone writes, so two genuinely different complaints
+ * collided and the second was silently folded into the first's issue — and the
+ * user was told it had been filed.
+ */
+const STOP = new Set(['the', 'and', 'that', 'this', 'you', 'your', 'for', 'with', 'not', 'but', 'are', 'was',
+    'can', 'has', 'have', 'its', 'from', 'they', 'them', 'please', 'fix', 'issue', 'now', 'when', 'what',
+    'why', 'how', 'all', 'any', 'app', 'very', 'really', 'just', 'need', 'want', 'should', 'would', 'could']);
+
 function fingerprint(text) {
-    const words = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2).slice(0, 8);
+    const words = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)
+        .filter(w => w.length > 2 && !STOP.has(w))
+        .slice(0, 8);
+    // Too little left to identify anything. Deduplicating on two generic words
+    // would merge unrelated reports, and losing a distinct report is far worse
+    // than filing a duplicate — so this one deliberately never matches.
+    if (words.length < 3) return 'fb-x' + Math.random().toString(36).slice(2, 10);
     return 'fb-' + words.join('-').slice(0, 60);
 }
 
@@ -129,7 +183,7 @@ export default async function handler(req, res) {
     }
 
     // classify (EdenAI, with safe local fallback)
-    const cls = (await edenClassify(text)) || localClassify(text);
+    const cls = reconcile((await edenClassify(text)) || localClassify(text), body);
     out.classification = cls;
 
     if (!repo || !token) {
@@ -425,7 +479,7 @@ export function diagnosticsSection(d) {
 }
 
 // exported for tests
-export { localClassify, fingerprint, LABELS };
+export { localClassify, fingerprint, LABELS, reconcile, URGENT_RE };
 
 function send(res, obj, code) {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };

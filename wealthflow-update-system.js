@@ -1337,7 +1337,11 @@
     function _readTriageResponse(status, body, err) {
         const j = body && typeof body === 'object' ? body : null;
         if (status >= 200 && status < 300 && j && (j.issue || j.deduped)) {
-            return { issue: j.issue || j.deduped, reason: null };
+            // `deduped` means an open issue already covers this — the report IS
+            // represented, but saying "this is now queued as work item #N" would
+            // claim their submission created it. Distinguished so the user can
+            // tell "I filed something" from "this was already known".
+            return { issue: j.issue || j.deduped, deduped: !j.issue && !!j.deduped, reason: null };
         }
         // The endpoint's own explanation, when there is one, is the best answer:
         // it knows whether the token is missing, unauthorised, or GitHub refused.
@@ -1367,8 +1371,11 @@
     function _feedbackMessage(s) {
         if (s && s.issue) {
             return {
-                msg: 'Thank you — this is now queued as work item #' + s.issue +
-                    '. You\'ll see it marked Completed here once the fix ships.',
+                msg: s.deduped
+                    ? ('Thank you — this is already tracked as work item #' + s.issue
+                        + '. You\'ll see it marked Completed here once the fix ships.')
+                    : ('Thank you — this is now queued as work item #' + s.issue +
+                        '. You\'ll see it marked Completed here once the fix ships.'),
                 tone: 'success',
             };
         }
@@ -1504,9 +1511,43 @@
         for (const p of pending) {
             try {
                 const uid = p.uid || (window.currentUser && window.currentUser.uid) || 'anon';
-                await window.db.collection('feedback').add(Object.assign({}, p, { uid, _pending: undefined,
-                    _ts: firebase.firestore.FieldValue.serverTimestamp() }));
-                p._pending = false; changed = true;
+                // Bounded, for the same reason the submit path is: Firestore's
+                // add() resolves only on server ack and stays pending forever
+                // when it cannot reach the backend. Unbounded here would stall
+                // the whole flush on the first unreachable write.
+                await _withTimeout(
+                    window.db.collection('feedback').add(Object.assign({}, p, { uid, _pending: undefined,
+                        _ts: firebase.firestore.FieldValue.serverTimestamp() })),
+                    8000, 'Firestore flush');
+
+                // AND FILE IT. This is the hole: the flush wrote to Firestore,
+                // marked the item sent, and stopped — so a report submitted
+                // while offline never became a work item. That is exactly the
+                // bug #40 fixed on the online path ("feedback went to Firestore
+                // and stopped"), surviving untouched in the one path nobody
+                // tested, under a message that promises "we'll send it
+                // automatically when you're back online".
+                //
+                // _pending is only cleared when BOTH have happened, so a report
+                // that reached Firestore but not triage is retried rather than
+                // being counted as delivered.
+                let filed = false;
+                try {
+                    const r = await _fetchWithTimeout('/api/feedback-triage', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            type: p.type, text: p.text, version: p.version,
+                            createdAt: p.createdAt, diagnostics: p.diagnostics || null,
+                            image: p.image || null,
+                        }),
+                    }, 30000);
+                    const j = await r.json().catch(() => null);
+                    const v = _readTriageResponse(r.status, j);
+                    if (v.issue) { p.issue = v.issue; filed = true; }
+                } catch (_) { /* still unreachable — leave pending, try next time */ }
+
+                if (filed) { p._pending = false; changed = true; }
             } catch (_) { /* still offline — keep for next time */ }
         }
         if (changed) { try { localStorage.setItem('wf_feedback_queue', JSON.stringify(q)); } catch (_) {} }
