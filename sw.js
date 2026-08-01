@@ -8,6 +8,110 @@
 
 const CACHE_NAME = 'wealthflow-v7.69.17';
 
+// ============================================================================
+//  WHY THERE IS A fetch HANDLER HERE NOW
+//  --------------------------------------------------------------------------
+//  For eight consecutive releases the line above was rewritten by the release
+//  bot — v7.69.10, .11, .12 … .17 — and it named a cache that NOTHING wrote to
+//  and NOTHING read from. There was no fetch handler at all, so the "cache" was
+//  an empty room whose nameplate was repainted every night. The owner was told
+//  an update had been installed; the only file that had genuinely changed on
+//  disk was the name of a container that never held anything.
+//
+//  That is fixed by making the name true, not by deleting it. Below is a real
+//  cache keyed on CACHE_NAME, so a version bump now does exactly what it has
+//  always claimed to do: a new version means a new cache, the previous one is
+//  deleted on activate, and no byte of the old build can survive the swap.
+//
+//  STRATEGY: NETWORK-FIRST FOR CODE, CACHE ONLY AS A FALLBACK.
+//  This is a financial app. Serving a stale module from cache to save a few
+//  hundred milliseconds is how a user ends up looking at last week's arithmetic
+//  and believing it is today's. So every request for code goes to the network
+//  first and only falls back to the cache when the network genuinely fails —
+//  which is what turns this into real offline support rather than a stale-code
+//  generator. Cache-first is deliberately NOT used for anything executable.
+//
+//  NEVER CACHED (correctness beats offline for all of these):
+//    · /api/*        — live server calls; a cached reply is a wrong reply
+//    · version.json  — the update check itself; caching it freezes the app on
+//                      whatever version it first saw, which is the very bug
+//    · non-GET       — POSTs are not cacheable and must never be replayed
+//    · cross-origin  — Firestore, CDNs, auth; not ours to reason about
+// ============================================================================
+
+/** Requests that must always hit the network and are never stored. */
+function _isNeverCacheable(request, url) {
+    if (request.method !== 'GET') return true;
+    if (url.origin !== self.location.origin) return true;
+    if (url.pathname.startsWith('/api/')) return true;
+    if (url.pathname === '/version.json') return true;
+    return false;
+}
+
+/** True for the app's own executable/shell assets — the things a version owns. */
+function _isAppShell(url) {
+    const p = url.pathname;
+    return p === '/'
+        || p === '/index.html'
+        || p === '/manifest.json'
+        || /^\/wealthflow-[a-zA-Z0-9-]+\.js$/.test(p)
+        || /^\/version\.js$/.test(p);
+}
+
+self.addEventListener('fetch', (event) => {
+    let url;
+    try { url = new URL(event.request.url); } catch (_) { return; }
+
+    // Untouched: let the browser do exactly what it would have done without us.
+    if (_isNeverCacheable(event.request, url)) return;
+    if (!_isAppShell(url)) return;
+
+    event.respondWith((async () => {
+        try {
+            // Network first, and deliberately WITHOUT a second argument.
+            //
+            // The obvious-looking `fetch(event.request, { cache: 'no-store' })`
+            // is a trap here: supplying a non-empty init for a request whose mode
+            // is 'navigate' re-derives the request and downgrades that mode, which
+            // is a spec corner sharp enough to cost a white screen on the app's
+            // own entry point. It is also unnecessary — vercel.json already serves
+            // '/', '/index.html' and '/wealthflow-*.js' with
+            // `Cache-Control: no-cache, must-revalidate`, so the browser
+            // revalidates these every time regardless. Freshness is already
+            // guaranteed by the header; re-asserting it here would buy nothing and
+            // risk the one request that must never fail.
+            const fresh = await fetch(event.request);
+            if (fresh && fresh.ok) {
+                // Store a copy for offline use. Failure to cache must never
+                // fail the request — the user gets their page either way.
+                try {
+                    const copy = fresh.clone();
+                    const cache = await caches.open(CACHE_NAME);
+                    await cache.put(event.request, copy);
+                } catch (_) {}
+            }
+            return fresh;
+        } catch (err) {
+            // Genuinely offline. Serve the last good copy of THIS version only:
+            // caches.open(CACHE_NAME) cannot reach a previous version's cache,
+            // because activate() deleted it.
+            const cache = await caches.open(CACHE_NAME);
+            const hit = await cache.match(event.request);
+            if (hit) return hit;
+            // A navigation with nothing cached still deserves the shell rather
+            // than a browser error page.
+            if (event.request.mode === 'navigate') {
+                const shell = await cache.match('/index.html') || await cache.match('/');
+                if (shell) return shell;
+            }
+            // Genuinely offline with nothing stored: surface the real network
+            // error rather than inventing a response. A fabricated 200 here would
+            // render an empty shell and let the owner believe the app had loaded.
+            throw err;
+        }
+    })());
+});
+
 // Install event — cache core assets
 self.addEventListener('install', (event) => {
     console.log('[SW] Installing WealthFlow Service Worker v7.11.0...');

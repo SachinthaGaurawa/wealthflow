@@ -45,6 +45,51 @@ const META_PATTERNS = [
     /^\.vercelignore$/i,
 ];
 
+/**
+ * Code that runs the PIPELINE, not the APP.
+ *
+ * THE SECOND HALF OF THE REPORTED BUG. The meta list above correctly stopped
+ * releases driven by merchant data and version churn — but it says nothing
+ * about tests, workflows, or the autonomy tooling. None of those files are ever
+ * sent to a browser or executed by the API, so changing them cannot alter the
+ * app the owner actually runs. The gate nevertheless counted them as
+ * substantive, so a day spent entirely on CI still cut a release, and the
+ * device announced "Update available" for a build that was byte-identical from
+ * the user's side. That is indistinguishable from the fake releases this file
+ * was written to stop — same symptom, different cause.
+ *
+ * A version bump is a promise to the person holding the phone: "the app you run
+ * has changed." Improving the robot that builds the app is real work, but it is
+ * not that promise, and announcing it as though it were is how the update system
+ * lost the owner's trust.
+ *
+ * NOT an allowlist of user-facing files: an unrecognised new file counts as
+ * substantive. Missing a real update leaves a financial app running stale code,
+ * which is worse than one unnecessary prompt, so the unknown case fails toward
+ * telling the user.
+ */
+const INFRA_PATTERNS = [
+    /^\.github\//i,                // workflows, actions, issue templates
+    /^test\//i,                    // the suite
+    /(^|\/)[^/]*[._]test\.[cm]?js$/i,
+    /(^|\/)[^/]*\.spec\.[cm]?js$/i,
+    /^autonomy\//i,                // the pipeline's own tooling (state/ already above)
+    /^policy\//i,                  // rego guardrails
+    /^scripts\//i,
+    /^vitest\.config\./i,
+    /^release(-brain)?\.(c?js)$/i, // the release machinery itself
+    /^consensus-review\.mjs$/i,
+    /^autonomous-fix-agent\.js$/i,
+    /^CODEOWNERS$/i,
+];
+
+/** True when the file drives CI/tooling rather than the shipped app. */
+function isInfraFile(file) {
+    const f = String(file || '').trim().replace(/^\.\//, '');
+    if (!f) return false;
+    return INFRA_PATTERNS.some((re) => re.test(f));
+}
+
 function isMetaFile(file) {
     const f = String(file || '').trim().replace(/^\.\//, '');
     if (!f) return true;
@@ -121,30 +166,45 @@ function classifyDiff(diffText) {
     const substantiveFiles = [];
     const ignored = [];
     const versionOnly = [];
+    const infra = [];
 
     for (const [file, hunks] of Object.entries(byFile)) {
         if (isMetaFile(file)) { ignored.push(file); continue; }
         if (isVersionOnlyChange(hunks.added, hunks.removed)) { versionOnly.push(file); continue; }
         if (!hunks.added.length && !hunks.removed.length) { ignored.push(file); continue; }
+        // Real code, but it builds the app rather than being the app. Recorded
+        // separately so the run summary can say so out loud instead of leaving
+        // the owner to wonder why a busy day produced no release.
+        if (isInfraFile(file)) { infra.push(file); continue; }
         substantiveFiles.push(file);
     }
 
     const substantive = substantiveFiles.length > 0;
-    const reason = substantive
-        ? `real changes in ${substantiveFiles.length} file(s): ${substantiveFiles.slice(0, 8).join(', ')}`
-        : `no functional change — ${ignored.length} data/meta file(s), ${versionOnly.length} version-string-only file(s). ` +
+    let reason;
+    if (substantive) {
+        reason = `real changes in ${substantiveFiles.length} file(s): ${substantiveFiles.slice(0, 8).join(', ')}`;
+    } else if (infra.length) {
+        reason = `no user-facing change — ${infra.length} file(s) changed, but all of them are ` +
+            `pipeline/tooling code that never reaches the browser or the API ` +
+            `(${infra.slice(0, 6).join(', ')}). The work is real; it just is not an app update, ` +
+            'and announcing it as one is what taught the owner to distrust the version number.';
+    } else {
+        reason = `no functional change — ${ignored.length} data/meta file(s), ${versionOnly.length} version-string-only file(s). ` +
           'Releasing here would be a FAKE update (the exact bug this gate exists to stop).';
+    }
 
-    return { substantive, substantiveFiles, ignored, versionOnly, reason };
+    return { substantive, substantiveFiles, ignored, versionOnly, infra, reason };
 }
 
 module.exports = {
     isMetaFile,
+    isInfraFile,
     normaliseLine,
     isVersionOnlyChange,
     parseUnifiedDiff,
     classifyDiff,
     META_PATTERNS,
+    INFRA_PATTERNS,
 };
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
