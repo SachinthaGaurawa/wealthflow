@@ -7522,7 +7522,14 @@
                 if (typeof d.tombstones === 'number' && d.tombstones > 300) {
                     let _tv = null;
                     try {
-                        if (window.WFDataHealth) _tv = window.WFDataHealth.verdict(window.WFDataHealth.measure());
+                        if (window.WFDataHealth) {
+                            // Pass what the device ACTUALLY holds, so the share is
+                            // a share of storage rather than of the record subset.
+                            const _kb = (h && h.storage && h.storage.approxKB) || null;
+                            _tv = window.WFDataHealth.verdict(window.WFDataHealth.measure(null, {
+                                totalStorageBytes: typeof _kb === 'number' ? _kb * 1024 : null,
+                            }));
+                        }
                     } catch (_) { _tv = null; }
                     if (_tv && _tv.measured) add(_tv.level === 'ok' ? 'info' : _tv.level, 'data', 'Deletion markers', _tv.text);
                     else add('info', 'data', 'High number of deletion markers (' + d.tombstones + ').', 'They are pruned automatically after 100 days.');

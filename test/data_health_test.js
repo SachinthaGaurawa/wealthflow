@@ -141,6 +141,29 @@ describe('data health: the verdict quotes its own arithmetic', () => {
         }
     });
 
+    it('says what the percentage is a percentage OF', () => {
+        // THE REGRESSION, from real production output. This read "70.4% of your
+        // stored data" while the markers were 15.2 KB against 2,574 KB actually
+        // stored — 0.6%. Overstated ~100x, on a diagnostic whose whole purpose
+        // is replacing an unverified claim with a measured one. A number that
+        // sounds authoritative and measures something other than what it says is
+        // "Harmless" wearing a percentage.
+        const m = H.measure(appData({ fresh: 400, records: 3 }), { now: NOW });
+        expect(H.verdict(m).text).not.toMatch(/of your stored data/);
+        expect(H.verdict(m).text).toMatch(/of your records and their markers/);
+    });
+
+    it('reports the share of ACTUAL storage when the caller knows it', () => {
+        const m = H.measure(appData({ fresh: 400, records: 3 }), { now: NOW, totalStorageBytes: 2574 * 1024 });
+        expect(m.sharePctOfStorage).toBeGreaterThan(0);
+        expect(m.sharePctOfStorage).toBeLessThan(m.sharePct);   // the honest, smaller number
+        expect(H.verdict(m).text).toMatch(/of everything this device stores/);
+    });
+
+    it('reports null rather than guessing when the total is unknown', () => {
+        expect(H.measure(appData({ fresh: 5, records: 2 }), { now: NOW }).sharePctOfStorage).toBeNull();
+    });
+
     it('says nothing alarming when there is nothing to say', () => {
         expect(H.verdict(H.measure({ _tomb: {}, expenses: [] }, { now: NOW })).level).toBe('ok');
     });
@@ -155,7 +178,12 @@ describe('data health: it is actually wired into the detector', () => {
         // The standing review question: who reads this output, and is there a
         // test proving they do? This is that test.
         const html = fs.readFileSync('index.html', 'utf8');
-        expect(html).toMatch(/window\.WFDataHealth\.verdict\(window\.WFDataHealth\.measure\(\)\)/);
+        // Anchored on the CALLS, not on their exact formatting — the first
+        // version pinned a one-liner and broke the moment the call was split
+        // across lines to pass the storage total, failing for a reason with
+        // nothing to do with what it tests.
+        expect(html).toMatch(/window\.WFDataHealth\.verdict\(/);
+        expect(html).toMatch(/window\.WFDataHealth\.measure\(/);
         expect(html).toMatch(/<script src="wealthflow-data-health\.js" defer><\/script>/);
     });
 
