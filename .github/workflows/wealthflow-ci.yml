@@ -119,9 +119,31 @@ jobs:
           echo "Changed files:"; echo "$CHANGED"
 
           # SENSITIVE PATHS — money, auth, security, data rules, the service worker,
-          # and dependency manifests. A change here may NOT auto-merge; it requires a
-          # human-approved label (and, via CODEOWNERS, a human review).
-          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|.*auth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
+          # dependency manifests, AND the pipeline's own machinery. A change here may
+          # NOT auto-merge; it requires a human-approved label (and, via CODEOWNERS,
+          # a human review).
+          #
+          # WHY THE SECOND HALF OF THIS LIST EXISTS
+          #   This gate is named "sensitive paths need human approval", and until now
+          #   it was blind to .github/, policy/, autonomy/, release.cjs and CODEOWNERS
+          #   — the files that DEFINE every gate in this repository, including this
+          #   one. A PR editing wealthflow-ci.yml, even one deleting this very step,
+          #   was told "✓ No sensitive paths touched — eligible for auto-merge".
+          #
+          #   It was caught because auto-merge.yml's classifier and policy/*.rego both
+          #   cover those paths, so nothing shipped unreviewed. But those are the
+          #   backstops; a boundary gate that abstains on the highest-privilege file
+          #   class in the repo leaves the rego as the only thing that must not fail,
+          #   and a gate that fails open is the exact defect this pipeline has already
+          #   produced once (the consensus board, fixed in #57).
+          #
+          #   The divergence was the whole bug: two lists, in two workflows, drifting
+          #   apart silently. test/sensitive_paths_test.js now extracts BOTH regexes
+          #   from these YAML files and runs them through real `grep -E` against a
+          #   canonical list, so they can never disagree again without a red test.
+          #   Keep this list and auto-merge.yml's SENSITIVE in sync — the test will
+          #   tell you if you forget.
+          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|release\.cjs|release-brain\.js|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
 
           HITS=$(echo "$CHANGED" | grep -iE "$SENSITIVE_REGEX" || true)
           if [ -n "$HITS" ]; then
