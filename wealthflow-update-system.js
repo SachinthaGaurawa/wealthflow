@@ -816,12 +816,31 @@
                     localStorage.setItem('wf_preupdate_snapshot', JSON.stringify({ at: Date.now(), data: snap }));
                 } catch (_) {}
             }},
-            { pct: 40, eta: 6, label: 'Downloading new version files…', run: async () => {
-                // ask the SW registration to fetch the newest files
+            // THE STEP THAT USED TO LIE. It called reg.update() — which refetches
+            // sw.js and nothing else — then slept 700ms while a bar labelled
+            // "Downloading new version files" advanced to 40%. No version file was
+            // ever downloaded. Now it downloads the actual modules this page runs
+            // and drives the bar off completed bytes, so the number on screen is a
+            // measurement rather than an animation.
+            { pct: 68, eta: null, label: 'Downloading new version files…', run: async (report) => {
                 try { const reg = await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch (_) {}
-                await _sleep(700);
+                const files = _appFileList();
+                if (!files.length) return;            // nothing measurable; do not fake a delay
+                let done = 0;
+                const started = Date.now();
+                await Promise.all(files.map(async (src) => {
+                    // cache: 'reload' bypasses the browser's HTTP cache and, with the
+                    // service worker's network-first fetch handler, populates the new
+                    // version's cache as a side effect — so this really is the download.
+                    try { await fetch(src, { cache: 'reload' }); } catch (_) { /* offline/404: still counts as attempted */ }
+                    done += 1;
+                    const frac = done / files.length;
+                    const elapsed = (Date.now() - started) / 1000;
+                    // Remaining time projected from the rate actually observed so far.
+                    const eta = frac > 0.05 ? Math.max(0, Math.round(elapsed / frac - elapsed)) : null;
+                    report(12 + Math.round(frac * 56), eta, done, files.length);
+                }));
             }},
-            { pct: 68, eta: 4, label: 'Applying security protocols…', run: async () => { await _sleep(600); }},
             { pct: 88, eta: 2, label: 'Swapping core files…', run: async () => {
                 try { localStorage.setItem(LS_PENDING, version); } catch (_) {}
                 // tell the waiting SW to take over (triggers controllerchange→reload)
@@ -830,21 +849,24 @@
                     const w = (reg && reg.waiting) || _swWaiting;
                     if (w) w.postMessage({ type: 'SKIP_WAITING' });
                 } catch (_) {}
-                await _sleep(500);
             }},
-            { pct: 100, eta: 0, label: 'Finalising…', run: async () => { await _sleep(400); }},
         ];
 
         for (const st of steps) {
             setStep(st.label); setEta(st.eta);
-            await st.run();
+            // Steps report real sub-progress; those that cannot simply do not call it.
+            await st.run((pct, eta, done, total) => {
+                setBar(pct);
+                if (eta != null) setEta(eta);
+                if (total) setStep(st.label + ' (' + done + '/' + total + ')');
+            });
             setBar(st.pct);
-            await _sleep(250);
         }
 
         // Mark the new version installed and queue the post-update popup.
         _markInstalled(version);
         try { localStorage.setItem(LS_SEEN_POPUP, ''); } catch (_) {}
+        setBar(100); setEta(0);
         setStep('Update complete. Restarting…');
 
         // If a SW actually took control, controllerchange already reloaded.
@@ -1572,6 +1594,35 @@
     function _close(id) { const ov = document.getElementById(id); if (ov) { ov.style.opacity = '0'; setTimeout(() => ov.remove(), 200); } }
     function _closeOverlay(id) { const ov = document.getElementById(id); if (ov) ov.remove(); }
     function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    /**
+     * The app's own code, read from the document rather than a hand-kept list.
+     *
+     * A hardcoded array would drift the moment a module is added or deleted —
+     * and this session deleted one — leaving the "download" step quietly missing
+     * files while still reporting 100%. Reading <script src> means the list is
+     * always exactly what this page loads.
+     *
+     * Same-origin only: third-party CDNs are not ours to re-fetch, and a failure
+     * there must not be reported as a failed app update.
+     */
+    function _appFileList() {
+        try {
+            var out = [];
+            var tags = document.querySelectorAll('script[src]');
+            for (var i = 0; i < tags.length; i++) {
+                var src = tags[i].getAttribute('src') || '';
+                if (!src) continue;
+                // Skip absolute cross-origin URLs; keep relative and same-origin paths.
+                if (/^https?:\/\//i.test(src) && src.indexOf(location.origin) !== 0) continue;
+                out.push(src);
+            }
+            // index.html itself is the shell every module hangs off, so it belongs
+            // in the count the user watches.
+            out.push('/index.html');
+            return out;
+        } catch (_) { return []; }
+    }
 
     // ───────────────────────────────────────────────────────────────────────
     //  INIT
