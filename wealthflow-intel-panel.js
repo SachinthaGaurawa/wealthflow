@@ -189,3 +189,15 @@
     window.wfIntelPanel = { refresh: _refresh, inject: _inject };
     console.log('[wfIntelPanel] ✓ Intelligence settings panel loaded');
 })();
+
+// Lazy load sections
+document.addEventListener('click', (e) => {
+    if (e.target.id === 'wfIntelDedup') {
+        const dedupResult = document.getElementById('wfIntelDedupResult');
+        if (dedupResult.style.display === 'none') {
+            dedupResult.style.display = 'block';
+        } else {
+            dedupResult.style.display = 'none';
+        }
+    }
+});
