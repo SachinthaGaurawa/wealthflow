@@ -43,6 +43,10 @@ let URGENT = has('--urgent');
 const FROM_BRAIN = has('--from-brain');
 const KIND = has('--major') ? 'major' : has('--minor') ? 'minor' : 'patch';
 let NOTE = val('--note', '');
+// Derived release notes (autonomy/release-notes.cjs). Module-scoped so both
+// version.json and the CHANGELOG read the SAME description — two places
+// describing one release from different sources is how they drift apart.
+let RELEASE_NOTES = null;
 const EXPLICIT = val('--version', '');
 
 const R = p => path.join(REPO, p);
@@ -101,7 +105,11 @@ function applyVersion(next) {
     // 1) version.json — latest + notes + (mandatory if urgent)
     vj.latest = next;
     vj.notes = vj.notes || {};
-    vj.notes[next] = NOTE;
+    // The app's _normNotes() accepts either a plain string or
+    // { headline, sections: [{ title, items }] } and renders the latter as a
+    // real sectioned sheet. Prefer the structured form so the owner sees the
+    // actual list; fall back to the string when nothing could be derived.
+    vj.notes[next] = (RELEASE_NOTES && RELEASE_NOTES.structured) ? RELEASE_NOTES.structured : NOTE;
     if (URGENT) { vj.mandatory = Array.from(new Set([...(vj.mandatory || []), next])); }
     if (!DRY) fs.writeFileSync(R('version.json'), JSON.stringify(vj, null, 2) + '\n');
     changed.push('version.json'); log('  ✓ version.json latest + notes' + (URGENT ? ' + mandatory' : ''), '→', next);
@@ -125,7 +133,10 @@ function applyVersion(next) {
 }
 
 function writeChangelog(next, reason) {
-    const head = `## v${next} — ${new Date().toISOString().slice(0, 10)}${URGENT ? ' (security)' : ''}\n\n${NOTE || reason || 'Maintenance release.'}\n\n`;
+    // The changelog gets the full itemised markdown; version.json gets the
+    // structured object. Same source, two renderings — never two summaries.
+    const detail = (RELEASE_NOTES && RELEASE_NOTES.markdown) || NOTE || reason || 'Maintenance release.';
+    const head = `## v${next} — ${new Date().toISOString().slice(0, 10)}${URGENT ? ' (security)' : ''}\n\n${detail}\n\n`;
     let prev = ''; try { prev = read('CHANGELOG.md'); } catch (_) {}
     const body = prev.startsWith('# WealthFlow') ? prev.replace(/^# WealthFlow[^\n]*\n/, '') : ('\n' + prev);
     if (!DRY) fs.writeFileSync(R('CHANGELOG.md'), '# WealthFlow — CHANGELOG\n\n' + head + body.replace(/^\n+/, ''));
@@ -161,7 +172,35 @@ function gitPush(next, reason) {
         else { log('computed version', next, 'is not greater than current', CURRENT, '— bumping patch instead.'); next = bump(CURRENT, 'patch'); }
     }
     const reason = (bd && bd.reason) || (URGENT ? 'security' : KIND);
-    if (!NOTE) NOTE = URGENT ? 'Security & stability update.' : 'Improvements and fixes in this release.';
+
+    // ── SAY WHAT ACTUALLY SHIPPED ────────────────────────────────────────────
+    // This line used to read:
+    //   if (!NOTE) NOTE = 'Improvements and fixes in this release.';
+    // v7.69.18 carried a service worker that had never had a fetch handler, a
+    // progress bar that had been animating over setTimeout, and a release gate
+    // that counted CI work as a user update — and announced all of it with that
+    // one sentence. The owner compared it against the release commit, which by
+    // design holds nothing but version strings, and concluded the update was
+    // fake. He was wrong about the gate and right about the experience: a
+    // release that will not say what it did cannot be told apart from one that
+    // did nothing.
+    //
+    // The information was never missing. It was sitting in the commit subjects
+    // of the range being released, and nothing read them.
+    let AUTO_NOTES = null;
+    if (!NOTE) {
+        try { AUTO_NOTES = require('./autonomy/release-notes.cjs').notesForRelease({ repoDir: REPO }); }
+        catch (e) { log('  (release notes unavailable: ' + e.message + ')'); }
+    }
+    if (!NOTE && AUTO_NOTES) {
+        RELEASE_NOTES = AUTO_NOTES;
+        NOTE = AUTO_NOTES.summary;
+        log('  ✓ notes derived from ' + AUTO_NOTES.base + '..HEAD — ' + AUTO_NOTES.summary);
+    }
+    // Only reached when the range is undescribable or git is unavailable. Kept
+    // deliberately vague-but-honest rather than dressed up: a release that
+    // cannot explain itself should look like one.
+    if (!NOTE) NOTE = URGENT ? 'Security & stability update.' : 'Maintenance release — see the commit log for details.';
 
     log((DRY ? '[DRY] ' : '') + 'releasing v' + CURRENT + ' → v' + next + (URGENT ? ' (security/mandatory)' : '') + ' · ' + reason);
     const changed = applyVersion(next);
