@@ -79,9 +79,30 @@ jobs:
       # exists to prevent, so the browser is installed explicitly rather than
       # left to chance. `continue-on-error` keeps a bad browser build from
       # taking down dependency and markup scanning, which need no browser.
+      # `--with-deps` was the bug. It shells out to `sudo apt-get install …`, and
+      # this job runs harden-runner with `disable-sudo: true` — so the install
+      # could never succeed here. Every run since this workflow was created hit:
+      #
+      #   Switching to root user to install dependencies...
+      #   sudo: a password is required
+      #   Error: Installation process exited with code: 1
+      #
+      # `continue-on-error` then swallowed it, the step reported success, and the
+      # scan proceeded with no browser. Two security controls that are each
+      # correct on their own — no sudo on CI, don't let a browser build break
+      # dependency scanning — combined into a scanner that silently lost half its
+      # detectors for four consecutive runs.
+      #
+      # The browser binary needs no sudo; only the OS packages do, and the
+      # ubuntu-latest image already ships them. So install the browser alone.
+      #
+      # continue-on-error stays: a broken browser must not take down the static
+      # detectors. What changes is that the outcome is no longer invisible —
+      # discover.mjs now records whether the sweep ran and the run summary says
+      # "incomplete" instead of reporting a clean scan it did not perform.
       - name: Install Chromium (for the runtime UI sweep)
         continue-on-error: true
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Scan for provable defects
         id: scan
