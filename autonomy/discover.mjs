@@ -368,11 +368,30 @@ function trackedCode(repoDir) {
  * where that is unavailable the rest of discovery must still run, so a failure
  * here degrades to "no UI findings" rather than taking the whole scan down.
  */
+/**
+ * Whether the browser half of discovery actually ran.
+ *
+ * WHY THIS IS TRACKED RATHER THAN INFERRED FROM THE FINDING COUNT
+ * The run summary used to say "Every detector ran and found nothing to file"
+ * whenever the list came back empty. On 2026-08-02 that sentence was written
+ * after Chromium had failed to install, so the browser detectors never started
+ * — and the owner was told, in the same breath, that the app was clean and that
+ * everything had been checked. Only one of those was true.
+ *
+ * "Found nothing" and "could not look" are different claims, and a scanner that
+ * cannot tell them apart is worse than one that reports neither: it converts an
+ * outage into a clean bill of health. So the sweep's own outcome is recorded
+ * here, and the summary reads from it.
+ */
+let uiSweepStatus = { ran: false, reason: 'not attempted' };
+export function getUiSweepStatus() { return { ...uiSweepStatus }; }
+
 export async function uiFindings(repoDir = process.cwd()) {
     let runSweep;
     try {
         ({ runSweep } = await import('../test/e2e/ui-sweep.mjs'));
-    } catch {
+    } catch (e) {
+        uiSweepStatus = { ran: false, reason: `harness absent: ${e.message}` };
         return [];                      // harness absent — not an error
     }
     let r;
@@ -382,8 +401,10 @@ export async function uiFindings(repoDir = process.cwd()) {
         // A sweep that cannot sign in is itself worth knowing about, but it is a
         // harness problem, not an application defect, so it is not filed as one.
         console.warn(`[discover] UI sweep unavailable: ${e.message}`);
+        uiSweepStatus = { ran: false, reason: e.message };
         return [];
     }
+    uiSweepStatus = { ran: true, reason: null };
 
     const out = [];
     for (const h of r.brokenHandlers || []) {
@@ -653,11 +674,58 @@ if (invokedDirectly) {
     }
 
     if (process.env.GITHUB_STEP_SUMMARY) {
-        const md = findings.length
-            ? `### 🔎 Autonomous discovery — ${findings.length} verified finding(s)\n\n`
-              + '| Severity | Kind | Where |\n|---|---|---|\n'
-              + findings.map((f) => `| ${f.severity} | ${f.kind} | \`${f.key}\` |`).join('\n') + '\n'
-            : '### ✅ Autonomous discovery — nothing actionable\n\nEvery detector ran and found nothing to file.\n';
+        const ui = getUiSweepStatus();
+        const uiDisabled = process.argv.includes('--no-ui');
+        const skippedUi = !uiDisabled && !ui.ran;
+
+        let md;
+        if (!findings.length && uiDisabled) {
+            // Deliberately static-only. Distinct from BOTH "everything ran" and
+            // "something broke": the browser detectors were switched off on
+            // purpose, so claiming either would be wrong. Writing this branch
+            // caught a bug in the branch below, which had said "including the
+            // browser sweep" on a run that was invoked with --no-ui.
+            md = '### ✅ Autonomous discovery — static detectors only\n\n'
+                + 'Ran with `--no-ui`, so the browser sweep was skipped by request. '
+                + 'The static detectors found nothing to file.\n';
+        } else if (findings.length) {
+            md = `### 🔎 Autonomous discovery — ${findings.length} verified finding(s)\n\n`
+                + '| Severity | Kind | Where |\n|---|---|---|\n'
+                + findings.map((f) => `| ${f.severity} | ${f.kind} | \`${f.key}\` |`).join('\n') + '\n';
+        } else if (skippedUi) {
+            // The case that produced a false all-clear: no findings BECAUSE half
+            // the detectors could not start. Say which half, and say it is not
+            // the same as clean.
+            md = '### ⚠️ Autonomous discovery — incomplete\n\n'
+                + 'The static detectors ran and found nothing. **The browser detectors did not run at all**, '
+                + 'so anything only a live page can reveal — dead handlers, duplicate ids, unlabelled '
+                + 'controls, uncaught page errors — was not checked on this run.\n\n'
+                + `> ${ui.reason}\n\n`
+                + 'This is **not** a clean bill of health. It is a partial scan reporting itself as partial.\n';
+        } else {
+            md = '### ✅ Autonomous discovery — nothing actionable\n\n'
+                + 'Every detector ran, including the browser sweep, and found nothing to file.\n';
+        }
         try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n'); } catch { /* ignore */ }
     }
+
+    // ── WHY THIS EXIT IS EXPLICIT ────────────────────────────────────────────
+    // Every one of this workflow's four runs was cancelled at the 15-minute
+    // timeout, and none of them was stuck doing work: the last line of output
+    // arrived 1 second in, and the runner then killed the process as an orphan
+    // fourteen minutes later ("Terminate orphan process: pid (2853)").
+    //
+    // The cause is narrow and reproducible: when Playwright's browser launch
+    // FAILS, it leaves a handle behind that keeps the event loop alive forever.
+    // A successful launch closes cleanly, which is why this never showed up
+    // locally until the failure path was reproduced deliberately
+    // (PLAYWRIGHT_BROWSERS_PATH=/nonexistent → node hangs; without it → exits 0).
+    //
+    // Chasing the specific handle would fix today's leak and not tomorrow's, in
+    // a script whose whole job is to import other people's scanners. The
+    // durable guarantee is that once the work is done and the summary written,
+    // this process ends — and ends with a status that reflects the work, not the
+    // cleanup. Anything still holding the loop open at this point is by
+    // definition not doing anything this run needed.
+    process.exit(0);
 }
