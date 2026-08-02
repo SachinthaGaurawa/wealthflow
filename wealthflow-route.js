@@ -567,7 +567,6 @@
     try { if (root.console) root.console.log('[WFRoute] ✓ transaction router ready'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);
 
-
 /* ============================================================================
  *  wealthflow-route.js · SELF-WIRING  (browser only — no-op under Node)
  * ----------------------------------------------------------------------------
