@@ -111,256 +111,21 @@
 
     // ── Built-in changelog for the current version. The manifest can override
     //    or extend this. Kept friendly + plain-language (iOS style). ──────────
-    const BUILTIN_NOTES = {
-        '7.40.0': {
-            date: '2026-07-01',
-            headline: 'Undo a confirmed investment month by pressing and holding, plus a fixed Restore history list and a Drive connection that stays on',
-            sections: [
-                { title: 'Investments — press & hold to undo a month', items: [
-                    'Confirmed a month by mistake? Press and hold the green "Received & Confirmed" button on an investment card for 3 seconds. A fill sweeps across it, and when it completes that month is set back to Pending.',
-                    'It also works inside "Past months": press and hold any confirmed month row (e.g. "May 2026") for 3 seconds to undo just that month. Each confirmed row now shows a small "hold to undo" hint.',
-                    'It is deliberately hard to trigger by accident — a quick tap does nothing, and sliding your finger (scrolling) cancels the hold, so it never fires while you scroll.'
-                ]},
-                { title: 'Restore Data Protocol — your backup history now shows', items: [
-                    'Fixed: after backing up to Google Drive, the previous-backup list in Settings > Restore Data Protocol was often empty. The list now reliably shows every backup this account has made, newest first, with the date/time and size.',
-                    'Root cause: the list was only looking inside one specific Drive folder, so any backup that landed elsewhere was invisible. It now finds your backups wherever they are, and the backup you just made appears immediately (even before Drive finishes indexing it).'
-                ]},
-                { title: 'Google Drive stays connected', items: [
-                    'Once you have allowed Google Drive, WealthFlow keeps that connection on stand-by for the whole session and silently refreshes it in the background — so Restore Data Protocol and Instant Cloud Backup keep working without asking you to sign in again, right up until you sign out of your Google account.'
-                ]},
-                { title: 'Note', items: [
-                    'Hard-refresh once after updating so the new version loads.'
-                ]}
-            ]
-        },
-        '7.39.0': {
-            date: '2026-06-30',
-            headline: 'Expenses that read like a thread, a smarter paid-tick, colour-coded notifications, and no more settings "dance"',
-            sections: [
-                { title: 'Expenses — clearer history', items: [
-                    'When you tap a category to view its history, those transactions now appear as a clearly nested thread \\u2014 indented under the category with a connecting rail and a \\u201cTransactions in \\u2026\\u201d label \\u2014 so you can instantly tell the category header (parent) from the individual charges (children), like a comment and its replies.',
-                ]},
-                { title: 'Expenses — smarter paid tick', items: [
-                    'The \\u201cmark paid\\u201d tick now appears only where it makes sense: on expenses you added manually, and only for the current month and upcoming months.',
-                    'Bank-statement expenses no longer show a tick \\u2014 they\\u2019re records of money already spent, not something you need to mark. In the table view they read as \\u201cRecorded\\u201d.',
-                    'When a new month begins, last month\\u2019s manual expenses are automatically marked paid (you can\\u2019t pay the past), so the tick tidies itself up.',
-                ]},
-                { title: 'Notifications — colour-coded', items: [
-                    'Each notification is now colour-coded by reason so you can read the bell at a glance: overdue is red, due-today/imminent is orange, due-soon is gold, and system/info is blue.',
-                ]},
-                { title: 'Settings — fixed', items: [
-                    'Turning an option on or off no longer makes the page jump or \\u201cdance\\u201d. Toggles now flip instantly in place, leaving your scroll position exactly where it was.',
-                ]},
-            ],
-        },
-        '7.38.0': {
-            date: '2026-06-30',
-            headline: 'Notifications, perfected — seen-state that sticks, a fix for the mobile cut-off, a smarter panel, and device reminders',
-            sections: [
-                { title: 'Fixed', items: [
-                    'Seen notifications now stay seen. Previously, opening the app could silently reset the count, so items you\\u2019d already read came back as unseen after you closed and reopened the app. The unseen badge now persists correctly across reloads and restarts.',
-                    'On phones in portrait, the notifications panel was running off the left edge (the title showed as \\u201cifications\\u201d and the left icons were clipped). The panel is now anchored to the screen with safe side margins and notch-safe insets, so it always fits \\u2014 no matter how narrow the screen.',
-                ]},
-                { title: 'Improved', items: [
-                    'The panel is cleaner and easier to scan: a summary line tells you how many items need attention, and notifications are grouped into \\u201cNeeds attention\\u201d, \\u201cComing up\\u201d and \\u201cGood to know\\u201d, each with a count.',
-                    'Every item now shows a clear due chip \\u2014 \\u201c4d over\\u201d, \\u201cToday\\u201d, \\u201cin 3d\\u201d, \\u201cThis mo\\u201d \\u2014 so you can see urgency at a glance, with refined premium styling throughout.',
-                ]},
-                { title: 'New \\u2014 device reminders', items: [
-                    'You can now have WealthFlow remind you in your phone or computer\\u2019s own notification centre when a payment or cheque needs attention. Turn it on under Settings \\u2192 Notifications \\u2192 Device push notifications (your device will ask permission once).',
-                    'Reminders are deduplicated so the same item never nags you twice, and several at once are bundled into a single tidy alert. Tapping a reminder opens WealthFlow on the right page.',
-                ]},
-                { title: 'Note', items: [
-                    'The bell still only reads your data \\u2014 it never changes it. Hard-refresh once after updating.',
-                ]},
-            ],
-        },
-        '7.37.0': {
-            date: '2026-06-29',
-            headline: 'New: a Notifications centre in the topbar — never miss a payment or cheque',
-            sections: [
-                { title: 'New', items: [
-                    'A notifications bell now sits in the top bar with a red badge showing how many urgent + warning items you haven\u2019t seen yet.',
-                    'It watches your real data and surfaces what needs attention: overdue or due-today cheques, unpaid card payments near or past their deadline, loan instalments due this month or overdue, and bills/subscriptions due soon or overdue. Active card-instalment plans show as gentle info.',
-                    'Most urgent first, newest at the top. Tap any notification and it takes you straight to the right page. Opening the bell clears the unseen count; opening or tapping an item marks it seen.',
-                ]},
-                { title: 'Settings → Notifications', items: [
-                    'A master on/off switch plus individual toggles for urgent alerts, due-soon warnings, cheques, card payments, loan instalments, bills, and card instalments — so you decide exactly what you\u2019re notified about.',
-                ]},
-                { title: 'Built carefully', items: [
-                    'The bell reads your data and never changes it. Severities are computed from real dates (cheque release dates, card deadlines, loan months, subscription due-days) and were simulated across overdue / due-today / due-soon cases before release, so the counts are accurate.',
-                ]},
-            ],
-        },
-        '7.36.0': {
-            date: '2026-06-29',
-            headline: 'Year Income now counts real received money — no more investment double-counting',
-            sections: [
-                { title: 'Fixed', items: [
-                    'Year Income (and everything derived from it) now reflects the ACTUAL money you received — the bank-statement imports and manual entries on your Income page — instead of the Investments tab.',
-                    'This removes a double-count: a recurring investment yield (say 100,000/month) was tracked on the Investments page AND, when that same money landed in your bank and the statement was imported, captured again as received income. Year Income now reads only the received-income side, so the same money can never be counted twice.',
-                    'The fix flows consistently through every place that shows income: the dashboard Year Income card, Net Savings, Savings Rate, the monthly income chart, the Monthly Plan, the CSV and PDF reports, and the 3D Cash Flow view (its income breakdown now matches its income total exactly).',
-                ]},
-                { title: 'Unchanged', items: [
-                    'Your Investments page is fully intact — every source, amount and history stays exactly as it was. It simply no longer inflates Year Income, because that income is already captured when it reaches your bank.',
-                ]},
-            ],
-        },
-        '7.35.0': {
-            date: '2026-06-26',
-            headline: 'Release-notes “View” now opens, a cleaner Add Saving, and tidier sort controls',
-            sections: [
-                { title: 'Fixed', items: [
-                    'Settings → Software Update → “View” / “What’s new” now opens the release-notes sheet correctly. It was silently doing nothing whenever the notes were stored as plain text — the sheet now renders every note format reliably.',
-                ]},
-                { title: 'Changed', items: [
-                    'Removed the “Reduce my Balance Tracker” checkbox from “+ Add Saving” — it had no effect (your saving is recorded against the target, and your balance is moved separately from “Log Balance Flow → Saving for Target”), so it was only adding confusion.',
-                ]},
-                { title: 'Improved', items: [
-                    'On small phone screens the CC One-Time sort controls (↓ Newest / ↑ Oldest, default ↓ Newest) now stay compact so the “+ Add Payment” button no longer drops onto a second line.',
-                ]},
-                { title: 'Reminder', items: [
-                    'Passcode-free entry for the installed app/APK already lives in Settings → Device Access & Encryption → “Passcode-free entry (installed app only)”. It’s off by default for safety and only ever applies to the installed app (never a browser tab) — turn it ON once and the installed app opens straight to your dashboard.',
-                ]},
-            ],
-        },
-        '7.34.0': {
-            date: '2026-06-26',
-            headline: 'Bank-statement cheques now file into the Cheque tab — accurately, for every bank',
-            sections: [
-                { title: 'New', items: [
-                    'When you import a bank statement, every cheque is now detected and filed straight into your Cheque tab — a deposited / inward / realised cheque is booked as RECEIVED (money in), and a cheque payment / outward / honoured cheque is booked as ISSUED (money out). The cheque number is read automatically from the narration, with leading zeros preserved (e.g. “Transfer Cheque Deposit Cheque No: 070283” → Received, #070283).',
-                    'Works across banks and wordings: deposit / inward / outward / clearing / realised / lodgement / collection / local / upcountry / outstation / electronic cheque, plus shorthand like “chq dep”, “cq no”, “chque” and “#070283”.',
-                ]},
-                { title: 'Improved', items: [
-                    'A cheque can no longer be swallowed by the “internal transfer” skip. Rows such as “Internal Transfer – Cheque Deposit” are now recognised as cheques first, so they always reach the Cheque tab instead of being dropped.',
-                    'Cheque-book / leaf / return / dishonour FEES are still correctly treated as bank charges (an expense), never mistaken for a cheque movement.',
-                    'Credit-vs-debit (received vs issued) is decided by the statement wording first, then by the credit/debit column — so the direction is right even when the narration is terse.',
-                ]},
-                { title: 'Note', items: [
-                    'This is a detection upgrade in the import engine — your existing cheques are untouched. Newly imported statement cheques arrive already marked “cleared” (they have already moved on the statement) and de-duplicate by cheque number, so re-importing the same statement never creates duplicates.',
-                ]},
-            ],
-        },
-        '7.33.0': {
-            date: '2026-06-25',
-            headline: 'Pinpoint loan allocation + a sharper, health-aware classifier',
-            sections: [
-                { title: 'New', items: [
-                    'Bank-statement loan repayments now land on the EXACTLY right loan — even when you have several. If you keep two housing loans and a vehicle lease, WealthFlow now tells them apart by loan TYPE first (a vehicle / lease payment can never be filed against a housing loan), then by the monthly instalment amount (which separates two same-type loans), then decisively by the loan / account number or the loan name when the statement prints it.',
-                    'Zero silent mistakes: when a statement genuinely does not print enough to be certain (e.g. two same-bank housing loans, no type word, an amount near neither instalment), the row is surfaced for your one-tap confirmation in the import review — it is never quietly filed against the wrong loan.',
-                ]},
-                { title: 'Improved', items: [
-                    'The instant classifier now recognises far more health spending — HEALTH, doctor, medicine, dispensary, drug store, e-Channelling, doc990, dental, optical, physiotherapy, ayurveda and more — so health charges stop falling into "Other", even when the statement text is abbreviated or cut off by OCR.',
-                    'The 18-engine AI vote (all engines still run IN PARALLEL) got a richer Sri-Lankan merchant brief and now reads abbreviated / truncated statement text more intelligently, so "Goes to" and "Type" are correct even more often. The AI still only ever upgrades a generic guess — locked fuel / cash-advance / fee verdicts are never overridden.',
-                ]},
-                { title: 'Note', items: [
-                    'This is a backend / engine update — no app screens changed. Just open the app and re-import (or re-run auto-sort) to feel the difference.',
-                ]},
-            ]
-        },
-        '7.32.0': {
-            date: '2026-06-25',
-            headline: 'Even more AI engines — all voting in parallel for sharper classification',
-            sections: [
-                { title: 'New', items: [
-                    'WealthFlow\'s classification brain now consults up to 18 AI engines at once — xAI Grok, Anthropic Claude, DeepInfra, Hyperbolic, Novita, OpenAI and Cohere now join the existing line-up (Gemini, Groq, DeepSeek, Mistral, Together, Fireworks, OpenRouter, Cerebras, SambaNova, NVIDIA, GitHub Models). Every engine runs IN PARALLEL and decides each ambiguous charge by majority vote, so "Goes to" and "Type" land correctly even more often. Engines you have configured contribute; the ones you have not simply sit out.',
-                ]},
-                { title: 'Improved', items: [
-                    'The built-in knowledge base is now in lock-step with the import classifier — many more Sri Lankan merchants, fees, taxes, levies and fuel stations are recognised instantly and offline, so fewer charges ever need the AI at all.',
-                    'The AI still only ever UPGRADES a generic guess — locked fuel, cash-advance and fee verdicts are never overridden, so the classifier can only get better.',
-                    'App modules now always refresh on a new release (no lingering old code), and the server now gives the multi-engine vote its full time budget so even slower engines still get to weigh in.',
-                ]},
-            ]
-        },
-        '7.31.0': {
-            date: '2026-06-24',
-            headline: 'Open the installed app straight to your dashboard',
-            sections: [
-                { title: 'New', items: [
-                    'Passcode-free entry for the installed app — when WealthFlow runs as the installed app (added to your home screen / APK), you can open straight to your dashboard with no passcode or biometric. Turn it on in Settings → Device Access & Encryption. For your security it NEVER applies in a normal browser tab — only the private installed app — and it is off by default.',
-                    'While passcode-free entry is on, the installed app also stops auto-locking on inactivity (a browser tab still auto-locks normally).',
-                ]},
-                { title: 'Note', items: [
-                    'Your PIN and biometrics are untouched and still protect a browser tab and every other device. Turn the option off anytime to require your passcode again.',
-                ]},
-            ]
-        },
-        '7.30.0': {
-            date: '2026-06-22',
-            headline: 'Loans that reconcile themselves & a sharper, faster classifier',
-            sections: [
-                { title: 'New', items: [
-                    'Loan auto-allocation — when a bank statement contains a loan repayment (EMI / instalment / standing order), WealthFlow now matches it to the right loan and files it against that month automatically, exactly like every other tab\'s allocated-months view. If you had already marked that month paid, the statement amount takes over (it\'s the authoritative figure). It is conservative on purpose: a payment must clearly look like a loan (loan wording plus a matching bank, name or installment amount) so ordinary purchases are never mistaken for a loan payment.',
-                    'Correct loan among several — with multiple loans (e.g. two housing loans and a vehicle lease) the right one is chosen by amount, bank and name, and decisively by the loan/account number when the bank prints it — so even two near-identical loans are told apart.',
-                    'Cheque auto-routing — cheque lines on a bank statement now file straight into the Cheque tab: a deposit/inward cheque as Received (money in), a cheque payment/outward as Issued (money out), with the cheque number read from the narration. Cheque-book and return fees correctly stay as bank charges.',
-                    'CC One-Time now sorts with two clean buttons — ↓ Newest and ↑ Oldest (default ↓ Newest) — so the controls never wrap and the "+ Add Payment" button stays put on smaller screens.',
-                ]},
-                { title: 'Improved', items: [
-                    'Much smarter auto-classification — the trained engine now recognises far more Sri Lankan merchants and services (supermarkets, restaurants, ride apps, e-commerce, pharmacies & hospitals, schools & courses, insurers, and streaming/SaaS subscriptions), so "Goes to" and "Type" are pre-selected correctly for many more rows without waiting on the AI.',
-                    'More fuel forecourts and income types (freelance/commission/royalty) are detected out of the box.',
-                ]},
-                { title: 'Fixed', items: [
-                    'Statement balance lines written as "B/F" or "C/F" are now correctly skipped instead of leaking in as an expense.',
-                ]},
-            ]
-        },
-        '7.29.0': {
-            date: '2026-06-22',
-            headline: 'Sharper credit-card brain & a smoother CC workspace',
-            sections: [
-                { title: 'New', items: [
-                    'Re-payment type — repayments and refunds on a card statement are detected automatically and filed as a credit that pays down your charges (oldest first). You can also pick "Re-payment" manually.',
-                    'Service Fee is now a one-tap type everywhere (manual add + statement review).',
-                    'CC One-Time sorts newest statement date first by default — import the latest statement first, then older ones, and the most recent stays on top.',
-                    'Card filter chips are colour-coded per card so you can tell them apart at a glance.',
-                ]},
-                { title: 'Improved', items: [
-                    'Far more accurate fee detection — FUEL SURCHARGE, ADVANCE FEE, STAMP DUTY, annual & membership fees, finance/interest charges and taxes/levies (VAT, NBT, SSCL, CESS) all resolve to Service Fee, and a fee always wins over fuel & cash-advance.',
-                    'Record-a-payment is locked to the card in context (no more typing the wrong name); the amount auto-formats with thousands separators and .00 cents.',
-                    'The trained classifier is now the single source of truth in the import review, so a wrong AI guess can no longer mislabel a charge.',
-                ]},
-                { title: 'Fixed', items: [
-                    'Deleting a card\'s statements now also clears its left-over payments (no more orphaned credit surplus).',
-                    'Removed the duplicated "LKR LKR" on the card filter chips.',
-                    'What\'s New now always shows the release notes.',
-                ]},
-            ]
-        },
-        '7.28.0': {
-            date: '2026-06-21',
-            headline: 'Imported card charges no longer show as paid',
-            sections: [
-                { title: 'Fixed', items: [
-                    'Charges imported from a credit-card statement are correctly marked unpaid until a payment actually covers them (previously every imported charge could show as Paid).',
-                    'A one-time self-healing pass re-opens any charge wrongly auto-marked paid by the old import, while keeping your real manual and auto-matched payments intact.',
-                ]},
-            ]
-        },
-        '7.12.0': {
-            date: '2026-06-01',
-            headline: 'Smarter, safer, and now self-updating',
-            sections: [
-                { title: 'New', items: [
-                    'In-app updates — see what\'s new, agree, confirm with your PIN, and the app updates itself with a live progress bar.',
-                    'Send Feedback — report a bug or idea right from Settings; it reaches the team automatically.',
-                    'Card & Account Registry is back — map a card\'s last-4 so the AI routes service charges correctly.',
-                ]},
-                { title: 'Improved', items: [
-                    'Much higher transaction-categorisation accuracy (600+ Sri-Lanka-aware merchant rules + agentic web lookup for unknown shops).',
-                    'Income & investment auto-detection (salary, dividends, unit trusts).',
-                    'Cleaner, more professional interface with fewer decorative emojis.',
-                ]},
-                { title: 'Fixed', items: [
-                    'The demo sample can no longer be saved as your real data.',
-                    'Review queue: each item now has a Remove button.',
-                    'AI advisor suggestion chips now always respond.',
-                ]},
-                { security: true, title: 'Security', items: [
-                    'All AI data (memory, review queue, job queue) encrypted at rest with AES-256-GCM.',
-                ]},
-            ]
-        }
-    };
+    // BUILTIN_NOTES was here: 250 lines and 23.7 KB of release notes for 14
+    // versions, none newer than 7.40.0 (2026-07-01).
+    //
+    // WHY IT IS GONE
+    // It existed to feed a fallback in _rawNotesFor whose comment read "never
+    // show an empty What's New". On 2026-08-02 the owner opened the app running
+    // v7.69.18 and was shown a sheet headed "Welcome to v7.69.15" — a stale
+    // localStorage value — describing press-and-hold undo and a Drive
+    // reconnection, which are v7.40.0's notes. Twenty-nine releases old, under
+    // the wrong version number, presented as his.
+    //
+    // A duplicate copy of release history that only ever drifts from
+    // version.json is not a safety net; it is a second source of truth with no
+    // way to be right. version.json is written by release.cjs from the actual
+    // commits, and is now the only place notes come from.
 
     let _manifest = null;     // loaded version.json (optional)
     let _swWaiting = null;    // a waiting service worker, if any
@@ -395,7 +160,28 @@
     }
 
     function _installedVersion() {
-        try { return localStorage.getItem(LS_INSTALLED) || null; } catch (_) { return null; }
+        // THE TRUTH IS THE CODE THAT IS RUNNING, NOT WHAT localStorage REMEMBERS.
+        //
+        // CURRENT_VERSION is rewritten inside this file by release.cjs at release
+        // time, so whatever value is executing right now IS the installed build.
+        // LS_INSTALLED only advanced when the user went through the in-app update
+        // flow -- so a hard refresh, which is how new code usually arrives, left
+        // it frozen. That is why a device executing v7.69.18 announced "Welcome
+        // to v7.69.15": it was reporting a memory of an install rather than the
+        // bundle it had just loaded.
+        //
+        // Reconcile forward only. A stored value AHEAD of CURRENT_VERSION means
+        // the device has been served older code than it once ran (a rollback, or
+        // a stale cache), and silently rewriting it downward would erase the only
+        // evidence of that.
+        try {
+            var stored = localStorage.getItem(LS_INSTALLED);
+            if (!stored || _cmp(CURRENT_VERSION, stored) > 0) {
+                try { localStorage.setItem(LS_INSTALLED, CURRENT_VERSION); } catch (_) {}
+                return CURRENT_VERSION;
+            }
+            return stored;
+        } catch (_) { return CURRENT_VERSION; }
     }
     function _markInstalled(v) {
         try { localStorage.setItem(LS_INSTALLED, v); } catch (_) {}
@@ -429,15 +215,21 @@
         return out;
     }
     function _rawNotesFor(v) {
+        // Notes for THIS version, or nothing. There is deliberately no fallback.
+        //
+        // The previous implementation ended with "never show an empty What's
+        // New: fall back to the newest notes we have" and returned another
+        // release's notes when this one had none. That is how a device running
+        // v7.69.18 came to display v7.40.0's feature list. Showing the wrong
+        // release's notes is worse than showing none: an empty sheet is a
+        // missing note, a filled one is a false claim about what the owner is
+        // running.
+        //
+        // Callers already handle null correctly -- _maybeShowPostUpdate marks
+        // the popup seen and returns without drawing, so nothing renders an
+        // empty shell.
         if (_manifest && _manifest.notes && _manifest.notes[v]) return _manifest.notes[v];
-        if (BUILTIN_NOTES[v]) return BUILTIN_NOTES[v];
-        // v7.29.0 — never show an empty What's New: fall back to the newest notes we have.
-        try {
-            const all = Object.assign({}, BUILTIN_NOTES, (_manifest && _manifest.notes) || {});
-            const vk = x => String(x).split('.').map(Number);
-            const keys = Object.keys(all).sort((a, b) => { const A = vk(a), B = vk(b); for (let i = 0; i < 3; i++) { if ((B[i] || 0) !== (A[i] || 0)) return (B[i] || 0) - (A[i] || 0); } return 0; });
-            return keys.length ? all[keys[0]] : null;
-        } catch (_) { return null; }
+        return null;
     }
     function _notesFor(v) { return _normNotes(_rawNotesFor(v)); }
     function _isMandatory(v) {
@@ -1784,6 +1576,11 @@
         // "Your Feedback" list can refresh statuses on demand.
         checkCompletions: _checkFeedbackCompletions,
         _collectDiagnostics,
+        // Exposed for the same reason as _collectDiagnostics: the version the
+        // app believes it is running is a claim the owner reads on screen, and a
+        // test that only greps the source cannot tell a reconciled value from a
+        // stale one. Read-only.
+        _installedVersion,
         // Exposed so the test harness can prove which words a given server
         // response produces. The bug these replace was invisible to every test
         // that only read the source, because the logic was inline in an async

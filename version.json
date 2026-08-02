@@ -422,7 +422,27 @@
     "7.69.15": "Improvements and fixes in this release.",
     "7.69.16": "Improvements and fixes in this release.",
     "7.69.17": "Improvements and fixes in this release.",
-    "7.69.18": "Improvements and fixes in this release."
+    "7.69.18": {
+      "headline": "What's new in v7.69.18",
+      "date": "2026-08-02",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Make the update system tell the truth (#60)"
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "The scanner lost half its detectors, then refused to exit (#64)",
+            "The Risk gate asked \"does this PR need approval?\" when there was no PR (#63)",
+            "The Risk gate was blind to the files that define the Risk gate (#62)",
+            "Close the loop back to the owner when a fix ships (#61)"
+          ]
+        }
+      ]
+    }
   },
   "version": "7.24.1"
 }
