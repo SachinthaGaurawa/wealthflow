@@ -37,7 +37,7 @@
  *                 heavy delete churn or exactly that, and the two need
  *                 different fixes.
  *    · orphaned — markers filed under a key that is not a record store at all,
- *                 which can never do any useful work.
+ *                 which can never be protecting a delete.
  * ========================================================================== */
 (function () {
     var W = (typeof window !== 'undefined') ? window
