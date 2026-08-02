@@ -49,7 +49,15 @@ export const BUDGETS = {
     // the top of this file, a ratchet that is not tightened after an improvement
     // quietly permits the improvement to be undone, so the reclaimed bytes are
     // taken off the ceiling rather than left as headroom for future drift.
-    totalJsBytes: 1_310_000,     // measured 1,287,488 across 46 modules
+    // TIGHTENED again after deleting BUILTIN_NOTES from
+    // wealthflow-update-system.js — 250 lines and 21.7 KB of release notes for
+    // 14 versions, none newer than 7.40.0, duplicating what version.json already
+    // holds. It existed only to feed a fallback that showed the wrong release's
+    // notes rather than none, which is how a device running v7.69.18 displayed
+    // v7.40.0's feature list. Same doctrine as every other move of this number:
+    // an improvement that is not ratcheted is an improvement that can be undone
+    // without anyone noticing.
+    totalJsBytes: 1_290_000,     // measured 1,268,930 across 46 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
