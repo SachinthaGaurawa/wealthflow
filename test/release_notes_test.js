@@ -17,14 +17,22 @@
  * { headline, sections: [{title, items}] } and has only ever been handed one
  * sentence. Machinery present, signal absent — twice over.
  *
- * These tests pin the notes to REAL repository history, not fixtures, because a
- * generator that only works on invented commits is exactly the kind of thing
- * this codebase keeps producing.
+ * These tests exercise the generator against a REAL git repository built in a
+ * temp directory with the exact commit shapes of that range — not stubbed
+ * arrays — because a generator that only works on invented objects is exactly
+ * the kind of thing this codebase keeps producing.
+ *
+ * They deliberately do NOT read this repository's own tags. An earlier draft did,
+ * passed locally, and failed in CI: the test job checks out shallow with no tags,
+ * so the range resolved to nothing. Four assertions failed and a fifth passed
+ * vacuously. See buildFixtureRepo() below.
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
     parseSubject, commitsInRange, describeRelease, touchesUserFacing, SKIP_SUBJECT,
 } from '../autonomy/release-notes.cjs';
@@ -101,12 +109,74 @@ describe('user-facing vs internal uses the SAME rule as the release gate', () =>
     });
 });
 
-describe('against the real v7.69.17..v7.69.18 history', () => {
-    const commits = commitsInRange('v7.69.17', 'v7.69.18', { repoDir: ROOT });
+/**
+ * A throwaway git repo with the exact commit shapes of the v7.69.17..v7.69.18
+ * range, built here so the git plumbing is tested wherever this suite runs.
+ *
+ * WHY THIS EXISTS INSTEAD OF READING THIS REPO'S OWN TAGS
+ * The first version of these tests called commitsInRange('v7.69.17','v7.69.18')
+ * against ROOT. That passed locally and failed in CI, because the test job
+ * checks out with actions/checkout's default fetch-depth: 1 — a shallow clone
+ * with no tags — so the range could not be resolved and commitsInRange returned
+ * [].
+ *
+ * Four assertions failed honestly. The fifth PASSED VACUOUSLY: it asserted that
+ * JSON.stringify(structured) did not contain "release: v", and structured was
+ * null, so "null" satisfied it. A test that stops testing without going red is
+ * the exact defect this codebase keeps producing, and I had just written one.
+ *
+ * Building the history here fixes both problems at once: the git integration is
+ * genuinely exercised, and it cannot silently become a no-op depending on how
+ * the checkout was configured.
+ */
+function buildFixtureRepo() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-notes-'));
+    const git = (args) => execFileSync('git', args, {
+        cwd: dir, encoding: 'utf8',
+        env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t',
+            GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
+        },
+    });
+    git(['init', '-q', '-b', 'main']);
+    const commit = (subject, files) => {
+        for (const f of files) {
+            fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
+            fs.appendFileSync(path.join(dir, f), 'x\n');
+        }
+        git(['add', '-A']);
+        git(['commit', '-q', '-m', subject]);
+    };
+    commit('base', ['README.md']);
+    git(['tag', 'v7.69.17']);
+    // The real shapes, in the real order.
+    commit('fix(update): make the update system tell the truth (#60)',
+        ['sw.js', 'wealthflow-update-system.js']);
+    commit('fix(feedback): close the loop back to the owner when a fix ships (#61)',
+        ['.github/workflows/autonomous-fix.yml', 'test/a_test.js']);
+    commit('fix(ci): the Risk gate was blind to the files that define the Risk gate (#62)',
+        ['.github/workflows/wealthflow-ci.yml']);
+    commit('fix(ci): the Risk gate asked "does this PR need approval?" when there was no PR (#63)',
+        ['.github/workflows/wealthflow-ci.yml', 'test/b_test.js']);
+    commit('fix(discover): the scanner lost half its detectors, then refused to exit (#64)',
+        ['autonomy/discover.mjs']);
+    commit('chore(merchants): auto-expand + verify merchant list [skip ci]', ['merchants.json']);
+    commit('release: v7.69.18 — patch', ['version.json']);
+    git(['tag', 'v7.69.18']);
+    return dir;
+}
+
+describe('against a real git repo carrying the v7.69.17..v7.69.18 shapes', () => {
+    const dir = buildFixtureRepo();
+    const commits = commitsInRange('v7.69.17', 'v7.69.18', { repoDir: dir });
     const r = describeRelease(commits, { version: '7.69.18' });
 
-    it('found the actual commits (not an empty range)', () => {
-        expect(commits.length).toBeGreaterThan(3);
+    it('reads the range through actual git, not a stubbed list', () => {
+        // Guards the vacuous-pass failure mode: if this is 0, every assertion
+        // below is meaningless, so fail here first and say why.
+        expect(commits.length, 'commitsInRange returned nothing — git plumbing broken').toBe(7);
+        expect(commits[0].files.length).toBeGreaterThan(0);
     });
 
     it('separates the one change the owner would notice from the four he would not', () => {
@@ -130,6 +200,11 @@ describe('against the real v7.69.17..v7.69.18 history', () => {
     });
 
     it('excludes the release commit and the merchant chore from both sections', () => {
+        // This assertion is only meaningful if structured exists — a null here
+        // stringifies to "null" and would satisfy both negative matches while
+        // testing nothing. That is precisely how this test passed in CI while
+        // its four siblings failed.
+        expect(r.structured, 'nothing to inspect — the negative matches below would be vacuous').not.toBe(null);
         const all = JSON.stringify(r.structured);
         expect(all).not.toMatch(/release: v/);
         expect(all).not.toMatch(/auto-expand/);
