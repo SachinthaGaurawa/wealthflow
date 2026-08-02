@@ -69,6 +69,7 @@
             var s = document.createElement('script');
             s.src = CRYPTOJS_CDN;
             s.async = true;
+            s.defer = true; // Add defer attribute
             s.onload = function () {
                 if (done) return; done = true; clearTimeout(to);
                 (window.CryptoJS && window.CryptoJS.AES) ? resolve(window.CryptoJS)
