@@ -1,5 +1,15 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.19 — 2026-08-03
+
+**What changed for you**
+
+- The What's-New sheet showed another release's notes rather than none (#69)
+
+**Under the hood**
+
+- Say what actually shipped, instead of "improvements and fixes" (#68)
+
 ## v7.69.18 — 2026-08-02
 
 Improvements and fixes in this release.
