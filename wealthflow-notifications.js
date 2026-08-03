@@ -1,27 +1,3 @@
-/* ============================================================================
- * WealthFlow Elite — Notifications Centre  (v7.38.0)
- * ----------------------------------------------------------------------------
- * Self-wiring topbar notifications bell.
- *   • Aggregates URGENT / WARNING / INFO items from existing data only
- *     (cheques, CC one-time, loans, subscriptions, CC installments).
- *     It NEVER writes financial data — read-only via window.DB.
- *   • Red badge = count of UNSEEN urgent + warning items.
- *   • Grouped, professional panel; most-urgent first, newest within a tier.
- *   • Click → navigate to the relevant page + mark seen. Opening = mark seen.
- *   • Optional DEVICE push notifications (Notifications API + service worker),
- *     opt-in via Settings, deduped so each item alerts at most once.
- *   • Settings → Notifications: master + per-category + push toggles.
- *
- * v7.38.0 fixes/upgrades:
- *   1. SEEN-STATE PERSISTENCE — pruneSeen no longer wipes seen ids during the
- *      boot race (empty list) or for transiently-absent items; it only drops
- *      past-month-stamped ids and hard-caps size. Unseen count now survives
- *      reload / app restart correctly.
- *   2. MOBILE CUTOFF — on small screens the panel is viewport-fixed with side
- *      gutters + safe-area insets, so it can never be clipped by the edge.
- *   3. UI — grouped sections, summary line, due chips, refined styling.
- *   4. DEVICE PUSH — reminders surface in the OS notification centre.
- * ==========================================================================*/
 (function () {
     'use strict';
 
@@ -78,9 +54,21 @@
 
     /* ----------------------------------------------------------- seen-state */
     function seen() { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {}; } catch (_) { return {}; } }
-    function saveSeen(o) { try { localStorage.setItem(SEEN_KEY, JSON.stringify(o || {})); } catch (_) { } }
+    function saveSeen(o) {
+        try {
+            localStorage.setItem(SEEN_KEY, JSON.stringify(o || {}));
+        } catch (e) {
+            console.warn('WealthFlow Notifications: Failed to save seen state to localStorage. QuotaExceededError?', e);
+        }
+    }
     function pushedMap() { try { return JSON.parse(localStorage.getItem(PUSH_KEY) || '{}') || {}; } catch (_) { return {}; } }
-    function savePushed(o) { try { localStorage.setItem(PUSH_KEY, JSON.stringify(o || {})); } catch (_) { } }
+    function savePushed(o) {
+        try {
+            localStorage.setItem(PUSH_KEY, JSON.stringify(o || {}));
+        } catch (e) {
+            console.warn('WealthFlow Notifications: Failed to save pushed state to localStorage. QuotaExceededError?', e);
+        }
+    }
 
     /* --------------------------------------------------------- computation  */
     // { id, sev, cat, icon, title, sub, when, date, sortTs, page }
