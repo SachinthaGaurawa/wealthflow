@@ -79,14 +79,54 @@ export function isSensitive(p) {
     return SENSITIVE.some((re) => re.test(f));
 }
 
-/** Files the swarm may edit: root-level, non-sensitive, reasonably sized JS modules. */
-export function candidateFiles(allFiles, { repoDir = process.cwd(), maxBytes = 120_000 } = {}) {
+/**
+ * The largest file the authoring step can actually rewrite.
+ *
+ * WHY THIS IS 32 KB AND WAS 120 KB
+ * authorPrompt() demands "the COMPLETE corrected contents of this file" with
+ * maxTokens: 16_000, and llm-router.mjs declares no per-provider output cap —
+ * every one of the fifteen providers is asked for 16,000 tokens regardless of
+ * what it will actually emit. Several free tiers cap far lower and simply stop
+ * mid-stream.
+ *
+ * The old 120 KB selection limit was therefore roughly four times what the
+ * generation step could deliver on a good day, and the two numbers had never
+ * been reconciled. Issue #71 is what that costs: fifteen attempts on the 42 KB
+ * wealthflow-notifications.js between 2 and 5 August, alternating between
+ * "output lost 54% of the file — likely truncated", "unbalanced braces", and
+ * "model returned no change". The owner's highest-severity bug was never
+ * winnable, and nothing said so.
+ *
+ * 32 KB is ~9.7k tokens of JavaScript at ~3.3 bytes/token, which survives a
+ * provider silently halving a 16k request and still leaves room for the fix to
+ * ADD lines. It keeps 36 of the 46 modules in scope. The other ten are honestly
+ * out of reach for whole-file rewriting and now say so instead of failing
+ * forever — see oversizedFiles().
+ */
+export const MAX_AUTHORABLE_BYTES = 32_000;
+
+const editable = (f) => /\.js$/i.test(f) && !f.includes('/') && !isSensitive(f) && !/\.test\.js$/i.test(f);
+const sizeOf = (f, repoDir) => { try { return fs.statSync(path.join(repoDir, f)).size; } catch { return Infinity; } };
+
+/** Files the swarm may edit: root-level, non-sensitive, and small enough to rewrite whole. */
+export function candidateFiles(allFiles, { repoDir = process.cwd(), maxBytes = MAX_AUTHORABLE_BYTES } = {}) {
+    return (allFiles || []).filter(editable).filter((f) => sizeOf(f, repoDir) <= maxBytes).sort();
+}
+
+/**
+ * Files the swarm would be allowed to edit but cannot rewrite whole.
+ *
+ * Reported so a failure names the real obstacle. "No safe editable file matches
+ * this issue" tells the owner nothing; "wealthflow-notifications.js is 42 KB,
+ * too large to rewrite in one model response" tells them exactly who has to
+ * pick it up and why.
+ */
+export function oversizedFiles(allFiles, { repoDir = process.cwd(), maxBytes = MAX_AUTHORABLE_BYTES } = {}) {
     return (allFiles || [])
-        .filter((f) => /\.js$/i.test(f) && !f.includes('/') && !isSensitive(f) && !/\.test\.js$/i.test(f))
-        .filter((f) => {
-            try { return fs.statSync(path.join(repoDir, f)).size <= maxBytes; } catch { return false; }
-        })
-        .sort();
+        .filter(editable)
+        .map((f) => ({ file: f, bytes: sizeOf(f, repoDir) }))
+        .filter((x) => Number.isFinite(x.bytes) && x.bytes > maxBytes)
+        .sort((a, b) => b.bytes - a.bytes);
 }
 
 // ── role definitions ────────────────────────────────────────────────────────
@@ -484,7 +524,9 @@ export async function runSwarm({
     log(`[swarm] ${role.agent} taking issue #${issue?.number ?? '—'}`);
 
     // ── stage 1: which file? ────────────────────────────────────────────────
-    const files = candidateFiles(fs.readdirSync(repoDir), { repoDir });
+    const allFiles = fs.readdirSync(repoDir);
+    const files = candidateFiles(allFiles, { repoDir });
+    const oversized = oversizedFiles(allFiles, { repoDir });
     if (!files.length) return { ok: false, stage: 'select', reason: 'no editable module files' };
 
     const picked = await chat({
@@ -494,7 +536,16 @@ export async function runSwarm({
     providers.select = picked.provider;
     const file = resolvePick(picked.text, files);
     if (!file) {
-        return { ok: false, stage: 'select', reason: `no safe editable file matches this issue (model said: ${picked.text.trim().slice(0, 80)})`, providers };
+        // Name the real obstacle when there is one. "No safe editable file
+        // matches this issue" is what issue #71 was told fifteen times while the
+        // file it needed sat just over the size limit.
+        const tooBig = oversized.length
+            ? ` The following module(s) are in scope but too large to rewrite in one model response, so a human has to take them: ${oversized.slice(0, 3).map((x) => `${x.file} (${Math.round(x.bytes / 1024)} KB)`).join(', ')}.`
+            : '';
+        return {
+            ok: false, stage: 'select', providers, oversized,
+            reason: `no safe editable file matches this issue (model said: ${picked.text.trim().slice(0, 80)}).${tooBig}`,
+        };
     }
     log(`[swarm] target file: ${file} (via ${picked.provider})`);
 

@@ -95,6 +95,48 @@ export function isStuck({ attempts = 0, signatures = [] } = {}) {
     return { stuck: false };
 }
 
+/**
+ * Reconcile the on-disk attempt count against the agent's own comment trail.
+ *
+ * THE BUG THIS FIXES
+ * `autonomy/state/issue-N.json` only ever reaches the repository on the paths
+ * that OPEN A PR — .github/workflows/autonomous-fix.yml runs
+ * `git add -- autonomy/state` inside the success branches only. When an attempt
+ * FAILS, the file is written to the runner's disk and the runner is destroyed.
+ * So readState() returned {attempts: 0} on every single run.
+ *
+ * Issue #71 is the receipt: fifteen attempts between 2 and 5 August, every one
+ * of them announcing "attempt 1/3". isStuck() never fired, the `ai-stuck` label
+ * was never applied, and the owner's highest-severity bug was retried forever
+ * instead of being handed to him — while the file it needed was too large for
+ * the agent to rewrite at all.
+ *
+ * THE SIGNAL WAS ALREADY THERE
+ * Every attempt posts a comment carrying `<!-- wf-agent-attempt -->`, and
+ * work-queue.mjs has exported attemptsFrom() to count exactly those since the
+ * beginning — tested in test/autonomy_test.js and called by nothing. The
+ * durable record existed, was correct, and had no consumer, while the code
+ * depended on the one copy that could not survive. Reading it needs no new
+ * storage and no workflow permission, and it makes #71's fifteen existing
+ * comments count immediately.
+ *
+ * The file is still consulted and the higher of the two wins, so the count
+ * cannot go backwards if a comment is ever deleted.
+ */
+async function reconcileAttempts(number, state) {
+    try {
+        const fromComments = Q.attemptsFrom(await Q.issueComments(number));
+        if (fromComments > (state.attempts || 0)) {
+            log(`#${number} attempts: ${state.attempts || 0} on disk, ${fromComments} in the comment trail — using ${fromComments}`);
+            return { ...state, attempts: fromComments };
+        }
+    } catch (e) {
+        // Never fatal: a comment-API hiccup must not stop a fix from happening.
+        log(`#${number} could not read the comment trail (${e.message}) — using the on-disk count`);
+    }
+    return state;
+}
+
 /** Per-issue attempt history, kept in-repo so it survives across runs. */
 function statePath(number) { return path.join(STATE_DIR, `issue-${number}.json`); }
 function readState(number) {
@@ -228,7 +270,7 @@ async function main() {
     const skipped = [];
     for (const issue of candidates) {
         const number = issue.number;
-        const state = readState(number);
+        const state = await reconcileAttempts(number, readState(number));
 
         const stuck = isStuck(state);
         if (stuck.stuck) {
