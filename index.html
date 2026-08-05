@@ -6997,6 +6997,43 @@
         else if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _wfInitFirebase);
         else _wfInitFirebase();
 
+        // AVATAR LOAD FAILURE — issue #74 ("please find the image and fix now",
+        // filed from the settings page).
+        //
+        // Every profile avatar in this app renders `currentUser.photoURL`, a
+        // Google CDN URL (lh3.googleusercontent.com). Those URLs rotate, expire,
+        // are blocked on some networks, and simply fail on a cold offline start
+        // of an installed PWA. None of the three <img> tags that use one had any
+        // error handling, so when the fetch failed the browser painted its
+        // broken-image icon — a torn grey placeholder sitting where the owner's
+        // face should be, on the Settings screen.
+        //
+        // Each of those tags already has a perfectly good no-photo fallback for
+        // the case where photoURL is empty. This just routes the FAILED-TO-LOAD
+        // case to the same place.
+        //
+        // The replacement text comes from data-fallback and is written with
+        // textContent, never innerHTML, so a display name can never inject
+        // markup here.
+        function _wfAvatarFail(img) {
+            try {
+                if (!img || img.dataset.wfFellBack) return;   // once only
+                img.dataset.wfFellBack = '1';
+                var d = document.createElement('div');
+                d.textContent = img.getAttribute('data-fallback') || '👤';
+                var cls = img.getAttribute('data-fallback-class');
+                if (cls) d.className = cls;
+                else {
+                    var size = (img.getAttribute('width') || img.style.width || '48px');
+                    d.style.cssText = 'width:' + size + ';height:' + size + ';border-radius:50%;background:var(--card3);'
+                        + 'display:flex;align-items:center;justify-content:center;font-size:24px;'
+                        + 'border:2px solid var(--accent);';
+                }
+                img.replaceWith(d);
+            } catch (_) { /* a fallback that throws is worse than a broken icon */ }
+        }
+        try { window._wfAvatarFail = _wfAvatarFail; } catch (_) { }
+
         let userDocRef = null;
         let currentUser = null;
 
@@ -14395,7 +14432,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             if ($('sbUser')) {
                                 const initial = (displayName.charAt(0) || '👤').toUpperCase();
                                 const avatarHtml = photoURL
-                                    ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
+                                    ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo" data-fallback="${initial}" data-fallback-class="sb-user-initial" onerror="_wfAvatarFail(this)">`
                                     : `<span class="sb-user-initial">${initial}</span>`;
                                 $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
                             }
@@ -14469,7 +14506,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                 if ($('sbUser')) {
                                     const initial = (displayName.charAt(0) || '👤').toUpperCase();
                                     const avatarHtml = photoURL
-                                        ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo">`
+                                        ? `<img src="${photoURL}" alt="${displayName}" class="sb-user-photo" data-fallback="${initial}" data-fallback-class="sb-user-initial" onerror="_wfAvatarFail(this)">`
                                         : `<span class="sb-user-initial">${initial}</span>`;
                                     $('sbUser').innerHTML = avatarHtml + `<span class="sb-user-name">${displayName}</span>`;
                                 }
@@ -20982,7 +21019,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">👤</div>
             <div class="settings-title" style="color:var(--accent);">Account & Identity</div>
             <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
-                ${userPhoto ? `<img src="${userPhoto}" alt="" style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);object-fit:cover;">` : '<div style="width:48px;height:48px;border-radius:50%;background:var(--card3);display:flex;align-items:center;justify-content:center;font-size:24px;">👤</div>'}
+                ${userPhoto ? `<img src="${userPhoto}" alt="" data-fallback="👤" onerror="_wfAvatarFail(this)" style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);object-fit:cover;">` : '<div style="width:48px;height:48px;border-radius:50%;background:var(--card3);display:flex;align-items:center;justify-content:center;font-size:24px;">👤</div>'}
                 <div>
                     <div style="font-weight:700;font-size:16px;">${userName}</div>
                     <div style="font-size:12px;color:var(--text3);">${userEmail}</div>
