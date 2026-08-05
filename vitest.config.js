@@ -35,7 +35,7 @@ export default defineConfig({
         reporters: ['default'],
         testTimeout: 30000,           // property/fuzz tests take a few seconds each
         hookTimeout: 10000,
-        environment: 'node',          // pure-logic tests; no DOM needed
+        environment: 'jsdom',          // DOM environment for tests that require it
         coverage: {
             provider: 'v8',
             include: ['wealthflow-statement-router.js', 'autonomy/**'],
