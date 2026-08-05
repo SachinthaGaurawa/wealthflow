@@ -44,6 +44,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
     verifyTestProves, runVitestFile, isSensitive, candidateFiles, testPrompt,
+    verificationPlan,
 } from '../autonomy/agent-swarm.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -204,6 +205,51 @@ describe('it fails closed', () => {
         } finally {
             try { fs.unlinkSync(p); } catch { /* best effort */ }
         }
+    });
+});
+
+describe('the verification cannot be switched off where it matters', () => {
+    // Raised by Agent 5 on this very PR: "the new verification mechanism could
+    // be bypassed". The parameter is not reachable by the swarm — the sole
+    // caller never passes it, and that caller is off-limits to the agent — but
+    // a gate with a silent off-switch is one careless refactor from being off.
+
+    it('refuses to skip verification in CI', () => {
+        const p = verificationPlan({ verifyTest: false, ci: true });
+        expect(p.allowed).toBe(false);
+        expect(p.reason).toMatch(/cannot be disabled in CI/);
+    });
+
+    it('verifies by default, with no arguments at all', () => {
+        expect(verificationPlan().verify).toBe(true);
+        expect(verificationPlan({}).verify).toBe(true);
+    });
+
+    it('still verifies in CI when nothing asked to skip', () => {
+        const p = verificationPlan({ verifyTest: true, ci: true });
+        expect(p.allowed).toBe(true);
+        expect(p.verify).toBe(true);
+    });
+
+    it('allows the skip only off-CI, and says it is skipping', () => {
+        const p = verificationPlan({ verifyTest: false, ci: false });
+        expect(p.allowed).toBe(true);
+        expect(p.verify).toBe(false);
+    });
+
+    it('the production caller never passes the opt-out', () => {
+        // If autonomous-fix-agent.js ever starts passing verifyTest, this fails
+        // and someone has to justify it in a diff.
+        const caller = fs.readFileSync(path.join(ROOT, 'autonomous-fix-agent.js'), 'utf8');
+        expect(caller).toMatch(/runSwarm\(/);
+        expect(caller).not.toMatch(/verifyTest/);
+    });
+
+    it('a skipped verification is never reported as a verified one', () => {
+        // `verified` is derived separately from testProof.ok precisely so that
+        // {ok:true, skipped:true} cannot be read downstream as evidence.
+        const src = fs.readFileSync(path.join(ROOT, 'autonomy', 'agent-swarm.mjs'), 'utf8');
+        expect(src).toMatch(/const verified = Boolean\(testProof && testProof\.ok && !testProof\.skipped\)/);
     });
 });
 

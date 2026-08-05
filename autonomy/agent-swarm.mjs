@@ -226,6 +226,24 @@ export function authorPrompt(issue, filename, content) {
  */
 
 /**
+ * Decide whether verification may be skipped for this run.
+ *
+ * Agent 5 flagged the `verifyTest` parameter as a bypass. It is not reachable
+ * by the swarm — the only caller is autonomous-fix-agent.js, which never passes
+ * it, and that file plus .github/ are both off-limits to the agent — but a gate
+ * with a silent off-switch is one careless refactor away from being off. So the
+ * off-switch is refused outright where it would matter, and its own decision is
+ * a pure function rather than a condition buried in a 200-line orchestrator,
+ * because a guard nobody can test is a guard nobody has tested.
+ */
+export function verificationPlan({ verifyTest = true, ci = false } = {}) {
+    if (!verifyTest && ci) {
+        return { allowed: false, verify: true, reason: 'test verification cannot be disabled in CI' };
+    }
+    return { allowed: true, verify: Boolean(verifyTest) };
+}
+
+/**
  * Run one test file through Vitest. Returns, never throws.
  *
  * Split out from verifyTestProves() so the verifier can be driven with a stub —
@@ -547,7 +565,13 @@ export async function runSwarm({
         }
 
         const tf = path.join('test', `auto-${file.replace(/\.js$/i, '')}-${issue?.number || 'x'}.test.js`);
-        testProof = verifyTest
+
+        const plan = verificationPlan({ verifyTest, ci: Boolean(env.CI) });
+        if (!plan.allowed) {
+            return { ok: false, stage: 'proof', file, code, providers, review, reason: plan.reason };
+        }
+
+        testProof = plan.verify
             ? verifyTestProves({ repoDir, targetFile: file, before, after: code, testFile: tf, testSource: candidate, log })
             : { ok: true, skipped: true, beforeFailed: null, afterPassed: null };
 
@@ -568,5 +592,9 @@ export async function runSwarm({
         log(`[swarm] Agent 4 wrote ${testFile}, verified red→green (via ${t.provider})`);
     }
 
-    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, role: role.id, review, providers };
+    // `verified` is stated separately from testProof so a skipped verification
+    // can never be read downstream as a passed one — the distinction that
+    // decides whether this PR's evidence means anything.
+    const verified = Boolean(testProof && testProof.ok && !testProof.skipped);
+    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, verified, role: role.id, review, providers };
 }
