@@ -107,6 +107,53 @@ function writeState(number, state) {
     } catch (e) { log('could not persist state (non-fatal):', e.message); }
 }
 
+/**
+ * The PR description the agent writes for a drafted fix.
+ *
+ * Exported and pure so its central claim can be tested rather than eyeballed.
+ * That claim is the whole reason this function exists separately: for PRs #67,
+ * #72, #73, #75 and #76 the body said "**Proving test:** `file` written by
+ * Agent 4 (QA)" — perfectly true, and worthless, because not one of those tests
+ * had ever executed. Since #78 the candidate is run red→green before a PR is
+ * drafted, so the body must distinguish "a test exists" from "a test proved
+ * something". A verification a reviewer cannot see is a verification that
+ * changes nobody's decision — the same computed-and-never-consumed defect this
+ * pipeline keeps producing, one level up.
+ */
+export function prBody({ issue = {}, number, result = {}, testWritten = null } = {}) {
+    const provs = result.providers || {};
+    return [
+        '## Autonomous fix',
+        '',
+        `Closes #${number}`,
+        '',
+        `**Authored by:** ${result.role} agent via \`${provs.author}\``,
+        `**Independently reviewed by:** Agent 5 (Chaos Security) via \`${provs.security || 'unavailable'}\``,
+        `**Security verdict:** ${result.review?.verdict || 'n/a'}${result.review?.reason ? ` — ${result.review.reason}` : ''}`,
+        testWritten && result.verified
+            ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — executed and verified: it FAILS against the original file and PASSES against this one.`
+            : testWritten
+                ? `**Proving test:** \`${testWritten}\` by Agent 4 (QA) via \`${provs.qa}\` — ⚠️ NOT verified red→green. Do not treat it as evidence.`
+                : '**Proving test:** none — this PR needs human review before merge.',
+        '',
+        '### Issue',
+        '> ' + String(issue.title || '').replace(/\n/g, '\n> '),
+        '',
+        '### Gates already passed before this PR existed',
+        '- Structural check (truncation, placeholders, new `eval`/`innerHTML` sinks, brace balance)',
+        '- `node --check` parse of the rewritten file',
+        '- Independent security review on a different model provider than the author',
+        result.verified
+            ? '- **The proving test was executed twice** — red against the original file, green against this one'
+            : '- ⚠️ The proving test was NOT executed red→green',
+        '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
+        '',
+        '### Still to pass in CI',
+        'Full test suite · multi-model consensus review · OPA/Conftest policy gate · fuzz gate if applicable.',
+        FOOTER,
+    ].join('\n');
+}
+
 async function main() {
     // ── preflight: prove we can actually work, and say so plainly ──────────
     const llm = describeAvailability();
@@ -270,31 +317,7 @@ async function main() {
             issue: number,
             role: result.role,
             providers: provs,
-            body: [
-                '## Autonomous fix',
-                '',
-                `Closes #${number}`,
-                '',
-                `**Authored by:** ${result.role} agent via \`${provs.author}\``,
-                `**Independently reviewed by:** Agent 5 (Chaos Security) via \`${provs.security || 'unavailable'}\``,
-                `**Security verdict:** ${result.review?.verdict || 'n/a'}${result.review?.reason ? ` — ${result.review.reason}` : ''}`,
-                testWritten
-                    ? `**Proving test:** \`${testWritten}\` written by Agent 4 (QA) via \`${provs.qa}\``
-                    : '**Proving test:** none — this PR needs human review before merge.',
-                '',
-                '### Issue',
-                '> ' + String(issue.title).replace(/\n/g, '\n> '),
-                '',
-                '### Gates already passed before this PR existed',
-                '- Structural check (truncation, placeholders, new `eval`/`innerHTML` sinks, brace balance)',
-                '- `node --check` parse of the rewritten file',
-                '- Independent security review on a different model provider than the author',
-                '- Sensitive-path gate: this change touches no auth, crypto, money, rules, service-worker, dependency, or CI file',
-                '',
-                '### Still to pass in CI',
-                'Full test suite · multi-model consensus review · OPA/Conftest policy gate · fuzz gate if applicable.',
-                FOOTER,
-            ].join('\n'),
+            body: prBody({ issue, number, result, testWritten }),
         };
         fs.writeFileSync(OUTPUT, JSON.stringify(pr, null, 2) + '\n');
 
@@ -305,6 +328,7 @@ async function main() {
             `| Role | ${result.role} |\n` +
             `| File | \`${result.file}\` |\n` +
             `| Test | ${testWritten ? `\`${testWritten}\`` : '_none_'} |\n` +
+            `| Test verified red→green | ${result.verified ? 'yes' : '**no**'} |\n` +
             `| Author model | \`${provs.author}\` |\n` +
             `| Reviewer model | \`${provs.security || 'unavailable'}\` |\n` +
             `| Attempt | ${state.attempts}/${MAX_ATTEMPTS} |\n`
