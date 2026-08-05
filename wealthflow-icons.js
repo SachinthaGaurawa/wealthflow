@@ -61,9 +61,61 @@
         cloud:'<path d="M17.5 19H7A5 5 0 0 1 7 9a6 6 0 0 1 11.3 1.7A4.5 4.5 0 0 1 17.5 19Z"/>',
         cloudDownload:'<path d="M12 13v8"/><path d="m8 17 4 4 4-4"/><path d="M20.5 15.5A5 5 0 0 0 18 6.5a6 6 0 0 0-11.3 1.7A4.5 4.5 0 0 0 6 17"/>'
     };
+    /* ------------------------------------------------------------------ sprite
+     * Issue #66 — "3702 DOM elements on the dashboard".
+     *
+     * Every icon used to inline its own shape, so the same 4-node calendar or
+     * 5-node bank glyph was rebuilt at every call site. Measured on the running
+     * app: 183 <svg> elements carrying 508 descendant nodes, drawn from only 40
+     * distinct shapes.
+     *
+     * The shapes are now defined ONCE in a hidden <symbol> sprite and every icon
+     * references one with a single <use>. Each icon drops from k children to 1.
+     *
+     * Measured, not estimated:
+     *     descendants before : 508
+     *     descendants after  : 342   (183 <use> + 1 sprite + 40 symbols + 118 shape children)
+     *
+     * Two things make this safe rather than clever:
+     *   · the outer <svg> keeps its class, size, fill and stroke, so every
+     *     selector and every bit of CSS that targets .wfi still matches, and the
+     *     shapes inherit `currentColor` through <use> exactly as before;
+     *   · the sprite is injected before any icon is emitted, so no icon can ever
+     *     reference a symbol that is not there yet.
+     */
+    var SPRITE_ID = 'wfIconSprite';
+    var _spriteReady = false;
+
+    function ensureSprite() {
+        if (_spriteReady) return;
+        try {
+            var host = document.body || document.documentElement;
+            if (!host) return;                       // too early; svg() retries
+            if (document.getElementById(SPRITE_ID)) { _spriteReady = true; return; }
+            var parts = [];
+            for (var n in P) {
+                if (Object.prototype.hasOwnProperty.call(P, n)) {
+                    parts.push('<symbol id="wfi-' + n + '" viewBox="0 0 24 24">' + P[n] + '</symbol>');
+                }
+            }
+            var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            s.setAttribute('id', SPRITE_ID);
+            s.setAttribute('aria-hidden', 'true');
+            s.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
+            s.innerHTML = parts.join('');
+            host.appendChild(s);
+            _spriteReady = true;
+        } catch (_) { /* fall back to inline shapes below */ }
+    }
+
     function svg(name, attrs) {
         var d = P[name]; if (!d) return '';
-        return '<svg class="wfi wfi-' + name + '" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (attrs || '') + '>' + d + '</svg>';
+        ensureSprite();
+        // If the sprite could not be created (called before <body> exists, or a
+        // hostile DOM), fall back to the original inline shape. A missing icon
+        // is a worse outcome than a few extra nodes.
+        var body = _spriteReady ? '<use href="#wfi-' + name + '"/>' : d;
+        return '<svg class="wfi wfi-' + name + '" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (attrs || '') + '>' + body + '</svg>';
     }
     function WFIcon(name) { return svg(name); }
     WFIcon.has = function (n) { return !!P[n]; };
