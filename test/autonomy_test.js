@@ -240,6 +240,10 @@ describe('agent-swarm: sensitive-path gate (anti toxic-proactivity)', () => {
         // the pipeline's own brain — the agent must not "fix" its own failures away
         'autonomy/llm-router.mjs', 'autonomous-fix-agent.js', 'autonomous-brain.js',
         'consensus-review.mjs', 'consensus-review.js',
+        // …nor the harness that judges it. PRs #79 and #80 both tried to "fix"
+        // the agent's non-running tests by flipping vitest.config.js to
+        // environment 'jsdom' without the dependency: 904 passing tests -> 0.
+        'vitest.config.js', 'vitest.config.mjs', 'vite.config.js',
     ];
 
     it.each(MUST_BE_BLOCKED)('refuses to edit %s', (f) => {
