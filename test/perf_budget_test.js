@@ -2,9 +2,11 @@
 // WealthFlow Shadow Test Harness — the payload budget
 // =============================================================================
 // Measured: index.html is 1,508 KB, the 43 modules add 1,202 KB, and 2.7 MB
-// leaves the server before the app is usable. Six script tags block the first
-// paint, four of them third-party — so first paint waits on someone else's CDN.
-// (It was seven until Chart.js was deferred; see the last block in this file.)
+// leaves the server before the app is usable. Two script tags block the first
+// paint, both first-party and both served from this origin. (It was seven until
+// Chart.js was deferred — see the last block in this file — and six until issue
+// #65 deleted the unused Firebase Storage SDK and deferred the other three
+// gstatic.com tags behind an init gate; see test/firebase_defer_test.js.)
 //
 // WHY THESE ARE CEILINGS AND NOT TARGETS
 // None of that is fixable in one pull request, and there is no build step to
@@ -67,12 +69,21 @@ describe('render-blocking detection', () => {
     });
 
     it('finds the real render-blocking set in index.html', () => {
-        // Documented rather than merely counted, because which ones matters: the
-        // four Firebase SDKs and Chart.js are third-party, so the first paint waits
-        // on a CDN this app does not control.
+        // Which ones matters more than how many. Until issue #65 this assertion
+        // read the other way round — it required at least four third-party
+        // blockers and a Firebase tag among them, because that was the measured
+        // truth and a budget test states what is, not what one wishes were so.
+        // The fix inverted the fact, so the assertion inverts with it: nothing on
+        // the critical path may come from a host this app does not control.
+        //
+        // It is still not a bare count. A count of two would pass if someone swapped
+        // a first-party tag for a CDN one, which is the exact regression #65 fixed.
         const list = measure().renderBlockingList;
-        expect(list.filter((s) => /^https?:/.test(s)).length).toBeGreaterThanOrEqual(4);
-        expect(list.some((s) => /firebase/.test(s))).toBe(true);
+        expect(list.length, 'render-blocking set is empty — measure() found no index.html').toBeGreaterThan(0);
+        for (const s of list) {
+            expect(s, `first paint waits on a third party again: ${s}`).not.toMatch(/^https?:\/\//);
+        }
+        expect(list.some((s) => /firebase/i.test(s)), 'a Firebase SDK is render-blocking again').toBe(false);
     });
 
     it('never throws on malformed or empty markup', () => {

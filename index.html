@@ -230,10 +230,23 @@
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
 
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+    <!-- FIREBASE — deferred, and one of them deleted outright.
+         These four tags were the "4 third-party scripts block first paint" in #65.
+         Parsing halted on each until gstatic.com answered, so the first paint of a
+         financial app waited on someone else's CDN four times over.
+
+         firebase-storage-compat.js is GONE, not deferred: `firebase.storage()`
+         appears nowhere in this repository. `storageBucket` in the config below is
+         a string passed to initializeApp, not a use of the SDK. It was downloaded
+         and parsed on every load, by every device, for nothing.
+
+         The other three carry `defer`, which is only safe because the init that
+         needs them no longer runs during parsing — see _wfInitFirebase() below.
+         Adding `defer` here WITHOUT that change throws "firebase is not defined"
+         and takes the whole app down, so the two edits belong together. -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js" defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
@@ -6916,7 +6929,36 @@
         // v7.5.9 — Firestore handle declared OUTSIDE the redirect guard so
         // it stays in outer scope for any later module that imports it.
         let db = null;
-        if (!window._WF_REDIRECTING) {
+
+        // WHY THIS IS A FUNCTION NOW, AND NOT STRAIGHT-LINE CODE
+        // The four Firebase <script> tags above used to be render-blocking, so by
+        // the time the parser reached this line the SDK was guaranteed present and
+        // `firebase.initializeApp(...)` could simply be called. Deferring them
+        // breaks that guarantee absolutely: a deferred script executes AFTER the
+        // document is parsed, while this inline block executes DURING parsing, so
+        // the naive change throws "firebase is not defined" and the app never
+        // starts. The tags and this function have to move together.
+        //
+        // Deferred scripts are guaranteed to have executed before DOMContentLoaded
+        // fires, and to run in document order — so on that event the SDK is loaded
+        // and firebase-app has initialised before firestore and auth touch it.
+        //
+        // Verified safe for the wealthflow-*.js modules, which also load deferred
+        // and therefore now run BEFORE this init: every one of them reads
+        // `window.db` inside a function rather than at load time, and each already
+        // guards with `window.db || (fb && fb.firestore ? fb.firestore() : null)`.
+        // Nothing reads the handle while it is still null.
+        function _wfInitFirebase() {
+            if (window._WF_REDIRECTING) return;
+            if (!window.firebase || typeof firebase.initializeApp !== 'function') {
+                // Say so loudly. A silent return here would leave a signed-out app
+                // with no explanation, which is the failure mode this codebase has
+                // produced too often already.
+                try { console.error('[Firebase] SDK did not load — the app cannot sign in or sync.'); } catch (_) {}
+                return;
+            }
+            // Idempotent: re-entry must not throw "app already exists".
+            try { if (firebase.apps && firebase.apps.length) return; } catch (_) {}
 
         firebase.initializeApp(firebaseConfig);
         db = firebase.firestore();
@@ -6945,7 +6987,15 @@
             }
         });
 
-        } // v7.5.9 — end of !window._WF_REDIRECTING guard (covers Firebase init only)
+        } // end of _wfInitFirebase()
+
+        // Run as soon as the SDK is available. The readyState check keeps this
+        // correct if the tags above ever lose their `defer` again: with a blocking
+        // SDK, firebase is already present here and init happens synchronously,
+        // exactly as it did before.
+        if (window.firebase && typeof window.firebase.initializeApp === 'function') _wfInitFirebase();
+        else if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _wfInitFirebase);
+        else _wfInitFirebase();
 
         let userDocRef = null;
         let currentUser = null;
