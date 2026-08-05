@@ -72,10 +72,19 @@ export const BUDGETS = {
     // deliberately NOT touched, because it did not fail and raising a ceiling
     // that is still holding is the pre-emptive slackening this file exists to
     // prevent.
-    scriptTags: 51,              // measured 50 (tightened: one tag removed)
-    renderBlockingScripts: 6,    // was 7; Chart.js deferred, so the ceiling comes down
-                                 // with it. A ratchet that is not tightened after an
-                                 // improvement quietly permits the improvement to be undone.
+    // TIGHTENED: 51 -> 50. firebase-storage-compat.js was deleted outright in
+    // the #65 fix -- `firebase.storage()` appears nowhere in this repository, so
+    // it was downloaded and parsed on every load for nothing.
+    scriptTags: 50,              // measured 49
+    // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
+    // "4 third-party scripts block first paint": four gstatic.com Firebase tags
+    // that halted parsing until someone else's CDN answered. One was deleted as
+    // unused; three now carry `defer`, paired with an init that waits for them.
+    // Proven by a full browser sweep signing in through
+    // google-auth -> pin-setup -> security-question -> recovery-code -> pin-unlock
+    // with 0 page errors and 0 console errors, identical to the run before the
+    // change. The two survivors are first-party and load from this origin.
+    renderBlockingScripts: 2,    // measured 2 (wealthflow-stability.js, wealthflow-icons.js)
 };
 
 /** Bytes of a file, or 0 if it is not there. */
@@ -88,8 +97,12 @@ function bytes(file) {
  *
  * A tag is non-blocking if it carries `defer`, `async`, or `type="module"`
  * (modules are deferred by definition). Everything else halts parsing until it
- * has been fetched and executed — and four of the six here are third-party, so
- * the first paint waits on someone else's CDN.
+ * has been fetched and executed.
+ *
+ * Six tags used to qualify, four of them third-party, so the first paint waited
+ * on someone else's CDN four times over — issue #65. The two survivors are
+ * first-party and served from this origin; see test/firebase_defer_test.js for
+ * the assertion that keeps it that way.
  */
 export function renderBlocking(html) {
     const tags = String(html || '').match(/<script\b[^>]*\bsrc\s*=[^>]*>/gi) || [];
