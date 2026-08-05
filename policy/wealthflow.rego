@@ -137,3 +137,42 @@ deny contains msg if {
     not human_approved
     msg := "BLOCKED: 'sw.js' can brick every installed PWA if it is wrong. Service-worker changes require 'human-approved'."
 }
+
+# ── RULE 6 — an autonomous PR may NEVER touch the test harness config ───────
+# THIS RULE HAS NO `human-approved` ESCAPE. That is the entire point of it, and
+# it is the only rule in this file built that way.
+#
+# WHY IT EXISTS
+# Issue #78 reported that the swarm's generated tests were never executed. The
+# swarm's answer, in PR #79 and then again — byte-identical — in PR #80, was to
+# flip vitest.config.js from `environment: 'node'` to `environment: 'jsdom'`
+# without adding the dependency. Measured on that branch: 904 passing tests
+# become 0 tests and 33 errors, because `jsdom` is not installed. Told its tests
+# did not run, the agent disabled every test in the repository. agent-swarm.mjs
+# was never touched, so the actual defect survived untouched too.
+#
+# WHY A LABEL IS NOT ENOUGH HERE
+# RULE 2 already listed vitest.config.* as a guardrail, and RULE 2 would have
+# stopped #79. It did not stop #80 — because #80 arrived already carrying
+# `human-approved`. One mislabelled PR is all it takes, and `human-approved` is
+# a master key that unlocks every other rule at once. A control whose failure
+# mode is "the whole suite silently runs nothing" is exactly the control that
+# must not be openable by accident: this repository has already shipped a green
+# safety harness that ran zero assertions for months, and that is the cost of
+# being wrong here.
+#
+# An agent may not edit the instrument that judges it. A human editing the test
+# config in a human-authored PR is unaffected — this only fires on PRs the
+# pipeline itself opened, identified by the `ai-fix` label that the fix workflow
+# applies to every PR it creates.
+autonomous if "ai-fix" in input.labels
+
+test_harness_config(f) if regex.match(`^vitest\.config\.[a-z]+$`, lower(f))
+test_harness_config(f) if regex.match(`^vite\.config\.[a-z]+$`, lower(f))
+
+deny contains msg if {
+    autonomous
+    some f in input.files
+    test_harness_config(f)
+    msg := sprintf("BLOCKED: '%s' configures the harness that validates autonomous work, and an autonomous PR may never change it. This denial is deliberately NOT unlockable with 'human-approved' — see RULE 6. If the test environment genuinely needs to change, a human must open that PR themselves.", [f])
+}

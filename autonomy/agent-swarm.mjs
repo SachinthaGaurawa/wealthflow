@@ -54,6 +54,19 @@ const SENSITIVE = [
     /^autonomous-fix-agent\.js$/i,
     /^autonomous-brain\.js$/i,
     /^consensus-review\.(js|mjs)$/i,
+    // THE TEST HARNESS ITSELF — an absolute bar, added after the agent tried
+    // twice (PRs #79 and #80, byte-identical) to "fix" its non-running tests by
+    // flipping vitest.config.js from environment 'node' to 'jsdom' without
+    // adding the dependency. That change takes the suite from 904 passing to
+    // 0 tests / 33 errors: it does not make the agent's tests run, it stops
+    // EVERY test running. #80 even arrived carrying `human-approved`.
+    //
+    // An agent may not edit the instrument that judges it. There is no
+    // legitimate autonomous reason to change the environment for all 34 test
+    // files, and the failure mode is total and silent — precisely how this repo
+    // once shipped a green "safety harness" that ran zero assertions for months.
+    /^vitest\.config\.[a-z]+$/i,
+    /^vite\.config\.[a-z]+$/i,
     /^HANDLEAISCAN_PATCH\.js$/i,   // a raw patch dump, not a live module
     /^ai-vision\.js$/i,            // holds provider credentials server-side
     /^inbox-(ack|pull|push)\.js$/i,
@@ -83,7 +96,8 @@ ABSOLUTE CONSTRAINTS — these outrank the task itself:
   • NEVER weaken, disable, or delete a security check, input validation,
     authentication step, or money calculation to make anything "work".
   • NEVER touch: index.html, sw.js, firestore.rules, package.json, vercel.json,
-    anything matching auth/oauth/crypto/fifo/allocator/otp, .github/, policy/.
+    vitest.config.*, anything matching auth/oauth/crypto/fifo/allocator/otp,
+    .github/, policy/.
   • If a correct fix would require any of the above, DO NOT invent a workaround.
     Reply with exactly: CANNOT_FIX_SAFELY followed by one sentence of reasoning.
   • Preserve the file's existing style, module pattern (IIFE / window globals),
@@ -191,6 +205,112 @@ export function authorPrompt(issue, filename, content) {
     ].join('\n');
 }
 
+// ── proving that the proving test proves anything ───────────────────────────
+/*
+ * THE DEFECT THIS SECTION EXISTS TO KILL
+ *
+ * Agent 4's output used to be accepted on three regexes: does it mention
+ * vitest, does the string `expect(` appear, does it parse. A file that imports
+ * a package this repo does not have and throws on its first line satisfies all
+ * three. Five PRs (#67, #72, #73, #75, #76) shipped roughly a thousand lines of
+ * generated tests on that basis. Not one assertion ever executed.
+ *
+ * That is this project's recurring failure in its purest form: something
+ * produces an output and nothing consumes it. The check inspected the SHAPE of
+ * the artifact instead of its BEHAVIOUR.
+ *
+ * A test is only evidence if it moves. Passing after the fix proves nothing on
+ * its own — a test that asserts 1 + 1 === 2 also passes. Failing before and
+ * passing after is the only transition that ties the test to the change, and it
+ * is the definition Agent 4 has always been given and was never held to.
+ */
+
+/**
+ * Run one test file through Vitest. Returns, never throws.
+ *
+ * Split out from verifyTestProves() so the verifier can be driven with a stub —
+ * a verifier that has only ever been exercised against real Vitest has not been
+ * shown to reject anything.
+ */
+export function runVitestFile(testPath, { repoDir = process.cwd(), timeoutMs = 120_000 } = {}) {
+    try {
+        execFileSync('npx', ['vitest', 'run', testPath, '--reporter=dot'], {
+            cwd: repoDir, stdio: 'pipe', timeout: timeoutMs,
+            env: { ...process.env, CI: '1' },
+        });
+        return { passed: true, output: '' };
+    } catch (e) {
+        const out = [e?.stdout, e?.stderr].map((b) => (b ? String(b) : '')).join('\n').trim();
+        return { passed: false, output: (out || String(e?.message || 'vitest failed')).slice(-2000) };
+    }
+}
+
+/**
+ * Execute Agent 4's candidate test against the file BEFORE and AFTER the fix.
+ *
+ * The working tree is mutated and restored: `before` is written back in a
+ * `finally`, because runSwarm() returns the new code for its caller to apply
+ * and must not leave a half-applied change behind if anything throws.
+ *
+ * @returns {{ok:boolean, reason?:string, beforeFailed:boolean|null,
+ *            afterPassed:boolean|null, output?:string}}
+ */
+export function verifyTestProves({
+    repoDir = process.cwd(),
+    targetFile, before, after, testFile, testSource,
+    run = runVitestFile,
+    log = () => {},
+} = {}) {
+    if (!targetFile || !testFile || !testSource) {
+        return { ok: false, reason: 'nothing to verify', beforeFailed: null, afterPassed: null };
+    }
+    const target = path.join(repoDir, targetFile);
+    const tPath = path.join(repoDir, testFile);
+    let wroteTest = false;
+
+    try {
+        fs.mkdirSync(path.dirname(tPath), { recursive: true });
+        fs.writeFileSync(tPath, testSource);
+        wroteTest = true;
+
+        // 1. Against the ORIGINAL file it must FAIL. A test that already passes
+        //    is describing behaviour the fix did not introduce — it is decorative.
+        fs.writeFileSync(target, before);
+        const pre = run(testFile, { repoDir });
+        if (pre.passed) {
+            return {
+                ok: false, beforeFailed: false, afterPassed: null,
+                reason: 'the test passes against the UNFIXED file, so it does not exercise the fix',
+            };
+        }
+        log('[swarm] Agent 4 test fails before the fix ✓');
+
+        // 2. Against the FIXED file it must PASS. Failing both ways means the
+        //    test is broken, the fix is wrong, or — the actual history here —
+        //    the test imports something this repository does not have.
+        fs.writeFileSync(target, after);
+        const post = run(testFile, { repoDir });
+        if (!post.passed) {
+            return {
+                ok: false, beforeFailed: true, afterPassed: false, output: post.output,
+                reason: 'the test still fails against the FIXED file, so it is broken or the fix is wrong',
+            };
+        }
+        log('[swarm] Agent 4 test passes after the fix ✓');
+
+        return { ok: true, beforeFailed: true, afterPassed: true };
+    } catch (e) {
+        return {
+            ok: false, beforeFailed: null, afterPassed: null,
+            reason: `could not verify the test: ${e?.message || e}`,
+        };
+    } finally {
+        // Always hand the tree back exactly as it was found.
+        try { fs.writeFileSync(target, before); } catch { /* nothing better to do */ }
+        if (wroteTest) { try { fs.unlinkSync(tPath); } catch { /* ditto */ } }
+    }
+}
+
 export function testPrompt(issue, filename, before, after) {
     return [
         'A fix was just made to a vanilla-JS PWA module. Write a Vitest test proving it.',
@@ -200,12 +320,25 @@ export function testPrompt(issue, filename, before, after) {
         '',
         `FILE CHANGED: ${filename}`,
         '',
-        'The module is a browser IIFE that attaches its API to `window`. In the test,',
-        'set up a minimal global/window shim, load the module with',
-        "  `await import('../" + filename + "')`  or by evaluating its source,",
-        'then assert the corrected behaviour. If the module cannot be imported in',
-        'isolation, instead test the pure logic by re-deriving it — but the assertions',
-        'must be meaningful, not tautological.',
+        'THE ENVIRONMENT YOUR TEST WILL RUN IN — these are facts, not preferences:',
+        "  · vitest.config.js sets `environment: 'node'`. There is NO `document`,",
+        '    NO `window`, and NO DOM. Referencing them throws ReferenceError.',
+        '  · `jsdom` is NOT installed and you may not add it. Importing it fails.',
+        '  · The ONLY packages available are the ones already in package.json.',
+        '    `vitest` and `fast-check` are available. Nothing else is.',
+        `  · ${filename} is a browser IIFE. It has NO \`export\` statement of any`,
+        '    kind, so `await import(...)` gives you a namespace with no `default`.',
+        '    `module.default.anything` is undefined and will throw.',
+        '',
+        'HOW TO LOAD IT — the pattern that works in this repository:',
+        '  Read the source with `fs.readFileSync` and evaluate it with `new Function`,',
+        '  passing a hand-built fake `window`/`localStorage`, then assert against the',
+        '  API the module attached to that fake window. `test/update_ui_truth_test.js`',
+        '  does exactly this and is the worked example to follow. (`new Function` also',
+        '  gives each test a fresh module — an ESM `import` is cached, so one test',
+        '  would leak state into the next.)',
+        '  If the changed logic is pure, testing it directly is fine too — but the',
+        '  assertions must be meaningful, never tautological.',
         '',
         'RELEVANT PART OF THE NEW CODE:',
         '--- BEGIN ---',
@@ -213,7 +346,13 @@ export function testPrompt(issue, filename, before, after) {
         '--- END ---',
         '',
         'Return ONLY the complete test file contents (ESM, `import { describe, it, expect } from "vitest"`).',
-        'No markdown fences. It MUST pass against the new code and must not require a network or a real browser.',
+        'No markdown fences. No network, no browser.',
+        '',
+        'YOUR TEST WILL BE EXECUTED TWICE BEFORE IT IS ACCEPTED: once against the',
+        'ORIGINAL file, where it MUST FAIL, and once against the fixed file, where it',
+        'MUST PASS. A test that passes both ways is not evidence and will be rejected,',
+        'and so will one that fails both ways. Target the specific behaviour the fix',
+        'changed — not the module in general.',
     ].join('\n');
 }
 
@@ -316,6 +455,7 @@ export async function runSwarm({
     repoDir = process.cwd(),
     env = process.env,
     writeTest = true,
+    verifyTest = true,           // execute Agent 4's test red→green before accepting it
     log = console.log,
 } = {}) {
     const issueText = `${issue?.title || ''}\n\n${issue?.body || ''}`.trim();
@@ -386,8 +526,8 @@ export async function runSwarm({
     }
     log(`[swarm] Agent 5 verdict: PASS (via ${reviewed.provider})`);
 
-    // ── stage 5: Agent 4 writes the proving test ────────────────────────────
-    let test = null, testFile = null;
+    // ── stage 5: Agent 4 writes the proving test, and it is EXECUTED ────────
+    let test = null, testFile = null, testProof = null;
     if (writeTest) {
         const t = await chat({
             system: ROLES.qa.system, prompt: testPrompt(issueText, file, before, code),
@@ -396,15 +536,37 @@ export async function runSwarm({
         }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
         providers.qa = t.provider;
         const candidate = stripFences(t.text);
-        // A test that neither imports vitest nor asserts anything is worthless.
-        if (candidate && /from\s+['"]vitest['"]/.test(candidate) && /expect\s*\(/.test(candidate) && isValidJs(candidate)) {
-            test = candidate;
-            testFile = path.join('test', `auto-${file.replace(/\.js$/i, '')}-${issue?.number || 'x'}.test.js`);
-            log(`[swarm] Agent 4 wrote ${testFile} (via ${t.provider})`);
-        } else {
-            log('[swarm] Agent 4 produced no usable test — the change will need human review');
+
+        // Cheap shape checks first — they cost nothing and skip a Vitest run
+        // that could not possibly succeed. They are a filter, NOT the gate.
+        if (!candidate || !/from\s+['"]vitest['"]/.test(candidate) || !/expect\s*\(/.test(candidate) || !isValidJs(candidate)) {
+            return {
+                ok: false, stage: 'test', file, code, providers, review,
+                reason: 'Agent 4 produced nothing that is even shaped like a test',
+            };
         }
+
+        const tf = path.join('test', `auto-${file.replace(/\.js$/i, '')}-${issue?.number || 'x'}.test.js`);
+        testProof = verifyTest
+            ? verifyTestProves({ repoDir, targetFile: file, before, after: code, testFile: tf, testSource: candidate, log })
+            : { ok: true, skipped: true, beforeFailed: null, afterPassed: null };
+
+        // A change whose test does not move from red to green is not a proven
+        // change, and shipping it would only re-create the situation this gate
+        // was built for: a PR that looks tested and is not. Fail the run and say
+        // why, rather than open a PR that rego RULE 3 would refuse anyway.
+        if (!testProof.ok) {
+            log(`[swarm] Agent 4's test does not prove the fix: ${testProof.reason}`);
+            return {
+                ok: false, stage: 'proof', file, code, providers, review, testProof,
+                reason: `the proving test did not prove anything — ${testProof.reason}`,
+            };
+        }
+
+        test = candidate;
+        testFile = tf;
+        log(`[swarm] Agent 4 wrote ${testFile}, verified red→green (via ${t.provider})`);
     }
 
-    return { ok: true, stage: 'ready', file, code, test, testFile, role: role.id, review, providers };
+    return { ok: true, stage: 'ready', file, code, test, testFile, testProof, role: role.id, review, providers };
 }
