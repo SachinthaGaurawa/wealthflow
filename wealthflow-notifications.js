@@ -7,7 +7,9 @@
  *     It NEVER writes financial data — read-only via window.DB.
  *   • Red badge = count of UNSEEN urgent + warning items.
  *   • Grouped, professional panel; most-urgent first, newest within a tier.
- *   • Click → navigate to the relevant page + mark seen. Opening = mark seen.
+ *   • Click → navigate to the relevant page + mark seen. Opening the panel
+ *     clears INFO and WARNING items only — anything already OVERDUE stays on
+ *     the badge until you tap it or "Mark all read" (see v7.69.x note below).
  *   • Optional DEVICE push notifications (Notifications API + service worker),
  *     opt-in via Settings, deduped so each item alerts at most once.
  *   • Settings → Notifications: master + per-category + push toggles.
@@ -21,6 +23,20 @@
  *      gutters + safe-area insets, so it can never be clipped by the edge.
  *   3. UI — grouped sections, summary line, due chips, refined styling.
  *   4. DEVICE PUSH — reminders surface in the OS notification centre.
+ *
+ * v7.69.x fixes — issues #70 and #71 ("Notifications have a bug. This is a
+ * critical issue. Very critical"):
+ *   5. STORAGE FAILURES ARE NO LONGER SILENT. saveSeen/savePushed swallowed
+ *      every error. On an installed iOS PWA at ~2.5 MB of localStorage a
+ *      QuotaExceededError makes both writes throw, and the results are exactly
+ *      what a user calls a notification bug: the badge never clears, and the
+ *      same overdue payment re-fires a device notification on every refresh
+ *      (250 ms debounce). They now warn, once, and maybePush() keeps an
+ *      in-memory dedup so a failed write cannot turn into an alert loop.
+ *   6. OVERDUE ALERTS SURVIVE AN ACCIDENTAL TAP. Opening the panel used to mark
+ *      EVERYTHING seen instantly — including overdue cheques and card payments,
+ *      before anything had been read. One stray tap on the bell silenced them
+ *      permanently. Urgent items now require a deliberate act.
  * ==========================================================================*/
 (function () {
     'use strict';
@@ -77,10 +93,48 @@
     }
 
     /* ----------------------------------------------------------- seen-state */
+    /* --------------------------------------------------- persistence, loudly
+     * These four used to swallow every failure with `catch (_) {}`. On an
+     * installed iOS PWA sitting at ~2.5 MB of localStorage that is not
+     * theoretical: a QuotaExceededError makes setItem throw, and both records
+     * this module depends on are then never written.
+     *
+     * The two consequences are exactly what "notifications have a bug" looks
+     * like from the outside:
+     *   · saveSeen fails   → the badge never clears. Mark all read, reopen the
+     *                        app, and every alert is back.
+     *   · savePushed fails → nothing is recorded as pushed, so the SAME overdue
+     *                        cheque fires a device notification again on the
+     *                        next refresh — and refresh() runs on a 250 ms
+     *                        debounce off every data change. Notification spam.
+     *
+     * A write that fails now says so: once to the console, once to the user,
+     * and never silently. `_storageBroken` also lets maybePush() fall back to
+     * an in-memory guard so a failed write degrades to "no dedup across
+     * reloads" rather than "alert every quarter second".
+     */
+    var _storageBroken = false;
+    var _warnedStorage = false;
+
+    function _storageFailed(what, e) {
+        _storageBroken = true;
+        try { console.warn('[wfNotif] could not save ' + what + ' — device storage is full or blocked:', e && e.message); } catch (_) { }
+        if (!_warnedStorage) {
+            _warnedStorage = true;
+            toast('Device storage is full, so notifications can’t remember what you’ve read. Clear some space in Settings → Data.', 'warn');
+        }
+    }
+
     function seen() { try { return JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {}; } catch (_) { return {}; } }
-    function saveSeen(o) { try { localStorage.setItem(SEEN_KEY, JSON.stringify(o || {})); } catch (_) { } }
+    function saveSeen(o) {
+        try { localStorage.setItem(SEEN_KEY, JSON.stringify(o || {})); return true; }
+        catch (e) { _storageFailed('read notifications', e); return false; }
+    }
     function pushedMap() { try { return JSON.parse(localStorage.getItem(PUSH_KEY) || '{}') || {}; } catch (_) { return {}; } }
-    function savePushed(o) { try { localStorage.setItem(PUSH_KEY, JSON.stringify(o || {})); } catch (_) { } }
+    function savePushed(o) {
+        try { localStorage.setItem(PUSH_KEY, JSON.stringify(o || {})); return true; }
+        catch (e) { _storageFailed('sent notifications', e); return false; }
+    }
 
     /* --------------------------------------------------------- computation  */
     // { id, sev, cat, icon, title, sub, when, date, sortTs, page }
@@ -274,12 +328,22 @@
         n.onclick = function () { try { window.focus(); if (page && typeof window.showPage === 'function') window.showPage(page); } catch (_) { } n.close(); };
     }
     // Push each pushable (urgent/warning) item at most once; batch when several.
+    // In-memory backstop for the dedup record. If localStorage cannot be
+    // written, pushedMap() comes back without the ids we just sent and the same
+    // overdue payment would alert again on the very next refresh — every 250 ms
+    // while data is changing. This keeps the session quiet even when the disk
+    // record is failing; the worst case degrades to "may re-alert once after a
+    // reload" instead of "alerts forever".
+    var _pushedThisSession = {};
+
     function maybePush() {
         if (!canPush()) return;
         var pm = pushedMap();
-        var fresh = _list.filter(function (n) { return (n.sev === 'urgent' || n.sev === 'warning') && !pm[n.id]; });
+        var fresh = _list.filter(function (n) {
+            return (n.sev === 'urgent' || n.sev === 'warning') && !pm[n.id] && !_pushedThisSession[n.id];
+        });
         if (!fresh.length) return;
-        fresh.forEach(function (n) { pm[n.id] = Date.now(); });
+        fresh.forEach(function (n) { pm[n.id] = Date.now(); _pushedThisSession[n.id] = true; });
         savePushed(pm);
         if (fresh.length === 1) {
             showDeviceNotification('WealthFlow', fresh[0].title + (fresh[0].sub ? ' \u2014 ' + fresh[0].sub : ''), fresh[0].page, 1, 'wf-payment');
@@ -382,8 +446,19 @@
         renderPanel();
         p.classList.add('open');
         var btn = $('wfNotifBtn'); if (btn) btn.classList.add('active');
+        // URGENT ITEMS ARE NOT DISMISSED BY MERELY OPENING THE PANEL.
+        // This used to mark every notification seen the instant the bell was
+        // tapped — before anything had been read, and regardless of whether the
+        // panel was even visible. One accidental tap permanently silenced an
+        // overdue cheque or an overdue card payment, and the badge dropped to
+        // zero immediately.
+        //
+        // In an app about money that is the wrong trade. Info and warning items
+        // are fine to clear on open — they are "coming up soon". Anything
+        // already OVERDUE requires a deliberate act: tapping the row, or
+        // "Mark all read". The badge keeps showing it until then.
         var sn = seen();
-        _list.forEach(function (n) { sn[n.id] = true; });
+        _list.forEach(function (n) { if (n.sev !== 'urgent') sn[n.id] = true; });
         saveSeen(sn);
         updateBadge();
         setTimeout(function () { document.addEventListener('mousedown', _outside, true); document.addEventListener('keydown', _escKey, true); }, 0);
