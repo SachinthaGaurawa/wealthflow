@@ -686,17 +686,38 @@ describe('feedback: the user\'s own classification is not discarded', () => {
         expect(out.declared).toBe(true);
     });
 
-    it('raises severity when the user says it is urgent', () => {
-        // "critical" and "urgently" appeared nowhere in the classifier at all.
-        const out = reconcile({ type: 'feature', severity: 'low' },
-            { text: 'Urgently fix that issue. Critical issue.' });
-        expect(out.severity).toBe('high');
-        expect(out.urgentWords).toBe(true);
+    // POLICY CHANGE, by the owner's explicit direction: every piece of user
+    // feedback is critical. These two cases previously asserted the banding —
+    // urgency words lifted to "high", and only crash/security reached
+    // "critical". That banding existed to decide whose report waits while
+    // another is handled first, and this app has exactly one user, so all it
+    // ever did was let his own reports be quietly deprioritised: #66 sat five
+    // days at [LOW], #70 and #74 at [LOW] with a visibly broken avatar, and #71
+    // needed the literal words "very critical" to reach [HIGH].
+    //
+    // They are rewritten rather than deleted, because the surrounding
+    // properties still matter and would otherwise lose their guard.
+    it('marks every report critical, whatever the classifier guessed', () => {
+        expect(reconcile({ type: 'feature', severity: 'low' }, { text: 'small idea' }).severity).toBe('critical');
+        expect(reconcile({ type: 'ui', severity: 'medium' }, { text: 'looks off' }).severity).toBe('critical');
+        expect(reconcile({ type: 'other', severity: 'low' }, { text: '' }).severity).toBe('critical');
     });
 
-    it('reaches critical only for a crash or a security report', () => {
-        expect(reconcile({ type: 'crash', severity: 'low' }, { text: 'critical' }).severity).toBe('critical');
-        expect(reconcile({ type: 'ui', severity: 'low' }, { text: 'critical' }).severity).toBe('high');
+    it('still records that the user used urgency words', () => {
+        // The signal is no longer needed to raise severity, but losing it would
+        // discard something the owner actually said.
+        expect(reconcile({ type: 'feature', severity: 'low' },
+            { text: 'Urgently fix that issue. Critical issue.' }).urgentWords).toBe(true);
+        expect(reconcile({ type: 'feature', severity: 'low' },
+            { text: 'a calm description' }).urgentWords).toBeUndefined();
+    });
+
+    it('still classifies the TYPE, which is what routes the work', () => {
+        // Severity is flat now; type is not, and it decides which agent role
+        // picks the issue up. Flattening it too would be the real mistake.
+        expect(reconcile({ type: 'crash', severity: 'low' }, { text: 'critical' }).type).toBe('crash');
+        expect(reconcile({ type: 'ui', severity: 'low' }, { text: 'critical' }).type).toBe('ui');
+        expect(reconcile({ type: 'security', severity: 'low' }, { text: 'x' }).type).toBe('security');
     });
 
     it('never LOWERS a severity the classifier already found', () => {

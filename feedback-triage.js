@@ -62,11 +62,23 @@ function reconcile(cls, body) {
 
     const text = String((body && (body.text || body.feedback)) || '');
     if (URGENT_RE.test(text)) {
-        // "high", not "critical": the user's own words raise it, but only a
-        // security or crash signal earns the top band automatically.
-        const floor = (out.type === 'security' || out.type === 'crash') ? 'critical' : 'high';
-        if ((SEV_RANK[out.severity] || 0) < SEV_RANK[floor]) { out.severity = floor; out.urgentWords = true; }
+        out.urgentWords = true;
     }
+
+    // EVERY PIECE OF USER FEEDBACK IS CRITICAL. Owner's directive, and it is
+    // correct for this app rather than a blanket-priority mistake: WealthFlow
+    // has exactly one user. A severity scale exists to decide whose report waits
+    // while someone else's is handled first, and there is nobody to wait behind.
+    // Everything the previous banding achieved was to let the owner's own
+    // reports be quietly deprioritised — #66 sat five days at [LOW], #70 and #74
+    // at [LOW] while one of them was a broken avatar the owner could see, and
+    // #71 needed the literal words "very critical" to reach [HIGH].
+    //
+    // The TYPE is deliberately untouched. It still routes the work to the right
+    // agent role (bug / ui / feature / security / crash) and still appears in
+    // the issue. Only the priority floor moves, so nothing can be triaged
+    // below the top band again.
+    out.severity = 'critical';
     return out;
 }
 
