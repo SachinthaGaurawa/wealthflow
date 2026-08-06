@@ -62,6 +62,20 @@ const HANDLERS = {
     // the app can stop showing "All systems operational" while the pipeline is dead.
     'autonomy-status': () => import('../autonomy-status.js'),
     'classify-charge': () => import('../classify-charge.js'),
+    // GOOGLE DRIVE — both handlers have existed since 26 July and neither was
+    // ever registered here, so every call the app made to them fell through to
+    // the not-found path. That is why the health snapshot reads
+    //   "drive": { "connected": false, "everGranted": true }
+    // The consent popup is client-side and works, so the owner granted access;
+    // the server-side code exchange at /api/drive-auth had nowhere to land, so
+    // the connection could never complete. Drive backup has never worked once.
+    //
+    // Identical shape to the 405 bug in test/api_routing_test.js: a real handler
+    // at the repo root that nothing dispatched to. test/api_contract_test.js now
+    // fails if any client-called endpoint has no handler, or any root handler is
+    // unreachable — this class cannot come back silently.
+    'drive-auth': () => import('../drive-auth.js'),
+    'drive-config': () => import('../drive-config.js'),
     'edenai': () => import('../edenai.js'),
     'feedback': () => import('../feedback.js'),
     'feedback-triage': () => import('../feedback-triage.js'),
