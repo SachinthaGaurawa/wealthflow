@@ -276,7 +276,15 @@ describe('feedback: an attached screenshot reaches the agent', () => {
 
         // And it must sit inside the issue-body array, next to the section it
         // belongs beside — not merely somewhere in the file.
-        const body = src.slice(src.indexOf('const issueBody'), src.indexOf('.filter(Boolean)'));
+        // Search for the closing anchor FORWARD from the start, not from the top
+        // of the file. Anchoring on the first `.filter(Boolean)` anywhere meant
+        // that adding any helper above `const issueBody` which happened to use
+        // the same idiom made the end index precede the start index, the slice
+        // come back empty, and this test fail for a reason that had nothing to
+        // do with what it checks. (That is exactly what githubDetail() did.)
+        const start = src.indexOf('const issueBody');
+        expect(start, 'the issue-body array has moved — retarget this test').toBeGreaterThan(-1);
+        const body = src.slice(start, src.indexOf('.filter(Boolean)', start));
         expect(body).toMatch(/diagnosticsSection\(diagnostics\)/);
         expect(body).toMatch(/imageSection\(image\)/);
     });
