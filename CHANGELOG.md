@@ -1,5 +1,24 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.20 — 2026-08-06
+
+**What changed for you**
+
+- Google Drive was never routed — and every feedback is now critical (#91)
+- Feedback could not become a work item — the dedupe label was too long (#89)
+- Icons share one symbol sprite — 3714 nodes to 3501, measured (#87)
+- A profile photo that fails to load no longer shows a broken icon (#86)
+- Give the two images that lacked alt text an accessible name (#85)
+- Overdue alerts survive a stray tap, and a full disk says so (#84)
+- Stop the first paint waiting on gstatic.com four times over (#77)
+
+**Under the hood**
+
+- Commit the cross-page access probe that vetoed the #66 "obvious fix" (#88)
+- Stop retrying a bug the agent cannot win, and count the tries (#83)
+- Make the red→green verification visible to the reviewer (#82)
+- Execute the proving test, and bar the agent from the harness (#81)
+
 ## v7.69.19 — 2026-08-03
 
 **What changed for you**
