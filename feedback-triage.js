@@ -26,6 +26,7 @@
  *  keyword classifier so a feedback item is NEVER lost.
  */
 
+import { createHash } from 'node:crypto';
 import { resolveRepo, resolveToken, isValidRepo } from './github-repo.js';
 
 const MAX_LEN = 2000;
@@ -120,15 +121,97 @@ const STOP = new Set(['the', 'and', 'that', 'this', 'you', 'your', 'for', 'with'
     'can', 'has', 'have', 'its', 'from', 'they', 'them', 'please', 'fix', 'issue', 'now', 'when', 'what',
     'why', 'how', 'all', 'any', 'app', 'very', 'really', 'just', 'need', 'want', 'should', 'would', 'could']);
 
-function fingerprint(text) {
-    const words = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)
+/**
+ * GitHub refuses a label name longer than this with 422 Validation Failed, and
+ * it refuses the WHOLE issue along with it. Verified against the live API:
+ *   50 chars -> HTTP 201
+ *   51 chars -> HTTP 422
+ *              {"resource":"Label","field":"name",
+ *               "message":"name is too long (maximum is 50 characters)"}
+ */
+export const LABEL_MAX = 50;
+
+/**
+ * What GitHub actually objected to.
+ *
+ * This used to be `created.message` alone, which for a 422 is the single word
+ * pair "Validation Failed" — true, and useless. GitHub puts the reason in an
+ * `errors[]` array, and throwing it away is why the owner's screenshot said
+ * only "GitHub refused to create the issue (HTTP 422): Validation Failed" while
+ * the response itself was carrying
+ *   {"field":"name","message":"name is too long (maximum is 50 characters)"}
+ *
+ * A failure that cannot say what it objected to is the same silent-failure
+ * class this pipeline keeps producing, one layer down: the diagnosis was
+ * available, transmitted, and discarded before anyone could read it.
+ */
+export function githubDetail(body) {
+    const msg = (body && body.message) || '';
+    const errs = (body && Array.isArray(body.errors)) ? body.errors : [];
+    if (!errs.length) return msg;
+    const parts = errs.slice(0, 4).map((e) => {
+        if (!e || typeof e !== 'object') return String(e);
+        const where = [e.resource, e.field].filter(Boolean).join('.');
+        const why = e.message || e.code || '';
+        return where ? `${where}: ${why}` : why;
+    }).filter(Boolean);
+    return parts.length ? `${msg} — ${parts.join('; ')}` : msg;
+}
+
+/** GitHub's issue-title ceiling; above it the whole issue is refused with 422. */
+export const TITLE_MAX = 256;
+
+/** Keep a title inside GitHub's limit without cutting mid-word where avoidable. */
+export function clampTitle(s) {
+    const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    if (t.length <= TITLE_MAX) return t;
+    const cut = t.slice(0, TITLE_MAX - 1);
+    const sp = cut.lastIndexOf(' ');
+    return (sp > TITLE_MAX - 40 ? cut.slice(0, sp) : cut) + '…';
+}
+
+/** Short, stable digest — enough to keep two truncated fingerprints apart. */
+function digest(text) {
+    return createHash('sha1').update(String(text || '')).digest('hex').slice(0, 8);
+}
+
+/**
+ * A stable label that identifies a report, so repeats deduplicate.
+ *
+ * THE BUG THIS SHAPE FIXES
+ * This used to be `'fb-' + words.join('-').slice(0, 60)` — the cap was applied
+ * to the joined words and the `fb-` prefix added AFTERWARDS, so the label could
+ * reach 63 characters, and it was measured against 60 rather than GitHub's real
+ * limit of 50. Any report whose first eight significant words joined to more
+ * than 47 characters produced an over-long label, GitHub rejected the entire
+ * issue with 422, and the owner's feedback was saved but never became a work
+ * item. Two earlier reports survived only because they happened to be short
+ * (38 and 12 characters).
+ *
+ * Truncating alone would be a different bug: two unrelated long reports would
+ * collide on the same prefix and the second would be silently deduplicated
+ * away. So when truncation is needed, a digest of the FULL text is appended —
+ * the label stays inside the limit and still tells the reports apart.
+ */
+function fingerprint(text) {   // exported in the list at the foot of this file
+    // `(text || '')` kept a truthy NON-STRING as-is, so a payload of
+    // {"text": 123} reached .toLowerCase() and threw, taking the whole triage
+    // request down with it. Found by the junk-input case in
+    // test/feedback_intake_limits_test.js, not in production — but it was
+    // reachable from any client that got the field type wrong.
+    const words = String(text == null ? '' : text).toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)
         .filter(w => w.length > 2 && !STOP.has(w))
         .slice(0, 8);
     // Too little left to identify anything. Deduplicating on two generic words
     // would merge unrelated reports, and losing a distinct report is far worse
     // than filing a duplicate — so this one deliberately never matches.
     if (words.length < 3) return 'fb-x' + Math.random().toString(36).slice(2, 10);
-    return 'fb-' + words.join('-').slice(0, 60);
+
+    const full = 'fb-' + words.join('-');
+    if (full.length <= LABEL_MAX) return full;
+
+    const d = digest(text);
+    return full.slice(0, LABEL_MAX - d.length - 1).replace(/-+$/, '') + '-' + d;
 }
 
 async function githubGet(repo, token, path) {
@@ -225,7 +308,12 @@ export default async function handler(req, res) {
     }
 
     const labelType = LABELS[cls.type] || 'triage';
-    const title = '[' + cls.severity.toUpperCase() + '] ' + (cls.summary || text.slice(0, 60));
+    // GitHub caps an issue title at 256 characters and answers 422 above it,
+    // refusing the whole issue exactly as an over-long label does. cls.summary
+    // comes from the classifier and is not length-bounded at the source, so it
+    // is bounded here — the same defect class as the label, found while
+    // auditing the rest of this payload rather than after it bit.
+    const title = clampTitle('[' + String(cls.severity || 'low').toUpperCase() + '] ' + (cls.summary || text.slice(0, 60)));
     const issueBody = [
         '## Autonomous feedback issue',
         '',
@@ -262,7 +350,7 @@ export default async function handler(req, res) {
             out.ok = false;
             out.error = 'github_create_failed';
             out.status = r.status;
-            out.detail = (created && created.message) || '';
+            out.detail = githubDetail(created);
             if (r.status === 401 || r.status === 403) {
                 // The token exists but cannot write here — a different problem
                 // from a missing token, and one `configured` alone cannot show.
