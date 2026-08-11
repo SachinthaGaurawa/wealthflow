@@ -639,6 +639,65 @@ export async function fileFindings(findings, { env = process.env, max = MAX_PER_
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
+ * THE RUN SUMMARY
+ *
+ * WHAT WENT WRONG WITH THE PREVIOUS SHAPE
+ * This was four mutually exclusive branches, and `findings.length` came SECOND
+ * — ahead of the "browser sweep did not run" branch. So on any run where the
+ * sweep failed AND a static detector found something, the report printed the
+ * findings table and said nothing whatsoever about the sweep. A partial scan
+ * reported itself as a complete one the moment it had anything to show.
+ *
+ * That is the exact "found nothing" / "could not look" conflation the incomplete
+ * branch was written to prevent, reintroduced one branch over — and it was live:
+ * a high-severity `nanoid` dependency finding was reported on every run while
+ * the dead browser sweep went unmentioned.
+ *
+ * COVERAGE IS NOT AN ALTERNATIVE TO FINDINGS. It is a separate fact about the
+ * same run, so it is always emitted alongside them rather than competing for the
+ * same slot. What was scanned and what was found are different questions and
+ * both get answered, every time.
+ *
+ * WHY THIS IS A PURE FUNCTION AND NOT INLINE IN THE CLI BLOCK
+ * It was inline, and the only thing exercising it was a subprocess test that ran
+ * the real scanner. That test DID catch this bug — but only by luck: it caught
+ * it because `nanoid` happened to be vulnerable in this repo on this day, which
+ * is what put a finding and a broken sweep into the same run. Fix the
+ * vulnerability and the test would have gone green again with the masking defect
+ * fully intact, having proved nothing. Composition is now callable directly, so
+ * every combination of (findings × coverage) is asserted deterministically
+ * instead of depending on the state of the lockfile.
+ * ────────────────────────────────────────────────────────────────────────────*/
+export function renderSummary({ findings = [], ui = { ran: false, reason: 'not attempted' }, uiDisabled = false } = {}) {
+    const coverage = uiDisabled
+        ? '\n**Coverage:** static detectors only — the browser sweep was skipped by request (`--no-ui`).\n'
+        : !ui.ran
+            ? '\n**Coverage: incomplete.** **The browser detectors did not run at all**, so anything only a '
+              + 'live page can reveal — dead handlers, duplicate ids, unlabelled controls, uncaught page '
+              + `errors — was not checked on this run.\n\n> ${ui.reason}\n\n`
+              + 'This is **not** a clean bill of health. It is a partial scan reporting itself as partial.\n'
+            : '\n**Coverage:** every detector ran, including the browser sweep.\n';
+
+    const heading = uiDisabled
+        ? `### ✅ Autonomous discovery — static detectors only${findings.length ? `, ${findings.length} finding(s)` : ''}`
+        : !ui.ran
+            ? `### ⚠️ Autonomous discovery — incomplete${findings.length ? `, ${findings.length} finding(s)` : ''}`
+            : findings.length
+                ? `### 🔎 Autonomous discovery — ${findings.length} verified finding(s)`
+                : '### ✅ Autonomous discovery — nothing actionable';
+
+    const body = findings.length
+        ? '| Severity | Kind | Where |\n|---|---|---|\n'
+          + findings.map((f) => `| ${f.severity} | ${f.kind} | \`${f.key}\` |`).join('\n') + '\n'
+        // Deliberately scoped to the detectors that actually ran — the coverage
+        // line says which those were. "Nothing was found" must never be readable
+        // as "nothing is there".
+        : 'Nothing to file from the detectors that ran.\n';
+
+    return `${heading}\n\n${body}${coverage}`;
+}
+
 const invokedDirectly = (process.argv[1] || '').endsWith('discover.mjs');
 
 if (invokedDirectly) {
@@ -674,38 +733,11 @@ if (invokedDirectly) {
     }
 
     if (process.env.GITHUB_STEP_SUMMARY) {
-        const ui = getUiSweepStatus();
-        const uiDisabled = process.argv.includes('--no-ui');
-        const skippedUi = !uiDisabled && !ui.ran;
-
-        let md;
-        if (!findings.length && uiDisabled) {
-            // Deliberately static-only. Distinct from BOTH "everything ran" and
-            // "something broke": the browser detectors were switched off on
-            // purpose, so claiming either would be wrong. Writing this branch
-            // caught a bug in the branch below, which had said "including the
-            // browser sweep" on a run that was invoked with --no-ui.
-            md = '### ✅ Autonomous discovery — static detectors only\n\n'
-                + 'Ran with `--no-ui`, so the browser sweep was skipped by request. '
-                + 'The static detectors found nothing to file.\n';
-        } else if (findings.length) {
-            md = `### 🔎 Autonomous discovery — ${findings.length} verified finding(s)\n\n`
-                + '| Severity | Kind | Where |\n|---|---|---|\n'
-                + findings.map((f) => `| ${f.severity} | ${f.kind} | \`${f.key}\` |`).join('\n') + '\n';
-        } else if (skippedUi) {
-            // The case that produced a false all-clear: no findings BECAUSE half
-            // the detectors could not start. Say which half, and say it is not
-            // the same as clean.
-            md = '### ⚠️ Autonomous discovery — incomplete\n\n'
-                + 'The static detectors ran and found nothing. **The browser detectors did not run at all**, '
-                + 'so anything only a live page can reveal — dead handlers, duplicate ids, unlabelled '
-                + 'controls, uncaught page errors — was not checked on this run.\n\n'
-                + `> ${ui.reason}\n\n`
-                + 'This is **not** a clean bill of health. It is a partial scan reporting itself as partial.\n';
-        } else {
-            md = '### ✅ Autonomous discovery — nothing actionable\n\n'
-                + 'Every detector ran, including the browser sweep, and found nothing to file.\n';
-        }
+        const md = renderSummary({
+            findings,
+            ui: getUiSweepStatus(),
+            uiDisabled: process.argv.includes('--no-ui'),
+        });
         try { fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n'); } catch { /* ignore */ }
     }
 

@@ -54,13 +54,35 @@ jobs:
             echo "sensitive=no" >> "$GITHUB_OUTPUT"
           fi
 
+      # ── INSTALL IS ITS OWN STEP, AND IT IS NOT ALLOWED TO FAIL QUIETLY ──────
+      # This was `npm ci && npm test` inside the step below, under
+      # continue-on-error. package-lock.json was gitignored, so `npm ci` exited
+      # EUSAGE, `&&` short-circuited, and npm test NEVER RAN — on every
+      # sensitive-path PR this gate has ever seen. The job then printed
+      # "Fuzz FAILED → removing fuzz-passed and blocking" and failed the check.
+      #
+      # It announced a test result for tests that had not executed. That verdict
+      # carried no information about the code at all: it was a broken install
+      # wearing the costume of a failed fuzz run. And because RULE 1 of
+      # policy/wealthflow.rego requires `fuzz-passed` before firestore.rules,
+      # auth, OAuth, crypto or the money paths may merge, the repo's most
+      # safety-critical files were guarded by a check that could only say no.
+      #
+      # Failing closed was the right direction. Lying about why was not.
+      # So: install separately, with NO continue-on-error, so a broken
+      # toolchain fails the job as a broken toolchain and can never again be
+      # laundered into a statement about the code.
+      - name: Install dependencies (must succeed — not a fuzz result)
+        if: steps.detect.outputs.sensitive == 'yes'
+        run: npm ci
+
       - name: Run intensive fuzz/property suite
         if: steps.detect.outputs.sensitive == 'yes'
         id: fuzz
         continue-on-error: true
         env:
           FUZZ_RUNS: '100000'    # the blueprint's heavy randomized-iteration gate
-        run: npm ci && npm test
+        run: npm test
 
       - name: Apply or revoke the fuzz-passed label
         if: steps.detect.outputs.sensitive == 'yes'
@@ -69,6 +91,9 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           gh label create fuzz-passed --color 0E8A16 --description "Passed intensive fuzz gate" 2>/dev/null || true
+          # Only 'success' or 'failure' can reach here: the step above ran, so
+          # this is a genuine statement about the suite. An install failure has
+          # already ended the job with its own name on it.
           if [ "${{ steps.fuzz.outcome }}" = "success" ]; then
             echo "Fuzz passed → labelling fuzz-passed"
             gh pr edit "$PR" --add-label fuzz-passed
