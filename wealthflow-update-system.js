@@ -128,6 +128,10 @@
     // commits, and is now the only place notes come from.
 
     let _manifest = null;     // loaded version.json (optional)
+    // Why the feedback-status poll came back empty, when it was not simply
+    // "nothing finished yet". Held so the reason is inspectable rather than
+    // swallowed — see _checkFeedbackCompletions().
+    let _feedbackStatusDown = null;
     let _swWaiting = null;    // a waiting service worker, if any
     let _fbImageData = null;  // attached screenshot (downscaled data-URL) for feedback
 
@@ -1243,6 +1247,22 @@
             const r = await fetch('/api/feedback-status?issues=' + encodeURIComponent(ids), { cache: 'no-store' });
             if (!r.ok) return [];
             const j = await r.json().catch(() => null);
+
+            // THE SERVER SAYS `ok:false` WITH HTTP 200, SO r.ok IS NOT ENOUGH.
+            // feedback-status.js send() defaults to status 200, and its
+            // not_configured branch returns { ok:false, reason:'not_configured',
+            // items: [] } through it. Checking only the HTTP status made a
+            // server with no GitHub token indistinguishable from "nothing has
+            // completed yet" — the app would poll forever and say nothing.
+            // The handler's own comment states this must not happen:
+            //   "a missing token must not look like 'your feedback was ignored'"
+            // It populated the field; nobody read it.
+            if (j && j.ok === false) {
+                try { console.warn('[wfUpdate] feedback status unavailable:', j.reason || 'unknown', j.note || ''); } catch (_) {}
+                _feedbackStatusDown = j.reason || 'unavailable';
+                return [];
+            }
+            _feedbackStatusDown = null;
             items = (j && Array.isArray(j.items)) ? j.items : [];
         } catch (_) { return []; }
 
@@ -1255,10 +1275,22 @@
             if (!x || !x.issue) return x;
             const st = byNumber[x.issue];
             if (!st) return x;
+            // `wontFix` was computed by the server and read by nobody. An issue
+            // closed as "not planned" comes back completed:false, wontFix:true,
+            // and this mapping fell through to 'open' — so feedback that was
+            // deliberately DECLINED sat in the app as still-pending forever,
+            // and was re-polled on every cycle because nothing ever marked it
+            // seen. The owner would wait indefinitely for an answer that had
+            // already been given.
             const next = Object.assign({}, x, {
-                _status: st.completed ? 'completed' : st.needsHuman ? 'needs-attention' : st.inProgress ? 'in-progress' : 'open',
+                _status: st.completed ? 'completed'
+                    : st.wontFix ? 'declined'
+                        : st.needsHuman ? 'needs-attention'
+                            : st.inProgress ? 'in-progress' : 'open',
                 _shippedVersion: st.shippedVersion || null
             });
+            // A decision, even a "no", is an ending. Stop re-polling it.
+            if (st.wontFix && !x._completedSeen) { next._completedSeen = true; changed = true; }
             if (st.completed && !x._completedSeen) {
                 next._completedSeen = true;
                 finished.push({ text: x.text, issue: x.issue, version: st.shippedVersion, type: x.type });
@@ -1575,6 +1607,11 @@
         // Feedback completion reporting — exposed so the Settings screen and the
         // "Your Feedback" list can refresh statuses on demand.
         checkCompletions: _checkFeedbackCompletions,
+        // Why the last poll returned nothing, when the reason was not "nothing
+        // finished yet". Exposed so a test can prove the app distinguishes a
+        // misconfigured server from an empty result — the two were identical
+        // before, because the handler answers ok:false with HTTP 200.
+        _feedbackStatusReason: () => _feedbackStatusDown,
         _collectDiagnostics,
         // Exposed for the same reason as _collectDiagnostics: the version the
         // app believes it is running is a claim the owner reads on screen, and a
