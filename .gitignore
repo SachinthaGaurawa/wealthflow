@@ -1,5 +1,26 @@
 node_modules/
-package-lock.json
+
+# package-lock.json IS COMMITTED ON PURPOSE — do not re-add it here.
+#
+# It was ignored, and that one line broke three things silently:
+#
+#   1. `npm ci` refuses to run without a lockfile ("EUSAGE ... can only install
+#      with an existing package-lock.json"). Every workflow says
+#      `npm ci || npm install`, so every run failed the first half and fell
+#      through to the second. `npm ci` had never once succeeded in this repo.
+#   2. fuzz-gate.yml says `npm ci && npm test` with NO fallback, so the fuzz
+#      suite never executed. The gate then reported "Fuzz FAILED", stripped the
+#      `fuzz-passed` label and blocked the PR — announcing a test result for
+#      tests that never ran. That label is what policy RULE 1 requires before a
+#      change to firestore.rules, auth, OAuth, crypto or the money paths may
+#      merge, so the most safety-critical files in the repo were gated by a
+#      check that could only ever say no.
+#   3. Dependencies floated. Every CI run resolved a different tree, so
+#      `npm audit` results were not reproducible and a vulnerability could
+#      appear or vanish between two runs of the same commit.
+#
+# A lockfile is how a build is made repeatable. Ignoring it does not avoid
+# pinning versions, it just moves the pin somewhere nobody can see or review.
 ai-fix-pr.json
 pr-body.txt
 .vercel

@@ -25,7 +25,7 @@
  * appears in process-exit behaviour that no in-process assertion can observe.
  * ===========================================================================*/
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -98,6 +98,99 @@ describe('"found nothing" and "could not look" must never read the same', () => 
         const { getUiSweepStatus } = await import('../autonomy/discover.mjs');
         // Fresh import: nothing has run the sweep, so it must not claim it did.
         expect(getUiSweepStatus().ran).toBe(false);
+    });
+});
+
+/* -----------------------------------------------------------------------------
+ * THE MASKING DEFECT, AND WHY THE SUBPROCESS TESTS ABOVE ARE NOT ENOUGH
+ *
+ * The summary was four mutually exclusive branches with `findings.length` ahead
+ * of the sweep-status branch, so a run that had BOTH a static finding and a dead
+ * browser sweep printed the findings table and never mentioned the sweep. The
+ * incomplete branch existed and was simply unreachable whenever there was
+ * anything to report — which is to say, on every run that mattered.
+ *
+ * The two subprocess tests above did catch it. They caught it by luck. They only
+ * saw it because `nanoid` happened to be vulnerable in this repo at that moment,
+ * which is what put a finding and a broken sweep into the same run. Bump nanoid
+ * — which this same change does — and those tests go green again with the
+ * masking defect fully intact, having proved nothing. A test whose red depends
+ * on the state of the lockfile is not a guard, it is a coincidence.
+ *
+ * So the composition is asserted directly, across every combination, with the
+ * inputs supplied rather than discovered.
+ * ---------------------------------------------------------------------------*/
+describe('coverage and findings are separate facts and both are always reported', () => {
+    const BROKE = { ran: false, reason: 'could not launch Chromium: spawn ENOENT' };
+    const RAN = { ran: true, reason: null };
+    const FOUND = [{ severity: 'high', kind: 'dep-vuln', key: 'nanoid' }];
+
+    let renderSummary;
+    beforeAll(async () => { ({ renderSummary } = await import('../autonomy/discover.mjs')); });
+
+    it('THE REGRESSION: findings do not suppress a failed-sweep warning', () => {
+        // This is the exact input the old code got wrong, and the assertion it
+        // could not have passed: it emitted the table and stopped.
+        const md = renderSummary({ findings: FOUND, ui: BROKE });
+        expect(md, 'the finding itself must still be reported').toMatch(/nanoid/);
+        expect(md, 'a finding silenced the coverage warning again').toMatch(/incomplete/i);
+        expect(md).toMatch(/did not run at all/i);
+        expect(md).toMatch(/could not launch Chromium/);
+        expect(md).not.toMatch(/Every detector ran|every detector ran/);
+    });
+
+    it('warns about a failed sweep when there is nothing else to say', () => {
+        const md = renderSummary({ findings: [], ui: BROKE });
+        expect(md).toMatch(/incomplete/i);
+        expect(md).toMatch(/not.{0,5}\*{0,2}a clean bill of health/i);
+    });
+
+    it('claims a complete scan only when the sweep genuinely ran', () => {
+        const md = renderSummary({ findings: [], ui: RAN });
+        expect(md).toMatch(/every detector ran, including the browser sweep/i);
+        expect(md).not.toMatch(/incomplete/i);
+    });
+
+    it('reports findings from a complete scan without downgrading it', () => {
+        const md = renderSummary({ findings: FOUND, ui: RAN });
+        expect(md).toMatch(/nanoid/);
+        expect(md).toMatch(/every detector ran/i);
+        expect(md).not.toMatch(/incomplete/i);
+    });
+
+    it('calls --no-ui skipped-by-request, never incomplete, findings or not', () => {
+        // A deliberate switch-off is not an outage. Saying "incomplete" here
+        // would train the owner to ignore the word on the runs where it is real.
+        for (const findings of [[], FOUND]) {
+            const md = renderSummary({ findings, ui: BROKE, uiDisabled: true });
+            expect(md).toMatch(/static detectors only/i);
+            expect(md).toMatch(/skipped by request/i);
+            expect(md).not.toMatch(/incomplete/i);
+            expect(md).not.toMatch(/including the browser sweep/);
+        }
+        expect(renderSummary({ findings: FOUND, ui: BROKE, uiDisabled: true })).toMatch(/nanoid/);
+    });
+
+    it('never reports a bare finding count with no coverage statement at all', () => {
+        // The general form of the defect: whatever the inputs, a reader must
+        // always be told what was scanned, not only what was found.
+        for (const ui of [BROKE, RAN]) {
+            for (const uiDisabled of [false, true]) {
+                for (const findings of [[], FOUND]) {
+                    expect(
+                        renderSummary({ findings, ui, uiDisabled }),
+                        `no coverage line for ui.ran=${ui.ran} uiDisabled=${uiDisabled} findings=${findings.length}`,
+                    ).toMatch(/\*\*Coverage/);
+                }
+            }
+        }
+    });
+
+    it('survives being called with nothing, rather than throwing inside the reporter', () => {
+        // summarise(null) in the cross-page probe threw for exactly this reason.
+        // A reporter that crashes loses the whole run's output.
+        expect(() => renderSummary()).not.toThrow();
+        expect(renderSummary()).toMatch(/\*\*Coverage/);
     });
 });
 
