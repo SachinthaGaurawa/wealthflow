@@ -264,7 +264,32 @@ async function main() {
         process.exit(3);
     }
 
-    log(`${candidates.length} workable issue(s); ${queue.proposals.length} Firestore proposal(s)`);
+    // FIRESTORE PROPOSALS ARE FETCHED AND NOT WORKED, AND THE LOG NOW SAYS SO.
+    // work-queue.mjs connects to Firestore, reads system/pendingRelease, and
+    // maps proposedChanges into fully-formed work items. This line was the only
+    // place `queue.proposals` was ever referenced: it printed the count and the
+    // agent then iterated `queue.issues` alone. The module docstring claims the
+    // proposals are "folded in". They are counted.
+    //
+    // They cannot simply be folded in either — every proposal carries
+    // number: null, and the loop below uses that number for the attempt state
+    // file, the issue comments, the labels and the `Closes #N` link. Merging
+    // them as-is would break all four. Turning a proposal into a real GitHub
+    // issue first is the only shape that works, and that is a behaviour change
+    // the owner decides, not something to slip in under an audit.
+    //
+    // So: say plainly that they are being ignored, and why. A count printed
+    // beside "workable issue(s)" read as though they were queued.
+    if (queue.proposals.length) {
+        log(`${candidates.length} workable issue(s). NOTE: ${queue.proposals.length} Firestore proposal(s) were read but NOT worked — `
+            + 'a proposal has no issue number, so it cannot carry attempt state, comments or a Closes link. '
+            + 'File it as a GitHub issue to have it actioned.');
+        summary(`### ⚠️ ${queue.proposals.length} Firestore proposal(s) ignored\n\n`
+            + 'They were read from `system/pendingRelease` but the agent only works GitHub Issues. '
+            + 'A proposal has no issue number, so it cannot carry attempt state, comments or a `Closes` link.\n');
+    } else {
+        log(`${candidates.length} workable issue(s); 0 Firestore proposal(s)`);
+    }
 
     // ── work the highest-priority issue we can actually move ────────────────
     const skipped = [];

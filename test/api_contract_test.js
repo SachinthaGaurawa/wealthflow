@@ -142,3 +142,40 @@ describe('the check can actually fail', () => {
         expect(stranded).toEqual(['drive-auth']);
     });
 });
+
+describe('Firestore state intake — read, and honestly not worked', () => {
+    // The audit's third finding. work-queue.mjs connects to Firestore, reads
+    // system/pendingRelease and maps proposedChanges into fully-formed work
+    // items; `queue.proposals` was then referenced in exactly ONE place, a log
+    // line printing its length. The agent iterated queue.issues alone. The
+    // module docstring says the proposals are "folded in" — they were counted.
+    //
+    // They also cannot just be folded in: every proposal carries number: null,
+    // and the agent loop uses that number for the attempt-state file, the issue
+    // comments, the labels and the `Closes #N` link. Merging them as-is breaks
+    // all four, which is why the honest fix is to SAY they are ignored until
+    // someone converts them into real issues.
+    const agent = read('autonomous-fix-agent.js');
+    const wq = read('autonomy/work-queue.mjs');
+
+    it('still maps proposals with no issue number — the reason they cannot be worked', () => {
+        const fn = wq.slice(wq.indexOf('export async function firestoreProposals'));
+        expect(fn).toMatch(/number: null/);
+    });
+
+    it('tells the operator they were ignored, instead of printing a bare count', () => {
+        expect(agent).toMatch(/were read but NOT worked/);
+        expect(agent).toMatch(/File it as a GitHub issue to have it actioned/);
+    });
+
+    it('says so in the job summary too, not only the log', () => {
+        expect(agent).toMatch(/Firestore proposal\(s\) ignored/);
+    });
+
+    it('does not pretend to queue them', () => {
+        // The old line read "N workable issue(s); M Firestore proposal(s)",
+        // which alongside the workable count implied M were queued.
+        const bad = /log\(`\$\{candidates\.length\} workable issue\(s\); \$\{queue\.proposals\.length\} Firestore proposal\(s\)`\)/;
+        expect(agent).not.toMatch(bad);
+    });
+});
