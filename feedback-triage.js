@@ -371,7 +371,8 @@ export default async function handler(req, res) {
         const regressed = hit.state_reason !== 'not_planned';
         out.recurrence = true;
         out.reopened = false;
-        await githubPost(repo, token, '/issues/' + hit.number + '/comments', {
+
+        const noted = await githubPost(repo, token, '/issues/' + hit.number + '/comments', {
             body: '### Reported again\n\n'
                 + 'This was closed as `' + (hit.state_reason || 'completed') + '` and has been reported again '
                 + 'through the in-app feedback form.\n\n'
@@ -379,13 +380,31 @@ export default async function handler(req, res) {
                     ? '_Reopened automatically: a fix that was shipped has not held._'
                     : '_Left closed: this was declined deliberately. Recording the recurrence only._')
         });
+        out.recurrenceNoted = !!noted;
+
         if (regressed) {
             const r = await githubPatch(repo, token, '/issues/' + hit.number, { state: 'open', state_reason: 'reopened' });
             out.reopened = !!r;
         }
-        out.reason = regressed
-            ? 'Issue #' + hit.number + ' was reopened — this problem came back.'
-            : 'Already decided on issue #' + hit.number + '; the recurrence has been recorded.';
+
+        // THE REASON MUST DESCRIBE WHAT ACTUALLY HAPPENED.
+        // The first draft said "was reopened" whenever `regressed` was true —
+        // computed from the issue's state_reason, NOT from whether the PATCH
+        // succeeded. githubPatch swallows its errors and returns null, so a
+        // failed reopen still reported success to the user, and `out.reopened`
+        // sat next to it saying false. Caught by the consensus board's security
+        // reviewer flagging silent failure in these helpers.
+        //
+        // That is this repository's signature defect — an action reported as
+        // done because the code MEANT to do it — and it is not allowed in the
+        // one endpoint whose whole job is telling the owner the truth about
+        // their feedback.
+        out.reason = !regressed
+            ? 'Already decided on issue #' + hit.number
+                + (out.recurrenceNoted ? '; the recurrence has been recorded.' : '. Recording the recurrence failed — it is still tracked there.')
+            : out.reopened
+                ? 'Issue #' + hit.number + ' was reopened — this problem came back.'
+                : 'Issue #' + hit.number + ' tracks this and it has come back, but reopening it failed. It needs a human.';
         return send(res, out, 200);
     }
 
