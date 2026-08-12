@@ -300,6 +300,25 @@ export async function ensureCoreLabels({ env = process.env } = {}) {
 }
 
 /**
+ * Firestore Timestamp | Date | ISO string | null  ->  ISO string | null.
+ *
+ * Total: returns null rather than throwing or inventing a date, because the
+ * caller's whole reason for existing is that a fabricated timestamp is worse
+ * than an absent one.
+ */
+export function tsToIso(v) {
+    if (!v) return null;
+    try {
+        if (typeof v.toDate === 'function') return v.toDate().toISOString();   // Firestore Timestamp
+        if (v instanceof Date) return isNaN(v) ? null : v.toISOString();
+        if (typeof v === 'number') return new Date(v).toISOString();
+        if (typeof v === 'string') { const d = new Date(v); return isNaN(d) ? null : d.toISOString(); }
+        if (Number.isFinite(v._seconds)) return new Date(v._seconds * 1000).toISOString();
+    } catch { /* fall through */ }
+    return null;
+}
+
+/**
  * OPTIONAL Firestore enrichment. Never throws, never required — the exact
  * opposite of the old behaviour, where its absence killed the whole run.
  */
@@ -317,13 +336,31 @@ export async function firestoreProposals({ env = process.env } = {}) {
         const doc = await admin.firestore().collection('system').doc('pendingRelease').get();
         const d = doc.exists ? doc.data() : null;
         const changes = Array.isArray(d?.proposedChanges) ? d.proposedChanges : [];
+        // The document's own timestamp, not the moment we happened to read it.
+        // See `generatedAt` below.
+        const generatedAt = tsToIso(d?.generatedAt);
         return changes.map((c, i) => ({
             source: 'firestore',
             number: null,
             title: String(c.action || c.issue || `proposal ${i + 1}`).slice(0, 120),
             body: String(c.detail || c.action || c.issue || ''),
             labels: [],
-            created_at: new Date().toISOString(),
+            // WHY created_at IS GONE
+            // It was `new Date().toISOString()` — stamped at READ time, so every
+            // proposal always looked seconds old however long it had been sitting
+            // in the document. Anything ranking or ageing on it was reading a
+            // number this function had just invented. `generatedAt` is the real
+            // one, and it is null when Firestore has not written it yet rather
+            // than being back-filled with a plausible lie.
+            generatedAt,
+            // Carried through because the CLUSTER WEIGHT is the whole point of
+            // these records: `reports` is how many separate users hit this. It
+            // was being dropped on the floor here, one line before the only
+            // place it could ever have been used.
+            priority: c.priority || null,
+            category: c.category || null,
+            reports: Number.isFinite(c.reports) ? c.reports : null,
+            sample: String(c.issue || ''),
             _priority: c.priority,
         }));
     } catch (e) {
