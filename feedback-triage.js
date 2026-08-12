@@ -233,6 +233,34 @@ async function githubGet(repo, token, path) {
     return r.ok ? r.json() : null;
 }
 
+function ghHeaders(token) {
+    return {
+        'Authorization': 'Bearer ' + token,
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'wealthflow-triage'
+    };
+}
+
+/* Both return null rather than throwing. Recording a recurrence is strictly a
+ * bonus on top of "the report was received": a GitHub hiccup here must never
+ * turn a successful dedup into an error the user sees. */
+async function githubPost(repo, token, path, body) {
+    try {
+        const r = await fetch('https://api.github.com/repos/' + repo + path,
+            { method: 'POST', headers: ghHeaders(token), body: JSON.stringify(body) });
+        return r.ok ? r.json() : null;
+    } catch (_) { return null; }
+}
+
+async function githubPatch(repo, token, path, body) {
+    try {
+        const r = await fetch('https://api.github.com/repos/' + repo + path,
+            { method: 'PATCH', headers: ghHeaders(token), body: JSON.stringify(body) });
+        return r.ok ? r.json() : null;
+    } catch (_) { return null; }
+}
+
 export default async function handler(req, res) {
     const out = { ok: true };
     let body = req && req.body;
@@ -307,15 +335,57 @@ export default async function handler(req, res) {
         return send(res, out, 503);
     }
 
-    // de-dup: if an open issue with the same fingerprint label exists, comment instead of duplicating
+    // de-dup: if an issue with the same fingerprint label exists, comment instead of duplicating
     const fp = fingerprint(text);
-    const existing = await githubGet(repo, token, '/issues?state=open&labels=' + encodeURIComponent(fp));
+    // WHY state=all AND NOT state=open
+    // This asked for OPEN issues only. So a problem reported again AFTER its
+    // issue was closed found nothing, and filed a brand-new issue — losing the
+    // link to the history of the first one, and hiding the single most valuable
+    // signal user feedback can carry: THE FIX DID NOT HOLD. The recurrence read
+    // as an unrelated first report.
+    //
+    // Closed issues are not all the same, though, and this is why the fix is not
+    // simply `state=all` with the existing dedup:
+    //   · closed as `completed`  -> we claimed to fix it and it came back.
+    //                               Reopen. That is a regression, not a new bug.
+    //   · closed as `not_planned`-> we declined it deliberately. Record the
+    //                               recurrence, but do NOT reopen: resurrecting
+    //                               a decision every time someone re-reports is
+    //                               exactly the churn this pipeline exists to
+    //                               eliminate.
+    const existing = await githubGet(repo, token, '/issues?state=all&labels=' + encodeURIComponent(fp));
     if (Array.isArray(existing) && existing.length) {
-        // NOT a drop: this feedback is already tracked by an open issue, so the
-        // user's report is represented. Named explicitly so it can never be
-        // confused with the not-configured case above.
-        out.deduped = existing[0].number;
-        out.reason = 'Already tracked by issue #' + existing[0].number + '.';
+        // Prefer an open issue when one exists; otherwise take the newest closed.
+        const open = existing.filter(function (i) { return i.state === 'open'; });
+        const hit = open.length ? open[0] : existing[0];
+        out.deduped = hit.number;
+
+        if (hit.state === 'open') {
+            // NOT a drop: this feedback is already tracked by an open issue, so
+            // the user's report is represented. Named explicitly so it can never
+            // be confused with the not-configured case above.
+            out.reason = 'Already tracked by issue #' + hit.number + '.';
+            return send(res, out, 200);
+        }
+
+        const regressed = hit.state_reason !== 'not_planned';
+        out.recurrence = true;
+        out.reopened = false;
+        await githubPost(repo, token, '/issues/' + hit.number + '/comments', {
+            body: '### Reported again\n\n'
+                + 'This was closed as `' + (hit.state_reason || 'completed') + '` and has been reported again '
+                + 'through the in-app feedback form.\n\n'
+                + (regressed
+                    ? '_Reopened automatically: a fix that was shipped has not held._'
+                    : '_Left closed: this was declined deliberately. Recording the recurrence only._')
+        });
+        if (regressed) {
+            const r = await githubPatch(repo, token, '/issues/' + hit.number, { state: 'open', state_reason: 'reopened' });
+            out.reopened = !!r;
+        }
+        out.reason = regressed
+            ? 'Issue #' + hit.number + ' was reopened — this problem came back.'
+            : 'Already decided on issue #' + hit.number + '; the recurrence has been recorded.';
         return send(res, out, 200);
     }
 
@@ -579,7 +649,11 @@ export function diagnosticsSection(d) {
 }
 
 // exported for tests
-export { localClassify, fingerprint, LABELS, reconcile, URGENT_RE };
+// STOP is exported so anything comparing against a STORED fingerprint label can
+// re-filter it through the CURRENT word set. Labels filed before a word was
+// added to STOP contain that word forever, and the function no longer produces
+// it — see the canonicalKey() note in autonomy/proposal-intake.mjs.
+export { localClassify, fingerprint, LABELS, reconcile, URGENT_RE, STOP };
 
 function send(res, obj, code) {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
