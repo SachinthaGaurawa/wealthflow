@@ -1,0 +1,96 @@
+name: Proposal intake — Firestore clusters become trackable work
+
+# WHY THIS IS ITS OWN WORKFLOW AND NOT A STEP IN autonomous-discover.yml
+#
+# Intake and discovery are different jobs against different sources on different
+# clocks, and bolting one onto the other couples two failure domains that have
+# no reason to share one:
+#
+#   discovery  scans THE REPOSITORY with deterministic detectors. It needs a
+#              browser and a dependency tree, takes minutes, and its findings
+#              exist the moment the code does.
+#   intake     reads A FIRESTORE DOCUMENT that release-brain rewrites. It needs
+#              neither browser nor audit, takes seconds, and has nothing to say
+#              until that document changes.
+#
+# Sharing a workflow would mean a Playwright failure could take down intake, an
+# intake credential problem would appear as a discovery failure, and neither
+# could be rescheduled without moving the other. It also means the run summary
+# for one would report on both — and this pipeline has already shipped a summary
+# that conflated two different facts into one slot.
+#
+# CADENCE — deliberately anchored, not arbitrary.
+# release-brain rewrites system/pendingRelease from auto-release.yml at 06:00
+# UTC. Running at 06:40 reads THAT day's document rather than yesterday's, and
+# sits clear of discovery (04:00), pipeline-liveness (07:17) and the */6 jobs.
+#
+# ACTIONS BUDGET
+# One short job a day. No browser, no audit, no matrix — this is a document read
+# and at most a handful of API calls, so it costs roughly a minute per run
+# against the 2,000-minute monthly allowance.
+
+on:
+  schedule:
+    - cron: '40 6 * * *'          # daily 06:40 UTC — 40 min after release-brain writes
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'File and comment (unchecked = dry run, decides but writes nothing)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write                   # mint an issue, comment on one; nothing else
+
+concurrency:
+  group: wealthflow-proposal-intake
+  cancel-in-progress: false       # never cut a run off mid-write
+
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+          disable-sudo: true
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      # NOT continue-on-error, and no `|| npm install` fallback.
+      # firebase-admin is what reads the document; without it the intake cannot
+      # do its job at all, and a broken install must fail as a broken install
+      # rather than be laundered into "no proposals today". That conflation is
+      # exactly what made fuzz-gate report test results for tests that never ran.
+      - name: Install dependencies
+        run: npm ci
+
+      # A SCHEDULED RUN APPLIES. A manual run defaults to a dry run.
+      # Applying is safe here by construction: minted issues carry
+      # `proposal-derived` + `needs-triage` and never `ai-fix`, so nothing enters
+      # the fix pipeline until a human promotes it. The scheduled run is the
+      # feature; the dry run is for inspecting a change before trusting it.
+      - name: Run intake
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.apply }}" != "true" ]; then
+            echo "Manual run without 'apply' — dry run, nothing will be written."
+            node autonomy/proposal-intake.mjs
+          else
+            node autonomy/proposal-intake.mjs --apply
+          fi
+
+      # The script writes its plan to GITHUB_STEP_SUMMARY itself, including the
+      # fail-closed case. Nothing is asserted here about what it found: a
+      # workflow that claimed an outcome its own script had not reported would be
+      # the same defect one layer up.

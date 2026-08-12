@@ -188,6 +188,74 @@ describe('an OPEN issue still short-circuits exactly as before', () => {
     });
 });
 
+describe('dedup no longer fractures on its own history', () => {
+    /* A fingerprint label is written once and never rewritten, but STOP has
+     * GROWN — `your`, `please`, `fix`, `that` are in it now. So issue #46 still
+     * carries words fingerprint() can no longer emit:
+     *     stored              fb-add-your-income-button-please-fix-that-urgently
+     *     fingerprint() today       fb-add-income-button-urgently
+     * The exact-label lookup found nothing and filed a DUPLICATE, for every
+     * issue predating the last change to the word list. */
+    const REAL_46 = 'fb-add-your-income-button-please-fix-that-urgently';
+    const REAL_TEXT = "'Add your income' button please fix that. Urgently fix that";
+
+    /** Serves the exact-label query as empty and the user-feedback query as `issues`. */
+    function stubHistorical(issues, { fail = [] } = {}) {
+        const seen = [];
+        globalThis.fetch = vi.fn(async (url, opts = {}) => {
+            const method = opts.method || 'GET';
+            seen.push({ url: String(url), method });
+            const ok = (d) => ({ ok: true, status: 200, json: async () => d });
+            if (method === 'GET' && /labels=user-feedback/.test(url)) return ok(issues);
+            if (method === 'GET' && /\/issues\?/.test(url)) return ok([]);       // exact label: miss
+            if (method === 'PATCH') return fail.includes('reopen')
+                ? { ok: false, status: 503, json: async () => ({}) } : ok({ number: 46, state: 'open' });
+            return ok({ number: 999 });
+        });
+        return seen;
+    }
+
+    it('proves the divergence is real, so this cannot pass vacuously', async () => {
+        const { fingerprint, canonicalKey } = await import('../feedback-triage.js');
+        expect(fingerprint(REAL_TEXT)).not.toBe(REAL_46);
+        expect(canonicalKey(REAL_46)).toBe(canonicalKey(fingerprint(REAL_TEXT)));
+    });
+
+    it('falls back to a canonical comparison and finds the historical issue', async () => {
+        const seen = stubHistorical([{ number: 46, state: 'closed', state_reason: 'completed', labels: [{ name: REAL_46 }] }]);
+        const res = fakeRes();
+        await handler({ body: { text: REAL_TEXT } }, res);
+        const out = res._json;
+
+        expect(out.deduped, 'it filed a duplicate of #46').toBe(46);
+        expect(seen.some((s) => s.method === 'POST' && /\/issues$/.test(s.url))).toBe(false);
+        expect(seen.some((s) => /labels=user-feedback/.test(s.url)), 'the fallback query never ran').toBe(true);
+    });
+
+    it('only pays for the extra request when the fast path misses', async () => {
+        // The common case must stay one request.
+        const seen = stubGitHub({ issues: [{ number: 5, state: 'open', labels: [] }] });
+        await call();
+        expect(seen.filter((s) => /labels=user-feedback/.test(s.url))).toEqual([]);
+    });
+
+    it('does not match an unrelated report that merely shares the label prefix shape', async () => {
+        stubHistorical([{ number: 61, state: 'closed', state_reason: 'completed', labels: [{ name: 'fb-export-ledger-crashes-repeatedly' }] }]);
+        const res = fakeRes();
+        await handler({ body: { text: REAL_TEXT } }, res);
+        expect(res._json.deduped, 'it merged two unrelated reports').toBeUndefined();
+        expect(res._json.issue).toBe(999);
+    });
+
+    it('still refuses to dedupe on the fb-x never-match sentinel', async () => {
+        // Too little text to identify anything: it must file, not merge.
+        stubHistorical([{ number: 74, state: 'closed', state_reason: 'completed', labels: [{ name: 'fb-xj915t0yp' }] }]);
+        const res = fakeRes();
+        await handler({ body: { text: 'Please fix the issue now' } }, res);
+        expect(res._json.deduped).toBeUndefined();
+    });
+});
+
 describe('a genuinely new report is unaffected', () => {
     it('files an issue when nothing matches', async () => {
         const seen = stubGitHub({ issues: [] });
