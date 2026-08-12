@@ -1,5 +1,17 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.21 — 2026-08-12
+
+**What changed for you**
+
+- Standardise fingerprint identity across time, and give intake its own workflow (#95)
+- Firestore proposals become trackable work without duplicating it (#94)
+- The app ignored two answers the server was already giving it (#92)
+
+**Under the hood**
+
+- Three checks that reported infrastructure failure as a result (#93)
+
 ## v7.69.20 — 2026-08-06
 
 **What changed for you**

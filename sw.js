@@ -6,7 +6,7 @@
 // new in-app modal (wealthflow-sms-paste.js). Service Worker stays simple:
 // notifications, caching, and the original auto-backup logic.
 
-const CACHE_NAME = 'wealthflow-v7.69.20';
+const CACHE_NAME = 'wealthflow-v7.69.21';
 
 // ============================================================================
 //  WHY THERE IS A fetch HANDLER HERE NOW
