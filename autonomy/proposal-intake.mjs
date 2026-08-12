@@ -61,7 +61,14 @@
  * ===========================================================================*/
 
 import * as Q from './work-queue.mjs';
-import { fingerprint as triageFingerprint, STOP } from '../feedback-triage.js';
+// Identity comparison lives in feedback-triage.js, beside the fingerprint()
+// and STOP it repairs. Imported rather than reimplemented: a second copy drifts
+// the moment either changes, and a dedup that silently stops matching is
+// indistinguishable from having no dedup at all.
+import {
+    fingerprint as triageFingerprint,
+    canonicalKey, stripDigest, keysMatch,
+} from '../feedback-triage.js';
 import { fingerprint as contentFingerprint, stampBody, fingerprintsIn } from './discover.mjs';
 
 /** Cap per run. Proposals top out at 8, but a cap is what stops a clustering
@@ -109,73 +116,25 @@ export function proposalFingerprint(p) {
     return contentFingerprint('feedback-cluster', normalize(p?.sample || p?.body || p?.title || ''));
 }
 
-/**
- * Strip the trailing sha1 digest from a feedback-triage fingerprint label.
+/* stripDigest / canonicalKey / keysMatch are imported from feedback-triage.js.
  *
- * WHY THIS EXISTS — the defect that would have sunk the enrich lookup.
- * feedback-triage's `fingerprint()` builds `fb-<first 8 significant words>` and,
- * ONLY when that exceeds the 50-char label cap, appends `digest(text)` — a sha1
- * of the FULL report. `release-brain` truncates its cluster sample to 240 chars.
- * So for any report longer than that:
+ * WHY THEY MATTER HERE — two ways an exact-label lookup silently misses, both
+ * of which would make this module mint the very duplicates it exists to prevent:
  *
- *   full report  -> fb-dashboard-completely-freezes-whenever-c40fe51e
- *   cluster sample -> fb-dashboard-completely-freezes-whenever-6597879b
+ *   THE DIGEST. fingerprint() appends sha1(FULL TEXT) once the label would
+ *   exceed 50 chars, and release-brain truncates its cluster sample to 240. So
+ *   for any report longer than that:
+ *       full report    -> fb-dashboard-completely-freezes-whenever-c40fe51e
+ *       cluster sample -> fb-dashboard-completely-freezes-whenever-6597879b
+ *   Same words, different digest, not equal — and it misses only on LONG
+ *   reports, which are disproportionately the detailed ones worth not
+ *   duplicating.
  *
- * Same words, different digest, NOT EQUAL. An exact-label lookup misses and the
- * intake mints exactly the duplicate this whole module exists to prevent —
- * and it misses only on LONG reports, which are disproportionately the detailed
- * bug reports worth not duplicating.
+ *   THE STOPWORD SET. STOP has grown, labels are never rewritten, so issue #46
+ *   still carries words fingerprint() can no longer emit.
  *
- * The word prefix is identical on both sides because both derive from the same
- * leading words, so comparison happens with the digest removed.
- *
- * THE WIDTH IS EXACT ON PURPOSE.
- * The first draft matched `[0-9a-f]{6,}` and ate the word "decade" — six letters
- * drawn entirely from a-f — turning `fb-alpha-decade` into `fb-alpha`. That is
- * not a duplicate, it is a FALSE MATCH: two different reports collapse to one
- * key and one of them is silently absorbed into the other's issue. Losing a
- * report is the failure this module treats as worse than any duplicate.
- * `digest()` is `sha1(...).slice(0, 8)`, so the width is fixed at 8 and the
- * pattern says 8. "decade" and "facade" survive; the residual risk is an
- * 8-letter word using only a-f, which is not a thing in practice.
+ * Both are handled by comparing canonical keys instead of raw labels.
  */
-export function stripDigest(label) {
-    return String(label || '').replace(/-[0-9a-f]{8}$/, '');
-}
-
-/** Minimum words that may stand as an identity — the same threshold
- *  feedback-triage uses when it refuses to dedupe on too little text. */
-const MIN_KEY_WORDS = 3;
-
-/**
- * Re-filter a stored fingerprint label through the CURRENT stopword set.
- *
- * WHY — found by dry-running against the real repository, and it is a live
- * defect in its own right.
- *
- * `fingerprint()` drops STOP words. STOP has GROWN over time (`your`, `please`,
- * `fix`, `that` are in it now). A label is written once and never rewritten, so
- * every issue filed before a word was added still carries that word — and the
- * current function can no longer produce that string. Real example, issue #46:
- *
- *   stored label       fb-add-your-income-button-please-fix-that-urgently
- *   fingerprint() today            fb-add-income-button-urgently
- *
- * Same report, two identities. Re-filtering the stored label through today's
- * STOP set collapses it back onto today's form. For a label written under the
- * current set this is a no-op, so it repairs history without touching the
- * present.
- *
- * Returns null when too little survives to identify anything, rather than
- * offering a two-word key that would merge unrelated reports.
- */
-export function canonicalKey(label) {
-    const bare = stripDigest(String(label || ''));
-    if (!/^fb-/.test(bare) || /^fb-x/.test(bare)) return null;
-    const words = bare.slice(3).split('-').filter((w) => w.length > 2 && !STOP.has(w));
-    if (words.length < MIN_KEY_WORDS) return null;
-    return 'fb-' + words.join('-');
-}
 
 /** The comparable form of a report's triage identity. */
 export function triageKey(text) {
@@ -217,10 +176,14 @@ export function findCovering(index, key) {
     if (!key) return null;
     if (index.has(key)) return index.get(key);
     for (const [k, issue] of index) {
-        if (key.startsWith(k + '-') || k.startsWith(key + '-')) return issue;
+        if (keysMatch(key, k)) return issue;
     }
     return null;
 }
+
+// Re-exported so this module's own tests exercise the identity rules through
+// the surface that uses them. There is still exactly one implementation.
+export { canonicalKey, stripDigest, keysMatch };
 
 /** Issues that already carry an enrich comment for this cluster fingerprint. */
 export function alreadyEnriched(comments, fp) {

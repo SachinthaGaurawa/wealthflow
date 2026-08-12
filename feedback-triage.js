@@ -226,6 +226,63 @@ function fingerprint(text) {   // exported in the list at the foot of this file
     return full.slice(0, LABEL_MAX - d.length - 1).replace(/-+$/, '') + '-' + d;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * COMPARING AGAINST A STORED FINGERPRINT LABEL
+ *
+ * A fingerprint label is written onto an issue once and never rewritten. Two
+ * things therefore drift out from under it over time, and both were live
+ * defects that made this endpoint's dedup fracture on its own history:
+ *
+ *   1. THE DIGEST. fingerprint() appends sha1(FULL TEXT) only when the label
+ *      would exceed 50 chars. Anything comparing against a TRUNCATED sample of
+ *      the same report computes a different digest, so the labels differ while
+ *      the words are identical.
+ *
+ *   2. THE STOPWORD SET. fingerprint() drops STOP words, and STOP has GROWN —
+ *      `your`, `please`, `fix`, `that` are in it now and were not always. A
+ *      label filed before a word was added still contains it, and the current
+ *      function can no longer produce that string. Real example, issue #46:
+ *
+ *          stored label        fb-add-your-income-button-please-fix-that-urgently
+ *          fingerprint() today       fb-add-income-button-urgently
+ *
+ *      Same report, two identities. Re-reporting it filed a duplicate instead
+ *      of finding #46, and every issue filed before the set last changed had
+ *      the same hole.
+ *
+ * canonicalKey() collapses a stored label onto today's form. For a label
+ * written under the current set it is a no-op, so it repairs history without
+ * touching the present.
+ * ────────────────────────────────────────────────────────────────────────────*/
+
+/** Minimum words that may stand as an identity — the same evidence threshold
+ *  fingerprint() itself requires before it will dedupe at all. */
+const MIN_KEY_WORDS = 3;
+
+/* Exactly 8, because digest() is sha1(...).slice(0, 8). A looser `{6,}` eats
+ * real words made only of a-f letters — "decade", "facade" — which is not a
+ * duplicate but a FALSE MATCH that absorbs one report into another's issue. */
+function stripDigest(label) {
+    return String(label || '').replace(/-[0-9a-f]{8}$/, '');
+}
+
+function canonicalKey(label) {
+    const bare = stripDigest(String(label || ''));
+    if (!/^fb-/.test(bare) || /^fb-x/.test(bare)) return null;   // fb-x = deliberate never-match
+    const words = bare.slice(3).split('-').filter(function (w) { return w.length > 2 && !STOP.has(w); });
+    if (words.length < MIN_KEY_WORDS) return null;
+    return 'fb-' + words.join('-');
+}
+
+/* A historical label held the first 8 words surviving a WEAKER filter; today's
+ * key holds the first 8 surviving the current one. Re-filtering the old label
+ * therefore yields a PREFIX of today's key, never a divergence — so prefix
+ * comparison is the correct rule here rather than a loose one. */
+function keysMatch(a, b) {
+    if (!a || !b) return false;
+    return a === b || a.startsWith(b + '-') || b.startsWith(a + '-');
+}
+
 async function githubGet(repo, token, path) {
     const r = await fetch('https://api.github.com/repos/' + repo + path, {
         headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'User-Agent': 'wealthflow-triage' }
@@ -353,7 +410,26 @@ export default async function handler(req, res) {
     //                               a decision every time someone re-reports is
     //                               exactly the churn this pipeline exists to
     //                               eliminate.
-    const existing = await githubGet(repo, token, '/issues?state=all&labels=' + encodeURIComponent(fp));
+    let existing = await githubGet(repo, token, '/issues?state=all&labels=' + encodeURIComponent(fp));
+
+    // FAST PATH MISSED — the label may simply be older than the current STOP set.
+    // Exact-label matching only ever finds issues filed while the word list was
+    // what it is today; see the canonicalKey note above. One extra request, and
+    // only when nothing matched exactly, so the common case is unchanged.
+    // `user-feedback` is on every issue this endpoint files, which keeps the
+    // candidate set small.
+    const key = canonicalKey(fp);
+    if (key && (!Array.isArray(existing) || !existing.length)) {
+        const candidates = await githubGet(repo, token, '/issues?state=all&labels=user-feedback&per_page=100');
+        existing = (Array.isArray(candidates) ? candidates : []).filter(function (i) {
+            return (i.labels || []).some(function (l) {
+                return keysMatch(canonicalKey(typeof l === 'string' ? l : l && l.name), key);
+            });
+        });
+        // Newest first, so an open recurrence lands on the most recent issue.
+        existing.sort(function (a, b) { return Number(b.number) - Number(a.number); });
+    }
+
     if (Array.isArray(existing) && existing.length) {
         // Prefer an open issue when one exists; otherwise take the newest closed.
         const open = existing.filter(function (i) { return i.state === 'open'; });
@@ -668,11 +744,12 @@ export function diagnosticsSection(d) {
 }
 
 // exported for tests
-// STOP is exported so anything comparing against a STORED fingerprint label can
-// re-filter it through the CURRENT word set. Labels filed before a word was
-// added to STOP contain that word forever, and the function no longer produces
-// it — see the canonicalKey() note in autonomy/proposal-intake.mjs.
-export { localClassify, fingerprint, LABELS, reconcile, URGENT_RE, STOP };
+// canonicalKey/stripDigest/keysMatch are exported so every consumer compares
+// identities the SAME way. They live here, beside fingerprint() and STOP, so
+// there is exactly one implementation to keep correct — a second copy in the
+// intake would drift the moment either changed, and a dedup that silently stops
+// matching is indistinguishable from having no dedup.
+export { localClassify, fingerprint, LABELS, reconcile, URGENT_RE, STOP, canonicalKey, stripDigest, keysMatch };
 
 function send(res, obj, code) {
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
