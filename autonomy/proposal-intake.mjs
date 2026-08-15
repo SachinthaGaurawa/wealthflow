@@ -175,10 +175,20 @@ export function indexTriageIssues(issues) {
 export function findCovering(index, key) {
     if (!key) return null;
     if (index.has(key)) return index.get(key);
+    // NEWEST WINS ON THE PREFIX PATH TOO.
+    // The first draft returned the first key that matched while iterating, which
+    // is Map insertion order — the order the API happened to return issues, not
+    // recency. indexTriageIssues() promises "newest wins so an enrich comment
+    // lands on the live issue, not a stale one", and on the prefix path the code
+    // did not honour its own docstring: with #10 `fb-cannot-open-settings` and
+    // #99 `fb-cannot-open-settings-page-crashes` both matching, it picked #10.
+    // Cluster evidence would attach to the older, likely-closed issue.
+    let best = null;
     for (const [k, issue] of index) {
-        if (keysMatch(key, k)) return issue;
+        if (!keysMatch(key, k)) continue;
+        if (!best || Number(issue.number) > Number(best.number)) best = issue;
     }
-    return null;
+    return best;
 }
 
 // Re-exported so this module's own tests exercise the identity rules through
@@ -231,6 +241,20 @@ export function plan(proposals, issues, { max = MAX_MINTS_PER_RUN } = {}) {
     const minted = fingerprintsIn(issues);
     const triage = indexTriageIssues(issues);
     const decisions = [];
+    // Identities already DECIDED IN THIS RUN. `minted` is a snapshot of issues
+    // that existed before the run started and is never updated as we go, so
+    // without this two proposals sharing one identity both reached `mint`.
+    //
+    // That is not hypothetical. normalize() collapses whitespace and strips
+    // trailing punctuation, so "Exports freeze the ledger view" and
+    // "Exports  freeze the ledger view." are ONE fingerprint — and
+    // release-brain builds proposedChanges from clustered free text, where that
+    // pair is entirely ordinary. Measured before the fix: two mints in one run.
+    // The next run would then see both issues and `skip` both, so the duplicate
+    // became permanent and silent. Enrich had the same hole: two identical
+    // cluster-evidence comments on one issue, because the executor's
+    // already-commented check reads comments fetched BEFORE the first was posted.
+    const seen = new Set();
     let mints = 0;
 
     for (const p of proposals || []) {
@@ -241,6 +265,15 @@ export function plan(proposals, issues, { max = MAX_MINTS_PER_RUN } = {}) {
             decisions.push({ action: 'skip', fp, proposal: p, reason: 'already minted by a previous run' });
             continue;
         }
+
+        if (seen.has(fp)) {
+            decisions.push({
+                action: 'skip', fp, proposal: p,
+                reason: 'a proposal earlier in THIS run has the same identity — handled once',
+            });
+            continue;
+        }
+        seen.add(fp);
 
         const key = triageKey(sample);
 
@@ -493,5 +526,11 @@ if (invokedDirectly) {
     // controls and a red X every morning would train them to ignore it — but
     // `unreachable` means Firestore rejected or dropped us, and that must show
     // as a failure rather than a quiet green tick.
-    process.exit(r.status === 'unreachable' ? 1 : 0);
+    //
+    // `r.error` is the fail-closed dedup path, and it exited 0. A run that could
+    // not see the existing issues, therefore wrote nothing and does not know the
+    // state of the queue, was reporting a green tick — the summary said "failed
+    // closed" while the job badge said success. Failing closed is correct
+    // behaviour; presenting it as a successful run is not.
+    process.exit(r.error || r.status === 'unreachable' ? 1 : 0);
 }

@@ -210,6 +210,81 @@ describe('coverage that cannot be determined is never minted', () => {
     });
 });
 
+describe('two proposals with ONE identity are handled once, in the same run', () => {
+    /* Found by adversarial review of the merged code, measured before fixing.
+     * `minted` is a snapshot of issues that existed BEFORE the run and is never
+     * updated as the loop decides, so two proposals sharing a fingerprint both
+     * reached `mint`. normalize() collapses whitespace and strips trailing
+     * punctuation, and release-brain clusters free text — so that pair is
+     * ordinary, not exotic. The next run would see both issues and skip both,
+     * making the duplicate permanent and invisible. */
+    const A = 'Exports freeze the ledger view';
+    const B = 'Exports  freeze the ledger view.';      // same identity after normalize
+
+    it('proves the two really do collapse to one fingerprint', () => {
+        expect(proposalFingerprint(proposal(A))).toBe(proposalFingerprint(proposal(B)));
+    });
+
+    it('mints once, not twice', () => {
+        const d = plan([proposal(A), proposal(B)], []);
+        expect(d.map((x) => x.action)).toEqual(['mint', 'skip']);
+        expect(summarisePlan(d).mint, 'a same-run duplicate was filed').toBe(1);
+    });
+
+    it('says WHY the second was skipped, distinctly from a previous-run skip', () => {
+        const d = plan([proposal(A), proposal(B)], []);
+        expect(d[1].reason).toMatch(/THIS run/);
+        expect(d[1].reason).not.toMatch(/previous run/);
+    });
+
+    it('enriches once, not twice, onto the same issue', () => {
+        // The executor's already-commented check reads comments fetched BEFORE
+        // the first was posted, so without this both would post.
+        const text = 'Exports freeze the ledger view completely';
+        const d = plan([proposal(text), proposal(text + '.')], [issue(41, [triageFingerprint(text)])]);
+        expect(d.map((x) => x.action)).toEqual(['enrich', 'skip']);
+        expect(d.filter((x) => x.action === 'enrich')).toHaveLength(1);
+    });
+
+    it('does not spend two mint slots on one identity', () => {
+        const dup = 'Recurring ledger duplication after a sync conflict';
+        const many = [proposal(dup), proposal(dup + ' '), proposal('a genuinely different ledger fault appears'),
+            proposal('another distinct ledger fault appears')];
+        const s = summarisePlan(plan(many, []));
+        expect(s.mint).toBe(3);        // dup counted once, plus the two distinct
+        expect(s.skip).toBe(1);
+    });
+});
+
+describe('a prefix match lands on the NEWEST issue, as the index promises', () => {
+    /* indexTriageIssues() documents "newest wins so an enrich comment lands on
+     * the live issue, not a stale one". The exact-key path honoured that; the
+     * prefix fallback returned the first key it iterated — Map insertion order,
+     * i.e. whatever order the API returned issues. The code contradicted its own
+     * docstring, and cluster evidence would attach to the older, likely-closed
+     * issue. */
+    const older = issue(10, ['fb-cannot-open-settings']);
+    const newer = issue(99, ['fb-cannot-open-settings-page-crashes']);
+
+    it('prefers the higher issue number when several prefixes match', () => {
+        const idx = indexTriageIssues([older, newer]);           // inserted 10, then 99
+        expect(findCovering(idx, 'fb-cannot-open-settings-page-crashes-badly')?.number).toBe(99);
+    });
+
+    it('is not an artefact of insertion order', () => {
+        const idx = indexTriageIssues([newer, older]);           // reversed
+        expect(findCovering(idx, 'fb-cannot-open-settings-page-crashes-badly')?.number).toBe(99);
+    });
+
+    it('still returns the only match when there is just one', () => {
+        expect(findCovering(indexTriageIssues([older]), 'fb-cannot-open-settings-page')?.number).toBe(10);
+    });
+
+    it('still matches nothing when nothing shares the prefix', () => {
+        expect(findCovering(indexTriageIssues([older, newer]), 'fb-export-ledger-crashes')).toBeNull();
+    });
+});
+
 describe('the projection is idempotent', () => {
     it('mints on the first pass and skips on the second', () => {
         const p = proposal('exports freeze the dashboard');
@@ -400,6 +475,32 @@ describe('an empty read names WHY it was empty', () => {
         const r = emptyReport('something_new');
         expect(r.title).toMatch(/unknown state/i);
         expect(r.icon).not.toBe('✅');
+    });
+});
+
+describe('a malformed Firestore record degrades honestly', () => {
+    /* proposedChanges is free-form data written by another service. A null or
+     * non-object entry made `c.action` throw inside firestoreProposals' try,
+     * and the catch labelled it `unreachable` — "Firestore could not be read".
+     * Firestore was read perfectly; one record was malformed. Mislabelling a
+     * data problem as an outage is the conflation the status enum exists to end. */
+    const junk = { source: 'firestore', number: null, title: 'proposal 1', body: '', sample: '',
+        priority: null, category: null, reports: null };
+
+    it('never mints an issue with no content', () => {
+        const d = plan([junk], []);
+        expect(d[0].action).toBe('unresolvable');
+        expect(summarisePlan(d).mint, 'a garbage issue was filed').toBe(0);
+    });
+
+    it('does not take a mint slot from a real proposal beside it', () => {
+        const d = plan([junk, proposal('a genuine ledger fault appears on export')], []);
+        expect(summarisePlan(d)).toMatchObject({ unresolvable: 1, mint: 1 });
+    });
+
+    it('renders without throwing even with everything absent', () => {
+        expect(() => renderMint(junk, 'f'.repeat(16))).not.toThrow();
+        expect(renderMint(junk, 'f'.repeat(16)).body).toMatch(/No cluster metadata was supplied/);
     });
 });
 
