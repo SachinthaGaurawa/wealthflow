@@ -323,23 +323,66 @@ export function tsToIso(v) {
  * opposite of the old behaviour, where its absence killed the whole run.
  */
 export async function firestoreProposals({ env = process.env } = {}) {
+    return (await firestoreProposalsDetailed({ env })).proposals;
+}
+
+/**
+ * The same read, but it SAYS WHY it came back empty.
+ *
+ * WHY THIS EXISTS
+ * `firestoreProposals()` returned `[]` for four completely different situations,
+ * and the intake could only print one sentence covering all of them:
+ *
+ *     "No Firestore proposals available (no credentials, or the document is empty)."
+ *
+ * On the first live scheduled run that sentence was the only output. It happened
+ * to be a missing FIREBASE_SERVICE_ACCOUNT secret — but the run summary could not
+ * say so, and the only reason anyone could tell was that the WORKFLOW log dumped
+ * an empty env var next to it. Read the sentence alone and "the pipeline is
+ * healthy and there was no work" is indistinguishable from "the pipeline has
+ * never been able to authenticate".
+ *
+ * That is this repository's recurring defect in its purest form: an outage and a
+ * clean result rendered identically. Every branch now names itself.
+ *
+ *   ok             read succeeded; `proposals` may still legitimately be empty
+ *   no_credentials FIREBASE_SERVICE_ACCOUNT missing or blank
+ *   bad_credentials  set, but not parseable JSON
+ *   empty_document system/pendingRelease absent, or it carries no proposedChanges
+ *   unreachable    the SDK or the query failed — auth rejected, network, quota
+ *
+ * Never throws: an enrichment source going down must not kill the run. It must
+ * only stop pretending it was healthy.
+ */
+export async function firestoreProposalsDetailed({ env = process.env } = {}) {
+    const none = (status, reason) => ({ status, reason, proposals: [] });
+
     const raw = env.FIREBASE_SERVICE_ACCOUNT;
-    if (!raw || !String(raw).trim()) return [];
+    if (!raw || !String(raw).trim()) {
+        return none('no_credentials',
+            'FIREBASE_SERVICE_ACCOUNT is not set in this environment, so Firestore was never contacted.');
+    }
     let creds;
-    try { creds = JSON.parse(raw); } catch {
+    try { creds = JSON.parse(raw); } catch (e) {
         console.warn('[work-queue] FIREBASE_SERVICE_ACCOUNT is set but not valid JSON — ignoring.');
-        return [];
+        return none('bad_credentials',
+            `FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON (${e.message}).`);
     }
     try {
         const admin = (await import('firebase-admin')).default;
         if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert(creds) });
         const doc = await admin.firestore().collection('system').doc('pendingRelease').get();
         const d = doc.exists ? doc.data() : null;
-        const changes = Array.isArray(d?.proposedChanges) ? d.proposedChanges : [];
+        if (!d) return none('empty_document', 'system/pendingRelease does not exist.');
+        if (!Array.isArray(d.proposedChanges) || !d.proposedChanges.length) {
+            return none('empty_document',
+                'system/pendingRelease exists but carries no proposedChanges — release-brain found nothing critical to propose.');
+        }
+        const changes = d.proposedChanges;
         // The document's own timestamp, not the moment we happened to read it.
         // See `generatedAt` below.
         const generatedAt = tsToIso(d?.generatedAt);
-        return changes.map((c, i) => ({
+        const proposals = changes.map((c, i) => ({
             source: 'firestore',
             number: null,
             title: String(c.action || c.issue || `proposal ${i + 1}`).slice(0, 120),
@@ -363,9 +406,14 @@ export async function firestoreProposals({ env = process.env } = {}) {
             sample: String(c.issue || ''),
             _priority: c.priority,
         }));
+        return { status: 'ok', reason: null, proposals };
     } catch (e) {
         console.warn('[work-queue] Firestore enrichment unavailable (non-fatal):', e.message);
-        return [];
+        // Deliberately NOT folded into empty_document. "I could not look" and
+        // "I looked and there was nothing" are different facts, and an auth
+        // rejection surfaces here — which is precisely the state that must never
+        // read as a healthy empty queue.
+        return none('unreachable', `Firestore could not be read: ${e.message}`);
     }
 }
 

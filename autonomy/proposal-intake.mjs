@@ -356,18 +356,24 @@ export function renderEnrich(p, fp) {
  * the system.
  */
 export async function runIntake({ env = process.env, apply = false, max = MAX_MINTS_PER_RUN } = {}) {
-    const proposals = await Q.firestoreProposals({ env });
-    if (!proposals.length) return { proposals: 0, decisions: [], applied: false };
+    // The status is carried, not discarded. `[]` used to mean any of "no
+    // credentials", "bad credentials", "document empty" or "Firestore
+    // unreachable", and the run could only print one sentence covering all four.
+    const src = await Q.firestoreProposalsDetailed({ env });
+    const proposals = src.proposals;
+    if (!proposals.length) {
+        return { proposals: 0, decisions: [], applied: false, status: src.status, reason: src.reason };
+    }
 
     let issues;
     try {
         issues = await Q.allIssues({ env });
     } catch (e) {
-        return { proposals: proposals.length, decisions: [], applied: false, error: `dedup lookup failed: ${e.message}` };
+        return { proposals: proposals.length, decisions: [], applied: false, status: src.status, error: `dedup lookup failed: ${e.message}` };
     }
 
     const decisions = plan(proposals, issues, { max });
-    if (!apply) return { proposals: proposals.length, decisions, applied: false };
+    if (!apply) return { proposals: proposals.length, decisions, applied: false, status: src.status };
 
     for (const l of MINT_LABELS) {
         await Q.ensureLabel(l, l === 'needs-triage' ? 'FBCA04' : '5319E7',
@@ -394,7 +400,7 @@ export async function runIntake({ env = process.env, apply = false, max = MAX_MI
             d.result = { error: e.message };
         }
     }
-    return { proposals: proposals.length, decisions, applied: true };
+    return { proposals: proposals.length, decisions, applied: true, status: src.status };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -420,33 +426,72 @@ export function formatPlan(decisions) {
     return lines.join('\n');
 }
 
+/**
+ * How an empty read should be presented. Each source status gets its OWN
+ * headline, because the first live run proved the cost of one shared sentence:
+ * a missing secret and a healthy quiet day printed the same words, and only the
+ * workflow's env dump distinguished them.
+ *
+ * `ok` is the sole status where an empty result is good news.
+ */
+export function emptyReport(status, reason) {
+    const map = {
+        ok: ['✅', 'Proposal intake — nothing to do',
+            'Firestore was read successfully and `proposedChanges` is empty. This is a clean result.'],
+        no_credentials: ['⚠️', 'Proposal intake — NOT RUN, no credentials',
+            'Firestore was **never contacted**. This is not an empty queue; the intake is inert until the '
+            + '`FIREBASE_SERVICE_ACCOUNT` secret is provisioned.'],
+        bad_credentials: ['⚠️', 'Proposal intake — NOT RUN, credentials unreadable',
+            'Firestore was **never contacted** because the credential could not be parsed.'],
+        empty_document: ['✅', 'Proposal intake — nothing to do',
+            'Firestore was read successfully; there is nothing queued to project.'],
+        unreachable: ['❌', 'Proposal intake — COULD NOT READ Firestore',
+            'The read failed. This is an outage, **not** an empty queue — treat it as unknown, not as clear.'],
+    };
+    const [icon, title, body] = map[status] || ['❔', 'Proposal intake — unknown state',
+        'The source reported a status this reporter does not recognise.'];
+    return { icon, title, body, reason };
+}
+
 const invokedDirectly = (process.argv[1] || '').endsWith('proposal-intake.mjs');
 
 if (invokedDirectly) {
     const apply = process.argv.includes('--apply');
     const r = await runIntake({ apply });
+    let md;
 
     if (r.error) {
         console.error(`✗ ${r.error} — nothing was written (fail closed).`);
+        md = `### ✗ Proposal intake failed closed\n\n${r.error}\n\nNothing was written.\n`;
     } else if (!r.proposals) {
-        console.log('No Firestore proposals available (no credentials, or the document is empty).');
+        // NOT one sentence for four different situations. See emptyReport().
+        const e = emptyReport(r.status, r.reason);
+        console.log(`${e.icon} ${e.title}`);
+        if (e.reason) console.log(`   ${e.reason}`);
+        md = `### ${e.icon} ${e.title}\n\n${e.body}\n\n`
+            + (e.reason ? `> ${e.reason}\n\n` : '')
+            + `_source status: \`${r.status}\`_\n`;
     } else {
         console.log(apply ? '── APPLIED ──' : '── DRY RUN — nothing was written ──');
         console.log(formatPlan(r.decisions));
+        const s = summarisePlan(r.decisions);
+        md = `### ${apply ? '✅' : '🔎'} Proposal intake — ${apply ? 'applied' : 'dry run (nothing written)'}\n\n`
+            + `**${s.mint}** mint · **${s.enrich}** enrich · **${s.skip}** skip · **${s.defer}** deferred`
+            + ` · **${s.unresolvable}** unresolvable\n\n`
+            + '```\n' + formatPlan(r.decisions) + '\n```\n';
     }
 
-    // The dry run must reach the JOB SUMMARY, not just stdout. A plan printed
+    // The plan must reach the JOB SUMMARY, not just stdout. A result printed
     // only into a log nobody opens is one more thing that computes a correct
     // answer and is never read — the failure this repository keeps repeating.
     if (process.env.GITHUB_STEP_SUMMARY) {
-        const s = summarisePlan(r.decisions);
-        const md = r.error
-            ? `### ✗ Proposal intake failed closed\n\n${r.error}\n\nNothing was written.\n`
-            : `### ${apply ? '✅' : '🔎'} Proposal intake — ${apply ? 'applied' : 'dry run (nothing written)'}\n\n`
-              + `**${s.mint}** mint · **${s.enrich}** enrich · **${s.skip}** skip · **${s.defer}** deferred`
-              + ` · **${s.unresolvable}** unresolvable\n\n`
-              + '```\n' + formatPlan(r.decisions) + '\n```\n';
         try { (await import('node:fs')).appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n'); } catch { /* ignore */ }
     }
-    process.exit(0);
+
+    // A failed READ is not a successful run. `no_credentials` and
+    // `bad_credentials` stay exit 0 — they are a configuration state the owner
+    // controls and a red X every morning would train them to ignore it — but
+    // `unreachable` means Firestore rejected or dropped us, and that must show
+    // as a failure rather than a quiet green tick.
+    process.exit(r.status === 'unreachable' ? 1 : 0);
 }
