@@ -83,6 +83,42 @@ describe('the lockfile is committed, because npm ci cannot work without it', () 
     });
 });
 
+describe('the lockfile still describes the dependencies package.json asks for', () => {
+    /* THE DRIFT THIS GUARDS, AND THE DRIFT IT DELIBERATELY IGNORES.
+     *
+     * The release bot bumps package.json's `version` on every release and does
+     * not touch package-lock.json — which was harmless while the lockfile was
+     * gitignored, and is new behaviour now that it is committed. Measured:
+     * package.json 7.69.21 against a lockfile recording 7.69.20, and `npm ci`
+     * still exits 0, because npm enforces the DEPENDENCY TREE, not the root
+     * version field. So that particular drift is cosmetic and is NOT asserted
+     * here — a test that failed on it would fail after every release and be
+     * disabled within a week.
+     *
+     * What genuinely breaks `npm ci` is a dependency added or changed in
+     * package.json without regenerating the lockfile. That is what this checks,
+     * and it is the condition under which every workflow in the repo would stop
+     * installing at once. */
+    it('has an entry for every declared dependency', () => {
+        const pkg = JSON.parse(read('package.json'));
+        const lock = JSON.parse(read('package-lock.json'));
+        const declared = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+        expect(Object.keys(declared).length, 'no dependencies parsed — this would pass vacuously').toBeGreaterThan(0);
+
+        const missing = Object.keys(declared).filter((n) => !lock.packages?.[`node_modules/${n}`]);
+        expect(missing, `declared in package.json but absent from the lockfile — \`npm ci\` will refuse to install:\n  ${missing.join('\n  ')}`).toEqual([]);
+    });
+
+    it('records the same dependency set the lockfile root declares', () => {
+        // packages[""] mirrors package.json's dependency blocks. If they diverge,
+        // npm ci errors before installing anything.
+        const pkg = JSON.parse(read('package.json'));
+        const root = JSON.parse(read('package-lock.json')).packages?.[''] || {};
+        expect(root.dependencies || {}).toEqual(pkg.dependencies || {});
+        expect(root.devDependencies || {}).toEqual(pkg.devDependencies || {});
+    });
+});
+
 describe('the pinned tree carries no known high-severity hole', () => {
     // Pinned by ADVISORY, not by version number, so this keeps meaning
     // something after the next bump. npm audit itself is not run here: it needs
@@ -163,5 +199,54 @@ describe('the workflows that fall back to npm install still exist', () => {
             .filter((f) => /npm ci\s*\|\|\s*npm install/.test(fs.readFileSync(path.join(dir, f), 'utf8')));
         expect(withFallback, 'fuzz-gate must never mask an install failure').not.toContain('fuzz-gate.yml');
         expect(withFallback.length, 'the fallback vanished everywhere — intended?').toBeGreaterThan(0);
+    });
+});
+
+describe('proposal intake is triggered causally, not by hoping two crons stay ordered', () => {
+    /* It ran on `cron: 40 6 * * *`, reasoning that release-brain writes
+     * pendingRelease at 06:00 so a 40-minute offset reads that day's document.
+     * Measured against this repo's own history, GitHub dispatches scheduled
+     * workflows 38-94 minutes late — auto-release actually ran 07:09/06:49/
+     * 07:11/06:38, and intake's first run landed at 08:02 (+82). Both drift by
+     * more than the gap between them, so the offset established nothing. */
+    const WF = read('.github/workflows/proposal-intake.yml');
+    const CODE = WF.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+
+    it('has no cron at all', () => {
+        expect(CODE, 'the cron is back — ordering vs auto-release is unguaranteed again')
+            .not.toMatch(/cron:/);
+    });
+
+    it('waits for Auto Release to finish', () => {
+        expect(CODE).toMatch(/workflow_run:/);
+        expect(CODE).toMatch(/workflows:\s*\["Auto Release \(WealthFlow\)"\]/);
+        expect(CODE).toMatch(/types:\s*\[completed\]/);
+    });
+
+    it('runs only when that release actually SUCCEEDED', () => {
+        // workflow_run fires on `completed` whatever the conclusion. A failed
+        // release may never have written the document, and reading it then and
+        // calling it "today's proposals" is the same unchecked assumption the
+        // trigger exists to remove.
+        expect(CODE).toMatch(/github\.event\.workflow_run\.conclusion == 'success'/);
+    });
+
+    it('still allows a deliberate manual run', () => {
+        expect(CODE).toMatch(/github\.event_name == 'workflow_dispatch'/);
+        expect(CODE).toMatch(/workflow_dispatch:/);
+    });
+
+    it('keeps the install strict — a broken toolchain must not read as no work', () => {
+        const i = CODE.indexOf('Install dependencies');
+        expect(i).toBeGreaterThan(-1);
+        const step = CODE.slice(i, CODE.indexOf('- name:', i + 10));
+        expect(step).toMatch(/npm ci/);
+        expect(step).not.toMatch(/continue-on-error/);
+        expect(step).not.toMatch(/\|\|\s*npm install/);
+    });
+
+    it('strips comments without stripping the workflow', () => {
+        expect(CODE).toMatch(/runs-on: ubuntu-latest/);
+        expect(CODE).toMatch(/proposal-intake\.mjs/);
     });
 });

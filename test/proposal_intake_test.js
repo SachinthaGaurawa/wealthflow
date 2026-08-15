@@ -17,7 +17,7 @@ import path from 'node:path';
 import {
     normalize, proposalFingerprint, stripDigest, triageKey, indexTriageIssues,
     alreadyEnriched, fence, plan, summarisePlan, renderMint, renderEnrich,
-    canonicalKey, findCovering,
+    canonicalKey, findCovering, emptyReport,
     MINT_LABELS, ENRICH_TAG, MAX_MINTS_PER_RUN,
 } from '../autonomy/proposal-intake.mjs';
 import { fingerprint as triageFingerprint } from '../feedback-triage.js';
@@ -353,6 +353,53 @@ describe('created_at is no longer invented at read time', () => {
     it('never throws on a hostile shape', () => {
         expect(() => tsToIso({ toDate: () => { throw new Error('x'); } })).not.toThrow();
         expect(tsToIso({ toDate: () => { throw new Error('x'); } })).toBeNull();
+    });
+});
+
+describe('an empty read names WHY it was empty', () => {
+    /* The first live scheduled run printed exactly one sentence:
+     *   "No Firestore proposals available (no credentials, or the document is empty)."
+     * It was in fact a missing FIREBASE_SERVICE_ACCOUNT secret, and the only
+     * reason anyone could tell was that the WORKFLOW log dumped an empty env var
+     * beside it. Read alone, "healthy and quiet" and "never authenticated once"
+     * were the same words — this repository's recurring defect in pure form. */
+    it('gives each status its own headline', () => {
+        const seen = new Set();
+        for (const s of ['ok', 'no_credentials', 'bad_credentials', 'empty_document', 'unreachable']) {
+            const r = emptyReport(s);
+            expect(r.title, `${s} has no title`).toBeTruthy();
+            seen.add(`${r.title}|${r.body}`);
+        }
+        // ok and empty_document share a headline ON PURPOSE — both mean "read
+        // succeeded, nothing queued". The other three must each be distinct.
+        expect(seen.size).toBeGreaterThanOrEqual(4);
+    });
+
+    it('never lets a missing credential read as a clean result', () => {
+        const bad = emptyReport('no_credentials');
+        expect(bad.body).toMatch(/never contacted/i);
+        expect(bad.body).not.toMatch(/clean result/i);
+        expect(bad.icon).not.toBe('✅');
+    });
+
+    it('never lets an unreachable Firestore read as an empty queue', () => {
+        const down = emptyReport('unreachable');
+        expect(down.body).toMatch(/not.{0,3}\*{0,2}an empty queue/i);
+        expect(down.body).toMatch(/unknown, not as clear/i);
+        expect(down.icon).toBe('❌');
+    });
+
+    it('calls a genuine empty document a clean result, because it is one', () => {
+        for (const s of ['ok', 'empty_document']) {
+            expect(emptyReport(s).icon).toBe('✅');
+            expect(emptyReport(s).body).toMatch(/read successfully/i);
+        }
+    });
+
+    it('does not invent a headline for a status it does not know', () => {
+        const r = emptyReport('something_new');
+        expect(r.title).toMatch(/unknown state/i);
+        expect(r.icon).not.toBe('✅');
     });
 });
 

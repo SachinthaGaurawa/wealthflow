@@ -18,10 +18,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const calls = { createIssue: [], comment: [], ensureLabel: [], issueComments: [] };
-const state = { proposals: [], issues: [], issuesThrow: null, comments: [] };
+const state = { proposals: [], proposalsDetailed: null, issues: [], issuesThrow: null, comments: [] };
 
 vi.mock('../autonomy/work-queue.mjs', () => ({
     firestoreProposals: async () => state.proposals,
+    firestoreProposalsDetailed: async () => state.proposalsDetailed
+        || { status: state.proposals.length ? 'ok' : 'empty_document', reason: null, proposals: state.proposals },
     allIssues: async () => { if (state.issuesThrow) throw new Error(state.issuesThrow); return state.issues; },
     createIssue: async (a) => { calls.createIssue.push(a); return { number: 900 + calls.createIssue.length }; },
     comment: async (n, b) => { calls.comment.push({ n, b }); return {}; },
@@ -42,7 +44,7 @@ const issue = (n, labels = [], over = {}) => ({
 
 beforeEach(() => {
     for (const k of Object.keys(calls)) calls[k] = [];
-    state.proposals = []; state.issues = []; state.issuesThrow = null; state.comments = [];
+    state.proposals = []; state.proposalsDetailed = null; state.issues = []; state.issuesThrow = null; state.comments = [];
 });
 
 describe('a dry run writes nothing at all', () => {
@@ -148,5 +150,43 @@ describe('the mock is real enough to be worth trusting', () => {
         state.proposals = [proposal('exports freeze the dashboard completely')];
         await runIntake({ apply: true });
         expect(calls.createIssue.length + calls.comment.length).toBeGreaterThan(0);
+    });
+});
+
+describe('the source status survives all the way to the caller', () => {
+    /* runIntake used to answer `[]` for four different situations and the CLI
+     * could only print one sentence covering all of them. The status is now
+     * carried on every return path — including the ones that write nothing. */
+    it('reports no_credentials rather than an empty queue', async () => {
+        state.proposalsDetailed = { status: 'no_credentials', reason: 'FIREBASE_SERVICE_ACCOUNT is not set', proposals: [] };
+        const r = await runIntake({ apply: true });
+        expect(r.status).toBe('no_credentials');
+        expect(r.reason).toMatch(/not set/);
+        expect(calls.createIssue).toEqual([]);
+    });
+
+    it('distinguishes an unreachable Firestore from an empty document', async () => {
+        state.proposalsDetailed = { status: 'unreachable', reason: 'Firestore could not be read: 16 UNAUTHENTICATED', proposals: [] };
+        const a = await runIntake({ apply: true });
+        state.proposalsDetailed = { status: 'empty_document', reason: 'no proposedChanges', proposals: [] };
+        const b = await runIntake({ apply: true });
+        expect(a.status).not.toBe(b.status);
+        expect(a.reason).toMatch(/UNAUTHENTICATED/);
+    });
+
+    it('carries ok through a successful apply', async () => {
+        state.proposalsDetailed = { status: 'ok', reason: null, proposals: [proposal('exports freeze the dashboard completely')] };
+        const r = await runIntake({ apply: true });
+        expect(r.status).toBe('ok');
+        expect(calls.createIssue).toHaveLength(1);
+    });
+
+    it('carries the status even when the dedup lookup fails closed', async () => {
+        state.proposalsDetailed = { status: 'ok', reason: null, proposals: [proposal('exports freeze the dashboard completely')] };
+        state.issuesThrow = 'API rate limit exceeded';
+        const r = await runIntake({ apply: true });
+        expect(r.status).toBe('ok');           // the READ was fine; the dedup was not
+        expect(r.error).toMatch(/dedup lookup failed/);
+        expect(calls.createIssue).toEqual([]);
     });
 });
