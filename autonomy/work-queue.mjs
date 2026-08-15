@@ -382,7 +382,13 @@ export async function firestoreProposalsDetailed({ env = process.env } = {}) {
         // The document's own timestamp, not the moment we happened to read it.
         // See `generatedAt` below.
         const generatedAt = tsToIso(d?.generatedAt);
-        const proposals = changes.map((c, i) => ({
+        // `c || {}` is load-bearing. A null or non-object entry in the array
+        // made `c.action` throw INSIDE the try, and the catch below labelled it
+        // `unreachable` — "Firestore could not be read". Firestore was read
+        // perfectly; one record was malformed. Mislabelling a data problem as an
+        // outage is the same conflation this status enum exists to end, so a bad
+        // entry degrades to an empty proposal instead of faking a read failure.
+        const proposals = changes.map((raw, i) => { const c = (raw && typeof raw === 'object') ? raw : {}; return ({
             source: 'firestore',
             number: null,
             title: String(c.action || c.issue || `proposal ${i + 1}`).slice(0, 120),
@@ -405,7 +411,7 @@ export async function firestoreProposalsDetailed({ env = process.env } = {}) {
             reports: Number.isFinite(c.reports) ? c.reports : null,
             sample: String(c.issue || ''),
             _priority: c.priority,
-        }));
+        }); });
         return { status: 'ok', reason: null, proposals };
     } catch (e) {
         console.warn('[work-queue] Firestore enrichment unavailable (non-fatal):', e.message);
