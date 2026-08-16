@@ -32,22 +32,84 @@
    Schedule is defined in vercel.json → crons.
    ============================================================================ */
 
+/* THIS FUNCTION COULD NEVER SUCCEED, AND SAID SO IN THE WRONG WORDS.
+ *
+ * It was `const admin = require('firebase-admin')` inside a module that is ESM
+ * — package.json declares `"type": "module"` and this file's only export is
+ * `export default`. `require` is simply not defined in ESM scope, so the very
+ * first statement threw `ReferenceError: require is not defined`, the blanket
+ * `catch (e) { return null; }` ate it, and `handler` announced:
+ *
+ *     "FIREBASE_SERVICE_ACCOUNT not configured — brain idle."
+ *
+ * That message is FALSE. The credential was configured. What failed was the
+ * module loader, and the report named the one thing that was fine. Every call
+ * to /api/release-brain — the Vercel cron and the `?mode=rerank` ping that
+ * wealthflow-feedback-ai.js fires when the feedback board opens — returned
+ * HTTP 200 with that sentence. It is why redeploying to "fix the missing env
+ * var" changed nothing: there was nothing wrong with the env var.
+ *
+ * Two changes, and the second matters as much as the first:
+ *   1. dynamic `import()`, the ESM equivalent — the same form
+ *      autonomy/work-queue.mjs already uses successfully against Firestore.
+ *   2. NAMED failure states instead of null-for-everything, so "not
+ *      configured", "not valid JSON", "could not load the SDK" and "could not
+ *      initialise" can never again be reported as one another.
+ */
+
+/* A JSON.parse message must NEVER be passed through. V8 embeds the first ~10
+ * bytes of the input in it:
+ *
+ *     JSON.parse('FIREBASE_SERVICE_ACCOUNT={"private_key":"-----BEGIN…')
+ *     → `Unexpected token 'F', "FIREBASE_S"... is not valid JSON`
+ *
+ * The reason string reaches two places that must never carry credential bytes:
+ * the GitHub Actions log, and — because /api/release-brain has no auth guard —
+ * an HTTP 200 body served to any unauthenticated caller. If the secret is ever
+ * misconfigured as a raw key, a path or a base64 blob rather than JSON, that
+ * echoed prefix is credential material.
+ *
+ * The offset is diagnostic and content-free, so it is all that survives.
+ * (firebase-admin's own cert() errors were checked against a credential whose
+ * every field was a marker string; they echo nothing, so those pass through.) */
+function jsonFault(e) {
+    const at = String((e && e.message) || '').match(/at position (\d+)/);
+    return at ? 'malformed at position ' + at[1] : 'malformed';
+}
+
 let _admin = null;
-function getAdmin() {
-    if (_admin) return _admin;
+async function getAdmin() {
+    if (_admin) return { admin: _admin, reason: null };
+
+    let admin;
     try {
-        const admin = require('firebase-admin');
-        if (!admin.apps.length) {
-            const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-            if (!raw) return null;
-            const cred = JSON.parse(raw);
-            admin.initializeApp({ credential: admin.credential.cert(cred) });
-        }
-        _admin = admin;
-        return admin;
+        admin = (await import('firebase-admin')).default;
     } catch (e) {
-        return null;
+        return { admin: null, reason: 'firebase-admin could not be loaded: ' + ((e && e.message) || e) };
     }
+    if (!admin || !admin.apps) {
+        return { admin: null, reason: 'firebase-admin loaded but exposes no app registry — wrong module shape.' };
+    }
+
+    if (!admin.apps.length) {
+        const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+        if (!raw || !String(raw).trim()) {
+            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is not set — brain idle.' };
+        }
+        let cred;
+        try {
+            cred = JSON.parse(raw);
+        } catch (e) {
+            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON (' + jsonFault(e) + ').' };
+        }
+        try {
+            admin.initializeApp({ credential: admin.credential.cert(cred) });
+        } catch (e) {
+            return { admin: null, reason: 'firebase-admin rejected that credential: ' + ((e && e.message) || e) };
+        }
+    }
+    _admin = admin;
+    return { admin, reason: null };
 }
 
 // ── scoring (mirrors the client engine, kept in sync) ─────────────────────────
@@ -186,8 +248,8 @@ function buildNotes(version, clusters, isUrgent) {
 
 export default async function handler(req, res) {
     const out = { ok: true, ran: new Date().toISOString(), wrote: [], note: '' };
-    const admin = getAdmin();
-    if (!admin) { out.ok = false; out.note = 'FIREBASE_SERVICE_ACCOUNT not configured — brain idle.'; return _send(res, out); }
+    const { admin, reason } = await getAdmin();
+    if (!admin) { out.ok = false; out.note = reason; return _send(res, out); }
 
     let db;
     try { db = admin.firestore(); } catch (e) { out.ok = false; out.note = 'firestore unavailable'; return _send(res, out); }
@@ -373,4 +435,128 @@ function _send(res, obj) {
         if (res && res.status) { res.status(obj.ok ? 200 : 200).json(obj); return; }
     } catch (_) {}
     return new Response(JSON.stringify(obj), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
+/* =============================================================================
+   CLI ENTRY POINT  —  `node release-brain.js`
+   ---------------------------------------------------------------------------
+   THIS FILE DID NOTHING WHEN RUN DIRECTLY. THAT IS WHY THE PIPELINE WAS DRY.
+
+   package.json declares `"type": "module"`, so `node release-brain.js` parsed
+   this file as ESM, bound `handler` to the default export, reached the end of
+   the module body and exited 0 — in milliseconds, having opened no Firestore
+   connection and written nothing. The handler was never called. Verified by
+   running it: exit 0, no output, no network.
+
+   .github/workflows/auto-release.yml ran exactly that command on every single
+   release, as `node release-brain.js || echo "brain step non-fatal"` under
+   `continue-on-error: true`. It reported success in ~3 seconds every time.
+   Downstream, autonomy/proposal-intake.mjs read the document that was never
+   written and reported — accurately — `system/pendingRelease does not exist.`
+   Green ticks all the way down a chain that had never once run.
+
+   Running this file now RUNS THE BRAIN, and the exit code is the truth about
+   whether it worked. Importing it (api/router.js) is completely unchanged:
+   nothing below executes unless this module IS the process entry point.
+   ========================================================================== */
+
+/**
+ * Is this module the process entry point?
+ *
+ * Pure, and takes both sides as arguments, so the decision is testable without
+ * spawning a process. No `node:` imports: this file is bundled into the Vercel
+ * function graph and its import list should not grow for a CLI concern.
+ */
+export function isEntryPoint(argv1, selfUrl) {
+    try {
+        if (!argv1 || !selfUrl) return false;
+        const self = decodeURIComponent(new URL(selfUrl).pathname).replace(/\\/g, '/');
+        const arg = String(argv1).replace(/\\/g, '/');
+        if (self === arg) return true;
+        // argv[1] is resolved but NOT realpath'd, so a symlinked checkout can
+        // spell one file two ways and the exact compare misses. Basename
+        // equality is sufficient here — the only file it can match is this one.
+        return self.split('/').pop() === 'release-brain.js'
+            && arg.split('/').pop() === 'release-brain.js';
+    } catch (_) { return false; }
+}
+
+/**
+ * The exit code the CLI must report for a finished handler result.
+ *
+ * `handler` folds every Firestore failure into `out.note` and still answers
+ * `ok: true`. That is right for an HTTP endpoint — the caller gets a 200 and
+ * can read the note. It is fatal for a scheduled job, where the note scrolls
+ * past in a log nobody opens and the tick stays green. At the CLI boundary a
+ * note IS a failure.
+ */
+export function brainExitCode(out) {
+    if (!out || typeof out !== 'object') return 1;
+    if (out.ok === false) return 1;
+    if (String(out.note || '').trim()) return 1;
+    // The default (non-rerank) pass writes system/pendingRelease unconditionally
+    // — that write is the entire reason auto-release invokes this. Reporting
+    // success without it is a no-op wearing the costume of a result, which is
+    // the exact defect this whole block exists to remove.
+    if (out.mode !== 'rerank' && !(out.wrote || []).some((w) => String(w).startsWith('pendingRelease'))) return 1;
+    return 0;
+}
+
+/**
+ * Run the brain once and report an honest exit code. `invoke` is injectable so
+ * the reporting can be tested without credentials or a network.
+ */
+export async function runBrainCli({ log = console.log, logErr = console.error, invoke = handler } = {}) {
+    let out;
+    try {
+        // A collector `res`: _send prefers res.status().json() when present, so
+        // this captures the same object the HTTP caller would have received.
+        const captured = {};
+        const res = { status() { return res; }, json(o) { captured.body = o; return res; } };
+        await invoke({ query: {} }, res);
+        out = captured.body;
+    } catch (e) {
+        logErr('::error::release-brain threw: ' + ((e && e.stack) || e));
+        return 1;
+    }
+    if (!out || typeof out !== 'object') {
+        logErr('::error::release-brain produced no result object — it did not run');
+        return 1;
+    }
+
+    log(JSON.stringify(out, null, 2));
+    const code = brainExitCode(out);
+    if (code === 0) {
+        log('release-brain wrote: ' + (out.wrote || []).join(', '));
+    } else {
+        logErr('::error::release-brain did not complete its work: '
+            + (String(out.note || '').trim() || 'system/pendingRelease was not written')
+            + ' (wrote: ' + ((out.wrote || []).join(', ') || 'nothing') + ')');
+    }
+    return code;
+}
+
+if (isEntryPoint(typeof process !== 'undefined' && process.argv && process.argv[1], import.meta.url)) {
+    runBrainCli().then(async (code) => {
+        process.exitCode = code;
+        // firebase-admin holds a gRPC channel open, so the event loop can stay
+        // alive long after the work is done. Close the app; if anything still
+        // holds the loop 10s later, leave with the code already earned rather
+        // than hanging until the job's 15-minute timeout. The timer is unref'd,
+        // so it fires ONLY when something else is keeping us alive.
+        try {
+            // The CACHED app only — never getAdmin(), which would initialise a
+            // brand new connection here just to close it.
+            if (_admin && _admin.apps) await Promise.all(_admin.apps.filter(Boolean).map((a) => a.delete()));
+        } catch (e) {
+            console.error('note: could not close the firebase app cleanly: ' + ((e && e.message) || e));
+        }
+        setTimeout(() => process.exit(code), 10_000).unref();
+    }).catch((e) => {
+        // runBrainCli catches its own errors, so reaching here means the
+        // reporting itself broke. Say so rather than dying as a bare unhandled
+        // rejection whose exit code nobody can explain.
+        console.error('::error::release-brain CLI failed while reporting: ' + ((e && e.stack) || e));
+        process.exitCode = 1;
+    });
 }

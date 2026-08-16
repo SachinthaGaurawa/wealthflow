@@ -10,14 +10,26 @@ name: Auto Release (WealthFlow)
 # a simple "new commits since the last release tag" heuristic otherwise.
 # Manual dispatch = one-click "Release now" (with optional explicit version).
 #
+# NOT CONFIGURED vs. FAILED — the distinction this file used to erase:
+#   "the secret is absent" is a CONFIGURATION state and shows up as a SKIPPED
+#   step, which is honest and visible. "the brain ran and could not do its job"
+#   is a FAILURE and now turns the run RED. The old file collapsed both into a
+#   green tick via `continue-on-error` plus `exit 0` plus `|| echo`, and the
+#   result was a release chain that reported success for months without the
+#   brain ever executing. Nothing in this file may swallow an error again.
+#   `2>/dev/null` survives in exactly two places, both of which use the exit
+#   code as an ANSWER rather than as an error: `git describe` ("is there a tag
+#   at all?") and `git rev-parse --verify` ("does this tag exist?").
+#
 # NOTE ON `secrets` IN CONDITIONS (this is why the old file was invalid):
 #   GitHub does NOT expose the `secrets` context to any `if:` — not a job's and
 #   not a step's. Only `env`, `github`, `inputs`, `job`, `matrix`, `needs`,
 #   `runner`, `steps`, `strategy` and `vars` are available there.
 #   The legal pattern (used below) is to hoist the *presence* of the secret into
 #   a job-level `env` value (job `env` DOES allow `secrets`) and then gate steps
-#   on `env.HAS_FIREBASE`. Every step also re-checks in the shell, so the run is
-#   correct even if the gate is ever removed.
+#   on `env.HAS_FIREBASE`. If that gate were ever removed, the run is still
+#   correct — but by failing loudly rather than by re-checking and skipping:
+#   release-brain.js exits 1 when it has no credentials.
 # =============================================================================
 
 on:
@@ -71,23 +83,32 @@ jobs:
           git config user.name  'WealthFlow Release Bot'
           git config user.email 'bot@wealthflow.local'
 
-      # Best-effort: let the brain prioritise feedback + arm system/pendingRelease.
-      - name: Arm the release brain (optional)
+      # This job had NO install step at all. Every consumer of firebase-admin
+      # below did its own `npm i firebase-admin@12 --no-save >/dev/null 2>&1`,
+      # which floated the version, hid its own failure, and was repeated three
+      # times. firebase-admin is a declared dependency, so one lockfile-backed
+      # `npm ci` replaces all three and makes the tree reproducible.
+      # NOT `npm ci || npm install`: a broken toolchain must never be able to
+      # read as a completed release.
+      - name: Install dependencies
+        run: npm ci
+
+      # NOT optional, NOT continue-on-error, and nothing here can swallow a
+      # failure. See the CLI block at the bottom of release-brain.js for why
+      # this step reported success in ~3 seconds on every release while doing
+      # literally nothing: the file is ESM whose only export is a Vercel
+      # handler, so `node release-brain.js` defined a function and exited 0.
+      #
+      # This step's whole purpose is the `system/pendingRelease` write that
+      # autonomy/proposal-intake.mjs reads. If the brain cannot make that
+      # write, the release must go red — a silent brain is precisely how the
+      # proposal pipeline stayed empty while three workflows showed green.
+      - name: Arm the release brain
         if: env.HAS_FIREBASE == 'true'
-        continue-on-error: true
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           RELEASE_BRAIN_ENABLED: '1'
-        run: |
-          if [ -z "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
-            echo "no service account — skipping the brain"
-            exit 0
-          fi
-          npm i firebase-admin@12 --no-save >/dev/null 2>&1 || {
-            echo "firebase-admin install failed — skipping the brain"
-            exit 0
-          }
-          node release-brain.js || echo "brain step non-fatal"
+        run: node release-brain.js
 
       - name: Decide if a release is due
         id: due
@@ -109,9 +130,13 @@ jobs:
           #    so the substantive gate below is the authority on whether to ship;
           #    the brain only influences urgency and the release notes.
           if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
-            npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
+            # This read stays non-fatal ON PURPOSE — unlike the brain step, its
+            # answer is advisory (see above: the substantive gate is the
+            # authority on whether to ship), so a Firestore blip must not block
+            # a legitimate release. But it no longer fails INVISIBLY: the error
+            # is printed instead of being swallowed by `catch(e){exit(0)}`.
             set +e
-            node -e "(async()=>{try{const a=require('firebase-admin');a.initializeApp({credential:a.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))});const d=await a.firestore().collection('system').doc('pendingRelease').get();const x=d.exists?d.data():{};process.exit((x.shouldRelease&&!x.consumed)?7:0);}catch(e){process.exit(0);}})();"
+            node -e "(async()=>{try{const a=require('firebase-admin');a.initializeApp({credential:a.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))});const d=await a.firestore().collection('system').doc('pendingRelease').get();const x=d.exists?d.data():{};process.exit((x.shouldRelease&&!x.consumed)?7:0);}catch(e){console.error('::warning::advisory brain read failed (release decision is unaffected): '+(e&&e.message||e));process.exit(0);}})();"
             RC=$?
             set -e
             if [ "$RC" = "7" ]; then
@@ -142,16 +167,33 @@ jobs:
             # by this workflow -> deadlock). Tag the CURRENT version at HEAD: this code IS
             # the current release, so there is nothing to ship right now, but every future
             # commit is now measurable and tomorrow's run works.
-            CUR=$(node -p "require('./version.json').latest" 2>/dev/null || true)
-            if [ -n "${CUR:-}" ]; then
-              git tag "v$CUR" || true
-              git push origin "v$CUR" || true
-              echo "bootstrapped tag v$CUR (no release tag existed) — nothing to release this run"
-            else
-              echo "could not read version.json — skipping bootstrap"
+            #
+            # None of this is best-effort. A bootstrap that silently fails to
+            # push leaves the repo with no reachable tag, so the NEXT run
+            # bootstraps again and a scheduled release can never fire — a
+            # permanent deadlock that reports itself as a clean no-op run.
+            CUR=$(node -p "require('./version.json').latest") || {
+              echo "::error::could not read version.json — cannot bootstrap the release tag."
+              exit 1
+            }
+            if [ -z "${CUR:-}" ] || [ "$CUR" = "undefined" ]; then
+              echo "::error::version.json has no \`latest\` — cannot bootstrap the release tag."
+              exit 1
             fi
+            if git rev-parse -q --verify "refs/tags/v$CUR" >/dev/null 2>&1; then
+              echo "tag v$CUR exists but is not reachable from HEAD — leaving it alone"
+            else
+              git tag "v$CUR"
+              git push origin "v$CUR"
+            fi
+            echo "bootstrapped tag v$CUR (no release tag was reachable) — nothing to release this run"
           else
-            N=$(git rev-list "${LAST}..HEAD" --count 2>/dev/null || echo 0)
+            # `|| echo 0` used to turn a git failure into "no new commits",
+            # which reads as "nothing to release" and skips the run silently.
+            N=$(git rev-list "${LAST}..HEAD" --count) || {
+              echo "::error::git rev-list ${LAST}..HEAD failed. Refusing to guess how many commits exist."
+              exit 1
+            }
             if [ "${N:-0}" -eq 0 ]; then
               echo "no new commits since $LAST"
               if [ "$BRAIN_ARMED" = "yes" ]; then
@@ -212,9 +254,8 @@ jobs:
           IN_URGENT: ${{ inputs.urgent }}
           IN_NOTE: ${{ inputs.note }}
         run: |
-          if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
-            npm i firebase-admin@12 --no-save >/dev/null 2>&1 || true
-          fi
+          # firebase-admin comes from the `npm ci` above — no ad-hoc install,
+          # no floating version, nothing to fail quietly here.
 
           # Build an argv ARRAY — never `eval` a command string. A release note
           # containing quotes, backticks or $(...) is then passed through verbatim
@@ -233,8 +274,10 @@ jobs:
           if [ "${IN_URGENT:-}" = "true" ]; then ARGS+=(--urgent); fi
           if [ -n "${IN_NOTE:-}" ]; then ARGS+=(--note "$IN_NOTE"); fi
 
-          # get ahead of any other bot push before release.cjs commits
-          git pull --rebase --autostash origin "$GITHUB_REF_NAME" || true
+          # Get ahead of any other bot push before release.cjs commits. If this
+          # fails the tree may be left mid-rebase, and running release.cjs on
+          # top of that is strictly worse than stopping here.
+          git pull --rebase --autostash origin "$GITHUB_REF_NAME"
 
           printf 'running: node release.cjs'
           printf ' %q' "${ARGS[@]}"
@@ -244,15 +287,24 @@ jobs:
       - name: Tag the release
         if: steps.due.outputs.due == 'yes'
         run: |
-          V=$(node -p "require('./version.json').latest" 2>/dev/null || true)
-          if [ -z "${V:-}" ]; then
-            echo "could not read version.json — skipping tag"
-            exit 0
+          # The tag is not decoration: `git describe` above measures "what has
+          # changed since the last release" from it. A tag that is skipped or
+          # fails to push means the next run measures from an OLDER tag and can
+          # cut a second release for work that already shipped. Failing after a
+          # successful release is loud and easy to repair; a missing tag is
+          # silent and corrupts every later decision.
+          V=$(node -p "require('./version.json').latest") || {
+            echo "::error::release.cjs ran but version.json is unreadable — the release is UNTAGGED."
+            exit 1
+          }
+          if [ -z "${V:-}" ] || [ "$V" = "undefined" ]; then
+            echo "::error::version.json has no \`latest\` after the release — the release is UNTAGGED."
+            exit 1
           fi
           if git rev-parse -q --verify "refs/tags/v$V" >/dev/null 2>&1; then
             echo "tag v$V already exists — nothing to do"
             exit 0
           fi
           git tag "v$V"
-          git push origin "v$V" || echo "tag push failed (non-fatal)"
+          git push origin "v$V"
           echo "tagged v$V"

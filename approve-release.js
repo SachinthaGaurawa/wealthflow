@@ -25,20 +25,65 @@
  *    DEPLOY_HOOK_URL            Vercel Deploy Hook URL                     [optional]
  */
 
+/* Same defect as release-brain.js, in the file the whole approval model rests
+ * on: `require('firebase-admin')` inside an ESM module (package.json says
+ * `"type": "module"`, and this file exports `export default`). `require` is not
+ * defined in ESM scope, so the first statement threw a ReferenceError, the
+ * blanket `catch (_) { return null; }` ate it, and the endpoint answered HTTP
+ * 500 "service account not configured" — naming the one thing that was fine.
+ *
+ * The consequence is worth stating plainly: THE ONE HUMAN SHIP BUTTON DESCRIBED
+ * IN THE HEADER ABOVE HAS NEVER BEEN ABLE TO REACH FIRESTORE. It failed closed,
+ * so nothing was ever shipped without approval — the safety property held — but
+ * approving was equally impossible, and the error blamed the configuration.
+ *
+ * Fixed the same way: dynamic import, plus named failure states so "not set",
+ * "not valid JSON", "SDK would not load" and "credential rejected" can never
+ * again be collapsed into one another. */
+
+/* A JSON.parse message must NEVER be passed through — V8 embeds the first ~10
+ * bytes of the input in it (`Unexpected token 'F', "FIREBASE_S"... is not valid
+ * JSON`), and this string is returned in an HTTP response body. If the secret
+ * is ever misconfigured as a raw key rather than JSON, that prefix is
+ * credential material. Only the content-free offset survives. */
+function jsonFault(e) {
+    const at = String((e && e.message) || '').match(/at position (\d+)/);
+    return at ? 'malformed at position ' + at[1] : 'malformed';
+}
+
 let _admin = null;
-function getAdmin() {
-    if (_admin) return _admin;
+async function getAdmin() {
+    if (_admin) return { admin: _admin, reason: null };
+
+    let admin;
     try {
-        const admin = require('firebase-admin');
-        if (!admin.apps.length) {
-            const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-            if (!raw) return null;
-            const cred = JSON.parse(raw);
-            admin.initializeApp({ credential: admin.credential.cert(cred) });
+        admin = (await import('firebase-admin')).default;
+    } catch (e) {
+        return { admin: null, reason: 'firebase-admin could not be loaded: ' + ((e && e.message) || e) };
+    }
+    if (!admin || !admin.apps) {
+        return { admin: null, reason: 'firebase-admin loaded but exposes no app registry — wrong module shape.' };
+    }
+
+    if (!admin.apps.length) {
+        const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+        if (!raw || !String(raw).trim()) {
+            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is not set.' };
         }
-        _admin = admin;
-        return admin;
-    } catch (_) { return null; }
+        let cred;
+        try {
+            cred = JSON.parse(raw);
+        } catch (e) {
+            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON (' + jsonFault(e) + ').' };
+        }
+        try {
+            admin.initializeApp({ credential: admin.credential.cert(cred) });
+        } catch (e) {
+            return { admin: null, reason: 'firebase-admin rejected that credential: ' + ((e && e.message) || e) };
+        }
+    }
+    _admin = admin;
+    return { admin, reason: null };
 }
 
 async function _readBody(req) {
@@ -55,8 +100,8 @@ async function _readBody(req) {
 
 export default async function handler(req, res) {
     const out = { ok: true, ran: new Date().toISOString() };
-    const admin = getAdmin();
-    if (!admin) { out.ok = false; out.error = 'service account not configured'; return _send(res, out, 500); }
+    const { admin, reason } = await getAdmin();
+    if (!admin) { out.ok = false; out.error = reason; return _send(res, out, 500); }
 
     let db;
     try { db = admin.firestore(); } catch (_) { out.ok = false; out.error = 'firestore unavailable'; return _send(res, out, 500); }
