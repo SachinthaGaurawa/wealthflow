@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.23 — 2026-08-16
+
+**What changed for you**
+
+- The release brain has never run — and three other masked failures (#98)
+
 ## v7.69.22 — 2026-08-16
 
 Contentless release, explicitly authorised: forces release-brain to create system/pendingRelease so the proposal-intake chain can be validated end to end.
