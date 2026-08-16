@@ -1,5 +1,9 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.22 — 2026-08-16
+
+Contentless release, explicitly authorised: forces release-brain to create system/pendingRelease so the proposal-intake chain can be validated end to end.
+
 ## v7.69.21 — 2026-08-12
 
 **What changed for you**
