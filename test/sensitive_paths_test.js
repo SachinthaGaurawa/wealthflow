@@ -92,6 +92,14 @@ const MUST_BE_GATED = [
     ['package-lock.json',                   'the resolved dependency tree'],
     ['send-otp.js',                         'auth'],
     ['verify-otp.js',                       'auth'],
+    // The shared-statement capability. `?s=<id>` is the ONLY thing between the
+    // public internet and someone's loan statement or Elite Report PDF: store
+    // mints that id, view serves the document to whoever presents it. Neither
+    // was gated by anything until a masked `require()` was found to have
+    // silently downgraded the id from a CSPRNG to Math.random() for the whole
+    // life of the file — a change no automated check would have questioned.
+    ['statement-store.js',                  'mints the only access token on a shared statement'],
+    ['statement-view.js',                   'serves that statement to whoever presents the token'],
 ];
 
 describe('the Risk gate covers the files that define the Risk gate', () => {
@@ -126,6 +134,65 @@ describe('ordinary changes still flow without a human', () => {
             expect(matches(RISK_GATE, file), `${file} should NOT need human approval`).toBe(false);
         });
     }
+});
+
+describe('the rego agrees with both workflows', () => {
+    /* THE THIRD LIST. This test was written to stop the Risk gate and the
+     * auto-merge classifier drifting apart — but policy/wealthflow.rego holds a
+     * third copy of the same judgement, and nothing compared it to the other
+     * two. That is the identical defect one layer down: the rego is the control
+     * that MUST NOT fail, and it was the only one with no cross-check.
+     *
+     * The rego expresses the boundary as rules rather than a regex, so this
+     * asserts coverage rather than string equality — every gated path must be
+     * reachable by some `guardrail(f)` or `is_sensitive(f)` clause. */
+    const REGO = fs.readFileSync(path.join(ROOT, 'policy/wealthflow.rego'), 'utf8');
+
+    // Mirror of the rego's two mechanisms, kept deliberately dumb so a change to
+    // the rego that this mirror cannot express shows up as a failure here.
+    const exactSet = (REGO.match(/sensitive_exact\s*:=\s*\{([^}]*)\}/) || [, ''])[1]
+        .split(',').map((s) => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
+    const substrList = (REGO.match(/sensitive_substr\s*:=\s*\[([^\]]*)\]/) || [, ''])[1]
+        .split(',').map((s) => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
+    const startsWith = [...REGO.matchAll(/guardrail\(f\) if startswith\(f,\s*"([^"]+)"\)/g)].map((m) => m[1]);
+    const equals     = [...REGO.matchAll(/guardrail\(f\) if f == "([^"]+)"/g)].map((m) => m[1]);
+    const contains   = [...REGO.matchAll(/guardrail\(f\) if contains\(f,\s*"([^"]+)"\)/g)].map((m) => m[1]);
+    const patterns   = [...REGO.matchAll(/guardrail\(f\) if regex\.match\(`([^`]+)`, f\)/g)].map((m) => m[1]);
+    // Not every human-approval requirement lives in guardrail(). RULE 5 pins
+    // sw.js with an inline `lower(f) == "sw.js"` inside its own deny block, and
+    // the first version of this mirror missed it and reported sw.js as an
+    // ungated file — a false finding produced by a checker that did not model
+    // what it was checking. Exactly the failure this suite exists to catch, so
+    // it is named here rather than quietly patched.
+    const inlineEq = [...REGO.matchAll(/lower\(f\)\s*==\s*"([^"]+)"/g)].map((m) => m[1]);
+
+    const regoGates = (f) =>
+        exactSet.includes(f)
+        || substrList.some((p) => f.toLowerCase().includes(p))
+        || startsWith.some((p) => f.startsWith(p))
+        || equals.includes(f)
+        || contains.some((p) => f.includes(p))
+        || inlineEq.includes(f.toLowerCase())
+        || patterns.some((p) => new RegExp(p).test(f));
+
+    it('parsed real rules out of the rego rather than an empty list', () => {
+        // Without this the whole block passes loudest when the parse breaks.
+        expect(exactSet.length + substrList.length, 'sensitive_* did not parse').toBeGreaterThan(5);
+        expect(startsWith.length + equals.length + contains.length + patterns.length,
+            'no guardrail() clauses parsed').toBeGreaterThan(5);
+    });
+
+    for (const [file, why] of MUST_BE_GATED) {
+        it(`rego also gates ${file} — ${why}`, () => {
+            expect(regoGates(file), `${file} is gated by the workflows but NOT by the rego`).toBe(true);
+        });
+    }
+
+    it('still lets ordinary files through', () => {
+        for (const f of ['wealthflow-insights.js', 'CHANGELOG.md', 'merchants.json']) {
+            expect(regoGates(f), `${f} would deadlock every autonomous change`).toBe(false);
+        }
+    });
 });
 
 describe('the regexes are valid and were really found', () => {

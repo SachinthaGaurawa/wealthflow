@@ -69,7 +69,13 @@ deny contains msg if {
 # itself, or the test configuration require an explicit human-approved label.
 # Without this, the most attractive "fix" for any failing check is to delete the
 # check.
-guardrail(f) if startswith(f, ".github/workflows/")
+# `.github/` and not just `.github/workflows/`: the composite action at
+# .github/actions/changed-files/action.yml computes the file list that EVERY
+# gate in this repository reads, including this one. It sat outside the rego
+# while both workflow regexes covered it — found by the rego cross-check in
+# test/sensitive_paths_test.js, which until now compared the two workflows to
+# each other and never to the policy they are supposed to back up.
+guardrail(f) if startswith(f, ".github/")
 guardrail(f) if startswith(f, "policy/")
 guardrail(f) if startswith(f, "autonomy/")
 guardrail(f) if f == "CODEOWNERS"
@@ -82,6 +88,28 @@ guardrail(f) if contains(f, "release.cjs")
 # assertions for months.
 guardrail(f) if regex.match(`^vitest\.config\.[a-z]+$`, f)
 guardrail(f) if f == "package.json"
+# Both workflow regexes gated these; the rego did not. Every one is already
+# blocked at merge time by the Risk gate and the auto-merge classifier, so
+# adding them here deadlocks nothing new — it removes the case where the rego,
+# the control that must not fail, was the ONLY layer abstaining.
+# package-lock.json: the resolved dependency tree.
+# index.html:        the application itself.
+# vercel.json:       routing, cache headers, function config.
+# release-brain:     decides what ships, and writes the in-app update manifest.
+guardrail(f) if f == "package-lock.json"
+guardrail(f) if f == "index.html"
+guardrail(f) if f == "vercel.json"
+guardrail(f) if contains(f, "release-brain")
+# statement-store MINTS THE ACCESS TOKEN. `?s=<id>` is the only thing between
+# the public internet and someone's loan statement or Elite Report PDF, and
+# statement-view serves the document to whoever presents that id. This is
+# RULE 2 rather than RULE 1 deliberately: RULE 1 accepts `fuzz-passed` as an
+# alternative to review, and a fuzzer cannot tell you whether a token is
+# guessable. It was not covered by any gate until a masked `require()` was
+# found to have silently downgraded that token to Math.random() for the
+# lifetime of the file — a change no automated check would have questioned.
+guardrail(f) if contains(f, "statement-store")
+guardrail(f) if contains(f, "statement-view")
 
 deny contains msg if {
     some f in input.files
