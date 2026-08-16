@@ -56,6 +56,27 @@
  *      configured", "not valid JSON", "could not load the SDK" and "could not
  *      initialise" can never again be reported as one another.
  */
+
+/* A JSON.parse message must NEVER be passed through. V8 embeds the first ~10
+ * bytes of the input in it:
+ *
+ *     JSON.parse('FIREBASE_SERVICE_ACCOUNT={"private_key":"-----BEGIN…')
+ *     → `Unexpected token 'F', "FIREBASE_S"... is not valid JSON`
+ *
+ * The reason string reaches two places that must never carry credential bytes:
+ * the GitHub Actions log, and — because /api/release-brain has no auth guard —
+ * an HTTP 200 body served to any unauthenticated caller. If the secret is ever
+ * misconfigured as a raw key, a path or a base64 blob rather than JSON, that
+ * echoed prefix is credential material.
+ *
+ * The offset is diagnostic and content-free, so it is all that survives.
+ * (firebase-admin's own cert() errors were checked against a credential whose
+ * every field was a marker string; they echo nothing, so those pass through.) */
+function jsonFault(e) {
+    const at = String((e && e.message) || '').match(/at position (\d+)/);
+    return at ? 'malformed at position ' + at[1] : 'malformed';
+}
+
 let _admin = null;
 async function getAdmin() {
     if (_admin) return { admin: _admin, reason: null };
@@ -79,7 +100,7 @@ async function getAdmin() {
         try {
             cred = JSON.parse(raw);
         } catch (e) {
-            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON: ' + ((e && e.message) || e) };
+            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON (' + jsonFault(e) + ').' };
         }
         try {
             admin.initializeApp({ credential: admin.credential.cert(cred) });

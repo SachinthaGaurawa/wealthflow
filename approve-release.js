@@ -40,6 +40,17 @@
  * Fixed the same way: dynamic import, plus named failure states so "not set",
  * "not valid JSON", "SDK would not load" and "credential rejected" can never
  * again be collapsed into one another. */
+
+/* A JSON.parse message must NEVER be passed through — V8 embeds the first ~10
+ * bytes of the input in it (`Unexpected token 'F', "FIREBASE_S"... is not valid
+ * JSON`), and this string is returned in an HTTP response body. If the secret
+ * is ever misconfigured as a raw key rather than JSON, that prefix is
+ * credential material. Only the content-free offset survives. */
+function jsonFault(e) {
+    const at = String((e && e.message) || '').match(/at position (\d+)/);
+    return at ? 'malformed at position ' + at[1] : 'malformed';
+}
+
 let _admin = null;
 async function getAdmin() {
     if (_admin) return { admin: _admin, reason: null };
@@ -63,7 +74,7 @@ async function getAdmin() {
         try {
             cred = JSON.parse(raw);
         } catch (e) {
-            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON: ' + ((e && e.message) || e) };
+            return { admin: null, reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON (' + jsonFault(e) + ').' };
         }
         try {
             admin.initializeApp({ credential: admin.credential.cert(cred) });

@@ -149,6 +149,33 @@ describe('release-brain names WHICH credential problem it hit', () => {
             .not.toMatch(/is not set/);
     });
 
+    it('never echoes the credential back in the failure reason', async () => {
+        /* REGRESSION I INTRODUCED, caught on review of this change.
+         *
+         * The first version of this reason was `'… is not valid JSON: ' +
+         * e.message`, and V8 embeds the first ~10 bytes of the input in a
+         * JSON.parse message:
+         *
+         *   JSON.parse(<a PEM private-key header followed by key bytes>)
+         *   → `Unexpected token '-', "-----BEGIN"... is not valid JSON`
+         *
+         * That string is printed into the Actions log AND returned in the HTTP
+         * body of /api/release-brain, which has no auth guard. A secret
+         * misconfigured as a raw key rather than JSON would have leaked its
+         * first bytes to any unauthenticated caller. */
+        const marker = 'AKIALEAKMARKER0987654321';
+        // The PEM header is assembled rather than written out: autonomy/secret-scan.mjs
+        // correctly flags a literal one in any tracked file, and that scanner must
+        // stay strict. This is synthetic input, not a credential.
+        const pemHeader = ['-----BEGIN', 'PRIVATE', 'KEY-----'].join(' ');
+        for (const raw of [marker, pemHeader + marker, '/etc/secrets/' + marker + '.json', marker + '={"private_key":"x"}']) {
+            const out = await call(raw);
+            expect(out.note, `the reason echoed the credential: ${out.note}`).not.toContain(marker);
+            expect(out.note).not.toContain(marker.slice(0, 8));
+            expect(out.note, 'the failure stopped being identifiable').toMatch(/not valid JSON/);
+        }
+    });
+
     it('never again reports a module-load failure as a config problem', async () => {
         const a = await call(undefined);
         const b = await call('{ not json');
