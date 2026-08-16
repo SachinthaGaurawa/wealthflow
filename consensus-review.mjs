@@ -360,13 +360,52 @@ const normWords = (s) => String(s || '')
  * context lines all count: the reviewer saw all of them, so it could be quoting
  * any of them.
  */
+/**
+ * Walk the diff once and label every line `comment` or `code`.
+ *
+ * STATEFUL ON PURPOSE. The first version tested each line against
+ * /^\s*(\/\/|\/\*|\*|#)/ in isolation, which works for `*`-prefixed JSDoc but
+ * NOT for this repository's dominant style:
+ *
+ *     /* ====================================================
+ *        AUTHENTICATION  —  this endpoint was completely open
+ *        ---------------------------------------------------
+ *
+ * Those continuation lines carry no marker at all, so a line-at-a-time filter
+ * classified them as executable code — meaning a reviewer citing one as its
+ * evidence would have sailed through both guards. Found by this file's own
+ * test, which is the only reason it is not still there.
+ */
+export function classifyDiffLines(diff) {
+    const comments = [];
+    const code = [];
+    let inBlock = false;
+    for (const raw of String(diff || '').split('\n')) {
+        if (/^(\+\+\+|---|diff --git|@@|index )/.test(raw)) continue;   // diff furniture
+        const marker = /^[+\- ]/.test(raw) ? raw[0] : ' ';
+        const line = raw.replace(/^[+\- ]/, '');
+
+        if (inBlock) {
+            comments.push({ marker, line });
+            if (line.includes('*/')) inBlock = false;
+            continue;
+        }
+        if (/^\s*(\/\/|#)/.test(line)) { comments.push({ marker, line }); continue; }
+        if (/^\s*\/\*/.test(line)) {
+            comments.push({ marker, line });
+            if (!line.includes('*/')) inBlock = true;
+            continue;
+        }
+        if (/^\s*\*/.test(line)) { comments.push({ marker, line }); continue; }
+        if (line.trim()) code.push({ marker, line });
+    }
+    return { comments, code };
+}
+
+/** Every word of every COMMENT line in the diff, in order. */
 export function commentWordsOf(diff) {
     const out = [];
-    for (const raw of String(diff || '').split('\n')) {
-        // Strip the diff marker, then keep only lines that are comments in the
-        // languages this repo uses: JS line/block, and YAML/shell `#`.
-        const line = raw.replace(/^[+\- ]/, '');
-        if (!/^\s*(\/\/|\/\*|\*|#)/.test(line)) continue;
+    for (const { line } of classifyDiffLines(diff).comments) {
         out.push(...normWords(line.replace(/^\s*(\/\/+|\/\*+|\*+|#+)/, '')));
     }
     return out;
@@ -402,6 +441,63 @@ export function restatesComment(reason, commentWords, opts = {}) {
     if (words.length < minRun) return false;         // too short to judge either way
     const run = longestSharedRun(words, commentWords || []);
     return run >= minRun && (run / words.length) >= minShare;
+}
+
+/* ── THE SECOND SIGNAL, added after the first one proved too narrow ──────────
+ *
+ * `restatesComment` catches a reviewer QUOTING the diff's comments. On PR #106
+ * the same lane did the same thing while PARAPHRASING, and slipped straight
+ * through:
+ *
+ *     reason:   "The PR introduces an open write endpoint that could be used to
+ *                delete feedback documents up to 5,000 documents per call."
+ *     evidence: "+        · DELETE feedback older than 14 days, via the archival pass"
+ *
+ * The reason shares only a 6-word run with the comment it came from — under the
+ * 8-word threshold, correctly. But look at the EVIDENCE: it is a bullet inside
+ * the block comment that PR added to describe the vulnerability it was fixing.
+ *
+ * That is the far stronger and far more mechanical signal, and it was sitting
+ * in the payload the whole time. The prompt already demands "the exact ADDED
+ * (+) executable line that causes it". A FAIL that cites a comment has, by its
+ * own answer, failed to find executable code — no prose similarity heuristic
+ * needed.
+ *
+ * Deliberately NOT applied when `evidence` is empty. That case already blocks,
+ * loudly, and changing it would weaken a fail-closed path this file chose on
+ * purpose. Citing nothing may mean the reviewer saw something it could not
+ * quote; citing a comment is positive proof it was reading prose.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+const normLine = (s) => String(s || '').replace(/^[+\-]\s?/, '').replace(/\s+/g, ' ').trim();
+
+/** Every ADDED line of the diff that is actually code, normalised. */
+export function addedCodeLines(diff) {
+    return classifyDiffLines(diff).code
+        .filter((e) => e.marker === '+')
+        .map((e) => normLine(e.line))
+        .filter(Boolean);
+}
+
+/**
+ * Did this FAIL cite something that is not an added executable line?
+ * Returns false for empty evidence — see the note above.
+ */
+export function citesNonExecutableEvidence(evidence, diff) {
+    const ev = normLine(evidence);
+    if (!ev) return false;
+    // A comment marker or a prose bullet can never be the executable line that
+    // causes a defect.
+    if (/^(\/\/|\/\*|\*|#|·|•|–|—)/.test(ev)) return true;
+    const added = addedCodeLines(diff);
+    if (!added.length) return false;          // nothing to compare against; do not reject
+    return !added.some((l) => (
+        l === ev
+        || (ev.length >= 12 && l.includes(ev))
+        // Guard the reverse direction against trivia: without a length floor,
+        // a one-character added line like `}` would "match" any evidence.
+        || (l.length >= 12 && ev.includes(l))
+    ));
 }
 
 export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null) {
@@ -454,13 +550,23 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
             // a finding. So the vote becomes a pass carrying a rejected objection,
             // which is preserved in the log and in the board table.
             let rejectedFinding = null;
-            if (finalVote === 'fail' && restatesComment(parsed.reason, commentWordsOf(diff))) {
-                rejectedFinding = { reason: String(parsed.reason || '').slice(0, 300), evidence };
-                finalVote = 'pass';
-                console.log(`      ⚠ FINDING REJECTED — the reason is a verbatim run of the diff's own`);
-                console.log('        comment text, not a statement about its code. See the rejection');
-                console.log('        block above runReviewer for why this is enforced here rather than');
-                console.log('        asked for in the prompt.');
+            if (finalVote === 'fail') {
+                // Two independent signals. The first catches a reviewer quoting
+                // the diff's comments; the second catches it paraphrasing them
+                // while citing one as the offending line. PR #98 tripped the
+                // first, PR #106 tripped only the second.
+                const why = restatesComment(parsed.reason, commentWordsOf(diff))
+                    ? "the reason is a verbatim run of the diff's own comment text"
+                    : citesNonExecutableEvidence(evidence, diff)
+                        ? 'the cited evidence is a comment or prose line, not an added executable line'
+                        : null;
+                if (why) {
+                    rejectedFinding = { reason: String(parsed.reason || '').slice(0, 300), evidence, why };
+                    finalVote = 'pass';
+                    console.log(`      ⚠ FINDING REJECTED — ${why}.`);
+                    console.log('        See the rejection block above runReviewer for why this is');
+                    console.log('        enforced here rather than asked for in the prompt.');
+                }
             }
 
             if (finalVote === 'fail') {
@@ -708,6 +814,7 @@ async function main() {
             ? '\n> 🚫 **Objection(s) rejected — a restatement of the diff, not a finding.**\n'
               + rejected.map((v) =>
                   `> \`${v.name}\` objected: _"${String(v.rejectedFinding.reason).replace(/\n/g, ' ')}"_\n`
+                  + `> rejected because ${v.rejectedFinding.why || 'it restated the diff'}.\n`
                   + (v.rejectedFinding.evidence ? `> cited: \`${String(v.rejectedFinding.evidence).replace(/\n/g, ' ')}\`\n` : '')
               ).join('> \n')
               + '> \n'

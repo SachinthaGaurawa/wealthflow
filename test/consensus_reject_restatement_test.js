@@ -33,6 +33,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     commentWordsOf, longestSharedRun, restatesComment,
+    addedCodeLines, citesNonExecutableEvidence,
     REJECT_MIN_RUN, REJECT_MIN_SHARE,
 } from '../consensus-review.mjs';
 
@@ -176,5 +177,125 @@ describe('the thresholds are what they claim to be', () => {
         expect(REJECT_MIN_RUN).toBeGreaterThanOrEqual(6);
         expect(REJECT_MIN_SHARE).toBeGreaterThan(0.3);
         expect(REJECT_MIN_SHARE).toBeLessThanOrEqual(1);
+    });
+});
+
+/* =============================================================================
+ * THE SECOND SIGNAL — added after the first proved too narrow
+ * -----------------------------------------------------------------------------
+ * PR #106 got the SAME treatment from the SAME lane, and sailed past the guard
+ * written two hours earlier:
+ *
+ *     reason:   "The PR introduces an open write endpoint that could be used to
+ *                delete feedback documents up to 5,000 documents per call."
+ *     evidence: "+        · DELETE feedback older than 14 days, via the archival pass"
+ *
+ * The reason PARAPHRASED rather than quoted — measured at a 6-word shared run
+ * against a threshold of 8, so `restatesComment` was right to say no. I had
+ * built the guard for the shape of the one failure I had seen.
+ *
+ * The stronger signal was in the payload the whole time: the cited evidence is
+ * a bullet inside the block comment that PR added to DESCRIBE THE VULNERABILITY
+ * IT WAS FIXING. The prompt already demands "the exact ADDED (+) executable
+ * line that causes it" — a FAIL citing a comment has, by its own answer, failed
+ * to find executable code.
+ * ===========================================================================*/
+
+/* The real hunk from PR #106, and the real evidence string it returned. */
+const PR106_DIFF = [
+    'diff --git a/release-brain.js b/release-brain.js',
+    '--- a/release-brain.js',
+    '+++ b/release-brain.js',
+    '+/* =============================================================================',
+    '+   AUTHENTICATION  —  this endpoint was completely open',
+    '+   ---------------------------------------------------------------------------',
+    '+   Any unauthenticated caller on the internet could make it:',
+    '+',
+    '+     · read every document in the `feedback` collection',
+    '+     · DELETE feedback older than 14 days, via the archival pass',
+    '+   ========================================================================== */',
+    '+export async function authorize(req, { env = process.env, verifyIdToken = null } = {}) {',
+    '+    const cronSecret = String(env.CRON_SECRET || \'\').trim();',
+    '+    if (!cronSecret && !adminUid) {',
+    '+        return { ok: false, status: 503 };',
+    '+    }',
+    '+}',
+].join('\n');
+
+const PR106_EVIDENCE = '+        · DELETE feedback older than 14 days, via the archival pass';
+const PR106_REASON = 'The PR introduces an open write endpoint that could be used to '
+    + 'delete feedback documents up to 5,000 documents per call.';
+
+describe('addedCodeLines separates code from prose', () => {
+    const lines = addedCodeLines(PR106_DIFF);
+
+    it('keeps the executable additions', () => {
+        expect(lines.join('\n')).toMatch(/export async function authorize/);
+        expect(lines.join('\n')).toMatch(/const cronSecret/);
+    });
+
+    it('drops the comment block', () => {
+        expect(lines.join('\n')).not.toMatch(/AUTHENTICATION/);
+        expect(lines.join('\n')).not.toMatch(/completely open/);
+    });
+
+    it('ignores the +++ file header', () => {
+        expect(lines.join('\n')).not.toMatch(/release-brain\.js/);
+    });
+});
+
+describe('THE REAL PR #106 FINDING is rejected', () => {
+    it('is NOT caught by the first signal — which is why the second exists', () => {
+        // Documenting the gap rather than pretending the first guard covered it.
+        expect(restatesComment(PR106_REASON, commentWordsOf(PR106_DIFF))).toBe(false);
+    });
+
+    it('IS caught by the evidence check', () => {
+        expect(citesNonExecutableEvidence(PR106_EVIDENCE, PR106_DIFF),
+            'this exact evidence string blocked PR #106').toBe(true);
+    });
+});
+
+describe('a genuine finding still cites real code and survives', () => {
+    it('accepts an added executable line', () => {
+        for (const ev of [
+            '+    const cronSecret = String(env.CRON_SECRET || \'\').trim();',
+            '+    if (!cronSecret && !adminUid) {',
+            'const cronSecret = String(env.CRON_SECRET || \'\').trim();',
+        ]) {
+            expect(citesNonExecutableEvidence(ev, PR106_DIFF), `wrongly rejected: ${ev}`).toBe(false);
+        }
+    });
+
+    it('rejects a line that is not in the diff at all', () => {
+        expect(citesNonExecutableEvidence('const x = somethingDangerous();', PR106_DIFF)).toBe(true);
+    });
+
+    it('rejects a DELETED line — removing a defect is a fix, not a defect', () => {
+        // Assembled rather than written literally: test/esm_require_test.js
+        // correctly forbids a bare `require(` in any ESM file, and it does not
+        // and should not know that this occurrence is sample data. That scanner
+        // stays strict; this string bends around it.
+        const deleted = '-    const admin = ' + 'require' + "('firebase-admin');";
+        expect(citesNonExecutableEvidence(deleted, PR106_DIFF + '\n' + deleted)).toBe(true);
+    });
+
+    it('leaves EMPTY evidence alone — that path already fails closed on purpose', () => {
+        // Citing nothing may mean the reviewer saw something it could not quote.
+        // Citing a comment is positive proof it was reading prose. Only the
+        // second is rejected here.
+        expect(citesNonExecutableEvidence('', PR106_DIFF)).toBe(false);
+        expect(citesNonExecutableEvidence(null, PR106_DIFF)).toBe(false);
+        expect(citesNonExecutableEvidence('   ', PR106_DIFF)).toBe(false);
+    });
+
+    it('does not reject when there is no added code to compare against', () => {
+        expect(citesNonExecutableEvidence('anything at all here', 'diff --git a/x b/x')).toBe(false);
+    });
+
+    it('is not fooled into matching a trivial one-character line', () => {
+        // Without a length floor, the added `}` would "match" every evidence
+        // string and excuse every bad citation.
+        expect(citesNonExecutableEvidence('some totally unrelated claim }', PR106_DIFF)).toBe(true);
     });
 });
