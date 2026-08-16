@@ -315,6 +315,95 @@ function prompt(reviewer, diff, truncated) {
  * only its OWN reserved fallbacks — so a retry here can never take a provider
  * another reviewer is running on.
  */
+/* =============================================================================
+   REJECTING FINDINGS THAT ARE JUST THE DIFF'S OWN COMMENTS READ BACK
+   ---------------------------------------------------------------------------
+   On PR #98 the security lane (mistral) returned, twice:
+
+       reason:   "The release-brain.js file could never succeed, and said so in
+                  the wrong words."
+       evidence: "+    const raw = process.env.FIREBASE_SERVICE_ACCOUNT;"
+
+   That sentence is the FIRST LINE OF THE COMMENT the PR added, describing the
+   bug it was fixing. The reviewer summarised the diff's prose and returned it
+   as a finding, blocking the change that removed the defect it was quoting.
+
+   The prompt already tells reviewers, at length, to judge code and not comments
+   (see the CRITICAL blocks in prompt()). Those instructions were added after
+   this exact failure happened the first time. The model ignored them twice more.
+   So the rule moves out of the prompt and into code, where it is enforced
+   rather than requested.
+
+   WHY THIS IS NARROW ON PURPOSE. Discarding a security objection is dangerous,
+   and this repository fails closed on security everywhere else. A finding is
+   only rejected when the reason is a LONG VERBATIM RUN of the diff's own
+   comment text — at least MIN_RUN consecutive words, AND at least MIN_SHARE of
+   the whole reason. A reviewer that describes a defect in its own words is
+   untouched even if it discusses the same subject the comments do.
+
+   The objection is never erased. It is printed to the log and rendered in the
+   board table as a rejected finding, so a human can disagree with the machine
+   that disagreed with the machine.
+   ========================================================================== */
+export const REJECT_MIN_RUN = 8;      // consecutive words shared with a comment
+export const REJECT_MIN_SHARE = 0.5;  // …and that much of the reason itself
+
+const normWords = (s) => String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+/**
+ * Every word of every COMMENT line in the diff, in order. Added, removed and
+ * context lines all count: the reviewer saw all of them, so it could be quoting
+ * any of them.
+ */
+export function commentWordsOf(diff) {
+    const out = [];
+    for (const raw of String(diff || '').split('\n')) {
+        // Strip the diff marker, then keep only lines that are comments in the
+        // languages this repo uses: JS line/block, and YAML/shell `#`.
+        const line = raw.replace(/^[+\- ]/, '');
+        if (!/^\s*(\/\/|\/\*|\*|#)/.test(line)) continue;
+        out.push(...normWords(line.replace(/^\s*(\/\/+|\/\*+|\*+|#+)/, '')));
+    }
+    return out;
+}
+
+/** Longest run of `a` that appears contiguously inside `b`. */
+export function longestSharedRun(a, b) {
+    if (!a.length || !b.length) return 0;
+    let best = 0;
+    let prev = new Uint32Array(b.length + 1);
+    for (let i = 1; i <= a.length; i++) {
+        const cur = new Uint32Array(b.length + 1);
+        for (let j = 1; j <= b.length; j++) {
+            if (a[i - 1] === b[j - 1]) {
+                cur[j] = prev[j - 1] + 1;
+                if (cur[j] > best) best = cur[j];
+            }
+        }
+        prev = cur;
+    }
+    return best;
+}
+
+/**
+ * Is this stated reason a regurgitation of the diff's comments rather than a
+ * finding about its code? Pure, so the threshold can be argued with in a test
+ * rather than in production.
+ */
+export function restatesComment(reason, commentWords, opts = {}) {
+    const minRun = opts.minRun ?? REJECT_MIN_RUN;
+    const minShare = opts.minShare ?? REJECT_MIN_SHARE;
+    const words = normWords(reason);
+    if (words.length < minRun) return false;         // too short to judge either way
+    const run = longestSharedRun(words, commentWords || []);
+    return run >= minRun && (run / words.length) >= minShare;
+}
+
 export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null) {
     const r = lane.role;
     // Own providers first, then — only once those are exhausted — providers
@@ -356,8 +445,24 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
             const evidence = String(parsed.evidence || '').slice(0, 300);
             // Still `unclear` after the retries is a parse failure, not an objection:
             // count it as a non-vote so it neither blocks nor silently approves.
-            const finalVote = vote === 'unclear' ? 'unavailable' : vote;
+            let finalVote = vote === 'unclear' ? 'unavailable' : vote;
             console.log(`  ${r.name} (${res.provider}) → ${finalVote.toUpperCase()}${parsed.reason ? `: ${parsed.reason}` : ''}`);
+
+            // The reviewer answered, so it is NOT `unavailable` — that state means
+            // nobody looked, and would make the board report itself degraded and
+            // defer to human-approved. It looked; its stated objection just was not
+            // a finding. So the vote becomes a pass carrying a rejected objection,
+            // which is preserved in the log and in the board table.
+            let rejectedFinding = null;
+            if (finalVote === 'fail' && restatesComment(parsed.reason, commentWordsOf(diff))) {
+                rejectedFinding = { reason: String(parsed.reason || '').slice(0, 300), evidence };
+                finalVote = 'pass';
+                console.log(`      ⚠ FINDING REJECTED — the reason is a verbatim run of the diff's own`);
+                console.log('        comment text, not a statement about its code. See the rejection');
+                console.log('        block above runReviewer for why this is enforced here rather than');
+                console.log('        asked for in the prompt.');
+            }
+
             if (finalVote === 'fail') {
                 // An unsubstantiated FAIL still blocks — we fail closed on security.
                 // But it is flagged loudly: "FAIL with no citable line" is the signature
@@ -376,8 +481,14 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 // reviewer — but it is no longer fully independent, and the board
                 // says so rather than presenting it as three separate opinions.
                 shared: sharedProviders.includes(pid),
-                reason: String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
-                evidence,
+                // A rejected objection must not be presented as this reviewer's
+                // reason for passing — it is carried separately and rendered as
+                // what it is.
+                rejectedFinding,
+                reason: rejectedFinding
+                    ? 'objection rejected — it restated the diff\'s own comments'
+                    : String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
+                evidence: rejectedFinding ? '' : evidence,
                 concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
             };
         } catch (e) {
@@ -574,12 +685,13 @@ async function main() {
 
     const result = tally(votes);
     const rows = votes.map((v) => {
-        const icon = v.vote === 'pass' ? '✅' : v.vote === 'unavailable' ? '⚪' : '❌';
+        const icon = v.rejectedFinding ? '🚫' : v.vote === 'pass' ? '✅' : v.vote === 'unavailable' ? '⚪' : '❌';
         const ev = v.vote === 'fail' ? (v.evidence || '_no executable line cited_') : '';
         return `| ${icon} ${v.name} | \`${v.provider}\` | ${v.vote} | ${v.reason || '—'} | ${ev} |`;
     }).join('\n');
 
     const unsubstantiated = votes.filter((v) => v.vote === 'fail' && !v.evidence);
+    const rejected = votes.filter((v) => v.rejectedFinding);
 
     // A board missing a reviewer is not the same as a board that objected, and
     // labelling both "BLOCKED" would train the reader to treat a real FAIL as
@@ -592,6 +704,19 @@ async function main() {
         `### ${headline}\n\n` +
         '| Reviewer | Model | Vote | Reason | Evidence |\n|---|---|---|---|---|\n' + rows + '\n\n' +
         `**Decision:** ${result.reason}\n\n` +
+        (rejected.length
+            ? '\n> 🚫 **Objection(s) rejected — a restatement of the diff, not a finding.**\n'
+              + rejected.map((v) =>
+                  `> \`${v.name}\` objected: _"${String(v.rejectedFinding.reason).replace(/\n/g, ' ')}"_\n`
+                  + (v.rejectedFinding.evidence ? `> cited: \`${String(v.rejectedFinding.evidence).replace(/\n/g, ' ')}\`\n` : '')
+              ).join('> \n')
+              + '> \n'
+              + '> That reason is a long verbatim run of this diff\'s own comment text — the\n'
+              + '> reviewer read prose describing a bug being FIXED and reported it as a bug\n'
+              + '> being introduced. The prompt asks reviewers not to do this; the rule is now\n'
+              + '> enforced in code instead. The objection is kept here rather than deleted, so\n'
+              + '> you can overrule the rejection if you think the reviewer was onto something.\n'
+            : '') +
         (result.outages
             ? `\n> ⚠️ **${result.outages} reviewer(s) unreachable — this board is INCOMPLETE.**\n`
               + `> A provider outage is not an objection, so nothing here disagreed with the change.\n`

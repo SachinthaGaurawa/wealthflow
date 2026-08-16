@@ -175,8 +175,14 @@ describe('the real process behaves the way the unit tests claim', () => {
             ['-e', "import('./release-brain.js').then(m=>console.log('EXPORTS:'+Object.keys(m).sort().join(',')))"],
             { cwd: ROOT, encoding: 'utf8', timeout: 60_000 });
         expect(r.status, 'importing the module ran the CLI — api/router.js would break').toBe(0);
-        expect(r.stdout).toMatch(/EXPORTS:brainExitCode,default,isEntryPoint,runBrainCli/);
-        expect(r.stdout).not.toMatch(/::error::/);
+        // Assert the surface the CLI and api/router.js depend on, NOT a frozen
+        // list: pinning every export made this fail the moment the version
+        // helpers were added, which is noise rather than a finding.
+        const exports = (r.stdout.match(/EXPORTS:(.*)/) || [, ''])[1].split(',');
+        for (const name of ['default', 'isEntryPoint', 'brainExitCode', 'runBrainCli']) {
+            expect(exports, `release-brain no longer exports ${name}`).toContain(name);
+        }
+        expect(r.stdout, 'importing the module produced CLI output').not.toMatch(/::error::|release-brain wrote/);
     });
 });
 

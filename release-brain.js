@@ -27,10 +27,13 @@
    feature code still ships through the repo.
 
    SETUP (all optional — the function no-ops safely if unset):
+   (fs is imported for version.json — see "WHICH VERSION IS CURRENT" below.)
      • FIREBASE_SERVICE_ACCOUNT  = the service-account JSON (string) for Admin SDK
      • RELEASE_BRAIN_ENABLED      = "1" to allow it to write the manifest
    Schedule is defined in vercel.json → crons.
    ============================================================================ */
+
+import fs from 'node:fs';
 
 /* THIS FUNCTION COULD NEVER SUCCEED, AND SAID SO IN THE WRONG WORDS.
  *
@@ -207,6 +210,93 @@ function enrichClusters(clusters) {
 
 function bumpPatch(v) { const p = String(v || '7.13.0').split('.').map(Number); p[2] = (p[2] || 0) + 1; return p.join('.'); }
 
+/* =============================================================================
+   WHICH VERSION IS "CURRENT"
+   ---------------------------------------------------------------------------
+   THIS ANNOUNCED v7.13.1 AS A MANDATORY SECURITY UPDATE WHILE THE APP WAS ON
+   v7.69.23, on the brain's very first successful run.
+
+   The old code was:
+
+       let curVersion = '7.13.0';
+       try { const m = await db.collection('system').doc('manifest').get();
+             if (m.exists && m.data().latest) curVersion = m.data().latest; } catch (_) {}
+       const nextVersion = bumpPatch(curVersion);
+
+   system/manifest had never been written — because the brain had never run (see
+   the getAdmin comment above) — so the read found nothing and `curVersion` kept
+   a constant that was stale by 56 patch releases. The urgent branch then wrote
+   `latest: '7.13.1'` and pushed it onto `mandatory`.
+
+   Clients read that document. wealthflow-update-system.js gates the update
+   prompt on `_cmp(latest, installed) > 0`, so 7.13.1 < 7.69.23 correctly
+   suppressed it — but `_renderCard` uses `avail = _updateAvailable() ||
+   _swWaiting`, and a browser with a service-worker update waiting satisfies the
+   second clause. Those users saw a red "Required security update" banner
+   labelled v7.13.1.
+
+   The bug was latent for as long as the brain was broken and fired the moment
+   it worked. Two guards, because one was clearly not enough:
+
+     1. version.json is the SOURCE OF TRUTH — release.cjs enforces it across
+        seven files. Read it first; the manifest is a cache, not the record.
+     2. Take the MAXIMUM of the two and never bump from anything lower, so a
+        stale or corrupted manifest can only ever be corrected upward.
+   ========================================================================== */
+
+/** Numeric semver compare. Returns >0 if a is newer than b. */
+export function cmpVer(a, b) {
+    const pa = String(a || '').split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = String(b || '').split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < 3; i++) {
+        if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+    }
+    return 0;
+}
+
+/**
+ * The version this code actually IS, from version.json beside this file.
+ * Returns null when it cannot be read — on Vercel the file may not be bundled,
+ * and guessing is what caused the incident above.
+ */
+export function shippedVersion() {
+    try {
+        const raw = fs.readFileSync(new URL('./version.json', import.meta.url), 'utf8');
+        const v = JSON.parse(raw).latest;
+        return (typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v)) ? v : null;
+    } catch (_) { return null; }
+}
+
+/** Pick the newest of the two known versions. Never returns something older. */
+export function resolveCurrentVersion(shipped, fromManifest) {
+    const valid = (v) => typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v);
+    const a = valid(shipped) ? shipped : null;
+    const b = valid(fromManifest) ? fromManifest : null;
+    if (a && b) return cmpVer(a, b) >= 0 ? a : b;
+    return a || b || '7.13.0';
+}
+
+/** The current version, reconciled across version.json and system/manifest. */
+async function currentVersion(db) {
+    let fromManifest = null;
+    try {
+        const m = await db.collection('system').doc('manifest').get();
+        if (m.exists && m.data().latest) fromManifest = String(m.data().latest);
+    } catch (_) {}
+    return resolveCurrentVersion(shippedVersion(), fromManifest);
+}
+
+/**
+ * Drop mandatory entries at or below the version now shipping. They can never
+ * be a pending update again, and one of them is the bogus 7.13.1 this bug
+ * wrote into production.
+ */
+export function pruneMandatory(list, current) {
+    return Array.from(new Set(list || []))
+        .filter((v) => typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v))
+        .filter((v) => cmpVer(v, current) > 0);
+}
+
 // Turn the top critical/high clusters into a concrete, ordered fix list — the
 // autonomous system's PROPOSAL for what the next release should change. This is
 // always available (deterministic). An optional AI step can elaborate each into
@@ -289,8 +379,7 @@ export default async function handler(req, res) {
         // (A human still approves; this only drafts the proposal.)
         if (rcritical.length > 0) {
             try {
-                let curV = '7.13.0';
-                try { const m = await db.collection('system').doc('manifest').get(); if (m.exists && m.data().latest) curV = m.data().latest; } catch (_) {}
+                const curV = await currentVersion(db);
                 const nextV = bumpPatch(curV);
                 await db.collection('system').doc('pendingRelease').set({
                     suggestedVersion: nextV, basedOn: curV, urgent: true,
@@ -344,11 +433,7 @@ export default async function handler(req, res) {
     const shouldRelease = isUrgent || isMonthlyWindow;
 
     // current deployed version (read from manifest if present, else default)
-    let curVersion = '7.13.0';
-    try {
-        const m = await db.collection('system').doc('manifest').get();
-        if (m.exists && m.data().latest) curVersion = m.data().latest;
-    } catch (_) {}
+    const curVersion = await currentVersion(db);
     const nextVersion = bumpPatch(curVersion);
     const notes = buildNotes(nextVersion, clusters, isUrgent);
     const proposedChanges = proposedChangesFrom(clusters);
@@ -376,7 +461,11 @@ export default async function handler(req, res) {
             const cur = await manRef.get();
             const man = cur.exists ? cur.data() : { latest: curVersion, mandatory: [], notes: {} };
             man.latest = nextVersion;
-            man.mandatory = Array.from(new Set([...(man.mandatory || []), nextVersion]));
+            // Prune first, THEN add. Anything at or below the version now
+            // shipping can never be a pending update, so this both keeps the
+            // list honest and clears the bogus 7.13.1 the version bug wrote
+            // into production on the brain's first successful run.
+            man.mandatory = [...pruneMandatory(man.mandatory, curVersion), nextVersion];
             man.notes = man.notes || {};
             man.notes[nextVersion] = notes;
             man.securitySchedule = 'monthly';
