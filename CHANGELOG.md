@@ -1,5 +1,11 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.24 — 2026-08-16
+
+**Internal changes only**
+
+- Version floor, reject regurgitated review findings, gate the statement tokens (#102)
+
 ## v7.69.23 — 2026-08-16
 
 **What changed for you**
