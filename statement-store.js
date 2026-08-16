@@ -22,6 +22,8 @@
 //
 // =====================================================================
 
+import { randomFillSync } from 'node:crypto';
+
 export const config = {
     maxDuration: 25,
     api: { bodyParser: { sizeLimit: '12mb' } }
@@ -53,12 +55,44 @@ const APP_URL     = 'https://wealthflow-personal.vercel.app/';
 const MAX_DOC_FS  = 900 * 1024;     // Firestore single-document soft cap
 const EXPIRY_DAYS = 30;
 
+/* This id IS the access control. `?s=<id>` is the only thing standing between
+ * the public internet and someone's loan statement or Elite Report PDF, so it
+ * has to be unguessable — and it was not.
+ *
+ * The old body was:
+ *     try { require('crypto').randomFillSync(out); }
+ *     catch (_) { for (...) out[i] = Math.floor(Math.random() * 256); }
+ *
+ * This file is ESM (package.json declares `"type": "module"`), where `require`
+ * is not defined. So the try ALWAYS threw `ReferenceError: require is not
+ * defined`, and every share id ever minted came from the Math.random() branch —
+ * the fallback was not a fallback, it was the only path. V8's Math.random is
+ * xorshift128+: not a CSPRNG, and its internal state is recoverable from a
+ * modest run of outputs, so ids generated in sequence are related to one
+ * another. Same masked-failure family as release-brain.js and approve-release.js
+ * — only here the mask silently downgraded a security property.
+ *
+ * Two fixes:
+ *   1. a real CSPRNG, imported the ESM way, with NO fallback. If the platform
+ *      cannot produce secure bytes, minting a weak token is worse than
+ *      failing the request.
+ *   2. rejection sampling. `b % 58` over 0..255 is biased — 256 = 4*58 + 24, so
+ *      the first 24 letters of the alphabet came up ~25% more often than the
+ *      rest, shrinking the real keyspace below the nominal 58^8.
+ * (`randomFillSync` is imported at the top of the file.)
+ */
 function randomId(n = 8) {
     const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-    const out = new Uint8Array(n);
-    try { require('crypto').randomFillSync(out); }
-    catch (_) { for (let i = 0; i < n; i++) out[i] = Math.floor(Math.random() * 256); }
-    return Array.from(out, b => chars[b % chars.length]).join('');
+    const limit = Math.floor(256 / chars.length) * chars.length;   // 232 for 58
+    const out = [];
+    const buf = new Uint8Array(n);
+    while (out.length < n) {
+        randomFillSync(buf);
+        for (let i = 0; i < buf.length && out.length < n; i++) {
+            if (buf[i] < limit) out.push(chars[buf[i] % chars.length]);
+        }
+    }
+    return out.join('');
 }
 
 async function withTimeout(fn, ms) {
