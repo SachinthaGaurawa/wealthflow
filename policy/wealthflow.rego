@@ -110,6 +110,17 @@ guardrail(f) if contains(f, "release-brain")
 # lifetime of the file — a change no automated check would have questioned.
 guardrail(f) if contains(f, "statement-store")
 guardrail(f) if contains(f, "statement-view")
+# sw.js is already pinned by RULE 5 because it decides WHAT CODE THE DEVICE
+# RUNS. This file decides whether the device is ever TOLD that new code exists:
+# it resolves the available version, owns the update prompt, and owns the
+# "Required security update" banner. It was covered by no gate at all until
+# #107 changed it — a PR that fixed a live suppression bug and passed every
+# governance control in the repo without a human being asked.
+#
+# RULE 2 rather than RULE 1, for the same reason as the statement pair: RULE 1
+# accepts `fuzz-passed` in place of review, and a fuzzer cannot tell you that a
+# version comparison silently stopped offering updates to anyone.
+guardrail(f) if contains(f, "wealthflow-update-system")
 
 deny contains msg if {
     some f in input.files

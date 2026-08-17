@@ -100,6 +100,12 @@ const MUST_BE_GATED = [
     // life of the file — a change no automated check would have questioned.
     ['statement-store.js',                  'mints the only access token on a shared statement'],
     ['statement-view.js',                   'serves that statement to whoever presents the token'],
+    // sw.js decides what code the device RUNS; this decides whether the device
+    // is ever TOLD new code exists. It owns the version comparison, the update
+    // prompt and the "Required security update" banner, and it was covered by
+    // nothing until #107 — a PR fixing a live update-suppression bug that
+    // passed every gate in this repo without a human being asked.
+    ['wealthflow-update-system.js',         'decides whether users are ever offered an update'],
 ];
 
 describe('the Risk gate covers the files that define the Risk gate', () => {

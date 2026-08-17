@@ -68,7 +68,7 @@ jobs:
           # Must mirror policy/wealthflow.rego and autonomy/agent-swarm.mjs. If the
           # three ever disagree, the OPA policy gate is the one that actually blocks —
           # this list only decides whether to skip waiting for a human.
-          SENSITIVE='^(index\.html|sw\.js|.*\.rules|firebase\.json|vercel\.json|package(-lock)?\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|release\.cjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js)$|auth|oauth|crypto|fifo-reconcile|allocator|send-otp|verify-otp|approve-release|release-brain|statement-store|statement-view'
+          SENSITIVE='^(index\.html|sw\.js|.*\.rules|firebase\.json|vercel\.json|package(-lock)?\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|release\.cjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js)$|auth|oauth|crypto|fifo-reconcile|allocator|send-otp|verify-otp|approve-release|release-brain|statement-store|statement-view|wealthflow-update-system'
 
           HITS=$(echo "$FILES" | grep -iE "$SENSITIVE" || true)
           if [ -n "$HITS" ]; then

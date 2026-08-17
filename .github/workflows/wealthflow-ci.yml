@@ -203,7 +203,7 @@ jobs:
           #   canonical list, so they can never disagree again without a red test.
           #   Keep this list and auto-merge.yml's SENSITIVE in sync — the test will
           #   tell you if you forget.
-          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|release\.cjs|release-brain\.js|statement-store\.js|statement-view\.js|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
+          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|release\.cjs|release-brain\.js|statement-store\.js|statement-view\.js|wealthflow-update-system\.js|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
 
           HITS=$(echo "$CHANGED" | grep -iE "$SENSITIVE_REGEX" || true)
           if [ -n "$HITS" ]; then
