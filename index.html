@@ -18121,70 +18121,32 @@ table.amort tbody tr { page-break-inside: avoid; }
                 errors.push('client-firestore: ' + (e && e.message));
             }
 
-            // Strategy 3: dpaste.com (100% free, NO auth, NO strict CORS, returns plain text URL)
-            // This is the absolute most reliable fallback because it's a generic text pastebin.
-            try {
-                const body = new URLSearchParams();
-                body.append('content', html);
-                body.append('format', 'url');
-                const res = await _fetchWithTimeout('https://dpaste.com/api/v2/', { method: 'POST', body }, 15000);
-                if (res.ok) {
-                    const txt = await res.text();
-                    const urlStr = txt.trim();
-                    if (urlStr.startsWith('https://dpaste.com/')) {
-                        const id = urlStr.replace('https://dpaste.com/', '').replace('.txt', '');
-                        const url = baseUrl + '?dp=' + id;
-                        console.log('[Share] ✅ dpaste.com:', url);
-                        return { url, expires: '7 days', shortId: id, via: 'dpaste' };
-                    }
-                }
-                errors.push('dpaste: HTTP ' + res.status);
-            } catch (e) {
-                errors.push('dpaste: ' + (e && e.message));
-            }
-
-            // Strategy 4: tmpfiles.org (100% free, zero-auth, CORS-friendly, 60 min expiry)
-            // This is the ultimate fallback that guarantees success on purely static hosting!
-            try {
-                const fd = new FormData();
-                const blob = new Blob([html], { type: "text/plain" });
-                fd.append("file", blob, "stmt.txt");
-                const res = await _fetchWithTimeout("https://tmpfiles.org/api/v1/upload", { method: "POST", body: fd }, 15000);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.status === 'success' && data.data && data.data.url) {
-                        const parts = data.data.url.split('/');
-                        const id = parts[3];
-                        if (id) {
-                            const url = baseUrl + '?tstmt=' + id;
-                            console.log('[Share] ✅ tmpfiles.org:', url);
-                            return { url, expires: '60 minutes', shortId: id, via: 'tmpfiles' };
-                        }
-                    }
-                }
-                errors.push('tmpfiles: HTTP ' + res.status);
-            } catch (e) {
-                errors.push('tmpfiles: ' + (e && e.message));
-            }
-
-            // Strategy 5: file.io (100% free, zero-auth, expires after 1 view)
-            try {
-                const fd = new FormData();
-                const blob = new Blob([html], { type: "text/html" });
-                fd.append("file", blob, "stmt.html");
-                const res = await _fetchWithTimeout("https://file.io/?expires=1w", { method: "POST", body: fd }, 15000);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.success && data.link) {
-                        console.log('[Share] ✅ file.io:', data.link);
-                        // file.io serves directly, so we just give the file.io link
-                        return { url: data.link, expires: '1 view or 7 days', shortId: data.key, via: 'file.io' };
-                    }
-                }
-                errors.push('file.io: HTTP ' + res.status);
-            } catch (e) {
-                errors.push('file.io: ' + (e && e.message));
-            }
+            // STRATEGIES 3-5 REMOVED — dpaste.com, tmpfiles.org and file.io.
+            //
+            // Each one uploaded the statement HTML to a PUBLIC, ZERO-AUTH third-party
+            // host and handed back a link. The payload is a loan statement or an
+            // Elite Report: the user's balances, transactions and lender details.
+            //
+            // They were written as resilience — "guarantees success on purely static
+            // hosting" — and that is exactly what made them dangerous. They ran
+            // automatically, with no prompt and no disclosure, whenever the two
+            // Firestore paths above failed. A user clicking Share during a server
+            // blip published their finances to a pastebin and was shown a normal
+            // success dialog, indistinguishable from a private share.
+            //
+            // file.io was the worst of the three: it returned its OWN domain as the
+            // share URL, so the link the user copied and sent to their bank or
+            // family pointed at a third-party file host rather than this app.
+            //
+            // No amount of resilience justifies that trade. A share that fails and
+            // says so is strictly better than a share that silently succeeds
+            // somewhere the owner did not choose. The chain now ends at Firestore,
+            // and the honest error below is the correct outcome when it cannot be
+            // reached.
+            //
+            // The READ handlers for ?dp= / ?tstmt= are intentionally left in place:
+            // links already sent to other people must keep resolving. They fetch
+            // data that is already published and send nothing new.
 
             // NEVER produce a giant data URL. Surface an honest error.
             console.error('[Share] ❌ All strategies failed:', errors.join('; '));
