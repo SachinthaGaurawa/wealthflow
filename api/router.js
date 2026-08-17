@@ -113,6 +113,152 @@ function setCors(res) {
     res.setHeader('Access-Control-Max-Age', '86400');
 }
 
+// ── Node ⇄ Web calling-convention bridge ─────────────────────────────────────
+//  Vercel builds ONE function from this directory and it is a NODE function:
+//  this file's default export is `handler(req, res)`, vercel.json gives it a
+//  maxDuration, and setCors(res) on its first line would throw on every single
+//  request if Vercel were passing a Web `Request` instead. /api/health and
+//  /api/version answer correctly in production, so the invocation is
+//  unambiguously Node's (req, res).
+//
+//  Twelve of the handlers in HANDLERS are nevertheless written against the Web
+//  Fetch API — `req.headers.get()`, `await req.json()`, `new URL(req.url)`,
+//  `return new Response(...)` — because each declares
+//  `export const config = { runtime: 'edge' }` at the top of its own file.
+//  THAT EXPORT IS DEAD METADATA. Vercel reads `config` only from files it builds
+//  as functions, and these live at the repo root, which is the entire reason
+//  this router exists. The declaration was never honoured and nothing said so.
+//
+//  What the mismatch actually did, measured by driving every route through this
+//  file with a faithful Node req/res rather than assumed:
+//    · inbox-push / inbox-pull / inbox-ack → 500, `res is not defined`
+//    · ios-shortcut                        → 500, `Invalid URL`
+//    · the other eight                     → NO ANSWER AT ALL. The handler built
+//      a Response and returned it; `return await fn(req, res)` handed that value
+//      to Vercel's Node launcher, which ignores a return value and waits for
+//      `res` to be written. Nothing ever wrote it, so the request sat until
+//      maxDuration and died as FUNCTION_INVOCATION_TIMEOUT — sixty seconds of
+//      silence for a handler that had computed the right answer in milliseconds.
+//
+//  Same family as every other defect in this repo's history: the machinery was
+//  all present and correct, and the JOIN between two halves was asserted by
+//  nobody. test/api_contract_test.js checked that every route EXISTS; it could
+//  not see that the two sides disagreed about how to call each other.
+//
+//  The discriminator is the handler's own arity, which is how Vercel itself
+//  tells the conventions apart: `handler(req, res)` is Node, `handler(req)` is
+//  Web. Arity-2 handlers are passed the untouched Node objects, so the 21
+//  endpoints that already worked are bit-for-bit unaffected by this bridge.
+
+/** `handler(req)` is a Web handler; `handler(req, res)` is a Node one. */
+function isWebHandler(fn) { return fn.length < 2; }
+
+function firstHeader(v) {
+    if (Array.isArray(v)) return v.length ? String(v[0]) : '';
+    return (v === undefined || v === null) ? '' : String(v);
+}
+
+/* Headers that a re-serialised body would make wrong, or that describe the hop
+ * rather than the message. content-length matters most: Vercel may hand us an
+ * already-parsed req.body, and JSON.stringify of it need not be the same byte
+ * length the client sent — passing the stale value through truncates the body. */
+const DROP_REQUEST_HEADERS = new Set(['content-length', 'transfer-encoding', 'connection', 'keep-alive']);
+
+function webHeaders(nodeHeaders) {
+    const h = new Headers();
+    for (const k of Object.keys(nodeHeaders || {})) {
+        if (DROP_REQUEST_HEADERS.has(k.toLowerCase())) continue;
+        const v = nodeHeaders[k];
+        for (const one of (Array.isArray(v) ? v : [v])) {
+            if (one === undefined || one === null) continue;
+            // A header name Headers refuses is not worth failing the request over.
+            try { h.append(k, String(one)); } catch (_) {}
+        }
+    }
+    return h;
+}
+
+/** The URL the CLIENT asked for, absolute — not the rewritten /api/router one.
+ *  sms-ingest and autonomous-brain build sibling calls from `new URL(req.url)
+ *  .origin`, and inbox-pull reads searchParams, so both the origin and the
+ *  client's own query string have to survive the rewrite. */
+function clientUrl(req, name) {
+    const proto = firstHeader(req.headers['x-forwarded-proto']).split(',')[0].trim() || 'https';
+    const host = (firstHeader(req.headers['x-forwarded-host'])
+        || firstHeader(req.headers.host)).split(',')[0].trim();
+    let url;
+    try { url = new URL('/api/' + name, proto + '://' + (host || 'localhost')); }
+    catch (_) { url = new URL('/api/' + name, 'https://localhost'); }
+    const raw = String(req.url || '');
+    const q = raw.indexOf('?');
+    if (q >= 0) {
+        for (const [k, v] of new URLSearchParams(raw.slice(q + 1))) {
+            if (k !== SELF_QUERY_KEY) url.searchParams.append(k, v);
+        }
+    }
+    // Vercel also exposes the merged query as req.query; fold in anything the
+    // raw URL did not already carry rather than trusting one source alone.
+    const parsed = (req.query && typeof req.query === 'object') ? req.query : {};
+    for (const k of Object.keys(parsed)) {
+        if (k === SELF_QUERY_KEY || url.searchParams.has(k)) continue;
+        for (const v of (Array.isArray(parsed[k]) ? parsed[k] : [parsed[k]])) {
+            url.searchParams.append(k, String(v));
+        }
+    }
+    return url.toString();
+}
+
+/** The request body as text, whatever Vercel already did to it. */
+async function rawBody(req) {
+    const b = req.body;
+    if (typeof b === 'string') return b;
+    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(b)) return b.toString('utf8');
+    if (b !== undefined && b !== null) return JSON.stringify(b);   // Vercel parsed it for us
+    if (typeof req[Symbol.asyncIterator] !== 'function') return '';
+    const chunks = [];
+    for await (const c of req) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+    return Buffer.concat(chunks).toString('utf8');
+}
+
+/** A REAL Web Request built from the Node one — not a hand-rolled shim, so
+ *  `.json()`, `.text()`, `.formData()` and `.headers.get()` all behave exactly
+ *  as the handler expects. That includes THROWING on a malformed body: every one
+ *  of these handlers wraps `await req.json()` in a try/catch to answer 400, and
+ *  a shim that swallowed the parse error would turn a bad request into a
+ *  confidently wrong success. */
+async function toWebRequest(req, name) {
+    const method = String(req.method || 'GET').toUpperCase();
+    const init = { method, headers: webHeaders(req.headers) };
+    if (method !== 'GET' && method !== 'HEAD') init.body = await rawBody(req);
+    return new Request(clientUrl(req, name), init);
+}
+
+function isWebResponse(v) {
+    if (!v || typeof v !== 'object') return false;
+    if (typeof Response === 'function' && v instanceof Response) return true;
+    // Duck-typed fallback so a Response from a different realm still routes.
+    return typeof v.status === 'number' && !!v.headers
+        && typeof v.headers.forEach === 'function' && typeof v.arrayBuffer === 'function';
+}
+
+/** Write a Web Response into the Node response. */
+async function sendWebResponse(webRes, res) {
+    const body = Buffer.from(await webRes.arrayBuffer());
+    const cookies = typeof webRes.headers.getSetCookie === 'function' ? webRes.headers.getSetCookie() : [];
+    webRes.headers.forEach((value, key) => {
+        const k = String(key).toLowerCase();
+        // content-length is recomputed from the buffer; content-encoding would
+        // claim the body is still compressed after arrayBuffer() decoded it;
+        // set-cookie is handled separately because forEach comma-joins it, which
+        // is invalid for cookies.
+        if (k === 'content-length' || k === 'content-encoding' || k === 'set-cookie') return;
+        try { res.setHeader(key, value); } catch (_) {}
+    });
+    if (cookies.length) { try { res.setHeader('Set-Cookie', cookies); } catch (_) {} }
+    res.status(webRes.status);
+    res.end(body);
+}
+
 
 // This function's own filename. The rewrite sends /api/anything here as
 // /api/router?path=anything, so the URL fallback below sees "router" in the
@@ -122,8 +268,14 @@ function setCors(res) {
 // name is excluded explicitly rather than left to ordering.
 const SELF = 'router';
 
+// The query key vercel.json's rewrite uses to carry the requested endpoint
+// (`/api/(.*)` → `/api/router?path=$1`). Named once because clientUrl() has to
+// strip exactly this key back out when it rebuilds the URL the client asked for
+// — leaving it in would hand handlers a phantom `?path=` they never sent.
+const SELF_QUERY_KEY = 'path';
+
 function resolveName(req) {
-    var seg = req && req.query && req.query.path;
+    var seg = req && req.query && req.query[SELF_QUERY_KEY];
     if (Array.isArray(seg) && seg.length) return String(seg[0]).toLowerCase();
     if (typeof seg === 'string' && seg) return seg.split('/')[0].toLowerCase();
     try {
@@ -174,7 +326,36 @@ export default async function handler(req, res) {
             });
         }
 
-        return await fn(req, res);
+        var answered = function () { return !!(res.writableEnded || res.headersSent); };
+
+        var out = isWebHandler(fn)
+            ? await fn(await toWebRequest(req, name))
+            : await fn(req, res);
+
+        if (isWebResponse(out)) {
+            if (answered()) {
+                // Both conventions used at once. The written response has already
+                // gone out and a second one cannot be sent, so record the
+                // ambiguity rather than dropping it in silence.
+                console.error('[api-router] ' + name + ' wrote to res AND returned a Response; the Response was dropped.');
+                return;
+            }
+            return await sendWebResponse(out, res);
+        }
+
+        if (!answered()) {
+            // The exact failure this bridge exists to end: the handler came back
+            // without answering, so the request would sit until maxDuration and
+            // die as FUNCTION_INVOCATION_TIMEOUT with nothing anywhere saying why.
+            // A 500 naming the endpoint is worse for nobody and readable by
+            // everybody.
+            console.error('[api-router] ' + name + ' returned without writing a response');
+            return res.status(500).json({
+                error: 'Endpoint produced no response', endpoint: name,
+                reason: 'the ' + name + ' endpoint returned without answering the request.',
+            });
+        }
+        return;
     } catch (err) {
         console.error('[api-router] ' + name + ' failed:', err && err.stack || err);
         if (!res.headersSent) {
