@@ -184,20 +184,89 @@ describe('the files the gate protects are actually in the repository', () => {
         });
     }
 
-    it('firestore.rules actually restricts something, rather than allowing everything', () => {
-        // `allow read, write: if true;` is the Firebase console's test-mode default.
-        // A committed rules file containing it would pass every check above while
-        // leaving the database open to the internet, which is precisely the
-        // "machinery present, signal absent" shape this whole test file exists for.
+    /* =========================================================================
+       MY OWN GUARD WAS WRONG, AND THIS RECORDS HOW
+       -----------------------------------------------------------------------
+       The first version of the assertion below was:
+
+           const open = /allow\s+[a-z, ]*\s*:\s*if\s+true\s*;/i.test(src);
+           expect(open).toBe(false);
+
+       It rejected ANY `allow …: if true` anywhere in the file. The moment the
+       real production rules were committed, it failed — because a share link
+       MUST be readable without signing in, so `match /s/{shortId} { allow read:
+       if true }` is correct by design, not a mistake.
+
+       So the guard would have blocked the very file it spent three CI runs
+       demanding. Its stated intent was to catch the Firebase console's TEST-MODE
+       default; its implementation caught every deliberate public path as well.
+       Written too broadly, a guard produces false findings, and a guard that
+       produces false findings gets switched off — which is how a repository ends
+       up with no guard at all.
+
+       The replacement checks the invariant that actually distinguishes test mode
+       from a real policy: what the ROOT catch-all does. Test mode is
+       `match /{document=**} { allow read, write: if true }` — everything open,
+       nothing scoped. A real policy ends with a default DENY and grants access
+       only inside named collections.
+
+       Deliberately NOT asserted here: that `wf-inbox/**` denies unauthenticated
+       write. It currently allows it, the rules file says so in its own HARDENING
+       TODO, and the fix is the firebase-admin migration in the next PR. Asserting
+       it here would hold that migration hostage to a test that only the migration
+       can turn green. It gets its assertion in the PR that closes it, where it
+       goes green on arrival — a guard should land with its fix, not before it.
+       ====================================================================== */
+    it('firestore.rules is a real policy, not the console test-mode default', () => {
         const p = path.join(ROOT, 'firestore.rules');
-        if (!fs.existsSync(p)) return;
+        if (!fs.existsSync(p)) return;   // the existence assertion above already failed
         const src = fs.readFileSync(p, 'utf8');
-        const open = /allow\s+[a-z, ]*\s*:\s*if\s+true\s*;/i.test(src);
-        expect(open, 'firestore.rules grants unconditional access (`if true`) — that is test mode, '
-            + 'not a security rule, and it leaves the owner\'s data readable and writable by anyone')
-            .toBe(false);
+
         expect(src, 'firestore.rules names no collection — it cannot be scoping anything')
             .toMatch(/match\s+\/databases\//);
+
+        // The root catch-all, i.e. `match /{document=**}` at the outermost level.
+        // Its body is what test mode opens and a real policy closes.
+        const root = src.match(/match\s+\/\{document=\*\*\}\s*\{([^}]*)\}/);
+        expect(root, 'firestore.rules has no root catch-all rule, so anything not '
+            + 'explicitly matched is undefined rather than denied').toBeTruthy();
+        expect(root[1], 'the ROOT catch-all grants access — this is the console test-mode '
+            + 'default and it leaves every collection in the database open')
+            .not.toMatch(/if\s+true/i);
+        expect(root[1], 'the root catch-all should deny by default').toMatch(/if\s+false/i);
+
+        // The two collections holding private financial data must be owner-scoped.
+        //
+        // `[^\n]*` and not `[^{]*` here, which cost a CI round to learn: the real
+        // declaration is `match /users/{uid}/{document=**} {`, so `[^{]*` stops at
+        // the brace of `{document=**}` and the capture group returns the string
+        // "document=**" instead of the rule body. The assertion then failed against
+        // correct rules — a guard reading the wrong bytes and reporting confidently
+        // on them, which is the same defect class this file exists to catch.
+        for (const coll of ['users', 'userAI']) {
+            const m = src.match(new RegExp(`match\\s+/${coll}/\\{uid\\}[^\\n]*\\{\\s*([^}]*)\\}`));
+            expect(m, `firestore.rules does not scope /${coll}/{uid} at all`).toBeTruthy();
+            expect(m[1], `/${coll}/{uid} is not restricted to its owner`).toMatch(/isOwner\(uid\)|request\.auth\.uid\s*==\s*uid/);
+            expect(m[1], `/${coll}/{uid} grants unconditional access`).not.toMatch(/if\s+true/i);
+        }
+    });
+
+    it('that test-mode check can actually fail (guards the corrected guard)', () => {
+        // The blunt version passed against real rules for the wrong reason and
+        // then failed against them for the wrong reason. This proves the
+        // replacement still rejects genuine test mode.
+        const testMode = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}`;
+        const root = testMode.match(/match\s+\/\{document=\*\*\}\s*\{([^}]*)\}/);
+        expect(root).toBeTruthy();
+        expect(root[1]).toMatch(/if\s+true/i);          // detected
+        expect(root[1]).not.toMatch(/if\s+false/i);     // and no default deny
     });
 
     it('the existence check can fail (guards a vacuous pass)', () => {
