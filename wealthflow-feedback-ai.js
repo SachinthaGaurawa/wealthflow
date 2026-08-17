@@ -309,7 +309,27 @@
         // submitted since its last run, so a critical report sent seconds ago is
         // flagged right now instead of at the next daily cron. Fire-and-forget —
         // the live listener below delivers the fresh decision when it lands.
-        try { fetch('/api/release-brain?mode=rerank', { cache: 'no-store', keepalive: true }); } catch (_) {}
+        // /api/release-brain now requires a credential — it was completely open,
+        // and an anonymous caller could drive its Firestore writes and its
+        // 14-day archival DELETE pass. This ping carries the signed-in user's
+        // Firebase ID token; the server accepts it only for RELEASE_ADMIN_UID.
+        // A non-owner simply gets a 401 here and still sees the board, because
+        // the live listener and the local `_analyse` fallback below do not
+        // depend on this call. Errors are caught rather than left as an
+        // unhandled rejection, but the ping stays fire-and-forget.
+        try {
+            var _fb = _fbRef();
+            var _u = _fb && _fb.auth ? _fb.auth().currentUser : null;
+            if (_u && typeof _u.getIdToken === 'function') {
+                _u.getIdToken().then(function (tok) {
+                    fetch('/api/release-brain?mode=rerank', {
+                        cache: 'no-store',
+                        keepalive: true,
+                        headers: { Authorization: 'Bearer ' + tok }
+                    }).catch(function () {});
+                }).catch(function () {});
+            }
+        } catch (_) {}
 
         // HARD SAFETY NET: if _refresh stalls for any reason, never leave the
         // user staring at "Loading…". After 7s, force a local-only render.

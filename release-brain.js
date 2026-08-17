@@ -11,29 +11,151 @@
      4. Auto-generates release notes from the top clusters and writes them to
         system/pendingRelease  (the publish script / GitHub Action reads this to
         fill the changelog with zero typing).
-     5. Decides scheduling automatically:
-          • If any CRITICAL security/crash cluster exists  → flags an URGENT
-            security release (mandatory) in  system/manifest .
-          • Else on the monthly cadence (1st of month)      → flags a routine
-            monthly security-maintenance release.
-        The client reads system/manifest, so this announcement needs NO redeploy.
+     5. PROPOSES urgency. If any CRITICAL security/crash cluster exists it sets
+        `urgent: true` on system/pendingRelease, behind
+        `approval: { required: true, approved: false }`.
 
-   HONEST LIMITATION: this brain announces, prioritises and schedules with no
-   human. It does NOT write application code or deploy by itself — that is done
-   by the publish script / GitHub Action (which CAN run unattended on a
-   schedule, but only ships code that exists in the repo). Announcing a version
-   whose code isn't deployed would be misleading, so the brain only bumps the
-   PATCH for security-maintenance refreshes and records a clear note; real
-   feature code still ships through the repo.
+   IT DOES NOT ANNOUNCE ANYTHING TO USERS. It used to: whenever a critical
+   cluster existed it wrote `mandatory` straight into system/manifest, which
+   every client reads, so a machine could declare a REQUIRED SECURITY UPDATE to
+   the whole user base with no human involved. On v7.69.24 that produced two
+   contradictory statements about one version — release.cjs derived "1 internal
+   change — nothing user-facing" from the real diff while the brain marked the
+   same version a mandatory security release from the FEEDBACK. The urgency was
+   real; the release it was pinned to did not address it.
 
-   SETUP (all optional — the function no-ops safely if unset):
-   (fs is imported for version.json — see "WHICH VERSION IS CURRENT" below.)
-     • FIREBASE_SERVICE_ACCOUNT  = the service-account JSON (string) for Admin SDK
-     • RELEASE_BRAIN_ENABLED      = "1" to allow it to write the manifest
+   approve-release.js, authenticated against RELEASE_ADMIN_UID, is now the only
+   writer that may promote a proposal into system/manifest or set `mandatory`.
+   The brain still keeps `manifest.latest` equal to the DEPLOYED version and
+   prunes stale `mandatory` entries — that is bookkeeping about a fact, and the
+   client prefers `manifest.latest` over version.json outright, so letting it
+   go stale would silently suppress real update prompts. See section 5 below.
+
+   HONEST LIMITATION: this brain prioritises and proposes with no human. It does
+   NOT write application code, deploy, or announce a release by itself.
+
+   AUTHENTICATION: the HTTP endpoint accepts `Authorization: Bearer` carrying
+   either CRON_SECRET (what Vercel sends for a Cron Job) or an owner Firebase ID
+   token matching RELEASE_ADMIN_UID. With neither configured it refuses every
+   request. See the AUTHENTICATION block below.
+
+   SETUP:
+     • FIREBASE_SERVICE_ACCOUNT  = service-account JSON (string) for Admin SDK  [required]
+     • CRON_SECRET               = shared secret Vercel Cron presents           [required for the cron]
+     • RELEASE_ADMIN_UID         = the owner's Firebase uid                     [required for owner calls]
+     • RELEASE_BRAIN_ENABLED     = "1" to allow the manifest bookkeeping write
    Schedule is defined in vercel.json → crons.
+   (`fs` is imported for version.json — see "WHICH VERSION IS CURRENT" below.)
    ============================================================================ */
 
 import fs from 'node:fs';
+import { createHash, timingSafeEqual } from 'node:crypto';
+
+/* =============================================================================
+   AUTHENTICATION  —  this endpoint was completely open
+   ---------------------------------------------------------------------------
+   /api/release-brain is routed by api/router.js with NO guard of any kind. Any
+   unauthenticated caller on the internet could make it:
+
+     · read every document in the `feedback` collection
+     · overwrite system/feedbackPriority (the in-app priority board)
+     · overwrite system/pendingRelease  (the owner's approval queue)
+     · DELETE feedback older than 14 days, via the archival pass
+
+   That last one is the sharp edge: `archiveOldFeedback` copies to
+   `feedbackArchive` and then deletes from `feedback`, up to 5,000 documents per
+   run, and it can be driven by anyone who knows the URL.
+
+   Two accepted credentials, and nothing else:
+
+     1. `Authorization: Bearer <CRON_SECRET>` — what Vercel sends on a Cron Job
+        invocation once CRON_SECRET is set in the project's environment. This is
+        the scheduled path.
+     2. A Firebase ID token whose uid equals RELEASE_ADMIN_UID — the owner, and
+        the same identity approve-release.js already requires to ship anything.
+
+   FAILING CLOSED IS THE POINT. If NEITHER credential is configured the endpoint
+   refuses every request rather than allowing every request: an unconfigured
+   guard that lets traffic through is not a guard, and this repository has
+   already produced that defect more than once.
+
+   The CLI (`node release-brain.js`, run by auto-release.yml) does not go
+   through HTTP and must not be blocked. It identifies itself with a Symbol,
+   which no HTTP request can carry — a request body or header can set `mode` or
+   `idToken`, but it cannot put a private Symbol key on the req object.
+   ========================================================================== */
+
+const LOCAL_INVOCATION = Symbol('release-brain.local');
+
+/** Build the request object the in-process CLI passes to `handler`. */
+export function localRequest(query = {}) {
+    return { query, [LOCAL_INVOCATION]: true };
+}
+
+export function isLocalInvocation(req) {
+    return !!(req && req[LOCAL_INVOCATION] === true);
+}
+
+/** Constant-time compare that also hides the length of either input. */
+function secretEquals(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+    const ha = createHash('sha256').update(a).digest();
+    const hb = createHash('sha256').update(b).digest();
+    return timingSafeEqual(ha, hb);
+}
+
+function bearerOf(req) {
+    try {
+        const h = (req && req.headers) || {};
+        const raw = h.authorization || h.Authorization || '';
+        const m = /^Bearer\s+(.+)$/i.exec(String(raw).trim());
+        return m ? m[1].trim() : '';
+    } catch (_) { return ''; }
+}
+
+/**
+ * Decide whether this request may run the brain.
+ *
+ * `verifyIdToken` is injected so the owner path can be tested without the
+ * Firebase Admin SDK or a network. Returns a named outcome rather than a
+ * boolean, so a 401 can say WHICH mechanism refused without revealing a secret.
+ */
+export async function authorize(req, { env = process.env, verifyIdToken = null } = {}) {
+    if (isLocalInvocation(req)) return { ok: true, via: 'local' };
+
+    const cronSecret = String(env.CRON_SECRET || '').trim();
+    const adminUid = String(env.RELEASE_ADMIN_UID || '').trim();
+    if (!cronSecret && !adminUid) {
+        return {
+            ok: false, status: 503, via: 'none',
+            reason: 'this endpoint has no credentials configured (set CRON_SECRET and/or RELEASE_ADMIN_UID). '
+                + 'Refusing every request rather than allowing every request.',
+        };
+    }
+
+    const token = bearerOf(req);
+    if (!token) {
+        return { ok: false, status: 401, via: 'none', reason: 'no Authorization: Bearer credential was presented.' };
+    }
+
+    if (cronSecret && secretEquals(token, cronSecret)) return { ok: true, via: 'cron' };
+
+    if (adminUid && typeof verifyIdToken === 'function') {
+        try {
+            const decoded = await verifyIdToken(token);
+            const uid = decoded && decoded.uid;
+            if (uid && uid === adminUid) return { ok: true, via: 'owner' };
+            return { ok: false, status: 403, via: 'owner', reason: 'authenticated, but this uid may not run the release brain.' };
+        } catch (_) {
+            // Fall through: not a valid ID token either.
+        }
+    }
+
+    return {
+        ok: false, status: 401, via: 'none',
+        reason: 'the bearer token is neither the configured cron secret nor a valid owner ID token.',
+    };
+}
 
 /* THIS FUNCTION COULD NEVER SUCCEED, AND SAID SO IN THE WRONG WORDS.
  *
@@ -341,6 +463,20 @@ export default async function handler(req, res) {
     const { admin, reason } = await getAdmin();
     if (!admin) { out.ok = false; out.note = reason; return _send(res, out); }
 
+    // AFTER getAdmin, because the owner path needs admin.auth() to verify a
+    // token — but BEFORE any read, write or delete. Nothing below this line
+    // runs for an unauthenticated caller.
+    const auth = await authorize(req, {
+        verifyIdToken: (t) => admin.auth().verifyIdToken(t),
+    });
+    if (!auth.ok) {
+        out.ok = false;
+        out.error = 'unauthorized';
+        out.note = auth.reason;
+        return _send(res, out, auth.status || 401);
+    }
+    out.authorizedVia = auth.via;
+
     let db;
     try { db = admin.firestore(); } catch (e) { out.ok = false; out.note = 'firestore unavailable'; return _send(res, out); }
 
@@ -452,27 +588,81 @@ export default async function handler(req, res) {
         out.wrote.push('pendingRelease');
     } catch (e) { out.note += ' pendingRelease write failed;'; }
 
-    // 5. for URGENT security only, announce immediately via the manifest (mandatory).
-    //    Routine monthly releases are left for the publish script/Action so code
-    //    and version stay in lockstep (honest: no announcing undeployed code).
-    if (isUrgent && process.env.RELEASE_BRAIN_ENABLED === '1') {
-        try {
-            const manRef = db.collection('system').doc('manifest');
-            const cur = await manRef.get();
-            const man = cur.exists ? cur.data() : { latest: curVersion, mandatory: [], notes: {} };
-            man.latest = nextVersion;
-            // Prune first, THEN add. Anything at or below the version now
-            // shipping can never be a pending update, so this both keeps the
-            // list honest and clears the bogus 7.13.1 the version bug wrote
-            // into production on the brain's first successful run.
-            man.mandatory = [...pruneMandatory(man.mandatory, curVersion), nextVersion];
-            man.notes = man.notes || {};
-            man.notes[nextVersion] = notes;
-            man.securitySchedule = 'monthly';
-            man.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-            await manRef.set(man);
-            out.wrote.push('manifest(urgent ' + nextVersion + ')');
-        } catch (e) { out.note += ' manifest write failed;'; }
+    /* 5. THE BRAIN NO LONGER DECLARES A MANDATORY UPDATE. It proposes one.
+     *
+     * WHAT THIS USED TO DO, AND WHY IT WAS WRONG
+     *
+     * The block here wrote `system/manifest` directly whenever any critical
+     * cluster existed: `latest = nextVersion`, and `nextVersion` appended to
+     * `mandatory`. Clients read that document, so it announced a REQUIRED
+     * SECURITY UPDATE to every user with no human in the loop — in a system
+     * whose entire design premise is that a human approves what ships.
+     *
+     * It produced exactly that on v7.69.24: release.cjs derived the notes from
+     * the real diff ("1 internal change — nothing user-facing") while this
+     * block marked the same version a mandatory security release, because
+     * three critical clusters existed in the FEEDBACK. Both statements were
+     * about the same version and only one could be true. The urgency was real;
+     * the release it was attached to did not address it. A truthful version
+     * bump carrying a false reason is the fake-release anti-pattern wearing a
+     * different hat.
+     *
+     * It also announced code that did not exist: `nextVersion` is
+     * bumpPatch(current), so on the Vercel cron path — where nothing ships —
+     * the manifest advertised a version that would never be deployed. The
+     * file's own header says announcing undeployed code would be misleading,
+     * and then this block did it.
+     *
+     * WHAT HAPPENS NOW
+     *
+     * The urgency proposal lives in system/pendingRelease and nowhere else. It
+     * is already written above with `urgent`, `notes`, `proposedChanges` and
+     * `approval: { required: true, approved: false }`. approve-release.js —
+     * owner-authenticated against RELEASE_ADMIN_UID — is the ONLY writer that
+     * may promote it into system/manifest and set `mandatory`.
+     *
+     * The one thing still written here is FACT, not judgement: `latest` is set
+     * to the version that is actually deployed, and stale `mandatory` entries
+     * are pruned. Both are needed for correctness rather than convenience —
+     *
+     *   · the client's `_latestVersion()` prefers `manifest.latest` over
+     *     version.json outright, so a manifest frozen at an old version would
+     *     silently SUPPRESS legitimate update prompts. Reporting what shipped
+     *     is not an announcement, it is bookkeeping.
+     *   · pruning can only ever remove an alarm, never raise one, and an entry
+     *     at or below the shipped version cannot be a pending update by
+     *     definition — including the `7.69.24` this bug left in production.
+     *
+     * If the deployed version cannot be determined (version.json is not
+     * readable in this runtime) NOTHING is written. Guessing is what produced
+     * the 7.13.1 incident.
+     */
+    const deployed = shippedVersion();
+    if (process.env.RELEASE_BRAIN_ENABLED === '1') {
+        if (!deployed) {
+            out.note += ' manifest not updated: the deployed version could not be read;';
+        } else {
+            try {
+                const manRef = db.collection('system').doc('manifest');
+                const cur = await manRef.get();
+                const man = cur.exists ? cur.data() : { latest: deployed, mandatory: [], notes: {} };
+                const before = Array.isArray(man.mandatory) ? man.mandatory.length : 0;
+                // Never move `latest` backwards, and never past what is deployed.
+                man.latest = resolveCurrentVersion(deployed, null);
+                man.mandatory = pruneMandatory(man.mandatory, deployed);
+                man.notes = man.notes || {};
+                man.securitySchedule = 'monthly';
+                man.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+                await manRef.set(man);
+                out.wrote.push('manifest(latest ' + man.latest + ', mandatory '
+                    + before + '→' + man.mandatory.length + ')');
+            } catch (e) { out.note += ' manifest write failed;'; }
+        }
+    }
+    if (isUrgent) {
+        // Recorded so the run is legible: the brain DID find urgent work, and
+        // deliberately did not announce it.
+        out.urgencyProposed = nextVersion;
     }
 
     out.summary = { reports: items.length, issues: clusters.length, critical: critical.length, urgent: isUrgent, monthlyWindow: isMonthlyWindow };
@@ -519,11 +709,15 @@ async function archiveOldFeedback(db, admin) {
     return archived;
 }
 
-function _send(res, obj) {
+/* `status` used to be `obj.ok ? 200 : 200` — both branches 200, so a refusal
+ * and a success were indistinguishable to any HTTP client. It stays 200 by
+ * default (existing callers read `ok` from the body), but an explicit code can
+ * now be passed, and the auth guard passes 401/403/503. */
+function _send(res, obj, status = 200) {
     try {
-        if (res && res.status) { res.status(obj.ok ? 200 : 200).json(obj); return; }
+        if (res && res.status) { res.status(status).json(obj); return; }
     } catch (_) {}
-    return new Response(JSON.stringify(obj), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
 /* =============================================================================
@@ -602,7 +796,7 @@ export async function runBrainCli({ log = console.log, logErr = console.error, i
         // this captures the same object the HTTP caller would have received.
         const captured = {};
         const res = { status() { return res; }, json(o) { captured.body = o; return res; } };
-        await invoke({ query: {} }, res);
+        await invoke(localRequest(), res);
         out = captured.body;
     } catch (e) {
         logErr('::error::release-brain threw: ' + ((e && e.stack) || e));
