@@ -140,7 +140,7 @@ guardrail(f) if f == "api/router.js"
 # RULE 2 rather than RULE 1, like the statement pair: RULE 1 accepts
 # `fuzz-passed` in place of review, and a fuzzer cannot tell you that an endpoint
 # is reporting a hand-off it never completed.
-guardrail(f) if regex.match(`(^|/)inbox-[a-z]+\.js$`, lower(f))
+guardrail(f) if regex.match(`(^|/)inbox-[a-z]+\.(js|mjs)$`, lower(f))
 guardrail(f) if contains(f, "sms-ingest")
 # fetch-timeout.mjs is the deadline policy for every outbound call the server
 # makes. Lowering its default breaks all of them at once; removing the abort

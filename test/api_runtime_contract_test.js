@@ -58,10 +58,63 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // not name the real database.
 process.env.FIREBASE_API_KEY = 'test-key-not-a-real-credential';
 process.env.FIREBASE_PROJECT_ID = 'wealthflow-test-does-not-exist';
+// The inbox trio now authenticates with a service account instead of the public
+// Web key. Not a real credential — firebase-admin is mocked below, so nothing
+// parses it beyond JSON.parse.
+process.env.FIREBASE_SERVICE_ACCOUNT = JSON.stringify({
+    project_id: 'wealthflow-test-does-not-exist', client_email: 'test@example.invalid', private_key: 'not-a-key',
+});
 
 const HOST = 'wealthflow.test';
 const TOKEN = 'x'.repeat(24);          // ≥16 chars, so it passes the token gate
 const realFetch = globalThis.fetch;
+
+/* ── the inbox's Firestore, faked ────────────────────────────────────────────
+ * The inbox trio moved off the REST API onto the Admin SDK, so stubbing `fetch`
+ * no longer reaches them — firebase-admin speaks gRPC. `fsCtl` lets each test
+ * say what the database should do, and the mock records every path touched so a
+ * test can assert that a refused key never reached it.
+ *
+ * A failure is modelled as a REJECTED promise rather than a hang: the handlers'
+ * deadline is 8s, and a real hang would put 8 seconds into every such test for no
+ * extra signal. withDeadline's own timeout behaviour is covered directly, with a
+ * short budget, in the deadline describe near the end of this file. */
+const fsCtl = { write: 'ok', read: 'ok', del: 'ok', docs: [], touched: [] };
+
+vi.mock('firebase-admin', () => {
+    const fail = (what) => { throw new Error(`ECONNRESET during ${what}`); };
+    const makeCollection = (prefix) => ({
+        doc: (id) => {
+            const path = `${prefix}/${id}`;
+            return {
+                collection: (sub) => makeCollection(`${path}/${sub}`),
+                async set(data) {
+                    fsCtl.touched.push({ op: 'set', path, data });
+                    if (fsCtl.write !== 'ok') fail('set');
+                },
+                async delete() {
+                    fsCtl.touched.push({ op: 'delete', path });
+                    if (fsCtl.del !== 'ok') fail('delete');
+                },
+            };
+        },
+        limit: () => ({
+            async get() {
+                fsCtl.touched.push({ op: 'get', path: prefix });
+                if (fsCtl.read !== 'ok') fail('get');
+                return { docs: fsCtl.docs.map((d) => ({ id: d.id, data: () => d.data })) };
+            },
+        }),
+    });
+    return {
+        default: {
+            apps: [],
+            initializeApp() {},
+            credential: { cert: () => ({}) },
+            firestore: () => ({ collection: makeCollection }),
+        },
+    };
+});
 
 let stubs;        // [RegExp, (url, init) => Response]
 let blocked;      // URLs no stub claimed
@@ -87,6 +140,8 @@ beforeEach(() => {
     // Captured by reference at module load, so it must be cleared rather than
     // replaced or state leaks between tests.
     if (globalThis.__wfMemStore) globalThis.__wfMemStore.clear();
+    fsCtl.write = 'ok'; fsCtl.read = 'ok'; fsCtl.del = 'ok';
+    fsCtl.docs = []; fsCtl.touched = [];
 });
 
 afterEach(() => {
@@ -117,6 +172,15 @@ function mkRes() {
         get writableEnded() { return seen.ended; },
     };
     return { res, seen };
+}
+
+/** The device bucket a token maps to, computed the way inbox-store.mjs does.
+ *  inbox-pull now builds each key from the CALLER's hash rather than parsing it
+ *  out of a server-supplied document name, so a returned key is guaranteed to sit
+ *  inside the caller's own bucket. These tests assert that explicitly. */
+async function hashOf(t) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(t)));
+    return Array.from(new Uint8Array(buf)).slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Drive one endpoint through the REAL router and report what came back. */
@@ -188,7 +252,7 @@ describe('inbox-push answers with real status codes', () => {
     const push = (opts) => call('inbox-push', { method: 'POST', headers: { 'x-wf-device-token': TOKEN }, ...opts });
 
     it('200 only when Firestore actually accepted the write', async () => {
-        stubs.push([FS, () => json(200, { name: 'projects/p/documents/wf-inbox/h/items/abc' })]);
+        fsCtl.write = 'ok';
         const r = await push({ body: { brain_result: { hash: 'abc' }, sms: 'LKR 500 debited' } });
         expect(r.status).toBe(200);
         expect(r.body.ok).toBe(true);
@@ -200,7 +264,7 @@ describe('inbox-push answers with real status codes', () => {
         // The old fsPut() answered `true` from inside its own catch and the
         // handler returned `{ ok: true }` with 200 regardless, so a rules
         // rejection was indistinguishable from a durable save.
-        stubs.push([FS, () => json(403, { error: { message: 'Missing or insufficient permissions.' } })]);
+        fsCtl.write = 'fail';
         const r = await push({ body: { brain_result: { hash: 'abc' } } });
         expect(r.status, 'a refused write still reports success').toBe(502);
         expect(r.body.ok).toBe(false);
@@ -209,7 +273,7 @@ describe('inbox-push answers with real status codes', () => {
     });
 
     it('502 when Firestore never answers, rather than hanging', async () => {
-        stubs.push([FS, () => { throw new Error('ECONNRESET'); }]);
+        fsCtl.write = 'fail';
         const r = await push({ body: { brain_result: { hash: 'abc' } } });
         expect(r.status).toBe(502);
         expect(r.body.durable).toBe(false);
@@ -247,7 +311,7 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
     const pull = (opts) => call('inbox-pull', { method: 'GET', headers: { 'x-wf-device-token': TOKEN }, ...opts });
 
     it('200 with count 0 when the inbox is genuinely empty', async () => {
-        stubs.push([FS, () => json(200, { documents: [] })]);
+        fsCtl.docs = [];
         const r = await pull();
         expect(r.status).toBe(200);
         expect(r.body.ok).toBe(true);
@@ -255,24 +319,20 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
     });
 
     it('200 with the items when there are some', async () => {
-        stubs.push([FS, () => json(200, {
-            documents: [{
-                name: 'projects/p/databases/(default)/documents/wf-inbox/abc/items/m1',
-                fields: { applied: { booleanValue: false }, sms_preview: { stringValue: 'LKR 500' } },
-            }],
-        })]);
+        fsCtl.docs = [{ id: 'm1', data: { applied: false, sms_preview: 'LKR 500' } }];
         const r = await pull();
         expect(r.status).toBe(200);
         expect(r.body.count).toBe(1);
-        expect(r.body.items[0].key).toBe('wf-inbox/abc/items/m1');
+        expect(r.body.items[0].key).toBe(`wf-inbox/${await hashOf(TOKEN)}/items/m1`);
         expect(r.body.items[0].sms_preview).toBe('LKR 500');
+        expect(r.body.items[0].durable).toBe(true);
     });
 
     it('THE SILENT ONE: 502, not an empty list, when the read is refused', async () => {
         // fsList() used to `return []` from its catch AND on !r.ok, so "I was not
         // allowed to look" and "there is nothing waiting" were the same answer.
         // The poller then reported drained: 0 — accurate and utterly misleading.
-        stubs.push([FS, () => json(403, { error: { message: 'Missing or insufficient permissions.' } })]);
+        fsCtl.read = 'fail';
         const r = await pull();
         expect(r.status, 'a refused read still reads as an empty inbox').toBe(502);
         expect(r.body.ok).toBe(false);
@@ -280,7 +340,7 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
     });
 
     it('502 when Firestore never answers', async () => {
-        stubs.push([FS, () => { throw new Error('ETIMEDOUT'); }]);
+        fsCtl.read = 'fail';
         expect((await pull()).status).toBe(502);
     });
 
@@ -294,10 +354,7 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
          * copy in this instance's memory; if pull served it with no distinction, a
          * caller would read a memory-only item as safely stored. The item is still
          * delivered — it is real, and this may be the only instance holding it. */
-        stubs.push([FS, (_u, init) => (String((init && init.method) || 'GET').toUpperCase() === 'PATCH'
-            ? json(403, { error: { message: 'Missing or insufficient permissions.' } })
-            : json(200, { documents: [] }))]);
-
+        fsCtl.write = 'fail';          // the durable write is refused
         const pushed = await call('inbox-push', {
             method: 'POST', headers: { 'x-wf-device-token': TOKEN },
             body: { brain_result: { hash: 'nd1' }, sms: 'LKR 100' },
@@ -305,6 +362,7 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
         expect(pushed.status).toBe(502);
         expect(pushed.body.durable).toBe(false);
 
+        fsCtl.write = 'ok'; fsCtl.docs = [];   // the read works and finds nothing stored
         const r = await pull();
         expect(r.status).toBe(200);
         expect(r.body.count).toBe(1);
@@ -313,21 +371,14 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
     });
 
     it('reports a durable item as durable, and nonDurable 0 in normal operation', async () => {
-        stubs.push([FS, () => json(200, {
-            documents: [{
-                name: 'projects/p/databases/(default)/documents/wf-inbox/abc/items/m1',
-                fields: { applied: { booleanValue: false } },
-            }],
-        })]);
+        fsCtl.docs = [{ id: 'm1', data: { applied: false } }];
         const r = await pull();
         expect(r.body.nonDurable).toBe(0);
         expect(r.body.items[0].durable).toBe(true);
     });
 
     it('a successful push is not marked non-durable', async () => {
-        stubs.push([FS, (_u, init) => (String((init && init.method) || 'GET').toUpperCase() === 'PATCH'
-            ? json(200, { name: 'ok' })
-            : json(200, { documents: [] }))]);
+        fsCtl.write = 'ok'; fsCtl.docs = [];
         await call('inbox-push', {
             method: 'POST', headers: { 'x-wf-device-token': TOKEN },
             body: { brain_result: { hash: 'd1' } },
@@ -340,7 +391,7 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
     it('accepts the token from the query string the rewrite preserves', async () => {
         // The bridge has to carry the client's own query through the
         // /api/router?path=… rewrite, or this token would never arrive.
-        stubs.push([FS, () => json(200, { documents: [] })]);
+        fsCtl.docs = [];
         const r = await call('inbox-pull', { method: 'GET', query: { token: TOKEN } });
         expect(r.status).toBe(200);
     });
@@ -349,12 +400,6 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
 describe('inbox-ack counts deletions, not attempts', () => {
     const key = (h) => `wf-inbox/${h}/items/m1`;
     const ack = (body) => call('inbox-ack', { method: 'POST', headers: { 'x-wf-device-token': TOKEN }, body });
-
-    /** The bucket hash this TOKEN maps to, computed the way the handler does. */
-    async function hashOf(t) {
-        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
-        return Array.from(new Uint8Array(buf)).slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
-    }
 
     it('200 and a true count when the deletes land', async () => {
         stubs.push([FS, () => json(200, {})]);
@@ -367,7 +412,7 @@ describe('inbox-ack counts deletions, not attempts', () => {
         // `_memStore.delete(k); await fsDelete(k); deleted++;` incremented
         // unconditionally, so `{ ok: true, deleted: 5 }` could mean five
         // documents still present — which get pulled and applied a second time.
-        stubs.push([FS, () => json(403, { error: { message: 'Missing or insufficient permissions.' } })]);
+        fsCtl.del = 'fail';
         const r = await ack({ keys: [key(await hashOf(TOKEN))] });
         expect(r.status, 'a failed delete still reports success').toBe(502);
         expect(r.body.deleted, 'the count still includes deletions that did not happen').toBe(0);
@@ -609,23 +654,70 @@ describe('these assertions can actually fail', () => {
 
 // ── 6. the not-configured path ───────────────────────────────────────────────
 
-describe('a missing FIREBASE_API_KEY is a 503, not a crash', () => {
-    it('says what is missing instead of calling Firestore with key=undefined', async () => {
-        const saved = process.env.FIREBASE_API_KEY;
-        delete process.env.FIREBASE_API_KEY;
-        vi.resetModules();                 // the const is captured at load time
+describe('a missing service-account credential is a 503, not a crash', () => {
+    /* The inbox trio moved from the public Web apiKey to FIREBASE_SERVICE_ACCOUNT
+     * when it moved to the Admin SDK, so this is the credential that now has to
+     * fail loudly. Getting it wrong in the quiet direction is the dangerous one: a
+     * missing secret must not read as "the inbox is empty". */
+    it('names the missing variable, and touches no database', async () => {
+        const saved = process.env.FIREBASE_SERVICE_ACCOUNT;
+        delete process.env.FIREBASE_SERVICE_ACCOUNT;
+        const { _resetInboxDb } = await import('../inbox-store.mjs');
+        _resetInboxDb();                   // drop the handle cached by earlier tests
         try {
-            const { default: router } = await import('../api/router.js');
-            const { res, seen } = mkRes();
-            await router(mkReq('inbox-push', {
+            const r = await call('inbox-push', {
                 method: 'POST', headers: { 'x-wf-device-token': TOKEN }, body: { brain_result: { hash: 'a' } },
-            }), res);
-            expect(seen.status).toBe(503);
-            expect(seen.body.error).toBe('firebase_key_not_configured');
-            expect(calls.filter((c) => FS.test(c.url))).toEqual([]);
+            });
+            expect(r.status).toBe(503);
+            expect(r.body.error).toBe('inbox_not_configured');
+            expect(String(r.body.detail)).toMatch(/FIREBASE_SERVICE_ACCOUNT/);
+            expect(fsCtl.touched, 'it reached the database without a credential').toEqual([]);
         } finally {
-            process.env.FIREBASE_API_KEY = saved;
-            vi.resetModules();
+            process.env.FIREBASE_SERVICE_ACCOUNT = saved;
+            _resetInboxDb();
+        }
+    });
+
+    it('inbox-pull reports it too, rather than answering "empty"', async () => {
+        const saved = process.env.FIREBASE_SERVICE_ACCOUNT;
+        delete process.env.FIREBASE_SERVICE_ACCOUNT;
+        const { _resetInboxDb } = await import('../inbox-store.mjs');
+        _resetInboxDb();
+        try {
+            const r = await call('inbox-pull', { method: 'GET', headers: { 'x-wf-device-token': TOKEN } });
+            expect(r.status, 'an unconfigured inbox answered 200 — indistinguishable from empty').toBe(503);
+            expect(r.body.error).toBe('inbox_not_configured');
+        } finally {
+            process.env.FIREBASE_SERVICE_ACCOUNT = saved;
+            _resetInboxDb();
+        }
+    });
+
+    it('a malformed credential never echoes the key material', async () => {
+        // V8 embeds the first ~10 bytes of the input in a JSON.parse message, which
+        // for a service account is the head of the private key.
+        const saved = process.env.FIREBASE_SERVICE_ACCOUNT;
+        // Assembled from fragments, not written as one literal. A literal PEM
+        // header here trips autonomy/secret-scan.mjs — correctly: the scanner
+        // cannot tell a fixture from the real thing, and the right response is to
+        // stop writing the pattern, never to teach the scanner to ignore it. Same
+        // precedent as the two other fixtures in this suite.
+        const PEM_HEAD = '-----BEGIN ' + 'PRIVATE' + ' KEY-----';
+        const KEY_HEAD = 'MII' + 'EvQIBAD';
+        process.env.FIREBASE_SERVICE_ACCOUNT = PEM_HEAD + KEY_HEAD;
+        const { _resetInboxDb } = await import('../inbox-store.mjs');
+        _resetInboxDb();
+        try {
+            const r = await call('inbox-push', {
+                method: 'POST', headers: { 'x-wf-device-token': TOKEN }, body: { brain_result: { hash: 'a' } },
+            });
+            expect(r.status).toBe(503);
+            expect(String(r.body.detail)).not.toContain(PEM_HEAD);
+            expect(String(r.body.detail)).not.toContain(KEY_HEAD);
+            expect(String(r.body.detail)).toMatch(/not valid JSON/);
+        } finally {
+            process.env.FIREBASE_SERVICE_ACCOUNT = saved;
+            _resetInboxDb();
         }
     });
 });

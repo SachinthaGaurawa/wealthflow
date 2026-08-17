@@ -130,15 +130,32 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // === 6. SMS INBOX BRIDGE - device-scoped relay ==========================
-    //  The native SMS bridge and /api/inbox-* endpoints push/pull bank alerts
-    //  here over the REST API (unauthenticated), scoped by an unguessable
-    //  device hash. Access is gated by that hash today.
+    // === 6. SMS INBOX BRIDGE - SEALED =======================================
+    //  This branch holds classified bank transactions, and the app applies
+    //  whatever it finds here straight into the user's ledger. It used to read
+    //  `allow read, write: if true` because inbox-push/pull/ack reached Firestore
+    //  over the REST API with only the public Web apiKey — unauthenticated as far
+    //  as these rules are concerned. Its only protection was the unguessability of
+    //  a 16-hex-character device hash carried in URLs, and therefore in logs.
     //
-    //  HARDENING TODO: move inbox-*.js to the Admin SDK + a per-device token,
-    //  then lock this branch down to that token.
+    //  The HARDENING TODO that used to sit here is DONE: inbox-push.js,
+    //  inbox-pull.js and inbox-ack.js now go through the Firebase Admin SDK
+    //  (inbox-store.mjs), which authenticates with the service account and
+    //  BYPASSES these rules entirely — the same mechanism release-brain.js uses to
+    //  write system/* while that collection is `allow write: if false`.
+    //
+    //  So this branch can be closed completely. No client, signed in or not, has
+    //  any business reading or writing another device's bank alerts; the only
+    //  legitimate accessor is the server, and the server does not consult rules.
+    //
+    //  The per-device boundary now lives entirely in inbox-store.mjs
+    //  (deviceTokenFrom + itemIdFrom): the server derives the bucket from the
+    //  presented token and refuses any key naming a different one. Firestore no
+    //  longer gets a vote, which is why those checks are covered by
+    //  test/api_runtime_contract_test.js and the file is under the sensitive-path
+    //  gate.
     match /wf-inbox/{deviceHash}/{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
 
     // === 7. DEFAULT - deny everything not explicitly allowed above ==========

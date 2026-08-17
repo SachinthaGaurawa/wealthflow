@@ -211,7 +211,7 @@ jobs:
           #   because no list matched it. sms-ingest accepts a bank SMS from the
           #   public internet and the inbox trio moves the resulting transaction into
           #   and out of the database — which the app applies straight to the ledger.
-          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|api/router\.js|release\.cjs|release-brain\.js|statement-store\.js|statement-view\.js|wealthflow-update-system\.js|inbox-[a-z]+\.js|sms-ingest\.js|fetch-timeout\.mjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
+          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|api/router\.js|release\.cjs|release-brain\.js|statement-store\.js|statement-view\.js|wealthflow-update-system\.js|inbox-[a-z]+\.(js|mjs)|sms-ingest\.js|fetch-timeout\.mjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
 
           HITS=$(echo "$CHANGED" | grep -iE "$SENSITIVE_REGEX" || true)
           if [ -n "$HITS" ]; then

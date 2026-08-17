@@ -122,6 +122,10 @@ const MUST_BE_GATED = [
     ['inbox-push.js',                       'writes a classified transaction under a device capability'],
     ['inbox-pull.js',                       'serves transactions the app applies straight to the ledger'],
     ['inbox-ack.js',                        'deletes transactions on the caller\'s word'],
+    // With wf-inbox sealed in firestore.rules, Firestore no longer checks anything
+    // here: this module IS the per-device boundary for the money ingestion path,
+    // and it holds the service-account bootstrap.
+    ['inbox-store.mjs',                     'the only remaining per-device boundary on the inbox'],
     // Lowering this file's default, or removing its abort, silently removes the
     // deadline from every outbound call the server makes.
     ['fetch-timeout.mjs',                   'the timeout policy for every outbound server call'],
@@ -248,6 +252,49 @@ describe('the files the gate protects are actually in the repository', () => {
             expect(m, `firestore.rules does not scope /${coll}/{uid} at all`).toBeTruthy();
             expect(m[1], `/${coll}/{uid} is not restricted to its owner`).toMatch(/isOwner\(uid\)|request\.auth\.uid\s*==\s*uid/);
             expect(m[1], `/${coll}/{uid} grants unconditional access`).not.toMatch(/if\s+true/i);
+        }
+    });
+
+    it('wf-inbox is sealed — the assertion #112 deferred until its fix landed', () => {
+        /* #112 deliberately did NOT assert this. wf-inbox was
+         * `allow read, write: if true` at the time, because inbox-push/pull/ack
+         * reached Firestore over REST with only the public Web apiKey, which rules
+         * see as unauthenticated. Asserting it there would have held the fix hostage
+         * to a test only the fix could turn green.
+         *
+         * The fix is the Admin SDK migration (inbox-store.mjs): the service account
+         * bypasses rules, so no client needs access to this branch at all. That is
+         * what makes the assertion possible, and it goes green on arrival — a guard
+         * landing WITH its fix rather than ahead of it.
+         *
+         * This branch holds classified bank transactions that the app applies
+         * straight to the ledger, so `if true` here meant anyone who learned a
+         * device hash could read a stranger's transactions, inject one they never
+         * made, or delete ones they did. */
+        const p = path.join(ROOT, 'firestore.rules');
+        if (!fs.existsSync(p)) return;
+        const src = fs.readFileSync(p, 'utf8');
+        const m = src.match(/match\s+\/wf-inbox\/\{deviceHash\}[^\n]*\{\s*([^}]*)\}/);
+        expect(m, 'firestore.rules no longer scopes /wf-inbox at all').toBeTruthy();
+        expect(m[1], 'wf-inbox grants access to clients — it holds bank transactions the app '
+            + 'applies straight to the ledger, and the server reaches it via the Admin SDK, '
+            + 'which does not need a rule')
+            .not.toMatch(/if\s+true/i);
+        expect(m[1], 'wf-inbox should deny outright').toMatch(/if\s+false/i);
+    });
+
+    it('the inbox endpoints no longer depend on that hole being open', () => {
+        // The rule above may only be sealed because the code stopped needing it.
+        // If an endpoint went back to the REST API with an apiKey, sealing the rule
+        // would break the pipeline — so the two facts are asserted together.
+        for (const f of ['inbox-push.js', 'inbox-pull.js', 'inbox-ack.js']) {
+            const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+            const code = src.replace(/\/\*[\s\S]*?\*\//g, ' ')
+                .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
+            expect(code, `${f} imports the Admin-SDK store`).toMatch(/from '\.\/inbox-store\.mjs'/);
+            expect(code, `${f} is back on the Firestore REST API, which needs the rule reopened`)
+                .not.toMatch(/firestore\.googleapis\.com/);
+            expect(code, `${f} still uses the public apiKey`).not.toMatch(/FIREBASE_API_KEY/);
         }
     });
 
