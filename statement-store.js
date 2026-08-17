@@ -23,6 +23,7 @@
 // =====================================================================
 
 import { randomFillSync } from 'node:crypto';
+import { fetchWithTimeout, withTimeout } from './fetch-timeout.mjs';
 
 export const config = {
     maxDuration: 25,
@@ -95,12 +96,10 @@ function randomId(n = 8) {
     return out.join('');
 }
 
-async function withTimeout(fn, ms) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), ms);
-    try { return await fn(ctrl.signal); }
-    finally { clearTimeout(t); }
-}
+// withTimeout used to be defined here, byte-for-byte identical to the copy in
+// fetch-timeout.mjs. Two identical implementations of a timeout policy is one
+// more than can be kept in step, so this file now imports the shared one — see
+// the import at the top.
 
 function wrapHtml(html, name) {
     if (html.trim().startsWith('<!') || html.trim().startsWith('<html')) return html;
@@ -119,8 +118,12 @@ export default async function handler(req, res) {
         try {
             const id = (req.query && req.query.id) || (req.body && req.body.id);
             if (!id || typeof id !== 'string' || id.length < 5) return res.status(400).json({ error: 'Invalid ID' });
-            await fetch(`${FS_BASE}/s/${id}?key=${API_KEY}`,                  { method: 'DELETE' }).catch(()=>{});
-            await fetch(`${FS_BASE}/shared_statements/${id}?key=${API_KEY}`,  { method: 'DELETE' }).catch(()=>{});
+            // These two were the only calls in this file with no deadline at all —
+            // the three write paths below already bound theirs. A stalled Firestore
+            // here held the whole invocation to the maxDuration ceiling on what is
+            // meant to be a fire-and-forget cleanup.
+            await fetchWithTimeout(`${FS_BASE}/s/${id}?key=${API_KEY}`,                 { method: 'DELETE' }).catch(()=>{});
+            await fetchWithTimeout(`${FS_BASE}/shared_statements/${id}?key=${API_KEY}`, { method: 'DELETE' }).catch(()=>{});
             return res.status(200).json({ success: true });
         } catch (e) { return res.status(500).json({ error: 'delete_failed' }); }
     }

@@ -29,6 +29,13 @@
 import { createHash } from 'node:crypto';
 import { resolveRepo, resolveToken, isValidRepo } from './github-repo.js';
 
+import { fetchWithTimeout } from './fetch-timeout.mjs';
+
+// The GitHub API calls in this file keep the 10s library default. Only the LLM
+// classification call gets a longer budget: a model round-trip is slow by nature,
+// and it is also the one call whose failure is harmless — the caller falls back to
+// keyword triage — so it is worth waiting for rather than cutting off early.
+const LLM_TIMEOUT_MS = 30_000;
 const MAX_LEN = 2000;
 
 const LABELS = { bug: 'bug', crash: 'bug', ui: 'ui/ux', feature: 'enhancement', security: 'security', other: 'triage' };
@@ -102,11 +109,11 @@ async function edenClassify(text) {
         'Feedback: ' + text
     ].join('\n');
     try {
-        const r = await fetch('https://api.edenai.run/v2/text/chat', {
+        const r = await fetchWithTimeout('https://api.edenai.run/v2/text/chat', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
             body: JSON.stringify({ providers: 'openai', text: prompt, temperature: 0, max_tokens: 120 })
-        });
+        }, LLM_TIMEOUT_MS);
         if (!r.ok) return null;
         const data = await r.json();
         const out = data && (data.openai || Object.values(data)[0]);
@@ -284,7 +291,7 @@ function keysMatch(a, b) {
 }
 
 async function githubGet(repo, token, path) {
-    const r = await fetch('https://api.github.com/repos/' + repo + path, {
+    const r = await fetchWithTimeout('https://api.github.com/repos/' + repo + path, {
         headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'User-Agent': 'wealthflow-triage' }
     });
     return r.ok ? r.json() : null;
@@ -304,7 +311,7 @@ function ghHeaders(token) {
  * turn a successful dedup into an error the user sees. */
 async function githubPost(repo, token, path, body) {
     try {
-        const r = await fetch('https://api.github.com/repos/' + repo + path,
+        const r = await fetchWithTimeout('https://api.github.com/repos/' + repo + path,
             { method: 'POST', headers: ghHeaders(token), body: JSON.stringify(body) });
         return r.ok ? r.json() : null;
     } catch (_) { return null; }
@@ -312,7 +319,7 @@ async function githubPost(repo, token, path, body) {
 
 async function githubPatch(repo, token, path, body) {
     try {
-        const r = await fetch('https://api.github.com/repos/' + repo + path,
+        const r = await fetchWithTimeout('https://api.github.com/repos/' + repo + path,
             { method: 'PATCH', headers: ghHeaders(token), body: JSON.stringify(body) });
         return r.ok ? r.json() : null;
     } catch (_) { return null; }
@@ -514,7 +521,7 @@ export default async function handler(req, res) {
     ].filter(Boolean).join('\n');
 
     try {
-        const r = await fetch('https://api.github.com/repos/' + repo + '/issues', {
+        const r = await fetchWithTimeout('https://api.github.com/repos/' + repo + '/issues', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'wealthflow-triage' },
             body: JSON.stringify({ title: title, body: issueBody, labels: [labelType, fp, 'autonomous', 'user-feedback'] })
@@ -579,7 +586,7 @@ export async function explain404(repo, token, tokenSource, out) {
     }
     let probe = null;
     try {
-        probe = await fetch('https://api.github.com/repos/' + repo, {
+        probe = await fetchWithTimeout('https://api.github.com/repos/' + repo, {
             headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'User-Agent': 'wealthflow-triage' },
         });
     } catch (_) { /* fall through to the generic answer below */ }

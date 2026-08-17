@@ -11,6 +11,8 @@
    Privacy: forwards only what the user typed plus optional basic diagnostics
    (version, device) — never financial data.
    ============================================================================ */
+import { fetchWithTimeout } from './fetch-timeout.mjs';
+
 export const config = { runtime: 'edge' };
 
 function json(body, status) {
@@ -53,7 +55,7 @@ export default async function handler(req) {
         '\n----- MESSAGE -----\n' + text + '\n';
 
     try {
-        const r = await fetch('https://api.resend.com/emails', {
+        const r = await fetchWithTimeout('https://api.resend.com/emails', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
             body: JSON.stringify({

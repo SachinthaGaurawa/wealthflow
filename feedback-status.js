@@ -23,6 +23,7 @@
 
 import { resolveRepo } from './github-repo.js';
 
+import { fetchWithTimeout } from './fetch-timeout.mjs';
 const MAX_ISSUES = 25;
 
 function send(res, body, status = 200) {
@@ -84,7 +85,7 @@ export function summarise(issue, comments) {
 }
 
 async function gh(repo, token, path) {
-    const r = await fetch(`https://api.github.com/repos/${repo}${path}`, {
+    const r = await fetchWithTimeout(`https://api.github.com/repos/${repo}${path}`, {
         headers: {
             Authorization: `Bearer ${token}`,
             Accept: 'application/vnd.github+json',
