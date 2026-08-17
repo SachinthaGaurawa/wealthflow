@@ -388,11 +388,24 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
         expect(r.body.items[0].durable).toBe(true);
     });
 
-    it('accepts the token from the query string the rewrite preserves', async () => {
-        // The bridge has to carry the client's own query through the
-        // /api/router?path=… rewrite, or this token would never arrive.
+    it('REFUSES a token supplied in the query string', async () => {
+        /* `?token=…` used to authenticate here. A query string is copied into
+         * server access logs, proxy logs, browser history, and the Referer header
+         * sent to any third party the page later links to. With wf-inbox sealed,
+         * this token is the ENTIRE per-device boundary — a channel that duplicates
+         * it into logs is not somewhere to carry it.
+         *
+         * Nothing in the app relied on it: wealthflow-autonomous.js sends the
+         * header on both inbox-pull and inbox-ack. */
         fsCtl.docs = [];
         const r = await call('inbox-pull', { method: 'GET', query: { token: TOKEN } });
+        expect(r.status, 'a query-string token still authenticates').toBe(401);
+        expect(fsCtl.touched, 'a query-string token reached the database').toEqual([]);
+    });
+
+    it('still accepts the header, which is what the app actually sends', async () => {
+        fsCtl.docs = [];
+        const r = await call('inbox-pull', { method: 'GET', headers: { 'x-wf-device-token': TOKEN } });
         expect(r.status).toBe(200);
     });
 });

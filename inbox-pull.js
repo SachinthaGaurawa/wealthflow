@@ -24,10 +24,10 @@ const _memStore = globalThis.__wfMemStore || (globalThis.__wfMemStore = new Map(
 const PAGE = 50;
 
 export default async function handler(req, res) {
-    // The header is what the app sends (wealthflow-autonomous.js). ?token= is
-    // retained for the manual-debug path it was added for; it is a weaker channel
-    // because query strings land in access logs, and it is filed as an open
-    // finding rather than changed here without the owner's say-so.
+    // Header only. The `?token=` query fallback was removed: a query string is
+    // copied into access logs, proxy logs, browser history and the Referer header,
+    // and with wf-inbox sealed this token IS the entire per-device boundary. See
+    // deviceTokenFrom() in inbox-store.mjs.
     const tok = deviceTokenFrom(req, null);
     if (!tok) {
         res.status(401).json({ ok: false, error: 'Token required' });

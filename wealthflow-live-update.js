@@ -13,6 +13,21 @@
  *  Safety: reloads at most once per detected SHA (sessionStorage), 20s minimum
  *  between reloads, and is a no-op if the page is hidden (won't reload under you).
  */
+// ── deadline for outbound calls ──────────────────────────────────────────────
+// `fetch` has no default timeout: an upstream that accepts the connection and
+// then goes quiet never settles, so the caller waits forever and the UI keeps a
+// spinner up with no way to recover. Defined as a guarded global so whichever of
+// these scripts loads first supplies it and the rest share one implementation —
+// no load-order dependency, and no eighth copy to drift.
+window._wfFetchT = window._wfFetchT || function (url, init, ms) {
+    var ctl = new AbortController();
+    var t = setTimeout(function () { ctl.abort(); }, ms || 15000);
+    var opts = {};
+    for (var k in (init || {})) opts[k] = init[k];
+    opts.signal = ctl.signal;
+    return fetch(url, opts).finally(function () { clearTimeout(t); });
+};
+
 (function () {
     'use strict';
     if (window.wfLiveUpdate) return;
@@ -27,7 +42,7 @@
 
     async function _liveSha() {
         try {
-            var r = await fetch('/api/version', { cache: 'no-store' });
+            var r = await _wfFetchT('/api/version', { cache: 'no-store' });
             if (!r.ok) return null;
             var j = await r.json();
             // keep the visible App Version label in sync with the deployed version
