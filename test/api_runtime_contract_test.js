@@ -288,6 +288,55 @@ describe('inbox-pull distinguishes an empty inbox from a failed read', () => {
         expect((await call('inbox-pull', { method: 'GET' })).status).toBe(401);
     });
 
+    it('marks an item whose durable write failed, instead of serving it as stored', async () => {
+        /* The dishonesty this PR removes from inbox-push must not simply move one
+         * hop downstream. A push that could not reach the database still leaves a
+         * copy in this instance's memory; if pull served it with no distinction, a
+         * caller would read a memory-only item as safely stored. The item is still
+         * delivered — it is real, and this may be the only instance holding it. */
+        stubs.push([FS, (_u, init) => (String((init && init.method) || 'GET').toUpperCase() === 'PATCH'
+            ? json(403, { error: { message: 'Missing or insufficient permissions.' } })
+            : json(200, { documents: [] }))]);
+
+        const pushed = await call('inbox-push', {
+            method: 'POST', headers: { 'x-wf-device-token': TOKEN },
+            body: { brain_result: { hash: 'nd1' }, sms: 'LKR 100' },
+        });
+        expect(pushed.status).toBe(502);
+        expect(pushed.body.durable).toBe(false);
+
+        const r = await pull();
+        expect(r.status).toBe(200);
+        expect(r.body.count).toBe(1);
+        expect(r.body.nonDurable, 'a memory-only item is being served as stored').toBe(1);
+        expect(r.body.items[0].durable).toBe(false);
+    });
+
+    it('reports a durable item as durable, and nonDurable 0 in normal operation', async () => {
+        stubs.push([FS, () => json(200, {
+            documents: [{
+                name: 'projects/p/databases/(default)/documents/wf-inbox/abc/items/m1',
+                fields: { applied: { booleanValue: false } },
+            }],
+        })]);
+        const r = await pull();
+        expect(r.body.nonDurable).toBe(0);
+        expect(r.body.items[0].durable).toBe(true);
+    });
+
+    it('a successful push is not marked non-durable', async () => {
+        stubs.push([FS, (_u, init) => (String((init && init.method) || 'GET').toUpperCase() === 'PATCH'
+            ? json(200, { name: 'ok' })
+            : json(200, { documents: [] }))]);
+        await call('inbox-push', {
+            method: 'POST', headers: { 'x-wf-device-token': TOKEN },
+            body: { brain_result: { hash: 'd1' } },
+        });
+        const r = await pull();
+        expect(r.body.nonDurable).toBe(0);
+        expect(r.body.items[0].durable).toBe(true);
+    });
+
     it('accepts the token from the query string the rewrite preserves', async () => {
         // The bridge has to carry the client's own query through the
         // /api/router?path=… rewrite, or this token would never arrive.

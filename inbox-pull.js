@@ -136,14 +136,21 @@ export default async function handler(req, res) {
     const memItems = [];
     const now = Date.now();
     for (const [k, v] of _memStore.entries()) {
-        if (k.startsWith(memPrefix) && (!v.exp || v.exp > now)) memItems.push({ key: k, ...v.v });
+        if (!k.startsWith(memPrefix) || (v.exp && v.exp <= now)) continue;
+        // inbox-push records whether the durable write behind a memory copy
+        // landed. An item it could not store is still worth delivering — it is
+        // real, and this may be the only instance that has it — but it must not
+        // be presented as though it were safely in the database.
+        memItems.push({ key: k, ...v.v, durable: v.durable !== false });
     }
 
-    // Deduplicate by key (Firestore wins if both have it)
+    // Deduplicate by key (Firestore wins if both have it — an item read back
+    // from the database is durable by definition).
     const map = new Map();
     for (const i of memItems) map.set(i.key, i);
-    for (const i of listed.items) map.set(i.key, i);
+    for (const i of listed.items) map.set(i.key, { ...i, durable: true });
     const items = Array.from(map.values());
+    const nonDurable = items.filter((i) => i.durable === false).length;
 
     if (!listed.ok) {
         // 502 even when the memory fallback produced items: this instance cannot
@@ -155,10 +162,14 @@ export default async function handler(req, res) {
             detail: `Firestore refused the read (${listed.detail}). `
                 + 'Any items below come from this instance\'s memory only and may be incomplete.',
             count: items.length,
+            nonDurable,
             items,
         });
         return;
     }
 
-    res.status(200).json({ ok: true, count: items.length, items });
+    // `nonDurable` is surfaced even on the happy path: it is 0 in normal
+    // operation, and any other value says a push could not reach the database,
+    // which is worth knowing before the number of affected items grows.
+    res.status(200).json({ ok: true, count: items.length, nonDurable, items });
 }

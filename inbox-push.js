@@ -179,11 +179,16 @@ export default async function handler(req, res) {
         sms_preview: String(body.sms || '').slice(0, 140),
     };
 
-    // Keep the in-instance copy — it costs nothing and occasionally helps a warm
-    // instance serve its own write back — but it is not what success means.
-    _memStore.set(docPath, { v: entry, exp: Date.now() + WEEK_MS });
-
     const wrote = await fsPut(docPath, entry);
+
+    // Keep the in-instance copy — it costs nothing and occasionally helps a warm
+    // instance serve its own write back — but it is not what success means, so it
+    // carries whether the durable write behind it landed. Without that flag,
+    // inbox-pull would serve a memory-only item as though it were stored, and the
+    // dishonesty this endpoint just stopped would simply move one hop downstream.
+    _memStore.set(docPath, { v: entry, exp: Date.now() + WEEK_MS, durable: wrote.ok });
+
+
     if (!wrote.ok) {
         // 502, not 200: the item is memory-only, which for a serverless instance
         // means the app polling from a different instance will never see it. The
