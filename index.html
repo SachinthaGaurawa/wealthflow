@@ -18652,11 +18652,45 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 btnCan.disabled = true;
                                 btnCan.style.opacity = '0.5';
                                 
-                                try {
-                                    if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
-                                        await fetch('https://wealthflow-personal.vercel.app/api/statement-store?id=' + h.shortId, { method: 'DELETE' }).catch(()=>{});
+                                // The local record of `shortId` is the ONLY place this
+                                // share link is written down. Deleting it after a FAILED
+                                // server delete leaves the statement publicly reachable
+                                // by anyone holding the link, with nothing left to retry
+                                // with — so the record is kept unless the server confirms
+                                // the document is actually gone.
+                                let serverGone = true;
+                                let why = '';
+                                if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
+                                    serverGone = false;
+                                    try {
+                                        const r = await fetch('https://wealthflow-personal.vercel.app/api/statement-store?id=' + h.shortId, { method: 'DELETE' });
+                                        // fetch does not reject on 4xx/5xx, so the status
+                                        // has to be read: the endpoint answers 502 when a
+                                        // target survived.
+                                        if (r.ok) {
+                                            let body = null;
+                                            try { body = await r.json(); } catch(_) {}
+                                            serverGone = !body || body.success !== false;
+                                            if (!serverGone) why = (body && body.error) || 'server reported failure';
+                                        } else {
+                                            let body = null;
+                                            try { body = await r.json(); } catch(_) {}
+                                            why = (body && (body.detail || body.error)) || ('HTTP ' + r.status);
+                                        }
+                                    } catch(e) { why = (e && e.message) || 'network error'; }
+                                }
+
+                                if (!serverGone) {
+                                    btnDel.disabled = false;
+                                    btnCan.disabled = false;
+                                    btnCan.style.opacity = '1';
+                                    btnDel.innerHTML = '🗑 Delete';
+                                    if (typeof window.notify === 'function') {
+                                        notify('Could not delete the shared copy — the link may still work. Kept in your history so you can retry. (' + why + ')', 'error');
                                     }
-                                } catch(e){}
+                                    return;   // history entry deliberately retained
+                                }
+
                                 // Remove from local history
                                 hist.splice(i, 1);
                                 localStorage.setItem('wf_shared_statements', JSON.stringify(hist));

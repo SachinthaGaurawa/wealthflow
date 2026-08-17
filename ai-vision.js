@@ -28,6 +28,15 @@
  *    GROQ_API_KEY                                            — Groq Llama vision
  */
 
+import { fetchWithTimeout } from './fetch-timeout.mjs';
+
+// Longer than the 10s library default, and deliberately so: these calls send
+// images to a vision model, which routinely takes tens of seconds on a large
+// receipt or a multi-page statement. The endpoint tries several models in
+// sequence, so this is a per-attempt budget — it still has to leave the function
+// room to answer inside maxDuration: 60 rather than be killed mid-sentence.
+const VISION_TIMEOUT_MS = 30_000;
+
 export const config = { maxDuration: 60, api: { bodyParser: { sizeLimit: '8mb' } } };
 
 const MAX_IMAGES = 6;
@@ -76,7 +85,7 @@ async function geminiVision(key, images, prompt) {
 
     for (const model of GEMINI_MODELS) {
         try {
-            const r = await fetch(
+            const r = await fetchWithTimeout(
                 `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
                 {
                     method: 'POST',
@@ -86,6 +95,7 @@ async function geminiVision(key, images, prompt) {
                         generationConfig: { temperature: 0.2, maxOutputTokens: 8192, topP: 0.95 },
                     }),
                 },
+                VISION_TIMEOUT_MS,
             );
             if (r.status === 429 || r.status === 503 || r.status === 404) continue;  // next model
             if (r.status === 400 || r.status === 403) return { fatal: true };        // bad key
@@ -105,13 +115,13 @@ async function groqVision(key, images, prompt) {
     }
     for (const model of GROQ_MODELS) {
         try {
-            const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            const r = await fetchWithTimeout('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
                 body: JSON.stringify({
                     model, messages: [{ role: 'user', content }], temperature: 0.25, max_tokens: 4096,
                 }),
-            });
+            }, VISION_TIMEOUT_MS);
             if (!r.ok) continue;
             const d = await r.json();
             const t = d?.choices?.[0]?.message?.content;

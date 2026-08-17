@@ -121,6 +121,32 @@ guardrail(f) if contains(f, "statement-view")
 # accepts `fuzz-passed` in place of review, and a fuzzer cannot tell you that a
 # version comparison silently stopped offering updates to anyone.
 guardrail(f) if contains(f, "wealthflow-update-system")
+# api/router.js is the SINGLE function Vercel builds. Every /api request on this
+# deployment enters through it, it decides which handler runs, and it decides how
+# that handler is CALLED — Node's (req, res) or a Web Request built from it. A
+# change here cannot break one endpoint; it breaks or silently disables all 33 at
+# once. #111 is the proof: a mismatch between the router's convention and its
+# handlers' left twelve endpoints answering 500 or nothing at all, for months,
+# while every governance control in this repository stayed green. That PR was
+# auto-labelled `auto-safe` and matched no gate.
+guardrail(f) if f == "api/router.js"
+# The inbox trio and sms-ingest are the INGESTION PATH for money. sms-ingest
+# accepts a bank SMS from the public internet, inbox-push writes the classified
+# transaction to the database under a hashed device token, inbox-pull serves it
+# back and inbox-ack deletes it. The app auto-applies what inbox-pull returns
+# straight into the user's ledger, so a defect here does not merely lose data —
+# it can write a transaction nobody made, or delete one they did.
+#
+# RULE 2 rather than RULE 1, like the statement pair: RULE 1 accepts
+# `fuzz-passed` in place of review, and a fuzzer cannot tell you that an endpoint
+# is reporting a hand-off it never completed.
+guardrail(f) if regex.match(`(^|/)inbox-[a-z]+\.js$`, lower(f))
+guardrail(f) if contains(f, "sms-ingest")
+# fetch-timeout.mjs is the deadline policy for every outbound call the server
+# makes. Lowering its default breaks all of them at once; removing the abort
+# removes every deadline in the repository with no symptom until an upstream
+# stalls, which is precisely the failure it was written to end.
+guardrail(f) if contains(f, "fetch-timeout")
 
 deny contains msg if {
     some f in input.files

@@ -20,6 +20,8 @@
    balances, card numbers or any personal data.
    ============================================================================ */
 
+import { fetchWithTimeout } from './fetch-timeout.mjs';
+
 export const config = { runtime: 'edge' };
 
 const CATEGORIES = [
@@ -72,7 +74,7 @@ function categorise(text) {
 }
 
 async function viaTavily(merchant, country, key) {
-    const r = await fetch('https://api.tavily.com/search', {
+    const r = await fetchWithTimeout('https://api.tavily.com/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -91,7 +93,7 @@ async function viaTavily(merchant, country, key) {
 
 async function viaBrave(merchant, country, key) {
     const q = encodeURIComponent(merchant + (country ? ' ' + country : '') + ' business type');
-    const r = await fetch('https://api.search.brave.com/res/v1/web/search?q=' + q, {
+    const r = await fetchWithTimeout('https://api.search.brave.com/res/v1/web/search?q=' + q, {
         headers: { 'X-Subscription-Token': key, 'Accept': 'application/json' }
     });
     if (!r.ok) throw new Error('brave ' + r.status);
@@ -101,7 +103,7 @@ async function viaBrave(merchant, country, key) {
 }
 
 async function viaSerper(merchant, country, key) {
-    const r = await fetch('https://google.serper.dev/search', {
+    const r = await fetchWithTimeout('https://google.serper.dev/search', {
         method: 'POST',
         headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
         body: JSON.stringify({ q: merchant + (country ? ' ' + country : '') + ' business type' })
@@ -119,7 +121,7 @@ async function viaGemini(merchant, country, key) {
     const prompt = 'A bank statement shows a merchant called "' + merchant + '"' + (country ? ' (likely in ' + country + ')' : '') +
         '. In ONE short sentence say what kind of business this is, then on a new line output exactly: CATEGORY: <one of ' +
         CATEGORIES.join(', ') + '>. If you are unsure, use CATEGORY: Other.';
-    const r = await fetch(url, {
+    const r = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 120 } })

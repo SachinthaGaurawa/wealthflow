@@ -46,6 +46,8 @@
  * JSON`), and this string is returned in an HTTP response body. If the secret
  * is ever misconfigured as a raw key rather than JSON, that prefix is
  * credential material. Only the content-free offset survives. */
+import { fetchWithTimeout } from './fetch-timeout.mjs';
+
 function jsonFault(e) {
     const at = String((e && e.message) || '').match(/at position (\d+)/);
     return at ? 'malformed at position ' + at[1] : 'malformed';
@@ -172,7 +174,7 @@ export default async function handler(req, res) {
     const hook = process.env.DEPLOY_HOOK_URL || '';
     if (hook) {
         try {
-            const r = await fetch(hook, { method: 'POST' });
+            const r = await fetchWithTimeout(hook, { method: 'POST' });
             out.deployTriggered = true; out.deployStatus = r.status;
         } catch (e) { out.deployTriggered = false; out.deployError = e.message; }
     } else {

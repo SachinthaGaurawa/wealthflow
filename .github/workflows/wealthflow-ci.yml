@@ -203,7 +203,15 @@ jobs:
           #   canonical list, so they can never disagree again without a red test.
           #   Keep this list and auto-merge.yml's SENSITIVE in sync — the test will
           #   tell you if you forget.
-          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|release\.cjs|release-brain\.js|statement-store\.js|statement-view\.js|wealthflow-update-system\.js|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
+          #   api/router.js and the ingestion path were added after #111. The router
+          #   is the SINGLE function Vercel builds: every /api request enters through
+          #   it, and it decides both which handler runs and HOW it is called. A
+          #   mismatch there disabled twelve endpoints for months while every gate in
+          #   this repo stayed green, and that PR was auto-labelled `auto-safe`
+          #   because no list matched it. sms-ingest accepts a bank SMS from the
+          #   public internet and the inbox trio moves the resulting transaction into
+          #   and out of the database — which the app applies straight to the ledger.
+          SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|api/router\.js|release\.cjs|release-brain\.js|statement-store\.js|statement-view\.js|wealthflow-update-system\.js|inbox-[a-z]+\.js|sms-ingest\.js|fetch-timeout\.mjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
 
           HITS=$(echo "$CHANGED" | grep -iE "$SENSITIVE_REGEX" || true)
           if [ -n "$HITS" ]; then

@@ -106,7 +106,179 @@ const MUST_BE_GATED = [
     // nothing until #107 — a PR fixing a live update-suppression bug that
     // passed every gate in this repo without a human being asked.
     ['wealthflow-update-system.js',         'decides whether users are ever offered an update'],
+    // api/router.js is the SINGLE function Vercel builds. Every /api request on
+    // this deployment enters through it; it picks the handler AND decides how the
+    // handler is called. A change here cannot break one endpoint — it breaks all
+    // 33. #111 is the proof: a convention mismatch between the router and its
+    // handlers left twelve endpoints answering 500 or nothing at all for months,
+    // and that PR was auto-labelled `auto-safe` because no list matched it.
+    ['api/router.js',                       'every /api request enters here, and it decides how each handler is called'],
+    // The ingestion path for money. sms-ingest accepts a bank SMS from the public
+    // internet; inbox-push writes the classified transaction; inbox-pull serves it
+    // back and the app applies it STRAIGHT TO THE LEDGER; inbox-ack deletes it. A
+    // defect here does not merely lose data — it can write a transaction nobody
+    // made, or delete one they did.
+    ['sms-ingest.js',                       'accepts a bank SMS from the public internet'],
+    ['inbox-push.js',                       'writes a classified transaction under a device capability'],
+    ['inbox-pull.js',                       'serves transactions the app applies straight to the ledger'],
+    ['inbox-ack.js',                        'deletes transactions on the caller\'s word'],
+    // Lowering this file's default, or removing its abort, silently removes the
+    // deadline from every outbound call the server makes.
+    ['fetch-timeout.mjs',                   'the timeout policy for every outbound server call'],
 ];
+
+/* =============================================================================
+   THE GATE MUST GUARD A FILE THAT EXISTS
+   ---------------------------------------------------------------------------
+   Every assertion above tests a REGEX against a STRING. That is necessary and
+   not sufficient: `firestore.rules` and `firebase.json` were listed as gated,
+   matched by all three layers, and asserted here — while neither file had ever
+   been committed to this repository. `git log --all --diff-filter=A` returns
+   nothing for both.
+
+   So the governance was airtight around an absence. Three independent layers
+   stood ready to demand human approval for a change to a file that could not be
+   changed, because it was not there, and every one of them reported success.
+
+   It matters more than a missing config, because of what these two files ARE.
+   autonomy/secret-scan.mjs allows the public Firebase apiKey to live in this
+   repo with the justification that "access is controlled by Firestore/Storage
+   security rules and App Check" — so the repo's own security argument rests on a
+   control that is not version-controlled, cannot be reviewed in a PR, cannot be
+   diffed when it changes, and cannot be restored if someone edits it in the
+   Firebase console by mistake.
+
+   These assertions therefore check the filesystem, not a pattern. They are
+   expected to FAIL until the live rules are exported and committed, and that
+   failure is the point: it is the first time this repository has been able to
+   say the files are missing.
+   ========================================================================== */
+const MUST_EXIST = [
+    ['firestore.rules', 'the only control protecting the owner\'s financial data, and the one '
+        + 'autonomy/secret-scan.mjs cites to justify shipping the public Firebase key'],
+    ['firebase.json', 'declares WHICH rules file is deployed and to which targets — without it, '
+        + 'a committed firestore.rules is a document nothing publishes'],
+];
+
+describe('the files the gate protects are actually in the repository', () => {
+    for (const [file, why] of MUST_EXIST) {
+        it(`${file} exists — ${why}`, () => {
+            const p = path.join(ROOT, file);
+            expect(
+                fs.existsSync(p),
+                `${file} is gated by all three layers and asserted by this test, but the file is `
+                + `NOT IN THE REPOSITORY. Export it from the live project and commit it:\n`
+                + `    firebase init  (or)  firebase firestore:rules:get > firestore.rules\n`
+                + `Until then every guard covering it passes over an absence.`,
+            ).toBe(true);
+        });
+
+        it(`${file} is not an empty placeholder`, () => {
+            // A zero-byte file would satisfy existsSync and re-create the same
+            // vacuum with a filename attached.
+            const p = path.join(ROOT, file);
+            if (!fs.existsSync(p)) return;   // the assertion above already failed
+            expect(fs.readFileSync(p, 'utf8').trim().length,
+                `${file} exists but is empty — that is the same absence with a filename`)
+                .toBeGreaterThan(0);
+        });
+    }
+
+    /* =========================================================================
+       MY OWN GUARD WAS WRONG, AND THIS RECORDS HOW
+       -----------------------------------------------------------------------
+       The first version of the assertion below was:
+
+           const open = /allow\s+[a-z, ]*\s*:\s*if\s+true\s*;/i.test(src);
+           expect(open).toBe(false);
+
+       It rejected ANY `allow …: if true` anywhere in the file. The moment the
+       real production rules were committed, it failed — because a share link
+       MUST be readable without signing in, so `match /s/{shortId} { allow read:
+       if true }` is correct by design, not a mistake.
+
+       So the guard would have blocked the very file it spent three CI runs
+       demanding. Its stated intent was to catch the Firebase console's TEST-MODE
+       default; its implementation caught every deliberate public path as well.
+       Written too broadly, a guard produces false findings, and a guard that
+       produces false findings gets switched off — which is how a repository ends
+       up with no guard at all.
+
+       The replacement checks the invariant that actually distinguishes test mode
+       from a real policy: what the ROOT catch-all does. Test mode is
+       `match /{document=**} { allow read, write: if true }` — everything open,
+       nothing scoped. A real policy ends with a default DENY and grants access
+       only inside named collections.
+
+       Deliberately NOT asserted here: that `wf-inbox/**` denies unauthenticated
+       write. It currently allows it, the rules file says so in its own HARDENING
+       TODO, and the fix is the firebase-admin migration in the next PR. Asserting
+       it here would hold that migration hostage to a test that only the migration
+       can turn green. It gets its assertion in the PR that closes it, where it
+       goes green on arrival — a guard should land with its fix, not before it.
+       ====================================================================== */
+    it('firestore.rules is a real policy, not the console test-mode default', () => {
+        const p = path.join(ROOT, 'firestore.rules');
+        if (!fs.existsSync(p)) return;   // the existence assertion above already failed
+        const src = fs.readFileSync(p, 'utf8');
+
+        expect(src, 'firestore.rules names no collection — it cannot be scoping anything')
+            .toMatch(/match\s+\/databases\//);
+
+        // The root catch-all, i.e. `match /{document=**}` at the outermost level.
+        // Its body is what test mode opens and a real policy closes.
+        const root = src.match(/match\s+\/\{document=\*\*\}\s*\{([^}]*)\}/);
+        expect(root, 'firestore.rules has no root catch-all rule, so anything not '
+            + 'explicitly matched is undefined rather than denied').toBeTruthy();
+        expect(root[1], 'the ROOT catch-all grants access — this is the console test-mode '
+            + 'default and it leaves every collection in the database open')
+            .not.toMatch(/if\s+true/i);
+        expect(root[1], 'the root catch-all should deny by default').toMatch(/if\s+false/i);
+
+        // The two collections holding private financial data must be owner-scoped.
+        //
+        // `[^\n]*` and not `[^{]*` here, which cost a CI round to learn: the real
+        // declaration is `match /users/{uid}/{document=**} {`, so `[^{]*` stops at
+        // the brace of `{document=**}` and the capture group returns the string
+        // "document=**" instead of the rule body. The assertion then failed against
+        // correct rules — a guard reading the wrong bytes and reporting confidently
+        // on them, which is the same defect class this file exists to catch.
+        for (const coll of ['users', 'userAI']) {
+            const m = src.match(new RegExp(`match\\s+/${coll}/\\{uid\\}[^\\n]*\\{\\s*([^}]*)\\}`));
+            expect(m, `firestore.rules does not scope /${coll}/{uid} at all`).toBeTruthy();
+            expect(m[1], `/${coll}/{uid} is not restricted to its owner`).toMatch(/isOwner\(uid\)|request\.auth\.uid\s*==\s*uid/);
+            expect(m[1], `/${coll}/{uid} grants unconditional access`).not.toMatch(/if\s+true/i);
+        }
+    });
+
+    it('that test-mode check can actually fail (guards the corrected guard)', () => {
+        // The blunt version passed against real rules for the wrong reason and
+        // then failed against them for the wrong reason. This proves the
+        // replacement still rejects genuine test mode.
+        const testMode = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}`;
+        const root = testMode.match(/match\s+\/\{document=\*\*\}\s*\{([^}]*)\}/);
+        expect(root).toBeTruthy();
+        expect(root[1]).toMatch(/if\s+true/i);          // detected
+        expect(root[1]).not.toMatch(/if\s+false/i);     // and no default deny
+    });
+
+    it('the existence check can fail (guards a vacuous pass)', () => {
+        // Without this, a typo in MUST_EXIST would make the loop above assert
+        // nothing while still printing green.
+        expect(fs.existsSync(path.join(ROOT, 'this-file-does-not-exist.rules'))).toBe(false);
+        expect(MUST_EXIST.length).toBeGreaterThan(1);
+        for (const [f] of MUST_EXIST) {
+            expect(MUST_BE_GATED.some(([g]) => g === f), `${f} must also be in MUST_BE_GATED`).toBe(true);
+        }
+    });
+});
 
 describe('the Risk gate covers the files that define the Risk gate', () => {
     for (const [file, why] of MUST_BE_GATED) {
@@ -163,7 +335,13 @@ describe('the rego agrees with both workflows', () => {
     const startsWith = [...REGO.matchAll(/guardrail\(f\) if startswith\(f,\s*"([^"]+)"\)/g)].map((m) => m[1]);
     const equals     = [...REGO.matchAll(/guardrail\(f\) if f == "([^"]+)"/g)].map((m) => m[1]);
     const contains   = [...REGO.matchAll(/guardrail\(f\) if contains\(f,\s*"([^"]+)"\)/g)].map((m) => m[1]);
-    const patterns   = [...REGO.matchAll(/guardrail\(f\) if regex\.match\(`([^`]+)`, f\)/g)].map((m) => m[1]);
+    // Both spellings of the argument. The first version of this mirror read only
+    // `regex.match(`P`, f)`, so a clause written against `lower(f)` — the more
+    // careful spelling, since it also catches Inbox-Push.js — was INVISIBLE to the
+    // cross-check and reported as an ungated file. Same shape as the sw.js false
+    // finding below: a checker that does not model everything it is checking.
+    const patterns = [...REGO.matchAll(/guardrail\(f\) if regex\.match\(`([^`]+)`,\s*(lower\()?f\)?\)/g)]
+        .map((m) => ({ re: m[1], lower: !!m[2] }));
     // Not every human-approval requirement lives in guardrail(). RULE 5 pins
     // sw.js with an inline `lower(f) == "sw.js"` inside its own deny block, and
     // the first version of this mirror missed it and reported sw.js as an
@@ -179,7 +357,7 @@ describe('the rego agrees with both workflows', () => {
         || equals.includes(f)
         || contains.some((p) => f.includes(p))
         || inlineEq.includes(f.toLowerCase())
-        || patterns.some((p) => new RegExp(p).test(f));
+        || patterns.some((p) => new RegExp(p.re).test(p.lower ? f.toLowerCase() : f));
 
     it('parsed real rules out of the rego rather than an empty list', () => {
         // Without this the whole block passes loudest when the parse breaks.

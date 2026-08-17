@@ -47,6 +47,8 @@
  * ---------------------------------------------------------------------------
  */
 
+import { fetchWithTimeout } from './fetch-timeout.mjs';
+
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 
@@ -70,7 +72,7 @@ function _applyCommonHeaders(req, res) {
 
 async function _postForm(url, params) {
     const body = new URLSearchParams(params).toString();
-    const r = await fetch(url, {
+    const r = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body
@@ -175,7 +177,7 @@ export default async function handler(req, res) {
             if (!token) return res.status(400).json({ ok: false, error: 'missing token' });
             let ok = false;
             try {
-                const r = await fetch(GOOGLE_REVOKE_URL, {
+                const r = await fetchWithTimeout(GOOGLE_REVOKE_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({ token }).toString()

@@ -10,6 +10,8 @@
 // POST /api/fx-rate { amount, from, to }        → returns converted amount
 // =============================================================================
 
+import { fetchWithTimeout } from './fetch-timeout.mjs';
+
 export const config = { runtime: 'edge' };
 
 const CACHE_TTL_MS = 30 * 60 * 1000;            // 30 minutes
@@ -24,7 +26,7 @@ async function fetchRates(base, symbols) {
     const url = symbols && symbols.length
         ? `https://api.exchangerate.host/latest?base=${base}&symbols=${symbols.join(',')}`
         : `https://api.exchangerate.host/latest?base=${base}`;
-    const r = await fetch(url);
+    const r = await fetchWithTimeout(url);
     if (!r.ok) throw new Error('FX upstream ' + r.status);
     const data = await r.json();
     _cache.set(key, { ts: Date.now(), data });
