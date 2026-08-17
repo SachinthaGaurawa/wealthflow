@@ -1,9 +1,33 @@
 // =============================================================================
-// WealthFlow Inbox Pull (server-side) v2.0
-// Reads pending classified transactions from Firestore + memory fallback.
+// WealthFlow Inbox Pull (server-side) v3.0
+// Reads pending classified transactions from Firestore, plus this instance's
+// memory fallback.
+// -----------------------------------------------------------------------------
+// v3.0 — TWO DEFECTS, BOTH SILENT
+//
+// 1. THE CALLING CONVENTION. The handler was `handler(req)` and its first
+//    statement was `if (!_requireFirebaseKey(res)) return;` — `res` was never
+//    declared, so every request threw `ReferenceError: res is not defined` and
+//    api/router.js answered 500. The app's poller
+//    (wealthflow-autonomous.js → drainServerInbox) does check `r.ok`, so it
+//    correctly reported `drained: 0` — into a `catch (_) {}` that nobody reads.
+//    Nothing above it ever said the inbox was unreachable.
+//
+//    The convention is Node's `(req, res)`, NOT the Web Fetch API, despite the
+//    `runtime: 'edge'` line this file used to carry. Vercel reads a `config`
+//    export only from files it BUILDS as functions; this one is imported by
+//    api/router.js, which is a Node function. That export has been removed
+//    rather than left to mislead the next reader.
+//
+// 2. A FAILED READ LOOKED LIKE AN EMPTY INBOX. fsList() returned `[]` from its
+//    catch block and `[]` again on `!r.ok`, so "Firestore refused me" and "there
+//    is nothing waiting" were the same answer. The poller then reported
+//    `drained: 0` — accurate, and completely misleading. This is the most
+//    dangerous shape a bug can take here: it suppresses rather than
+//    over-reports, and nobody files a report for a transaction they were never
+//    shown. It now answers 502 when the read failed, so the caller can tell the
+//    difference.
 // =============================================================================
-
-export const config = { runtime: 'edge' };
 
 const FIREBASE_PROJECT = process.env.FIREBASE_PROJECT_ID || 'wealthflow-6dffb';
 // The Firebase Web apiKey is a public project identifier, not a secret — but it is
@@ -12,26 +36,29 @@ const FIREBASE_PROJECT = process.env.FIREBASE_PROJECT_ID || 'wealthflow-6dffb';
 // outright, instead of needing an allowlist that a real Gemini key could hide behind.
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY;
 
-// Fail loudly, not mysteriously. This value moved from a hardcoded literal to an
-// environment variable; if it is not configured, say so plainly instead of
-// issuing Firestore requests with `key=undefined` and returning a confusing 400.
 function _requireFirebaseKey(res) {
     if (FIREBASE_API_KEY) return true;
-    const msg = 'FIREBASE_API_KEY is not configured on this deployment. '
-        + 'Set it in Vercel → Project → Settings → Environment Variables. '
-        + '(It is the public Firebase Web apiKey — no longer hardcoded in the repo.)';
-    try {
-        if (res && res.status) { res.status(503).json({ ok: false, error: 'firebase_key_not_configured', detail: msg }); return false; }
-    } catch (_) {}
-    throw new Error(msg);
+    res.status(503).json({
+        ok: false,
+        error: 'firebase_key_not_configured',
+        detail: 'FIREBASE_API_KEY is not configured on this deployment. '
+            + 'Set it in Vercel → Project → Settings → Environment Variables. '
+            + '(It is the public Firebase Web apiKey — no longer hardcoded in the repo.)',
+    });
+    return false;
 }
 
 const FS_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents`;
 const _memStore = globalThis.__wfMemStore || (globalThis.__wfMemStore = new Map());
 
+/** Never let the `key=` query parameter reach a response body or a log line. */
+function _scrub(s) {
+    return String(s == null ? '' : s).replace(/key=[^&\s"']+/gi, 'key=[redacted]').slice(0, 300);
+}
+
 async function tokenHash(t) {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
-    return Array.from(new Uint8Array(buf)).slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
+    return Array.from(new Uint8Array(buf)).slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Convert Firestore REST "fields" format back to plain JSON
@@ -51,53 +78,98 @@ function fromFsValue(v) {
     return null;
 }
 
-async function fsList(collectionPath) {
-    const url = `${FS_BASE}/${collectionPath}?key=${FIREBASE_API_KEY}&pageSize=50`;
+/** List a collection. Returns `{ ok, items, detail }` — never a bare array,
+ *  because an empty array cannot say whether it means "nothing waiting" or
+ *  "I was not allowed to look". */
+async function fsList(collectionPath, timeoutMs = 8000) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
     try {
-        const r = await fetch(url);
-        if (!r.ok) return [];
+        const r = await fetch(`${FS_BASE}/${collectionPath}?key=${FIREBASE_API_KEY}&pageSize=50`,
+            { signal: ctl.signal });
+        if (!r.ok) {
+            let detail = '';
+            try { const j = await r.json(); detail = (j && j.error && j.error.message) || ''; } catch (_) {}
+            return { ok: false, items: [], detail: _scrub(detail) || `HTTP ${r.status}` };
+        }
         const data = await r.json();
-        return (data.documents || []).map(d => ({
+        const items = (data.documents || []).map((d) => ({
             key: d.name.split('/').slice(-4).join('/'),  // wf-inbox/<hash>/items/<msgHash>
-            ...fromFsValue({ mapValue: { fields: d.fields } })
+            ...fromFsValue({ mapValue: { fields: d.fields } }),
         }));
-    } catch (e) { return []; }
+        return { ok: true, items, detail: null };
+    } catch (e) {
+        const aborted = e && (e.name === 'AbortError' || ctl.signal.aborted);
+        return {
+            ok: false,
+            items: [],
+            detail: aborted ? `Firestore did not answer within ${timeoutMs}ms` : _scrub(e && e.message),
+        };
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
-export default async function handler(req) {
+export default async function handler(req, res) {
     if (!_requireFirebaseKey(res)) return;
-    const tok = (
-        req.headers.get('x-wf-device-token') ||
-        new URL(req.url).searchParams.get('token') ||
-        ''
+
+    // The header is what the app actually sends (wealthflow-autonomous.js).
+    // ?token= is retained for the manual-debug path it was added for; it is a
+    // weaker channel because query strings land in access logs, which is filed as
+    // an open finding rather than changed here without the owner's say-so.
+    const tok = String(
+        req.headers['x-wf-device-token']
+        || (req.query && req.query.token)
+        || '',
     ).trim();
     if (!tok || tok.length < 16) {
-        return new Response(JSON.stringify({ ok: false, error: 'Token required' }), {
-            status: 401, headers: { 'Content-Type': 'application/json' }
-        });
+        res.status(401).json({ ok: false, error: 'Token required' });
+        return;
     }
+
     const tHash = await tokenHash(tok);
     const collection = `wf-inbox/${tHash}/items`;
 
-    // Combine Firestore results and in-memory fallback
-    const fsItems = await fsList(collection);
-    const memPrefix = `wf-inbox/${tHash}/items/`;
+    const listed = await fsList(collection);
+
+    const memPrefix = `${collection}/`;
     const memItems = [];
     const now = Date.now();
     for (const [k, v] of _memStore.entries()) {
-        if (k.startsWith(memPrefix) && (!v.exp || v.exp > now)) {
-            memItems.push({ key: k, ...v.v });
-        }
+        if (!k.startsWith(memPrefix) || (v.exp && v.exp <= now)) continue;
+        // inbox-push records whether the durable write behind a memory copy
+        // landed. An item it could not store is still worth delivering — it is
+        // real, and this may be the only instance that has it — but it must not
+        // be presented as though it were safely in the database.
+        memItems.push({ key: k, ...v.v, durable: v.durable !== false });
     }
-    // Deduplicate by key (Firestore wins if both exist)
+
+    // Deduplicate by key (Firestore wins if both have it — an item read back
+    // from the database is durable by definition).
     const map = new Map();
     for (const i of memItems) map.set(i.key, i);
-    for (const i of fsItems) map.set(i.key, i);
+    for (const i of listed.items) map.set(i.key, { ...i, durable: true });
     const items = Array.from(map.values());
+    const nonDurable = items.filter((i) => i.durable === false).length;
 
-    return new Response(JSON.stringify({
-        ok: true,
-        count: items.length,
-        items
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    if (!listed.ok) {
+        // 502 even when the memory fallback produced items: this instance cannot
+        // see the durable inbox, so `count` is a floor and not a total. Answering
+        // 200 here is what let a broken read read as an empty inbox.
+        res.status(502).json({
+            ok: false,
+            error: 'inbox_read_failed',
+            detail: `Firestore refused the read (${listed.detail}). `
+                + 'Any items below come from this instance\'s memory only and may be incomplete.',
+            count: items.length,
+            nonDurable,
+            items,
+        });
+        return;
+    }
+
+    // `nonDurable` is surfaced even on the happy path: it is 0 in normal
+    // operation, and any other value says a push could not reach the database,
+    // which is worth knowing before the number of affected items grows.
+    res.status(200).json({ ok: true, count: items.length, nonDurable, items });
 }

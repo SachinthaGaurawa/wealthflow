@@ -99,11 +99,21 @@ describe('api routing: the /api rewrite points at a file that exists', () => {
     });
 
     it('passes the requested endpoint through in a form the router reads', () => {
-        // The destination carries ?path=$1, and resolveName() reads req.query.path
+        // The destination carries ?path=$1, and resolveName() reads that key
         // first. If the rewrite dropped the capture, every request would arrive
         // named "router" and be answered "unknown endpoint" with total confidence.
-        expect(apiRewrite.destination).toMatch(/[?&]path=\$1\b/);
-        expect(routerSrc).toMatch(/req\.query\.path/);
+        //
+        // The key is now a named constant, because clientUrl() has to strip
+        // exactly this key back out when it rebuilds the URL a Web-style handler
+        // sees — leaving it in would hand the handler a phantom ?path= the client
+        // never sent. So both halves are pinned: that the constant IS the key the
+        // rewrite sends, and that resolveName reads the query through it. That is
+        // a stronger claim than the single literal this line used to match, not a
+        // relaxation of it.
+        const key = (routerSrc.match(/const SELF_QUERY_KEY = '([^']+)'/) || [])[1];
+        expect(key, 'the router no longer names the rewrite query key').toBeTruthy();
+        expect(apiRewrite.destination).toMatch(new RegExp('[?&]' + key + '=\\$1\\b'));
+        expect(routerSrc).toMatch(/req\.query\[SELF_QUERY_KEY\]/);
     });
 });
 

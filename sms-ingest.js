@@ -18,6 +18,23 @@ const ALLOWED_SENDERS = [
     'STANCHART', 'STDCHRT', 'NSB', 'HSBC', 'CITI', 'DIALOG', 'MOBITEL'
 ];
 
+/** fetch with a hard deadline. An unbounded fetch inside a 60s function has no
+ *  outcome to report: it neither succeeds nor fails, it just consumes the whole
+ *  budget and takes the request down with it. Every call below has to resolve to
+ *  a fact, because the response tells the caller what happened. */
+async function fetchWithTimeout(url, init, timeoutMs) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+        return { ok: true, res: await fetch(url, { ...(init || {}), signal: ctl.signal }) };
+    } catch (e) {
+        const aborted = e && (e.name === 'AbortError' || ctl.signal.aborted);
+        return { ok: false, res: null, error: aborted ? `no answer within ${timeoutMs}ms` : String((e && e.message) || e) };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function isLikelyBankSms(sender, body) {
     const s = (sender || '').toUpperCase().replace(/\s+/g, '');
     if (ALLOWED_SENDERS.some(a => s.includes(a.replace(/\s+/g, '')))) return true;
@@ -109,20 +126,34 @@ export default async function handler(req) {
     const origin = new URL(req.url).origin;
 
     // Delegate to the brain
+    const brainCall = await fetchWithTimeout(`${origin}/api/autonomous-brain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            sms, phone_number: sender, received_at_ms: receivedAt,
+            device_id: deviceId, location, card_registry: cardReg
+        })
+    }, 25000);
+    if (!brainCall.ok) {
+        return new Response(JSON.stringify({
+            ok: false, error: 'Brain unreachable: ' + brainCall.error
+        }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+    }
+    // fetch does not throw on 4xx/5xx, so the status has to be read explicitly —
+    // otherwise an error page reaches JSON.parse and is reported as "unreachable",
+    // which sends the reader looking for a network fault that does not exist.
     let brain;
     try {
-        const r = await fetch(`${origin}/api/autonomous-brain`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                sms, phone_number: sender, received_at_ms: receivedAt,
-                device_id: deviceId, location, card_registry: cardReg
-            })
-        });
-        brain = await r.json();
+        brain = await brainCall.res.json();
     } catch (e) {
         return new Response(JSON.stringify({
-            ok: false, error: 'Brain unreachable: ' + e.message
+            ok: false,
+            error: `Brain answered ${brainCall.res.status} with a body that is not JSON`,
+        }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (!brainCall.res.ok) {
+        return new Response(JSON.stringify({
+            ok: false, error: `Brain returned HTTP ${brainCall.res.status}`, detail: brain
         }), { status: 502, headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -136,35 +167,78 @@ export default async function handler(req) {
     // so the main app picks it up next time it opens. Without this, the
     // classification result is lost (iOS Shortcuts throws away the HTTP
     // response after running the Shortcut).
-    try {
-        await fetch(`${origin}/api/inbox-push`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-wf-device-token': deviceTok
-            },
-            body: JSON.stringify({
-                brain_result: brain,
-                sms: sms,
-                received_at_ms: receivedAt,
-                device_id: deviceId
-            })
-        });
-    } catch (e) {
-        // Inbox push failed but classification succeeded. Log and continue —
-        // the response still contains the result, so a caller that DOES
-        // process the response (like our share-target.html) still works.
-        console.error('[sms-ingest] inbox-push failed:', e);
+    //
+    // v7.69.25 — this block used to be `try { await fetch(...) } catch { log }`
+    // and the response below hardcoded `inboxed: true`. Both halves were wrong,
+    // and together they made the failure invisible:
+    //
+    //   · fetch does not reject on an HTTP error, so the catch could only ever
+    //     fire on a network fault. /api/inbox-push was answering 500 on EVERY
+    //     request (it referenced an undeclared `res`), and this catch never ran
+    //     once.
+    //   · `inboxed: true` was a literal. It described the code path taken, not
+    //     the outcome — so the endpoint reported a successful hand-off of an
+    //     item that had just been thrown away.
+    //
+    // The status is now read, and `inboxed` is derived from what the inbox
+    // actually said. It is allowed to be false: the classification is in this
+    // response either way, so a caller that reads the response (share-target.html)
+    // still works, and one that does not (the iOS Shortcut) at least leaves a
+    // truthful record.
+    let inboxed = false;
+    let inboxDetail = null;
+    const push = await fetchWithTimeout(`${origin}/api/inbox-push`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-wf-device-token': deviceTok
+        },
+        body: JSON.stringify({
+            brain_result: brain,
+            sms: sms,
+            received_at_ms: receivedAt,
+            device_id: deviceId
+        })
+    }, 15000);
+
+    if (!push.ok) {
+        inboxDetail = `inbox-push unreachable: ${push.error}`;
+    } else if (!push.res.ok) {
+        let detail = '';
+        try {
+            const j = await push.res.json();
+            detail = String((j && (j.detail || j.error)) || '');
+        } catch (_) {}
+        inboxDetail = `inbox-push returned HTTP ${push.res.status}${detail ? ': ' + detail : ''}`;
+    } else {
+        // 200 is necessary but not sufficient: inbox-push answers 200 only when
+        // the write is durable, and reports `durable` explicitly. Trust the field
+        // over the status code, and treat a missing field as durable so an older
+        // deployment of that endpoint does not read as a failure.
+        let saved = null;
+        try { saved = await push.res.json(); } catch (_) {}
+        if (saved && saved.durable === false) {
+            inboxDetail = 'inbox-push accepted the item but could not store it durably';
+        } else if (saved && saved.ok === false) {
+            inboxDetail = `inbox-push reported failure: ${String(saved.error || 'unspecified')}`;
+        } else {
+            inboxed = true;
+        }
     }
+    if (!inboxed) console.error('[sms-ingest] inbox-push did not store the item:', inboxDetail);
 
     return new Response(JSON.stringify({
         ok: true,
         classified: true,
-        inboxed: true,
         device_id: deviceId,
         received_at_ms: receivedAt,
         sender,
         sms_preview: sms.slice(0, 140),
-        ...brain
+        ...brain,
+        // AFTER the spread, deliberately. This is the one fact only this function
+        // knows, and a `brain` payload that happened to carry the same key would
+        // otherwise silently overwrite the hand-off result with its own.
+        inboxed,
+        ...(inboxed ? {} : { inbox_error: inboxDetail })
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
