@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 89,
+  "version": 90,
   "updated": "2026-08-17",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 890,
+  "count": 893,
   "merchants": [
     {
       "key": "bake house",
@@ -2279,6 +2279,20 @@
       "source": "seed"
     },
     {
+      "key": "hemas hospitals",
+      "category": "Health",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "hemas pharmacy",
+      "category": "Health",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "hospital",
       "category": "Health",
       "goesTo": "expenses",
@@ -2403,6 +2417,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "nawaloka pharmacy",
+      "category": "Health",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "nine wells",
