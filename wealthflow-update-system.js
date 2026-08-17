@@ -125,9 +125,12 @@
     // A duplicate copy of release history that only ever drifts from
     // version.json is not a safety net; it is a second source of truth with no
     // way to be right. version.json is written by release.cjs from the actual
-    // commits, and is now the only place notes come from.
+    // commits, and no notes are hardcoded in this file any more.
+    // (Amended: notes now come from version.json AND system/manifest, keyed by
+    // version, remote winning where both describe one. Not a duplicate history
+    // — one history from its two legitimate writers. See _mergeManifests.)
 
-    let _manifest = null;     // loaded version.json (optional)
+    let _manifest = null;     // the RESOLVED view: version.json ∪ system/manifest
     // Why the feedback-status poll came back empty, when it was not simply
     // "nothing finished yet". Held so the reason is inspectable rather than
     // swallowed — see _checkFeedbackCompletions().
@@ -138,12 +141,66 @@
     // ───────────────────────────────────────────────────────────────────────
     //  DETECTION
     // ───────────────────────────────────────────────────────────────────────
-    async function _loadManifest() {
-        // (a) inline manifest if the page defined one
-        if (window.wfVersionManifest) { _manifest = window.wfVersionManifest; return _manifest; }
-        // (b) Firestore manifest written by the auto-release brain — this lets
-        //     the server announce/schedule updates with NO redeploy. Takes
-        //     priority over the static file when present and newer.
+    /* A STALLED DATABASE RECORD MUST NOT HIDE SHIPPED CODE.
+       This returned as soon as system/manifest had a `latest`, so version.json
+       was never fetched — one document was a single point of failure for the
+       update pathway. A frozen manifest kept answering with an old version and
+       users were told they were current while newer code sat on the server. A
+       MISSING manifest is obvious; a STALE one looks healthy and suppresses,
+       so nobody reports an update they were never offered.
+
+       Both are read every check, in parallel, and `latest` is the MAX of the
+       two. version.json ships with the code and cannot lag it (sw.js:47 keeps
+       it uncached); system/manifest carries the approved announcement and may
+       lead without a redeploy. Neither masks the other, either answers alone,
+       both failing yields null and _latestVersion() then claims nothing. */
+
+    /** A version string only counts if it actually looks like one. */
+    function _validVersion(v) {
+        return (typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v.trim())) ? v.trim() : null;
+    }
+
+    /** The newer of two versions, ignoring anything malformed. */
+    function _maxVersion(a, b) {
+        const x = _validVersion(a), y = _validVersion(b);
+        if (x && y) return _cmp(x, y) >= 0 ? x : y;
+        return x || y || null;
+    }
+
+    /**
+     * Fold the two manifests into the single shape the rest of this file reads
+     * (`latest`, `notes`, `mandatory`). Pure, so it can be reasoned about and
+     * tested without a network or a database.
+     */
+    function _mergeManifests(local, remote) {
+        const a = local || {}, b = remote || {};
+        const latest = _maxVersion(a.latest, b.latest);
+        if (!latest) return null;
+        return {
+            latest,
+            // UNION. release.cjs writes `mandatory` only under --urgent, and
+            // --from-brain exits at the approval check first, so nothing lands
+            // here without the owner. A stale entry is inert: _isMandatory is
+            // only ever asked about _latestVersion().
+            mandatory: (a.mandatory || []).concat(b.mandatory || [])
+                .filter((v, i, arr) => _validVersion(v) && arr.indexOf(v) === i),
+            // Remote wins per key (the approved announcement, as before);
+            // local fills in versions it never heard of — else a frozen
+            // manifest leaves a shipped version with no notes to show.
+            notes: Object.assign({}, a.notes || {}, b.notes || {}),
+            securitySchedule: b.securitySchedule || a.securitySchedule,
+        };
+    }
+
+    async function _loadLocalManifest() {
+        try {
+            const r = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
+            if (r.ok) return await r.json();
+        } catch (_) {}
+        return null;
+    }
+
+    async function _loadRemoteManifest() {
         try {
             const fb = window.firebase || (typeof firebase !== 'undefined' ? firebase : null);
             const db = window.db || (fb && fb.firestore ? fb.firestore() : null);
@@ -151,16 +208,22 @@
                 const doc = await db.collection('system').doc('manifest').get();
                 if (doc && doc.exists) {
                     const m = doc.data();
-                    if (m && m.latest) { _manifest = m; return _manifest; }
+                    if (m && m.latest) return m;
                 }
             }
-        } catch (_) { /* offline or no permission — fall through to static file */ }
-        // (c) static version.json (cache-busted) — fallback
-        try {
-            const r = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
-            if (r.ok) { _manifest = await r.json(); return _manifest; }
-        } catch (_) {}
+        } catch (_) { /* offline, or no permission */ }
         return null;
+    }
+
+    async function _loadManifest() {
+        // An explicit developer override, honoured as-is. Nothing here sets
+        // it; redefining its meaning is not this fix's business.
+        if (window.wfVersionManifest) { _manifest = window.wfVersionManifest; return _manifest; }
+
+        // Parallel: neither a slow nor a failing source may stop the other.
+        const both = await Promise.all([_loadLocalManifest(), _loadRemoteManifest()]);
+        _manifest = _mergeManifests(both[0], both[1]);
+        return _manifest;
     }
 
     function _installedVersion() {
@@ -191,7 +254,8 @@
         try { localStorage.setItem(LS_INSTALLED, v); } catch (_) {}
     }
 
-    // The version that is *available* to move to (manifest latest, else current build)
+    // The version available to move to: the newer of version.json and
+    // system/manifest, else the running build. See _mergeManifests.
     function _latestVersion() {
         if (_manifest && _manifest.latest) return _manifest.latest;
         return CURRENT_VERSION;
