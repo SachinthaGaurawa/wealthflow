@@ -101,6 +101,32 @@ function randomId(n = 8) {
 // more than can be kept in step, so this file now imports the shared one — see
 // the import at the top.
 
+/** Never let the `key=` query parameter reach a response body or a log line. */
+function _scrubKey(s) {
+    return String(s == null ? '' : s).replace(/key=[^&\s"']+/gi, 'key=[redacted]').slice(0, 300);
+}
+
+/**
+ * Delete one document, and REPORT WHAT HAPPENED. The previous code discarded
+ * this outcome entirely, which is what let a refused delete read as a completed
+ * one. Firestore's REST DELETE is idempotent, so a document that was never there
+ * answers 200 and is correctly treated as gone.
+ */
+async function fsDeleteDoc(docPath, timeoutMs = 8000) {
+    try {
+        const r = await fetchWithTimeout(`${FS_BASE}/${docPath}?key=${API_KEY}`,
+            { method: 'DELETE' }, timeoutMs);
+        if (r.ok) return { ok: true, detail: null };
+        let detail = '';
+        try { const j = await r.json(); detail = (j && j.error && j.error.message) || ''; } catch (_) {}
+        return { ok: false, detail: _scrubKey(detail) || `HTTP ${r.status}` };
+    } catch (e) {
+        // fetchWithTimeout throws a named TimeoutError on expiry; both that and a
+        // transport error mean the document's state is unknown, which is not success.
+        return { ok: false, detail: _scrubKey((e && e.message) || e) };
+    }
+}
+
 function wrapHtml(html, name) {
     if (html.trim().startsWith('<!') || html.trim().startsWith('<html')) return html;
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} — WealthFlow</title></head><body style="margin:0;background:#0a0e1a;">${html}</body></html>`;
@@ -114,18 +140,62 @@ export default async function handler(req, res) {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     // DELETE — for the "history" panel's remove button.
+    //
+    // v3.1 — THIS PATH USED TO CLAIM SUCCESS IT HAD NOT ACHIEVED:
+    //
+    //     await fetch(`${FS_BASE}/s/${id}?key=${API_KEY}`, { method:'DELETE' }).catch(()=>{});
+    //     await fetch(`${FS_BASE}/shared_statements/${id}...`, ...).catch(()=>{});
+    //     return res.status(200).json({ success: true });
+    //
+    // Both results were discarded — `.catch(()=>{})` swallowed the throw and the
+    // resolved Response was never read, so a rules rejection, a 5xx or a timeout
+    // all produced `{ success: true }` with 200.
+    //
+    // What that costs is not a wrong number on a dashboard. `?s=<id>` is the ONLY
+    // thing between the public internet and someone's loan statement or Elite
+    // Report, and the caller in index.html deletes its local record of the id as
+    // soon as this endpoint answers. So a failed delete meant: the document stays
+    // served to anyone holding the link, the owner is told it is gone, and the id
+    // is erased from the only place it was written down — leaving a permanently
+    // public document that nobody can find again to remove.
+    //
+    // Now every delete is checked, and a partial failure is a real 502 naming
+    // which target survived.
     if (req.method === 'DELETE') {
         try {
             const id = (req.query && req.query.id) || (req.body && req.body.id);
             if (!id || typeof id !== 'string' || id.length < 5) return res.status(400).json({ error: 'Invalid ID' });
-            // These two were the only calls in this file with no deadline at all —
-            // the three write paths below already bound theirs. A stalled Firestore
-            // here held the whole invocation to the maxDuration ceiling on what is
-            // meant to be a fire-and-forget cleanup.
-            await fetchWithTimeout(`${FS_BASE}/s/${id}?key=${API_KEY}`,                 { method: 'DELETE' }).catch(()=>{});
-            await fetchWithTimeout(`${FS_BASE}/shared_statements/${id}?key=${API_KEY}`, { method: 'DELETE' }).catch(()=>{});
-            return res.status(200).json({ success: true });
-        } catch (e) { return res.status(500).json({ error: 'delete_failed' }); }
+
+            // A statement lives under `s/` (current) or `shared_statements/`
+            // (legacy), so both are always attempted. Firestore's REST DELETE is
+            // idempotent — removing a document that is not there answers 200 — so
+            // "absent from one collection" is a success and needs no special case.
+            const targets = [`s/${id}`, `shared_statements/${id}`];
+            const failed = [];
+            for (const t of targets) {
+                const gone = await fsDeleteDoc(t);
+                if (!gone.ok) failed.push({ target: t, detail: gone.detail });
+            }
+
+            if (failed.length) {
+                // 502, and `success: false`. The document may still be publicly
+                // reachable, so the caller must keep the id rather than forget it.
+                return res.status(502).json({
+                    success: false,
+                    error: 'delete_incomplete',
+                    id,
+                    failed,
+                    detail: `${failed.length} of ${targets.length} target(s) were not deleted. `
+                        + 'The shared statement may still be reachable by anyone holding its link — '
+                        + 'keep this id and retry.',
+                });
+            }
+            return res.status(200).json({ success: true, deleted: targets.length });
+        } catch (e) {
+            // A genuine last resort: fsDeleteDoc reports its own failures, so
+            // reaching here means something unexpected, and it is still not success.
+            return res.status(500).json({ success: false, error: 'delete_failed', detail: _scrubKey(e && e.message) });
+        }
     }
 
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
