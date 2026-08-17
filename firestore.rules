@@ -1,0 +1,149 @@
+rules_version = '2';
+
+// =============================================================================
+//  WealthFlow - Firestore Security Rules
+//  ---------------------------------------------------------------------------
+//  WHY THIS FILE EXISTS
+//  Firestore rules - not your app code - are what actually stop one signed-in
+//  user from reading another user's data. Your code already stores each user's
+//  financial data under users/{uid} and AI memory under userAI/{uid}, which is
+//  correct. But without these rules deployed, the database may be in test mode
+//  (open) or otherwise unprotected - which is the real risk behind the
+//  "data leaks / one user sees another's dashboard" feedback. These rules close
+//  that: every user can read and write ONLY their own documents.
+//
+//  This rule set was written against the ACTUAL Firestore paths your code uses:
+//    users/{uid}                      (private financial data)        - client SDK
+//    userAI/{uid}                     (private AI memory)             - client SDK
+//    feedback/{id}                    (feedback reports)              - client SDK
+//    system/{manifest|pendingRelease|feedbackPriority}                - read: client, write: brain (Admin SDK)
+//    shared_statements/{id}, shared_stmts/{id}, s/{id}, links/{id}    (public SHARE links)
+//    wf-inbox/{deviceHash}/items/{msgHash}  (native SMS bridge relay)
+//
+//  HOW SERVER ACCESS WORKS (important):
+//   • release-brain.js uses the Firebase Admin SDK (service account) → it
+//     BYPASSES these rules entirely. That's why system/* can be write:false
+//     here yet the brain still writes it.
+//   • statement-store.js / statement-view.js / shorten.js / inbox-*.js call the
+//     Firestore REST API with only the Web API key → those requests are
+//     UNAUTHENTICATED as far as rules are concerned (request.auth == null).
+//     That is why the public share + inbox collections below must allow
+//     unauthenticated access today. See the "HARDENING TODO" notes: migrating
+//     those functions to the Admin SDK lets you lock those collections too.
+//
+//  DEPLOY:  firebase deploy --only firestore:rules
+//  (or paste into Firebase Console → Firestore Database → Rules → Publish.
+//   The console/CLI validates syntax and shows errors before publishing.)
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- helpers -----------------------------------------------------------
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    // Admins who may read ALL feedback in the in-app "Feedback Intelligence"
+    // board. Paste your own Firebase Auth uid(s) here. Leave empty to disable
+    // cross-user feedback reads entirely (recommended unless you need them).
+    function isAdmin() {
+      return request.auth != null && request.auth.uid in [
+        // 'PASTE_YOUR_ADMIN_FIREBASE_UID_HERE'
+      ];
+    }
+
+    // === 1. PRIVATE USER DATA - owner only ==================================
+    //  THE data-isolation fix: a user can read/write only their own document
+    //  (and any future subcollections under it). No one can read anyone else's.
+    match /users/{uid}/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // === 2. PER-USER AI MEMORY - owner only =================================
+    match /userAI/{uid}/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+
+    // === 3. FEEDBACK - create your own, read only your own (+ admins) =======
+    //  • A signed-in user may create feedback tagged with their own uid.
+    //  • Signed-out submissions are allowed only when tagged uid == 'anon'
+    //    (matches the app's current offline/sign-out behaviour). Remove that
+    //    branch if you want to require sign-in for all feedback.
+    //  • A user can read only their OWN feedback. A broad "list all feedback"
+    //    query is refused unless the requester is an admin → privacy enforced.
+    //  • Feedback is append-only from clients, the brain (Admin SDK) handles
+    //    any cleanup/TTL and bypasses these rules.
+    match /feedback/{docId} {
+      allow read: if isAdmin()
+                  || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if request.resource.data.text is string
+                    && request.resource.data.text.size() > 0
+                    && request.resource.data.text.size() < 5000
+                    && (
+                         (signedIn() && request.resource.data.uid == request.auth.uid)
+                         || request.resource.data.uid == 'anon'
+                       );
+      allow update, delete: if false;
+    }
+
+    // === 4. SYSTEM DOCS - public read, no client writes =====================
+    //  manifest / pendingRelease / feedbackPriority are read by the app to show
+    //  the update pill and the feedback board. They are written ONLY by the
+    //  server brain via the Admin SDK (which bypasses these rules), so client
+    //  writes are denied.
+    match /system/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // === 5. PUBLIC SHARE LINKS - readable by anyone with the link ===========
+    //  These hold content the user explicitly chose to SHARE (a statement HTML
+    //  payload + short-code maps). Share links are opened without signing in,
+    //  so read must be public. They contain NO private dashboard data beyond
+    //  what was shared. (Firestore enforces a ~1 MiB per-document size cap.)
+    //
+    //  HARDENING TODO (recommended, non-urgent): move the writes in
+    //  statement-store.js and shorten.js to the Admin SDK (like
+    //  release-brain.js). Then change `allow create, update` below to
+    //  `if false` so ONLY your server can mint share docs, and add a check on
+    //  an expiry field so stale shares stop resolving.
+    match /shared_statements/{id} {
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if false;
+    }
+    match /shared_stmts/{id} {            // legacy read-only path
+      allow read: if true;
+      allow write: if false;
+    }
+    match /s/{shortId} {                  // short-code → statement map (client + server write)
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if false;
+    }
+    match /links/{goId} {                 // short-link redirect map
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if false;
+    }
+
+    // === 6. SMS INBOX BRIDGE - device-scoped relay ==========================
+    //  The native SMS bridge and /api/inbox-* endpoints push/pull bank alerts
+    //  here over the REST API (unauthenticated), scoped by an unguessable
+    //  device hash. Access is gated by that hash today.
+    //
+    //  HARDENING TODO: move inbox-*.js to the Admin SDK + a per-device token,
+    //  then lock this branch down to that token.
+    match /wf-inbox/{deviceHash}/{document=**} {
+      allow read, write: if true;
+    }
+
+    // === 7. DEFAULT - deny everything not explicitly allowed above ==========
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
