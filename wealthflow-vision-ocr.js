@@ -23,6 +23,21 @@
  *  back to the original behaviour. Idempotent: a prompt is never OCR-enriched
  *  twice (guarded by a marker), and callAI is wrapped only once.
  *  ===========================================================================*/
+// ── deadline for outbound calls ──────────────────────────────────────────────
+// `fetch` has no default timeout: an upstream that accepts the connection and
+// then goes quiet never settles, so the caller waits forever and the UI keeps a
+// spinner up with no way to recover. Defined as a guarded global so whichever of
+// these scripts loads first supplies it and the rest share one implementation —
+// no load-order dependency, and no eighth copy to drift.
+window._wfFetchT = window._wfFetchT || function (url, init, ms) {
+    var ctl = new AbortController();
+    var t = setTimeout(function () { ctl.abort(); }, ms || 15000);
+    var opts = {};
+    for (var k in (init || {})) opts[k] = init[k];
+    opts.signal = ctl.signal;
+    return fetch(url, opts).finally(function () { clearTimeout(t); });
+};
+
 (function () {
     'use strict';
     if (window.WFVision && window.WFVision.__v && window.WFVision.__v >= 722) return;
@@ -71,7 +86,7 @@
             mode: opts.mode || 'document',
             languageHints: opts.languageHints || ['en', 'si', 'ta']
         };
-        var p = fetch(_apiBase() + '/vision', {
+        var p = _wfFetchT(_apiBase() + '/vision', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         }).then(function (r) {

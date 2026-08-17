@@ -13,6 +13,21 @@
    All functions are attached to window so onclick handlers can reach them.
    ===========================================================================*/
 
+// ── deadline for outbound calls ──────────────────────────────────────────────
+// `fetch` has no default timeout: an upstream that accepts the connection and
+// then goes quiet never settles, so the caller waits forever and the UI keeps a
+// spinner up with no way to recover. Defined as a guarded global so whichever of
+// these scripts loads first supplies it and the rest share one implementation —
+// no load-order dependency, and no eighth copy to drift.
+window._wfFetchT = window._wfFetchT || function (url, init, ms) {
+    var ctl = new AbortController();
+    var t = setTimeout(function () { ctl.abort(); }, ms || 15000);
+    var opts = {};
+    for (var k in (init || {})) opts[k] = init[k];
+    opts.signal = ctl.signal;
+    return fetch(url, opts).finally(function () { clearTimeout(t); });
+};
+
 (function () {
     'use strict';
 
@@ -129,7 +144,7 @@
             });
             for (const it of items) {
                 try {
-                    const r = await fetch('/api/sms-ingest', {
+                    const r = await _wfFetchT('/api/sms-ingest', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json',
                                    'x-wf-device-token': getDeviceToken() },
@@ -379,7 +394,7 @@
         }
 
         try {
-            const r = await fetch('/api/fifo-reconcile', {
+            const r = await _wfFetchT('/api/fifo-reconcile', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -441,7 +456,7 @@
             location: null
         };
         try {
-            const r = await fetch('/api/sms-ingest', {
+            const r = await _wfFetchT('/api/sms-ingest', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json',
                            'x-wf-device-token': getDeviceToken() },
@@ -471,7 +486,7 @@
     // ────────────────────────────────────────────────────────────────────────
     async function refreshPredictions(horizon) {
         try {
-            const r = await fetch('/api/predict-wealth', {
+            const r = await _wfFetchT('/api/predict-wealth', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -497,7 +512,7 @@
     // ────────────────────────────────────────────────────────────────────────
     async function fxConvert(amount, from, to) {
         try {
-            const r = await fetch('/api/fx-rate', {
+            const r = await _wfFetchT('/api/fx-rate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ amount, from, to })
@@ -579,7 +594,7 @@
         try {
             const tok = getDeviceToken();
             if (!tok) return { drained: 0 };
-            const r = await fetch('/api/inbox-pull', {
+            const r = await _wfFetchT('/api/inbox-pull', {
                 method: 'GET',
                 headers: { 'x-wf-device-token': tok }
             });
@@ -603,7 +618,7 @@
             // ACK: tell server to delete the items we successfully applied
             if (successfulKeys.length) {
                 try {
-                    await fetch('/api/inbox-ack', {
+                    await _wfFetchT('/api/inbox-ack', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'x-wf-device-token': tok },
                         body: JSON.stringify({ keys: successfulKeys })

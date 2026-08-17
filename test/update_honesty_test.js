@@ -120,12 +120,55 @@ describe('2. CACHE_NAME must name a cache that exists', () => {
         const i = sw.indexOf("self.addEventListener('fetch'");
         expect(i, 'fetch handler anchor not found — retarget this test').toBeGreaterThan(-1);
         const body = sw.slice(i);
-        const netAt = body.indexOf('await fetch(event.request');
+        // The anchor is `fetch(event.request)` rather than `await fetch(...)`: the
+        // call is now inside a Promise.race that bounds how long the shell waits
+        // before falling back to cache, so the `await` sits on the race. The claim
+        // asserted here is unchanged — the network call still precedes the cache
+        // read — only the shape it is spelled in.
+        const netAt = body.indexOf('fetch(event.request)');
         const cacheAt = body.indexOf('cache.match(event.request)');
-        expect(netAt).toBeGreaterThan(-1);
+        expect(netAt, 'the app shell no longer fetches at all').toBeGreaterThan(-1);
         expect(cacheAt).toBeGreaterThan(-1);
         // Network-first: the fetch must appear before the cache read.
         expect(netAt).toBeLessThan(cacheAt);
+    });
+
+    it('never passes a second argument to the app-shell fetch', () => {
+        /* THE TRAP THIS PINS, which sw.js documents in its own comment and which
+         * adding a deadline could easily have walked into:
+         *
+         * supplying ANY non-empty init for a request whose mode is 'navigate'
+         * re-derives the request and downgrades that mode. `{ cache: 'no-store' }`
+         * does it, and so does `{ signal }`. The cost is a white screen on the
+         * app's own entry point — the one request that must never fail.
+         *
+         * So the shell's deadline is a Promise.race, which cancels nothing but
+         * stops US waiting, rather than an AbortSignal. */
+        /* Comments stripped first. sw.js EXPLAINS the trap by quoting the bad form
+         * — `fetch(event.request, { cache: 'no-store' })` — so matching the raw
+         * text finds the explanation rather than the code and fails against a
+         * correct file. That is the same defect this whole suite exists to catch,
+         * and it caught me writing this very assertion. */
+        const code = sw.replace(/\/\*[\s\S]*?\*\//g, ' ')
+            .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
+        const i = code.indexOf("self.addEventListener('fetch'");
+        expect(i, 'fetch handler anchor not found after stripping comments').toBeGreaterThan(-1);
+        const body = code.slice(i);
+        const m = body.match(/fetch\(event\.request[^)]*\)/);
+        expect(m, 'the app-shell fetch is gone — retarget this test').toBeTruthy();
+        expect(m[0], 'a second argument was added to the navigate fetch, which downgrades '
+            + 'request.mode and can white-screen the app shell')
+            .toBe('fetch(event.request)');
+    });
+
+    it('bounds how long the shell waits, and falls back to cache', () => {
+        // Without a bound, a connection that opens and then stalls left the app
+        // shell hanging forever with no recovery path.
+        expect(sw, 'the app-shell fetch is unbounded again').toMatch(/Promise\.race\(\[\s*fetch\(event\.request\)/);
+        expect(sw).toMatch(/NET_TIMEOUT_MS/);
+        const ms = Number((sw.match(/const NET_TIMEOUT_MS = (\d+)/) || [])[1]);
+        expect(ms, 'the shell timeout is missing or implausible').toBeGreaterThan(2000);
+        expect(ms, 'a shell timeout this long is indistinguishable from a hang').toBeLessThanOrEqual(30000);
     });
 
     it('never caches the API or the update check itself', () => {

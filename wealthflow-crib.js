@@ -29,6 +29,21 @@
  *    getAnalysis(id) · deleteReport(id) · compare() · scoreFactor() ·
  *    contextForAdvisor() · reanalyse(id)
  *  ===========================================================================*/
+// ── deadline for outbound calls ──────────────────────────────────────────────
+// `fetch` has no default timeout: an upstream that accepts the connection and
+// then goes quiet never settles, so the caller waits forever and the UI keeps a
+// spinner up with no way to recover. Defined as a guarded global so whichever of
+// these scripts loads first supplies it and the rest share one implementation —
+// no load-order dependency, and no eighth copy to drift.
+window._wfFetchT = window._wfFetchT || function (url, init, ms) {
+    var ctl = new AbortController();
+    var t = setTimeout(function () { ctl.abort(); }, ms || 15000);
+    var opts = {};
+    for (var k in (init || {})) opts[k] = init[k];
+    opts.signal = ctl.signal;
+    return fetch(url, opts).finally(function () { clearTimeout(t); });
+};
+
 (function () {
     'use strict';
     if (window.WFCrib && window.WFCrib.__v && window.WFCrib.__v >= 756) return;
@@ -198,7 +213,7 @@
                 return window.WFVision.ocrBase64(base64, { mode: 'document', languageHints: ['en', 'si', 'ta'] });
             }
         } catch (_) {}
-        return fetch(_apiBase() + '/vision', {
+        return _wfFetchT(_apiBase() + '/vision', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image: base64, mode: 'document', languageHints: ['en', 'si', 'ta'] })
         }).then(function (r) { return r.ok ? r.json() : null; })

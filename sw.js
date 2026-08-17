@@ -8,6 +8,17 @@
 
 const CACHE_NAME = 'wealthflow-v7.69.24';
 
+// How long the app shell waits for the network before falling back to the cached
+// copy. Long enough for a slow mobile connection to win the race, short enough
+// that a stalled one does not hold the page indefinitely. On expiry the user gets
+// the last good copy of THIS version — a correct page, possibly not the freshest —
+// and vercel.json's no-cache headers mean the next navigation revalidates anyway.
+const NET_TIMEOUT_MS = 8000;
+
+// The background-sync backup is not user-facing and may run on a waking device,
+// so it gets a longer budget than the shell.
+const SYNC_TIMEOUT_MS = 20000;
+
 // ============================================================================
 //  WHY THERE IS A fetch HANDLER HERE NOW
 //  --------------------------------------------------------------------------
@@ -80,7 +91,25 @@ self.addEventListener('fetch', (event) => {
             // revalidates these every time regardless. Freshness is already
             // guaranteed by the header; re-asserting it here would buy nothing and
             // risk the one request that must never fail.
-            const fresh = await fetch(event.request);
+            // Bounded WITHOUT a second argument to fetch, deliberately. The
+            // comment above is not decoration: supplying any non-empty init for a
+            // request whose mode is 'navigate' re-derives the request and
+            // downgrades that mode, and `{ signal }` is a non-empty init. So the
+            // deadline is a race rather than an AbortSignal — the underlying
+            // request is not cancelled, but WE stop waiting on it.
+            //
+            // Without this, a connection that opens and then stalls left the app
+            // shell hanging forever with no way to recover, on the one request
+            // that must never fail. A timeout now lands in exactly the same catch
+            // block as a network error and serves the last good copy, which is a
+            // correct page for this version rather than a white screen.
+            let netTimer;
+            const fresh = await Promise.race([
+                fetch(event.request),
+                new Promise((_resolve, reject) => {
+                    netTimer = setTimeout(() => reject(new Error('network timeout')), NET_TIMEOUT_MS);
+                }),
+            ]).finally(() => clearTimeout(netTimer));
             if (fresh && fresh.ok) {
                 // Store a copy for offline use. Failure to cache must never
                 // fail the request — the user gets their page either way.
@@ -257,11 +286,21 @@ async function _runAutoBackupFromSW(triggerKind) {
             return;
         }
 
-        const r = await fetch(payload.firestoreUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload.body)
-        });
+        // This one already supplies an init, and it is not a navigate request, so
+        // a real AbortSignal is safe here — unlike the app-shell fetch above.
+        const syncCtl = new AbortController();
+        const syncTimer = setTimeout(() => syncCtl.abort(), SYNC_TIMEOUT_MS);
+        let r;
+        try {
+            r = await fetch(payload.firestoreUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload.body),
+                signal: syncCtl.signal
+            });
+        } finally {
+            clearTimeout(syncTimer);
+        }
         if (r.ok) {
             console.log('[SW] cloud-only backup succeeded (' + triggerKind + ')');
             try {

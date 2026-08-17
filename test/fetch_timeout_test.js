@@ -314,3 +314,65 @@ describe('withTimeout is the same policy in the shape statement-store uses', () 
         expect(aborted).toBe(true);
     });
 });
+
+/* =============================================================================
+ * CLIENT-SIDE CALLS
+ * -----------------------------------------------------------------------------
+ * The census above deliberately scoped itself to server endpoints, on the
+ * grounds that a hang in the browser costs a spinner rather than a function's
+ * whole time budget. That was true and it was not a reason to leave them
+ * unbounded: fourteen client calls across eight files could stall forever, and a
+ * spinner that never resolves is a feature the user cannot use and cannot
+ * diagnose.
+ *
+ * The browser scripts are classic <script> IIFEs, not modules, so they cannot
+ * import fetch-timeout.mjs. They share a guarded global instead — whichever file
+ * loads first defines `window._wfFetchT` and the rest reuse it, which removes
+ * both the load-order dependency and the eighth copy that would drift.
+ *
+ * sw.js is the exception, and deliberately so: see the app-shell assertions in
+ * test/update_honesty_test.js. Passing ANY non-empty init to a `navigate` request
+ * re-derives it and downgrades request.mode, so the shell's deadline is a
+ * Promise.race rather than an AbortSignal. `{ signal }` there would be the very
+ * bug the timeout was meant to prevent, in the one request that must never fail.
+ * ===========================================================================*/
+describe('client-side calls are bounded too', () => {
+    const CLIENT = ['wealthflow-autonomous.js', 'wealthflow-crib.js', 'wealthflow-live-update.js',
+        'wealthflow-queue.js', 'wealthflow-release-approve.js', 'wealthflow-vision-ocr.js',
+        'wealthflow-vision-sms.js'];
+
+    for (const f of CLIENT) {
+        it(`${f} routes every call through the deadline helper`, () => {
+            const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+            const code = executableSource(src);
+            expect(code.indexOf('window._wfFetchT = window._wfFetchT ||'),
+                `${f} does not define or reuse the shared deadline helper`).toBeGreaterThan(-1);
+            // The helper's own body legitimately calls the real fetch once, so that
+            // ONE line is excluded by exact text. An earlier version tried to skip
+            // the whole helper by scanning to the next `};` — which landed on
+            // `var opts = {};` inside the body, leaking `return fetch(url, opts)`
+            // back into the scan and failing every correct file. Precision beats
+            // cleverness for a boundary a guard depends on.
+            const outside = code.replace('return fetch(url, opts).finally(function () { clearTimeout(t); });', '');
+            const bare = [...outside.matchAll(/(?<![\w.$])fetch\s*\(/g)];
+            expect(bare.map((m) => outside.slice(0, m.index).split('\n').length),
+                `${f} still calls fetch() directly; use _wfFetchT(url, init, ms)`).toEqual([]);
+        });
+    }
+
+    it('the helper calls the real fetch, not itself', () => {
+        // A rename that turned the helper recursive would hang every call in the
+        // app rather than bound it — the exact opposite of the intent, and it
+        // would still satisfy a naive "no bare fetch" check.
+        for (const f of CLIENT) {
+            const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+            expect(src, `${f}'s helper is self-recursive`).toMatch(/return fetch\(url, opts\)/);
+        }
+    });
+
+    it('sw.js bounds the shell without an AbortSignal, and the sync call with one', () => {
+        const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+        expect(sw).toMatch(/Promise\.race\(\[\s*fetch\(event\.request\)/);
+        expect(sw, 'the background-sync call is unbounded').toMatch(/signal: syncCtl\.signal/);
+    });
+});

@@ -186,13 +186,26 @@ export function itemIdFrom(key, tHash) {
     return id;
 }
 
-/** The device token, from the header the app sends or the documented query
- *  fallback. Returns '' when absent or too short to be a capability. */
+/**
+ * The device token, from the header the app sends or a JSON body field.
+ *
+ * THE QUERY STRING IS NO LONGER ACCEPTED. `?token=…` used to work here as a
+ * manual-debug convenience, and it is the weakest possible channel for a
+ * capability: query strings are written to server access logs, proxy logs and
+ * browser history, and they travel in the Referer header to any third party the
+ * page later links to. This token is the ONLY thing identifying a device's
+ * inbox — with wf-inbox sealed, it is the whole boundary — so a channel that
+ * copies it into logs is not an acceptable place to carry it.
+ *
+ * Nothing in the app used it: wealthflow-autonomous.js sends the header on both
+ * inbox-pull and inbox-ack, and sms-ingest forwards the header to inbox-push. The
+ * only cost is that a hand-typed browser URL no longer authenticates, which is
+ * the point.
+ */
 export function deviceTokenFrom(req, body) {
     const raw = String(
         (body && body.device_token)
         || (req && req.headers && req.headers['x-wf-device-token'])
-        || (req && req.query && req.query.token)
         || '',
     ).trim();
     return raw.length >= 16 ? raw : '';
