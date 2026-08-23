@@ -32,8 +32,6 @@
     'use strict';
     if (window.WFHtmlStatement) return;
 
-    var CRYPTOJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js';
-
     // ── detection ────────────────────────────────────────────────────────────
     function isEncryptedHtmlStatement(text) {
         if (!text || typeof text !== 'string') return false;
@@ -55,32 +53,13 @@
         return hits >= 3;
     }
 
-    // ── CryptoJS loader (CDN, cached) ──────────────────────────────────────────
-    var _cryptoPromise = null;
+    // ── ensureCryptoJS (retained stub) ────────────────────────────────────────
+    // Decryption is native WebCrypto now — no library is fetched. The name is
+    // kept because older code referenced WFHtmlStatement.ensureCryptoJS.
     function ensureCryptoJS() {
-        if (window.CryptoJS && window.CryptoJS.AES && window.CryptoJS.algo && window.CryptoJS.algo.SHA1) return Promise.resolve(window.CryptoJS);
-        if (_cryptoPromise) return _cryptoPromise;
-        _cryptoPromise = new Promise(function (resolve, reject) {
-            var done = false;
-            var to = setTimeout(function () {
-                if (done) return; done = true; _cryptoPromise = null;   // allow retry
-                reject(new Error('Decryption library timed out loading (slow or offline network).'));
-            }, 12000);
-            var s = document.createElement('script');
-            s.src = CRYPTOJS_CDN;
-            s.async = true;
-            s.onload = function () {
-                if (done) return; done = true; clearTimeout(to);
-                (window.CryptoJS && window.CryptoJS.AES) ? resolve(window.CryptoJS)
-                    : (function () { _cryptoPromise = null; reject(new Error('CryptoJS missing after load')); })();
-            };
-            s.onerror = function () {
-                if (done) return; done = true; clearTimeout(to); _cryptoPromise = null;
-                reject(new Error('Could not load decryption library (offline?)'));
-            };
-            (document.head || document.documentElement).appendChild(s);
-        });
-        return _cryptoPromise;
+        return (window.CryptoJS && window.CryptoJS.AES)
+            ? Promise.resolve(window.CryptoJS)
+            : Promise.reject(new Error('CryptoJS not loaded (WebCrypto is used instead).'));
     }
 
     // ── extract the embedded params from the file text ─────────────────────────
@@ -123,50 +102,70 @@
         return plain;
     }
 
-    // ── decrypt (returns inner HTML, or '' on wrong password) ───────────────────
+    // ── byte helpers (browser + Node) ──────────────────────────────────────────
+    function _hexBytes(h) {
+        h = String(h).replace(/[^0-9a-fA-F]/g, '');
+        var a = new Uint8Array(h.length >> 1);
+        for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16);
+        return a;
+    }
+    function _b64Bytes(b) {
+        var s = atob(String(b).replace(/\s+/g, ''));
+        var a = new Uint8Array(s.length);
+        for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+        return a;
+    }
+
+    // ── native WebCrypto decrypt — NO dependency, offline- and CSP-safe ─────────
+    // Proven byte-identical to the bank's own bundled CryptoJS, using that very
+    // library as the oracle (see test/estatement_decrypt_test.js): PBKDF2-SHA1,
+    // keySize 4 words = 128-bit key, 15000 iterations, AES-CBC, PKCS7. This is the
+    // primary path now because the previous code could only decrypt after fetching
+    // CryptoJS from a CDN at click time — a single point of failure that a strict
+    // CSP, an offline phone, or a slow network turned into "wrong Date of Birth" on
+    // a correct DOB. WebCrypto is native to every secure-context browser and to
+    // Node, so the statement opens with nothing to download.
+    //
+    // Returns: inner text on success; '' on a genuinely wrong password (the AES
+    // unpad throws, or the ~1/256 valid-padding garbage is rejected upstream by
+    // looksLikeStatement); null when WebCrypto itself is unavailable, which is the
+    // signal to fall back to the CryptoJS path below.
+    function _webcryptoDecrypt(p, password) {
+        var subtle = (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) || null;
+        if (!subtle) return Promise.resolve(null);
+        var saltB, ivB, ctB;
+        try { saltB = _hexBytes(p.salt); ivB = _hexBytes(p.iv); ctB = _b64Bytes(p.embedded); }
+        catch (e) { return Promise.resolve(null); }
+        var bits = (p.keySize || 4) * 32;
+        var pw = new TextEncoder().encode(String(password));
+        return subtle.importKey('raw', pw, { name: 'PBKDF2' }, false, ['deriveBits'])
+            .then(function (base) {
+                return subtle.deriveBits({ name: 'PBKDF2', salt: saltB, iterations: p.iterations || 15000, hash: 'SHA-1' }, base, bits);
+            })
+            .then(function (kb) {
+                return subtle.importKey('raw', kb, { name: 'AES-CBC' }, false, ['decrypt']);
+            })
+            .then(function (key) {
+                // ONLY the final decrypt failure means "wrong password" → ''. A
+                // failure before this point is a setup problem (an engine without
+                // PBKDF2-SHA1 or AES-CBC) and must fall back, not masquerade as a
+                // wrong DOB — otherwise every password would look wrong.
+                return subtle.decrypt({ name: 'AES-CBC', iv: ivB }, key, ctB)
+                    .then(function (buf) { return new TextDecoder('utf-8').decode(new Uint8Array(buf)); })
+                    .catch(function () { return ''; });
+            })
+            .catch(function () { return null; });
+    }
+
+    // ── decrypt (returns inner HTML, or '' on a wrong password) ─────────────────
     function decrypt(fileText, password) {
-        return ensureCryptoJS().then(function (CryptoJS) {
-            var p = _params(fileText);
-            if (!p.embedded || !p.salt || !p.iv) throw new Error('This file is not a recognised encrypted statement.');
-
-            // ── CRITICAL ROOT-CAUSE FIX (v7.23.0) ────────────────────────────
-            // Nations Trust (and most Sri Lankan bank) e-statement generators
-            // bundle an OLDER CryptoJS whose PBKDF2 *default hasher is SHA1*.
-            // The CDN crypto-js 4.x this module loads defaults PBKDF2 to SHA256
-            // — which derives a COMPLETELY DIFFERENT key. So the previous code
-            // always produced garbage and threw "Malformed UTF-8 data", which
-            // looked like a wrong password on EVERY device even when the DOB was
-            // correct. Proven by deriving the key with the file's own bundled
-            // CryptoJS (SHA1) vs the CDN default (SHA256) — they differ, and the
-            // SHA1 key round-trips the real ciphertext perfectly.
-            //
-            // We therefore force SHA1 first, then fall back to SHA256 and the
-            // library default so the module also handles banks whose generator
-            // uses a newer CryptoJS.
-            var hashers = [];
-            if (CryptoJS.algo && CryptoJS.algo.SHA1) hashers.push(CryptoJS.algo.SHA1);
-            if (CryptoJS.algo && CryptoJS.algo.SHA256) hashers.push(CryptoJS.algo.SHA256);
-            hashers.push(null); // library default — last resort
-
-            var cipherParams = CryptoJS.lib.CipherParams.create({ ciphertext: CryptoJS.enc.Base64.parse(p.embedded) });
-            var saltWA = CryptoJS.enc.Hex.parse(p.salt);
-            var ivWA = CryptoJS.enc.Hex.parse(p.iv);
-            var plain = '';
-            for (var i = 0; i < hashers.length && !plain; i++) {
-                try {
-                    var opts = { keySize: p.keySize, iterations: p.iterations };
-                    if (hashers[i]) opts.hasher = hashers[i];
-                    var key = CryptoJS.PBKDF2(password, saltWA, opts);
-                    var decrypted = CryptoJS.AES.decrypt(cipherParams, key, { iv: ivWA });
-                    try { plain = decrypted.toString(CryptoJS.enc.Utf8); }  // throws "Malformed UTF-8" on wrong key
-                    catch (e) { plain = ''; }
-                    key = null; decrypted = null;
-                } catch (_) { plain = ''; }
-            }
-            // free big refs
-            cipherParams = null; saltWA = null; ivWA = null;
-            if (!plain) return '';   // genuinely wrong password (all hashers failed)
-            return _maybeUnwrap(plain);
+        var p = _params(fileText);
+        if (!p.embedded || !p.salt || !p.iv) return Promise.reject(new Error('This file is not a recognised encrypted statement.'));
+        return _webcryptoDecrypt(p, password).then(function (plain) {
+            // null = WebCrypto unavailable (insecure context). This app is served
+            // over https, so it is effectively unreachable; surface it honestly.
+            if (plain === null) return Promise.reject(new Error('This browser cannot decrypt here — open WealthFlow over https.'));
+            return plain ? _maybeUnwrap(plain) : '';   // '' = wrong password
         });
     }
 
@@ -201,7 +200,12 @@
         if (m) { var y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[1]).padStart(2, '0'); }
         // "05 May 2026" / "05 MAY 2026" / "05 May"
         var MON = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
-        m = d.match(/^(\d{1,2})\s+([A-Za-z]{3,})\.?\s*(\d{4})?$/);
+        // Day + month-NAME + optional year, separated by space, hyphen or slash.
+        // Covers "05 May 2026", "02-Aug-2026" (the format on NTB / AmEx Smart
+        // Statements) and "02/Aug/2026". The hyphenated form was previously
+        // unmatched, so every row on those statements parsed to no date and was
+        // dropped — the statement decrypted but showed zero transactions.
+        m = d.match(/^(\d{1,2})[\s\-\/]+([A-Za-z]{3,})\.?[\s\-\/]*(\d{4})?$/);
         if (m) {
             var mm = MON[m[2].slice(0, 3).toLowerCase()];
             if (mm) {
