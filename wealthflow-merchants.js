@@ -73,7 +73,14 @@
     function stripPrefix(desc) { var s = String(desc || '').trim(); for (var i = 0; i < PREFIXES.length; i++) s = s.replace(PREFIXES[i], ''); return s.trim(); }
 
     // ── FEE detector (must win before merchant matching) ───────────────────────
-    var FEE_KWS = ['pos transaction fee', 'transaction fee', 'atm withdrawal fee', 'withdrawal fee', 'ceft charge', 'cefts charge', 'ceft charges', 'slips charge', 'slip charge', 'stamp duty', 'debit tax', 'service charge', 'maintenance fee', 'ledger fee', 'sms active fee', 'sms alert', 'sms charge', 'alert charge', 'active fee', 'fuel surcharge', 'card annual', 'annual fee', 'annual or maintenance', 'card fee', 'card replacement', 'over limit', 'overlimit', 'late fee', 'late payment', 'finance charge', 'interest charge', 'commission', 'processing fee', 'handling fee', 'e statement fee', 'estatement fee', 'statement fee', 'capitalise', 'capitalize', 'fallback fee', 'markup', 'mark up', 'conversion fee', 'cross border', 'reissue', 'pin reissue', 'joining fee', 'membership fee', 'cheque return', 'return fee', 'ledger', 'vat', 'nbt', 'sscl', 'cess', 'government levy', 'govt levy', 'levy', 'debit interest', 'credit interest'];
+    var FEE_KWS = ['pos transaction fee', 'transaction fee', 'atm withdrawal fee', 'withdrawal fee', 'ceft charge', 'cefts charge', 'ceft charges', 'slips charge', 'slip charge', 'stamp duty', 'debit tax', 'service charge', 'maintenance fee', 'ledger fee', 'sms active fee', 'sms alert', 'sms charge', 'alert charge', 'active fee', 'fuel surcharge', 'card annual', 'annual fee', 'annual or maintenance', 'card fee', 'card replacement', 'over limit', 'overlimit', 'late fee', 'late payment', 'finance charge', 'interest charge', 'commission', 'processing fee', 'handling fee', 'e statement fee', 'estatement fee', 'statement fee', 'capitalise', 'capitalize', 'fallback fee', 'markup', 'mark up', 'conversion fee', 'cross border', 'reissue', 'pin reissue', 'joining fee', 'membership fee', 'cheque return', 'return fee', 'ledger', 'vat', 'nbt', 'sscl', 'cess', 'government levy', 'govt levy', 'levy', 'debit interest', 'credit interest',
+        /* A cash-advance fee is the one fee this list did not know, so
+         * "LOCAL CASH ADVANCE FEE (DB)" matched nothing at all and was sent to
+         * the manual review queue — where the picker had no category for it
+         * either. wealthflow-route.js has recognised these since it was written;
+         * only this module had not. */
+        'cash advance fee', 'local cash advance fee', 'overseas cash advance fee',
+        'cash adv fee', 'advance fee', 'cash advance interest'];
     // words that make a "fee-looking" line actually a normal payment (avoid false fees)
     // A fee keyword must never match INSIDE another word. 'vat' hides in
     // "priVATe" / "cultiVATion"; 'cess' hides in "proCESSing" / "prinCESS".
@@ -87,6 +94,11 @@
         for (var i = 0; i < FEE_PHRASES.length; i++) { var k = FEE_PHRASES[i]; if (nd.indexOf(k) >= 0 || gd.indexOf(k.replace(/ /g, '')) >= 0) return true; }
         return RE_FEE_WORD.test(nd);
     }
+
+    /* Cash ADVANCE (borrowed against a card) is not cash WITHDRAWAL (your own
+     * money out of an ATM). They carry different fees and different meaning, so
+     * they stay two categories rather than one comfortable blur. */
+    var RE_CASH_ADVANCE = /\b(cash advance|cash adv|advance from (?:mb|cc|card))\b/;
 
     // ── truncation-tolerant key match ────────────────────────────────────────
     // Banks CUT merchant names to fit a fixed field: "Aliexpress"->"Aliexpres",
@@ -222,6 +234,12 @@
             /(ownaccount|selftransfer|internaltransfer|interaccount)/],
         loan_in: [/\b(loan (?:disburse\w*|drawdown|proceeds)|disbursements?|od drawdown)\b/,
             /(loandisburse|loandrawdown|disbursement)/],
+        /* Drawing cash against a credit card lands in the bank account as a
+         * CREDIT. It is borrowing at the highest rate the card charges — filing
+         * it as income would overstate earnings and understate what is owed, in
+         * the same movement. It is a loan drawdown wearing a different name. */
+        cash_advance: [/\b(cash advance|cash adv|advance from (?:mb|cc|card))\b/,
+            /(cashadvance|cashadv)/],
         salary: [/\b(salary|salaries|payroll|wages|stipend|pension|gratuity|bonus)\b/,
             /(salary|payroll)/],
         ret: [/\b(dividends?|interest credit|coupon|maturity|redemption|profit credit)\b/,
@@ -244,6 +262,11 @@
     function creditKind(nd, gd, out) {
         // Money coming BACK, in any of its shapes. Checked before earnings so a
         // line like "SALARY OVERPAYMENT REVERSAL" reads as the reversal it is.
+        if (_hit('cash_advance', nd, gd)) {
+            out.creditKind = 'cash_advance'; out.confidence = 0.9; out.matched = 'credit:cash_advance';
+            out.reason = 'credit-card cash advance — borrowed against your card at card rates, not income';
+            return out;
+        }
         if (_hit('refund', nd, gd)) {
             out.creditKind = 'refund'; out.confidence = 0.9; out.matched = 'credit:refund';
             out.reason = 'money returned (refund/reversal/cashback) — it reduces the original expense, it is not income';
@@ -327,6 +350,22 @@
             return out;
         }
 
+        /* 2c) CASH ADVANCE drawn against the card. Deliberately AFTER the fee
+         *     rule, so "LOCAL CASH ADVANCE FEE" is read as the fee it is rather
+         *     than as the advance itself — the two are separate lines on the
+         *     statement and separate money.
+         *
+         *     Not a purchase. index.html already models cash_advance as its own
+         *     type and computes the bank's fee for it (see the service-fee block
+         *     there); this module simply never told it so, which is why both the
+         *     advance and its fee ended up in the manual review queue. */
+        if (RE_CASH_ADVANCE.test(nd) || /cashadvance|cashadv/.test(gd)) {
+            out.goesTo = 'expenses'; out.category = 'Cash Advance'; out.type = 'cash_advance';
+            out.confidence = 0.95; out.matched = 'cash advance';
+            out.reason = 'cash advance against the card → Cash Advance (borrowed, and it carries a fee)';
+            return out;
+        }
+
         // 3) learned override (user-confirmed memory)
         var learned = _loadLearned(); var mk = merchantKey(raw);
         if (mk && learned[mk] && learned[mk].category) {
@@ -387,8 +426,26 @@
         // unknown → let WFRoute / AI consensus decide
         return out;
     }
+    /* THE taxonomy — one list, in the order the picker shows it.
+     *
+     * There were four of these: this one, the picker in wealthflow-verify-panel.js,
+     * the server list in api/verify.js and the sentence in the AI prompt below.
+     * They had drifted apart, and the drift had a cost the user paid: a cash
+     * advance and its own fee were classified into categories this module accepts
+     * but the picker could not offer, so the only two lines the system asked a
+     * human about were the two it gave the human no way to answer.
+     *
+     * VALID_CATS and the prompt are now DERIVED from this array, and
+     * test/merchant_taxonomy_test.js pins the other two files to it. */
+    var CATEGORIES = [
+        'Telecom', 'Insurance', 'Streaming', 'Software', 'Internet', 'Utilities',
+        'Groceries', 'Dining', 'Health', 'Transport', 'Fuel', 'Education',
+        'Government', 'Shopping', 'Gold', 'Gym/Fitness', 'Leasing',
+        'Cash Advance', 'Cash Withdrawal', 'Bank Charges', 'Other'
+    ];
     // valid taxonomy — the ONLY categories a remote/AI entry may claim (self-verification)
-    var VALID_CATS = { Telecom: 1, Insurance: 1, Streaming: 1, Software: 1, Internet: 1, Utilities: 1, Groceries: 1, Dining: 1, Health: 1, Transport: 1, Fuel: 1, Education: 1, Government: 1, Shopping: 1, Gold: 1, 'Gym/Fitness': 1, Leasing: 1, 'Bank Charges': 1, 'Cash Withdrawal': 1, Other: 1 };
+    var VALID_CATS = {};
+    for (var _ci = 0; _ci < CATEGORIES.length; _ci++) VALID_CATS[CATEGORIES[_ci]] = 1;
     function _validEntry(e) { return !!(e && typeof e.key === 'string' && e.key.length >= 2 && e.category && VALID_CATS[e.category]); }
     function _matchFlat(nd, gd) { for (var i = 0; i < _remote.length; i++) { var e = _remote[i]; if (hasKey(nd, gd, e.key)) return e; } return null; }
     function _loadRemoteCache() { try { var a = JSON.parse(root.localStorage.getItem(LS_REMOTE) || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; } }
@@ -555,7 +612,11 @@
         'Deduce the industry from the text. A 10-digit number starting 077/071/070/078/076/075/074/072 is a Sri Lankan mobile -> Telecom.',
         '"Life"/"Insurance"/"Assurance" -> Insurance. CEB/LECO/Water Board -> Utilities. Supermarkets -> Groceries.',
         'If the entity could honestly belong to more than one category, LOWER the confidence. Never invent a merchant.',
-        'category must be exactly one of: Telecom, Insurance, Streaming, Software, Internet, Utilities, Groceries, Dining, Health, Transport, Fuel, Education, Government, Shopping, Gold, Gym/Fitness, Leasing.',
+        'category must be exactly one of: ' + CATEGORIES.join(', ') + '.',
+        'A bank\'s own charge is Bank Charges. Cash drawn against a card is Cash Advance; '
+            + 'cash taken from an ATM with your own money is Cash Withdrawal. '
+            + 'If none of them honestly fits, answer Other with a LOW confidence rather than '
+            + 'forcing the nearest merchant category.',
         'destination must be exactly "subscription" or "expenses".',
         'confidence is 0.00-1.00. Use >= 0.95 ONLY when the merchant is unmistakable. A low score is CORRECT and safe; a confident wrong answer is a system failure.',
         'Return only JSON, no prose and no markdown fences, in exactly this shape:',
@@ -717,6 +778,6 @@
     try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
     try { verify(); } catch (_) {}                          // heal any learned conflicts on load
     try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
-    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, VERSION: VERSION };
+    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

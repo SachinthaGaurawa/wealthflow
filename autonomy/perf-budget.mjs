@@ -37,7 +37,19 @@ import path from 'node:path';
  * act that belongs in a diff with a reason, which is the entire point.
  */
 export const BUDGETS = {
-    htmlBytes: 1_560_000,        // measured 1,544,365
+    // Raised from 1_560_000 (measured 1,544,365). Three fixes in index.html, all
+    // three found by LOADING the page in a real browser at six viewports rather
+    // than by reading it: the online/offline probe was fetching a Markdown link
+    // and so answered "online" without ever leaving the device; DB.set — the
+    // write path for every record in the app — had a bare localStorage.setItem
+    // that throws QuotaExceededError on a full iOS device, taking the click
+    // handler down with it and skipping the cloud push below it; and 92
+    // interactive elements measured under 36 px on every phone viewport, down to
+    // a 15 px auth link, which a measurement after the change returns as 0.
+    // Most of the growth is the comments recording WHY, which is the part a
+    // later edit must not be able to undo quietly.
+    // Moves ONCE, to the newly measured value with ~1.1% headroom.
+    htmlBytes: 1_580_000,        // measured 1,562,010
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
