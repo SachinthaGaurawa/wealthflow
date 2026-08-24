@@ -112,6 +112,21 @@ const SHAPES = {
         <tr><td>05-Aug-2026 PAYMENT - THANK YOU</td><td>15,000.00 Cr</td></tr>
         </table>`,
 
+    /* The marker in a column of its OWN, not merged into the amount. Every
+     * fixture above happens to write "15,000.00 Cr" in one cell, so nothing here
+     * noticed that a separate Dr/Cr column was ignored and every payment came
+     * back as a charge. Found by rendering a statement in a real browser. */
+    'the Dr/Cr marker in a column of its own': `<table>
+        <tr><th>Post Date</th><th>Txn Date</th><th>Description</th><th>Cur</th><th>Amount</th><th></th></tr>
+        <tr><td>03-Aug-2026</td><td>02-Aug-2026</td><td>KEELLS SUPER COLOMBO</td><td>LKR</td><td>4,250.00</td><td>Dr</td></tr>
+        <tr><td>05-Aug-2026</td><td>04-Aug-2026</td><td>PAYMENT - THANK YOU</td><td>LKR</td><td>15,000.00</td><td>Cr</td></tr>
+        </table>`,
+
+    'the marker spelled out': `<table>
+        <tr><td>03-Aug-2026</td><td>KEELLS SUPER COLOMBO</td><td>4,250.00</td><td>Debit</td></tr>
+        <tr><td>05-Aug-2026</td><td>PAYMENT - THANK YOU</td><td>15,000.00</td><td>Credit</td></tr>
+        </table>`,
+
     'the date in a <th>': `<table>
         <tr><th>03-Aug-2026</th><td>KEELLS SUPER COLOMBO</td><td>4,250.00 Dr</td></tr>
         <tr><th>05-Aug-2026</th><td>PAYMENT - THANK YOU</td><td>15,000.00 Cr</td></tr>

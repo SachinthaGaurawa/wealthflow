@@ -70,7 +70,22 @@ export const BUDGETS = {
     // the same ~1.7% headroom the original carried, and is NOT slackened to buy
     // room for future drift. About 1.9 KB of comment was moved into
     // test/estatement_parse_shapes_test.js (not shipped) before raising it.
-    totalJsBytes: 1_321_000,     // measured 1,299,294 across 46 modules
+    // Raised from 1_321_000 (measured 1,299,294). The ratchet fired on the
+    // sandboxed renderer in wealthflow-html-statement.js. The three-layer parser
+    // the last raise bought was reading a document that had never been rendered:
+    // the field diagnostic on the real file came back "tables 2 / rows 3 /
+    // date-cells 0 / money-cells 0 / scripts 14 / chars 3104263" — three million
+    // characters, and three table rows between them. A Smart Statement is an
+    // application; its rows are drawn by its own JavaScript on load, and no
+    // amount of extra layout guessing reaches data that does not exist yet. The
+    // +5 KB runs it in a frame with sandbox="allow-scripts" and an injected
+    // default-src 'none' CSP, and parses the DOM that comes back. Most of the
+    // growth is the block comment stating WHY the containment is shaped that
+    // way, which is the part a later edit must not be able to undo quietly.
+    // Moves ONCE, to the newly measured value with ~1.4% headroom — TIGHTER than
+    // the ~1.7% the original carried, deliberately, because a ceiling raised to
+    // cover work already done should not also buy room for work not yet started.
+    totalJsBytes: 1_348_000,     // measured 1,329,833 across 46 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
