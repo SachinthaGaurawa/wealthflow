@@ -36,21 +36,46 @@
     function isEncryptedHtmlStatement(text) {
         if (!text || typeof text !== 'string') return false;
         // Strong signals from the real NTB file.
-        var hasEmbedded = /var\s+embedded\s*=\s*["']/.test(text);
-        var hasDecryptFn = /function\s+decryptDocument\s*\(/.test(text) || /CryptoJS\.AES\.decrypt/.test(text);
-        var hasPbkdf2 = /CryptoJS\.PBKDF2/.test(text);
+        // var/let/const, and the payload is not always called `embedded`.
+        var hasEmbedded = /\b(?:var|let|const)\s+(?:embedded|payload|cipher(?:text)?|encrypted|data)\s*=\s*["']/i.test(text);
+        var hasDecryptFn = /function\s+decrypt\w*\s*\(/.test(text) || /CryptoJS\.AES\.decrypt/.test(text)
+            || /subtle\.decrypt/.test(text);
+        var hasPbkdf2 = /CryptoJS\.PBKDF2/.test(text) || /PBKDF2/.test(text);
         return hasEmbedded && (hasDecryptFn || hasPbkdf2);
     }
 
+    /* Requiring THREE keyword hits rejected a perfectly real but sparse statement —
+     * a heading, a table and nothing else scores one. That matters twice over,
+     * because this same function decides whether a decryption SUCCEEDED: a correct
+     * Date of Birth on such a file was reported as "Incorrect Date of Birth".
+     *
+     * Two hits now, over a wider vocabulary, OR the structural signal that settles
+     * it outright — a row carrying both a date and an amount. Wrong-password
+     * detection is unaffected: a bad key fails PKCS7 unpadding and yields an empty
+     * string long before this is consulted. */
     function looksLikeStatement(html) {
         if (!html) return false;
         var t = String(html).toLowerCase();
         var hits = 0;
         ['transaction', 'statement', 'closing balance', 'opening balance', 'payment due',
-         'credit limit', 'post date', 'amount', 'card no', 'account no'].forEach(function (k) {
+         'credit limit', 'post date', 'amount', 'card no', 'account no', 'balance',
+         'e-statement', 'cardholder', 'due date', 'minimum payment', 'available credit',
+         'account summary', 'value date', 'description', 'particulars', 'narration'].forEach(function (k) {
             if (t.indexOf(k) >= 0) hits++;
         });
-        return hits >= 3;
+        if (hits >= 2) return true;
+        // A line with a date AND a money amount is a transaction, whatever it is called.
+        return /\d{1,4}[\/\-. ][A-Za-z0-9]{2,9}[\/\-. ]\d{2,4}[\s\S]{0,120}?\d[.,]\d{2}\b/.test(t);
+    }
+
+    /* Did the decryption succeed? A WRONG key fails PKCS7 unpadding and produces an
+     * empty string, so anything structured here came from the right one. Requiring
+     * a <table> as well meant a div-built statement made a correct Date of Birth
+     * report as incorrect, three times, and then give up. */
+    function _decryptedOk(html) {
+        if (!html) return false;
+        if (looksLikeStatement(html)) return true;
+        return /<(?:table|html|body|div|section|tbody|tr|p)\b/i.test(html);
     }
 
     // ── ensureCryptoJS (retained stub) ────────────────────────────────────────
@@ -66,7 +91,7 @@
     function _params(text) {
         var out = { embedded: '', salt: '', iv: '', iterations: 15000, keySize: 4 };
         var m;
-        m = text.match(/var\s+embedded\s*=\s*["']([\s\S]*?)["']\s*;/);
+        m = text.match(/\b(?:var|let|const)\s+(?:embedded|payload|cipher(?:text)?|encrypted|data)\s*=\s*["']([\s\S]*?)["']\s*;/i);
         if (m) out.embedded = m[1];
         // salt / iv are 32-hex-char strings assigned to vars named salt / iv
         m = text.match(/\bsalt\s*=\s*["']([0-9a-fA-F]{16,})["']/);
@@ -182,40 +207,92 @@
     }
 
     // money: first standalone money-looking number in a string (NOT a balance col)
+    /* Money, across grouping conventions. "1.234,56" and "1 234,56" were dropped
+     * entirely: the old reader stripped commas and spaces and then matched the
+     * first \d+(\.\d{1,2})? it found, which on "5.000,00" is "5.000" — five, not
+     * five thousand. The separator that appears LAST is the decimal one; if only
+     * one kind appears it is a decimal point only when exactly two digits follow.
+     * A TRAILING minus ("5,000.00-") is a credit, the accounting convention. */
     function _num(s) {
         if (s == null) return null;
-        var m = String(s).replace(/[, ]/g, function (c) { return c === ',' ? '' : ' '; })
-            .match(/-?\d+(?:\.\d{1,2})?/);
+        var t = String(s).replace(/ /g, ' ').trim();
+        var neg = /^\(.*\)$/.test(t) || /^[-−]/.test(t) || /[-−]$/.test(t);
+        var m = t.replace(/[()]/g, ' ').match(/[\d.,\s ]*\d/);
         if (!m) return null;
-        var v = parseFloat(m[0]);
-        return isNaN(v) ? null : v;
+        var raw = m[0].replace(/[\s ]/g, '');
+        var lastDot = raw.lastIndexOf('.'), lastCom = raw.lastIndexOf(',');
+        var dec = lastDot > lastCom ? '.' : (lastCom > lastDot ? ',' : '');
+        if (dec) {
+            var tail = raw.length - raw.lastIndexOf(dec) - 1;
+            // A lone separator with three trailing digits is grouping, not a decimal.
+            if (tail === 3 && raw.indexOf(dec) === raw.lastIndexOf(dec)) dec = '';
+        }
+        var norm = dec
+            ? raw.slice(0, raw.lastIndexOf(dec)).replace(/[.,]/g, '') + '.' + raw.slice(raw.lastIndexOf(dec) + 1)
+            : raw.replace(/[.,]/g, '');
+        var v = parseFloat(norm);
+        if (isNaN(v)) return null;
+        return neg ? -Math.abs(v) : v;
     }
 
+    var _MON = { jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+                 jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12' };
+    function _pad(n) { return String(n).padStart(2, '0'); }
+    function _yr(y) {
+        y = String(y);
+        if (y.length === 4) return y;
+        var n = parseInt(y, 10);
+        return String(n > 70 ? 1900 + n : 2000 + n);   // 2-digit year window
+    }
+    function _ok(y, m, d) {
+        y = parseInt(y, 10); m = parseInt(m, 10); d = parseInt(d, 10);
+        return m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1900 && y <= 2999;
+    }
+
+    /* Dates, across the separators and orders a statement actually uses.
+     * '.' was missing entirely, so 02.08.2026 dropped every row; and a 4-digit
+     * first group fell through to the day-first branch, turning 2026/08/02 into
+     * 2002-08-26 — a WRONG date imported silently, which is worse than none. */
     function _toISO(d) {
         if (!d) return '';
-        d = String(d).trim();
+        d = String(d).replace(/ /g, ' ').trim().replace(/,/g, ' ').replace(/\s+/g, ' ');
         var m;
-        // DD/MM/YYYY or DD-MM-YYYY
-        m = d.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-        if (m) { var y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[1]).padStart(2, '0'); }
-        // "05 May 2026" / "05 MAY 2026" / "05 May"
-        var MON = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
-        // Day + month-NAME + optional year, separated by space, hyphen or slash.
-        // Covers "05 May 2026", "02-Aug-2026" (the format on NTB / AmEx Smart
-        // Statements) and "02/Aug/2026". The hyphenated form was previously
-        // unmatched, so every row on those statements parsed to no date and was
-        // dropped — the statement decrypted but showed zero transactions.
-        m = d.match(/^(\d{1,2})[\s\-\/]+([A-Za-z]{3,})\.?[\s\-\/]*(\d{4})?$/);
+
+        // ISO first: YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD
+        m = d.match(/^(\d{4})[\/\-. ](\d{1,2})[\/\-. ](\d{1,2})$/);
+        if (m && _ok(m[1], m[2], m[3])) return m[1] + '-' + _pad(m[2]) + '-' + _pad(m[3]);
+
+        // D?M?Y with any separator. Day-first (the local convention) unless the
+        // numbers can only be month-first.
+        m = d.match(/^(\d{1,2})[\/\-. ](\d{1,2})[\/\-. ](\d{2,4})$/);
         if (m) {
-            var mm = MON[m[2].slice(0, 3).toLowerCase()];
-            if (mm) {
-                var yr = m[3] || String(new Date().getFullYear());
-                return yr + '-' + mm + '-' + String(m[1]).padStart(2, '0');
-            }
+            var a = parseInt(m[1], 10), b = parseInt(m[2], 10), y = _yr(m[3]);
+            if (a > 12 && b <= 12 && _ok(y, b, a)) return y + '-' + _pad(b) + '-' + _pad(a);
+            if (b > 12 && a <= 12 && _ok(y, a, b)) return y + '-' + _pad(a) + '-' + _pad(b);
+            if (_ok(y, b, a)) return y + '-' + _pad(b) + '-' + _pad(a);   // day-first default
         }
-        // already ISO
-        m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (m) return d;
+
+        // D MMM YYYY — space, hyphen, slash or dot ("02-Aug-2026", "02.Aug.2026")
+        m = d.match(/^(\d{1,2})[\s\-\/.]+([A-Za-z]{3,})\.?[\s\-\/.]*(\d{2,4})?$/);
+        if (m) {
+            var mm = _MON[m[2].slice(0, 3).toLowerCase()];
+            if (mm) return (m[3] ? _yr(m[3]) : String(new Date().getFullYear())) + '-' + mm + '-' + _pad(m[1]);
+        }
+
+        // MMM D YYYY — "Aug 02 2026" (the comma was stripped above)
+        m = d.match(/^([A-Za-z]{3,})\.?[\s\-\/.]+(\d{1,2})[\s\-\/.]+(\d{2,4})$/);
+        if (m) {
+            var mm2 = _MON[m[1].slice(0, 3).toLowerCase()];
+            if (mm2) return _yr(m[3]) + '-' + mm2 + '-' + _pad(m[2]);
+        }
+
+        // DDMMYYYY / YYYYMMDD, unseparated
+        m = d.match(/^(\d{8})$/);
+        if (m) {
+            var t = m[1];
+            if (_ok(t.slice(4), t.slice(2, 4), t.slice(0, 2))) return t.slice(4) + '-' + t.slice(2, 4) + '-' + t.slice(0, 2);
+            if (_ok(t.slice(0, 4), t.slice(4, 6), t.slice(6))) return t.slice(0, 4) + '-' + t.slice(4, 6) + '-' + t.slice(6);
+        }
         return '';
     }
 
@@ -237,9 +314,21 @@
         return c.map(_txt);
     }
 
-    // A cell that is ONLY money: optional currency code, sign, parens, Dr/Cr.
-    var _MONEY_ONLY = /^\(?\s*(?:[A-Z]{3}\s*)?[-+]?[\d,]+(?:\.\d{1,2})?\s*\)?\s*(?:[A-Z]{3}\s*)?(?:DR|CR)?\.?$/i;
-    function _isMoney(s) { s = String(s || '').trim(); return !!s && _MONEY_ONLY.test(s); }
+    /* A cell that is ONLY money. Decorations are stripped and whatever remains
+     * must be digits and separators — a single regex could not express "1.234,56"
+     * and "1,234.56" and "1 234,56" at once without matching prose too. */
+    function _isMoney(s) {
+        var t = String(s || '').replace(/ /g, ' ').trim();
+        if (!t) return false;
+        var core = t
+            .replace(/^[\s(]+|[\s)]+$/g, '')
+            .replace(/^(?:[A-Z]{3}|Rs)\.?\s*/i, '')     // leading LKR / Rs.
+            .replace(/\s*(?:[A-Z]{3}|Rs)\.?$/i, '')     // trailing LKR
+            .replace(/\s*(?:DR|CR)\.?$/i, '')           // Dr / Cr marker
+            .replace(/^[-\u2212+]|[-\u2212+]$/g, '')    // sign at either end
+            .trim();
+        return /^\d$|^\d[\d.,\s\u00a0]*\d$/.test(core);
+    }
     /* A KNOWN currency code, never "any three capitals". Matching [A-Z]{3} ate the
      * last word of "PAYMENT - THANK YOU", and would equally eat LTD, PLC, KFC. */
     var _CUR = /^(?:LKR|USD|EUR|GBP|INR|AUD|CAD|SGD|JPY|CHF|AED|SAR|MYR|THB|CNY|NZD|HKD|QAR|KWD|BHD|OMR|PKR|BDT|NPR|MVR|ZAR|SEK|NOK|DKK)$/i;
@@ -252,7 +341,8 @@
         if (/\bCR\b/i.test(t)) return 'credit';
         if (/\bDR\b/i.test(t)) return 'debit';
         if (/^\s*\(.*\)\s*$/.test(t.trim())) return 'credit';   // (1,234.00) = credit
-        if (/^\s*-/.test(t.trim())) return 'credit';
+        if (/^\s*[-\u2212]/.test(t.trim())) return 'credit';
+        if (/[-\u2212]\s*$/.test(t.trim())) return 'credit';     // "5,000.00-" = credit
         return '';
     }
 
@@ -470,6 +560,98 @@
         return _dedupe(rows);
     }
 
+    /* WHAT THE DOCUMENT ACTUALLY LOOKED LIKE.
+     *
+     * "Couldn't read transactions" is a dead end: it names no cause, so the only
+     * way forward was to guess at layouts and ship another build. This reports the
+     * structure the parser saw, which turns one screenshot into a precise fix.
+     *
+     * It is deliberately SHAPE ONLY — counts, and lines with every digit masked —
+     * so a diagnostic can be shared without exposing an amount, a card number or a
+     * merchant the owner banks with. */
+    function diagnose(html) {
+        var d = { tables: 0, rows: 0, cells: 0, scripts: 0, arrays: 0, chars: 0, dateCells: 0, moneyCells: 0, samples: [] };
+        var src = String(html || '');
+        d.chars = src.length;
+        d.scripts = (src.match(/<script[^>]*>/gi) || []).length;
+        try {
+            var doc = new DOMParser().parseFromString(src, 'text/html');
+            var tables = _slice(doc.querySelectorAll('table'));
+            d.tables = tables.length;
+            tables.forEach(function (t) {
+                _slice(t.querySelectorAll('tr')).forEach(function (tr) {
+                    d.rows++;
+                    var cells = _cellsOf(tr);
+                    d.cells += cells.length;
+                    cells.forEach(function (c) {
+                        if (_toISO(c)) d.dateCells++;
+                        else if (_isMoney(c)) d.moneyCells++;
+                    });
+                });
+            });
+        } catch (_) {}
+        try { d.arrays = _fromScripts(src).length; } catch (_) {}
+
+        /* A few lines that carry BOTH something date-shaped and something
+         * money-shaped — the lines a transaction would be on. Digits masked. */
+        var text = src.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<\/(tr|div|p|li|td|th)>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ')
+            .replace(/[ \t ]+/g, ' ');
+        var lines = text.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+        for (var i = 0; i < lines.length && d.samples.length < 6; i++) {
+            var L = lines[i];
+            if (L.length < 8 || L.length > 160) continue;
+            if (!/\d/.test(L)) continue;
+            if (!/\d[.,]\d{2}\b/.test(L) && !/[A-Za-z]{3}/.test(L)) continue;
+            d.samples.push(L.replace(/\d/g, '#').slice(0, 120));
+        }
+        return d;
+    }
+
+    /** One line a person can screenshot. */
+    function diagLine(d) {
+        if (!d) return '';
+        return 'tables ' + d.tables + ' / rows ' + d.rows + ' / cells ' + d.cells
+            + ' / date-cells ' + d.dateCells + ' / money-cells ' + d.moneyCells
+            + ' / scripts ' + d.scripts + ' / script-rows ' + d.arrays
+            + ' / chars ' + d.chars;
+    }
+
+    /* Shown when the statement opened but yielded nothing. The shape line and the
+     * masked samples are what identify the layout, and a Copy button beats asking
+     * someone to retype them off a phone screen. */
+    function showDiagnostic(d) {
+        try {
+            var body = diagLine(d) + '\n\n' + (d.samples.length ? d.samples.join('\n') : '(no line carried both a date and an amount)');
+            var ov = document.createElement('div');
+            ov.setAttribute('data-wfhs-modal', '1');
+            ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(3,6,14,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px;pointer-events:auto;';
+            ov.innerHTML =
+                '<div style="width:100%;max-width:420px;background:var(--card,#0f1626);border:1px solid var(--border2,#243049);border-radius:18px;padding:20px;">'
+                + '<div style="font-size:16px;font-weight:800;color:var(--text,#e8edf5);margin-bottom:6px;">Statement opened, but no transactions found</div>'
+                + '<div style="font-size:12.5px;color:var(--text3,#8a97ad);line-height:1.5;margin-bottom:12px;">It unlocked correctly — this is a layout the reader does not recognise yet. Send this to support and it can be added. All digits are masked.</div>'
+                + '<textarea readonly id="_wfhsDiag" style="width:100%;box-sizing:border-box;height:132px;font-family:var(--mono,monospace);font-size:11.5px;padding:10px;border-radius:10px;border:1px solid var(--border2,#243049);background:var(--bg2,#0a0f1a);color:var(--text2,#aeb9cc);pointer-events:auto;-webkit-user-select:text;user-select:text;"></textarea>'
+                + '<div style="display:flex;gap:10px;margin-top:12px;">'
+                + '<button id="_wfhsDClose" style="flex:1;padding:11px;border-radius:11px;border:1px solid var(--border2,#243049);background:transparent;color:var(--text2,#aeb9cc);font-weight:700;">Close</button>'
+                + '<button id="_wfhsDCopy" style="flex:1;padding:11px;border-radius:11px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;">Copy</button>'
+                + '</div></div>';
+            document.body.appendChild(ov);
+            ov.querySelector('#_wfhsDiag').value = body;
+            ov.querySelector('#_wfhsDClose').onclick = function () { ov.remove(); };
+            ov.querySelector('#_wfhsDCopy').onclick = function () {
+                var ta = ov.querySelector('#_wfhsDiag');
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(body);
+                    else { ta.select(); document.execCommand('copy'); }
+                    ov.querySelector('#_wfhsDCopy').textContent = 'Copied';
+                } catch (_) { ta.select(); }
+            };
+            ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+        } catch (_) {}
+    }
+
     // pull a few header fields for display / dedup
     function _meta(html) {
         var meta = { card_last4: '', period: '', holder: '' };
@@ -540,7 +722,7 @@
             // Plain (already-decrypted) statement HTML?
             if (!isEncryptedHtmlStatement(text)) {
                 if (looksLikeStatement(text)) {
-                    return { ok: true, encrypted: false, html: text, text: htmlToText(text), transactions: htmlToTransactions(text), meta: _meta(text) };
+                    return { ok: true, encrypted: false, html: text, text: htmlToText(text), transactions: htmlToTransactions(text), meta: _meta(text), diag: diagnose(text) };
                 }
                 return { ok: false, notStatement: true, reason: 'Not a bank statement HTML file.' };
             }
@@ -550,10 +732,10 @@
                 return promptPassword().then(function (pw) {
                     if (pw == null) return { ok: false, cancelled: true };
                     return decrypt(text, pw).then(function (html) {
-                        if (html && (looksLikeStatement(html) || /<table/i.test(html))) {
+                        if (html && _decryptedOk(html)) {
                             // success — close the active overlay if still open
                             try { if (window.__wfhsActiveOverlay) { window.__wfhsActiveOverlay.style.opacity = '0'; setTimeout(function () { window.__wfhsActiveOverlay && window.__wfhsActiveOverlay.remove(); window.__wfhsActiveOverlay = null; }, 150); } } catch (_) {}
-                            return { ok: true, encrypted: true, html: html, text: htmlToText(html), transactions: htmlToTransactions(html), meta: _meta(html) };
+                            return { ok: true, encrypted: true, html: html, text: htmlToText(html), transactions: htmlToTransactions(html), meta: _meta(html), diag: diagnose(html) };
                         }
                         attempts++;
                         if (attempts >= 3) {
@@ -573,9 +755,9 @@
                                     var v = (ov2._inp.value || '').replace(/\D/g, '');
                                     if (v.length !== 8) { ov2._setError('Enter all 8 digits (DDMMYYYY).'); return; }
                                     decrypt(text, v).then(function (h2) {
-                                        if (h2 && (looksLikeStatement(h2) || /<table/i.test(h2))) {
+                                        if (h2 && _decryptedOk(h2)) {
                                             ov2.style.opacity = '0'; setTimeout(function () { ov2.remove(); window.__wfhsActiveOverlay = null; }, 150);
-                                            res({ ok: true, encrypted: true, html: h2, text: htmlToText(h2), transactions: htmlToTransactions(h2), meta: _meta(h2) });
+                                            res({ ok: true, encrypted: true, html: h2, text: htmlToText(h2), transactions: htmlToTransactions(h2), meta: _meta(h2), diag: diagnose(h2) });
                                         } else {
                                             attempts++;
                                             if (attempts >= 3) { ov2.remove(); window.__wfhsActiveOverlay = null; res({ ok: false, wrongPassword: true, reason: 'Incorrect Date of Birth (3 attempts).' }); }
@@ -603,6 +785,9 @@
     }
 
     window.WFHtmlStatement = {
+        diagnose: diagnose,
+        diagLine: diagLine,
+        showDiagnostic: showDiagnostic,
         _layerTables: _layerTables,
         _layerScripts: function (h) { try { return _dedupe(_fromScripts(h)); } catch (_) { return []; } },
         _layerText: function (h) { try { return _dedupe(_fromTextLines(h)); } catch (_) { return []; } },
