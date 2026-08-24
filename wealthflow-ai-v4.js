@@ -2228,14 +2228,21 @@
     };
     }  // end: if (typeof window.openScannerSettings !== 'function')
 
-    /* =========================================================================
-     * 17. PATCH FILE INPUTS to accept PDFs
-     * ========================================================================= */
-    function patchFileInputs() {
-        var inputs = document.querySelectorAll('input[type="file"][id="e_ai_scan"], input[type="file"][id="ai_chat_scan"], input[type="file"][id="sub_ai_scan"], input[type="file"][id="ccot_ai_scan"]');
-        inputs.forEach(function (inp) {
-            inp.accept = 'image/*,application/pdf,.pdf';
+    /* ADDED to an input's declared accept, never substituted for it. */
+    var EXTRA_ACCEPT_V5 = 'image/*,image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.pdf,.PDF';
+
+    /* Union of the element's declared accept and `extra`; dupes dropped. The patch
+     * functions below select ccot_ai_scan (the statement uploader, declared with
+     * text/html), so ASSIGNING here strips HTML and iOS greys out e-statements.
+     * Merge, never assign. Full account: test/statement_upload_accept_test.js */
+    function mergeAcceptV5(declared, extra) {
+        var seen = Object.create(null), out = [];
+        (String(declared || '') + ',' + String(extra || '')).split(',').forEach(function (tok) {
+            var t = tok.trim(), k = t.toLowerCase();
+            if (!t || seen[k]) return;
+            seen[k] = 1; out.push(t);
         });
+        return out.join(',');
     }
 
     /* =========================================================================
@@ -2251,7 +2258,7 @@
             window.clearAIChat = newClearAIChat;
             window.confirmResetAIMemory = newConfirmResetAIMemory;
             patchBuildSystemPrompt();
-            patchFileInputs();
+            patchFileInputsV5();   // single accept patcher; see mergeAcceptV5
             console.log('[' + V + '] all patches applied ✓');
             console.log('[' + V + '] Settings: WF_SCAN_SETTINGS =', window.WF_SCAN_SETTINGS);
         } catch (e) {
@@ -2512,8 +2519,8 @@
             'input[type="file"][id="ccot_ai_scan"]'
         );
         inputs.forEach(function (inp) {
-            // ALL platforms: include explicit MIME types Chrome/Firefox/Safari prefer
-            inp.accept = 'image/*,image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.pdf,.PDF';
+            // ADD the MIME types desktop browsers prefer; discard nothing.
+            inp.accept = mergeAcceptV5(inp.getAttribute('accept'), EXTRA_ACCEPT_V5);
             // Allow multi-file for AI chat
             if (inp.id === 'ai_chat_scan') {
                 inp.multiple = true;
@@ -3178,7 +3185,8 @@
         if (!inp) return false;
         if (inp._v5patched) return true;
         inp.multiple = true;
-        inp.accept = 'image/*,image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.pdf,.PDF';
+        // Merged, not assigned — see mergeAcceptV5.
+        inp.accept = mergeAcceptV5(inp.getAttribute('accept'), EXTRA_ACCEPT_V5);
         // Bind the multi-attach handler directly (in addition to the inline
         // _aiChatFilePicked bridge, which also routes here — belt & braces so
         // attaching works even before/after this patch runs).
