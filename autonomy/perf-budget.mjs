@@ -57,7 +57,20 @@ export const BUDGETS = {
     // v7.40.0's feature list. Same doctrine as every other move of this number:
     // an improvement that is not ratcheted is an improvement that can be undone
     // without anyone noticing.
-    totalJsBytes: 1_290_000,     // measured 1,268,930 across 46 modules
+    // Raised from 1_290_000 (measured 1,268,930). The ratchet fired on the
+    // three-layer statement parser in wealthflow-html-statement.js: an encrypted
+    // NTB / AmEx Smart Statement decrypted correctly and imported ZERO
+    // transactions, because its rows are held as data inside <script> and drawn
+    // by JS — DOMParser never runs scripts, so the old table-only reader saw an
+    // empty shell, and htmlToText strips <script> so the text fallback was empty
+    // too. Reading a statement is the feature; +9 KB buys the script-data and
+    // text-line layers plus the fix for amounts being taken from the description.
+    // Growth that is intended and stated in the diff is what this ceiling exists
+    // to force — not to forbid. It moves ONCE, to the newly measured value with
+    // the same ~1.7% headroom the original carried, and is NOT slackened to buy
+    // room for future drift. About 1.9 KB of comment was moved into
+    // test/estatement_parse_shapes_test.js (not shipped) before raising it.
+    totalJsBytes: 1_321_000,     // measured 1,299,294 across 46 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

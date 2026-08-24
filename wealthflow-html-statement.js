@@ -219,71 +219,255 @@
         return '';
     }
 
-    // Parse the transaction table(s). NTB rows look like:
-    //   Post Date | Transaction Date | Description | Currency | Amount | Amount(LKR) Dr/Cr
-    function htmlToTransactions(html) {
+    /* Transaction extraction, THREE LAYERS in order: (1) static <table>;
+     * (2) rows held as data in <script> and drawn by JS — DOMParser never runs
+     * scripts, so layer 1 sees an empty shell there; (3) one transaction per text
+     * line, for merged cells and <div> grids. All feed one row builder.
+     * Full account + a fixture per layer: test/estatement_parse_shapes_test.js */
+
+    function _slice(x) { return Array.prototype.slice.call(x || []); }
+    function _txt(el) { return String((el && (el.innerText || el.textContent)) || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim(); }
+
+    /* td+th: a date in a <th> is still a transaction. Fallbacks keep simpler DOM
+     * implementations working. */
+    function _cellsOf(tr) {
+        var c = _slice(tr.querySelectorAll('td,th'));
+        if (!c.length) c = _slice(tr.querySelectorAll('td'));
+        if (!c.length) c = _slice(tr.querySelectorAll('th'));
+        return c.map(_txt);
+    }
+
+    // A cell that is ONLY money: optional currency code, sign, parens, Dr/Cr.
+    var _MONEY_ONLY = /^\(?\s*(?:[A-Z]{3}\s*)?[-+]?[\d,]+(?:\.\d{1,2})?\s*\)?\s*(?:[A-Z]{3}\s*)?(?:DR|CR)?\.?$/i;
+    function _isMoney(s) { s = String(s || '').trim(); return !!s && _MONEY_ONLY.test(s); }
+    /* A KNOWN currency code, never "any three capitals". Matching [A-Z]{3} ate the
+     * last word of "PAYMENT - THANK YOU", and would equally eat LTD, PLC, KFC. */
+    var _CUR = /^(?:LKR|USD|EUR|GBP|INR|AUD|CAD|SGD|JPY|CHF|AED|SAR|MYR|THB|CNY|NZD|HKD|QAR|KWD|BHD|OMR|PKR|BDT|NPR|MVR|ZAR|SEK|NOK|DKK)$/i;
+    function _isCur(s) { return _CUR.test(String(s || '').trim()); }
+
+    /* Unmarked defaults to debit: the majority on a card statement, and a wrong
+     * credit silently subtracts from what is owed. */
+    function _dirOf(s) {
+        var t = String(s || '');
+        if (/\bCR\b/i.test(t)) return 'credit';
+        if (/\bDR\b/i.test(t)) return 'debit';
+        if (/^\s*\(.*\)\s*$/.test(t.trim())) return 'credit';   // (1,234.00) = credit
+        if (/^\s*-/.test(t.trim())) return 'credit';
+        return '';
+    }
+
+    var _DATE_TOKEN = '(?:\\d{1,2}[\\/\\-\\s](?:\\d{1,2}|[A-Za-z]{3,9})[\\/\\-\\s]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})';
+
+    function _cleanNarr(s) {
+        return String(s || '')
+            .replace(new RegExp('^\\s*' + _DATE_TOKEN + '\\s+'), '')   // a second date column
+            .replace(/\s+[A-Za-z]{3}\s*$/, function (m) { return _isCur(m.trim()) ? '' : m; })
+            .replace(/[\s.\-|:]+$/, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /** The one row definition: null unless date, amount AND description are all
+     *  found — a partial row is not a row. */
+    function _mkRow(dateRaw, narrRaw, amtRaw, dirHint) {
+        var date = _toISO(dateRaw);
+        if (!date) return null;
+        var amount = _num(amtRaw);
+        if (amount == null || Math.abs(amount) < 0.01) return null;
+        var narration = _cleanNarr(narrRaw);
+        if (!narration || _isMoney(narration) || _isCur(narration)) return null;
+        return {
+            date: date,
+            narration: narration,
+            amount: Math.abs(amount),
+            direction: dirHint || _dirOf(amtRaw) || 'debit'
+        };
+    }
+
+    /* date … description … amount [Dr|Cr]. Decimals required, so a reference or
+     * card number is never read as money. */
+    var _LINE_RE = new RegExp(
+        '^\\s*(' + _DATE_TOKEN + ')\\s+(.+?)\\s+([-+(]?\\s*[\\d,]+\\.\\d{2}\\s*\\)?)\\s*(DR|CR)?\\.?\\s*$', 'i');
+
+    function _fromLine(line) {
+        var m = String(line || '').match(_LINE_RE);
+        if (!m) return null;
+        var marker = m[4] || '';
+        return _mkRow(m[1], m[2], m[3], _dirOf(marker) || _dirOf(m[3]) || '');
+    }
+
+    // ── layer 1: tables ───────────────────────────────────────────────────────
+    function _fromTables(doc) {
         var out = [];
-        var doc;
-        try { doc = new DOMParser().parseFromString(html, 'text/html'); }
-        catch (_) { return out; }
+        _slice(doc.querySelectorAll('table')).forEach(function (table) {
+            _slice(table.querySelectorAll('tr')).forEach(function (tr) {
+                var cells = _cellsOf(tr);
+                if (cells.length < 2) return;
 
-        var tables = Array.prototype.slice.call(doc.querySelectorAll('table'));
-        tables.forEach(function (table) {
-            var rows = Array.prototype.slice.call(table.querySelectorAll('tr'));
-            rows.forEach(function (tr) {
-                var cells = Array.prototype.slice.call(tr.querySelectorAll('td')).map(function (td) {
-                    return (td.innerText || td.textContent || '').replace(/\u00a0/g, ' ').trim();
-                });
-                if (cells.length < 3) return;
+                var date = '', di = -1;
+                for (var i = 0; i < cells.length && !date; i++) { var d = _toISO(cells[i]); if (d) { date = d; di = i; } }
 
-                // Find a date cell + a description cell + an amount cell.
-                var dateISO = '';
-                for (var i = 0; i < cells.length && !dateISO; i++) dateISO = _toISO(cells[i]);
-                if (!dateISO) return;
-
-                // direction: a trailing "Dr"/"Cr" on the row, or a credit/debit word
-                var rowText = cells.join(' ');
-                var dir = /\bCr\b/i.test(cells[cells.length - 1]) || /\bcredit\b/i.test(rowText) ? 'credit' : 'debit';
-                if (/\bDr\b/i.test(cells[cells.length - 1])) dir = 'debit';
-
-                // amount: prefer a cell that has Dr/Cr, else the first money cell
-                // that ISN'T the date and ISN'T a pure currency code.
-                var amount = null;
+                /* RIGHT TO LEFT, money-only cells first. Left-to-right took the
+                 * first number on the row, so "FUEL 20.00 LTR" became a 20.00
+                 * charge. Money columns sit right and hold only money. */
+                var amtRaw = null;
                 for (var j = cells.length - 1; j >= 0; j--) {
-                    if (/\b(Dr|Cr)\b/i.test(cells[j])) { amount = _num(cells[j]); if (amount != null) break; }
+                    if (j === di || _isCur(cells[j])) continue;
+                    if (_isMoney(cells[j]) && _num(cells[j]) != null) { amtRaw = cells[j]; break; }
                 }
-                if (amount == null) {
-                    for (var k = 0; k < cells.length; k++) {
-                        if (_toISO(cells[k])) continue;            // skip date cells
-                        if (/^[A-Z]{3}$/.test(cells[k])) continue; // skip "LKR"/"USD"
-                        var v = _num(cells[k]);
-                        if (v != null && Math.abs(v) >= 1) { amount = v; break; }
+                if (amtRaw == null) {
+                    for (var k = cells.length - 1; k >= 0; k--) {
+                        if (k === di || _isCur(cells[k])) continue;
+                        if (/\b(DR|CR)\b/i.test(cells[k]) && _num(cells[k]) != null) { amtRaw = cells[k]; break; }
                     }
                 }
-                if (amount == null || Math.abs(amount) < 0.01) return;
 
-                // narration: the longest non-numeric, non-date, non-currency cell
-                var narration = '';
-                cells.forEach(function (c) {
+                // narration: the longest cell that is not the date, a currency code
+                // or money.
+                var narr = '';
+                cells.forEach(function (c, idx) {
+                    if (idx === di || _isCur(c) || _isMoney(c)) return;
                     if (_toISO(c)) return;
-                    if (/^[A-Z]{3}$/.test(c)) return;
-                    if (/^-?[\d,]+(?:\.\d{1,2})?\s*(Dr|Cr)?$/i.test(c)) return;
-                    if (c.length > narration.length) narration = c;
+                    if (c.length > narr.length) narr = c;
                 });
-                if (!narration) return;
 
-                out.push({ date: dateISO, narration: narration, amount: Math.abs(amount), direction: dir });
+                var row = (date && amtRaw != null) ? _mkRow(date, narr, amtRaw, '') : null;
+                // Merged cells ("02-Aug-2026 ODEL COLOMBO" | "5,000.00 Dr") do not
+                // decompose by column; the line parser handles them.
+                if (!row) row = _fromLine(cells.join(' '));
+                if (row) out.push(row);
             });
         });
+        return out;
+    }
 
-        // De-dupe identical rows that appear in both summary + detail tables.
-        var seen = {}, dedup = [];
-        out.forEach(function (t) {
+    // ── layer 2: rows rendered from data inside <script> ──────────────────────
+    var _K_DESC = /desc|narrat|detail|merchant|particular|remark|title|name/i;
+    var _K_AMT = /amount|amt|value|total|lkr|debit|credit/i;
+    var _K_DIR = /dr.?cr|indicator|sign|type|kind/i;
+
+    /** One object → a row, without knowing the bank's field names. */
+    function _fromObject(o) {
+        if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+        var keys = Object.keys(o).filter(function (k) {
+            var v = o[k];
+            return v == null || typeof v === 'string' || typeof v === 'number';
+        });
+        if (!keys.length) return null;
+        var val = function (k) { return o[k] == null ? '' : String(o[k]); };
+
+        var dk = '';
+        keys.forEach(function (k) { if (!dk && /date|^dt$/i.test(k) && _toISO(val(k))) dk = k; });
+        keys.forEach(function (k) { if (!dk && _toISO(val(k))) dk = k; });
+        if (!dk) return null;
+
+        var ak = '';
+        keys.forEach(function (k) { if (!ak && k !== dk && _K_AMT.test(k) && _num(val(k)) != null && _isMoney(val(k))) ak = k; });
+        keys.forEach(function (k) { if (!ak && k !== dk && _isMoney(val(k)) && _num(val(k)) != null) ak = k; });
+        if (!ak) return null;
+
+        var nk = '';
+        keys.forEach(function (k) { if (!nk && k !== dk && k !== ak && _K_DESC.test(k) && val(k).trim()) nk = k; });
+        keys.forEach(function (k) {
+            if (nk || k === dk || k === ak) return;
+            var v = val(k).trim();
+            if (!v || _isMoney(v) || _isCur(v) || _toISO(v)) return;
+            if (v.length > val(nk || k).length || !nk) nk = k;
+        });
+        if (!nk) return null;
+
+        var dir = '';
+        keys.forEach(function (k) { if (!dir && _K_DIR.test(k)) dir = _dirOf(val(k)); });
+        return _mkRow(val(dk), val(nk), val(ak), dir);
+    }
+
+    /** Every balanced [...] span inside a <script>, parsed as data if it can be. */
+    function _fromScripts(html) {
+        var out = [];
+        var blocks = String(html).match(/<script[^>]*>[\s\S]*?<\/script>/gi) || [];
+        blocks.forEach(function (block) {
+            var body = block.replace(/^<script[^>]*>/i, '').replace(/<\/script>\s*$/i, '');
+            for (var i = 0; i < body.length; i++) {
+                if (body[i] !== '[') continue;
+                var depth = 0, inStr = false, q = '', j = i;
+                for (; j < body.length; j++) {
+                    var ch = body[j];
+                    if (inStr) { if (ch === '\\') { j++; continue; } if (ch === q) inStr = false; continue; }
+                    if (ch === '"' || ch === "'") { inStr = true; q = ch; continue; }
+                    if (ch === '[') depth++;
+                    else if (ch === ']') { depth--; if (depth === 0) break; }
+                }
+                if (depth !== 0) break;                      // unbalanced — give up on this block
+                var span = body.slice(i, j + 1);
+                i = j;
+                if (span.length < 20 || span.indexOf('{') < 0) continue;
+                var arr = null;
+                try { arr = JSON.parse(span); } catch (_) {
+                    // Tolerate JS object literals; anything else is skipped.
+                    try {
+                        arr = JSON.parse(span
+                            .replace(/'/g, '"')
+                            .replace(/,(\s*[}\]])/g, '$1')
+                            .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":'));
+                    } catch (__) { arr = null; }
+                }
+                if (!Array.isArray(arr)) continue;
+                arr.forEach(function (o) { var r = _fromObject(o); if (r) out.push(r); });
+            }
+        });
+        return out;
+    }
+
+    // ── layer 3: one transaction per text line ────────────────────────────────
+    function _fromTextLines(html) {
+        var out = [];
+        var text = String(html)
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<\/(tr|div|p|li|h[1-6]|table)>/gi, '\n')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+            .replace(/[ \t ]+/g, ' ');
+        text.split(/\r?\n/).forEach(function (line) {
+            var r = _fromLine(line);
+            if (r) out.push(r);
+        });
+        if (out.length) return out;
+
+        /* A <div> grid splits each field into its own element, so no single line
+         * holds a whole transaction. Flatten and scan for triples. Deliberately
+         * last: the loosest reading, used only when everything else found none. */
+        var flat = text.replace(/\s+/g, ' ');
+        var scan = new RegExp('(' + _DATE_TOKEN + ')\\s+(.{2,80}?)\\s+([-+(]?[\\d,]+\\.\\d{2}\\)?)\\s*(DR|CR)?\\b', 'gi');
+        var m;
+        while ((m = scan.exec(flat)) !== null) {
+            var r2 = _mkRow(m[1], m[2], m[3], _dirOf(m[4] || '') || _dirOf(m[3]) || '');
+            if (r2) out.push(r2);
+        }
+        return out;
+    }
+
+    function _dedupe(rows) {
+        var seen = {}, out = [];
+        rows.forEach(function (t) {
             var key = t.date + '|' + t.narration.toLowerCase() + '|' + t.amount + '|' + t.direction;
             if (seen[key]) return;
-            seen[key] = 1; dedup.push(t);
+            seen[key] = 1; out.push(t);
         });
-        return dedup;
+        return out;
+    }
+
+    function htmlToTransactions(html) {
+        if (!html) return [];
+        var doc = null;
+        try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (_) { doc = null; }
+
+        var rows = [];
+        if (doc) { try { rows = _fromTables(doc); } catch (_) { rows = []; } }
+        if (!rows.length) { try { rows = _fromScripts(html); } catch (_) { rows = []; } }
+        if (!rows.length) { try { rows = _fromTextLines(html); } catch (_) { rows = []; } }
+        return _dedupe(rows);
     }
 
     // pull a few header fields for display / dedup
@@ -411,7 +595,17 @@
         });
     }
 
+    /* The layers individually: asserting only on htmlToTransactions cannot tell
+     * WHICH one answered, so a broken table layer hid behind the text scan. */
+    function _layerTables(html) {
+        try { return _dedupe(_fromTables(new DOMParser().parseFromString(html, 'text/html'))); }
+        catch (_) { return []; }
+    }
+
     window.WFHtmlStatement = {
+        _layerTables: _layerTables,
+        _layerScripts: function (h) { try { return _dedupe(_fromScripts(h)); } catch (_) { return []; } },
+        _layerText: function (h) { try { return _dedupe(_fromTextLines(h)); } catch (_) { return []; } },
         isEncryptedHtmlStatement: isEncryptedHtmlStatement,
         looksLikeStatement: looksLikeStatement,
         ensureCryptoJS: ensureCryptoJS,
