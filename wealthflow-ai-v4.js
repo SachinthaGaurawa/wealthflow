@@ -1125,7 +1125,24 @@
                     return;
                 }
                 if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
-                if (typeof window.notify === 'function') window.notify((_hres && _hres.notStatement) ? "That HTML file doesn't look like a bank statement." : "Couldn't read transactions from that e-statement.", 'warn');
+                if (_hres && _hres.notStatement) {
+                    if (typeof window.notify === 'function') window.notify("That HTML file doesn't look like a bank statement.", 'warn');
+                } else {
+                    /* The statement DID open — this is a layout the reader does not
+                     * know yet. A bare "couldn't read transactions" names no cause
+                     * and leaves the only next step as guessing at layouts, so show
+                     * the structure that was actually found (counts and digit-masked
+                     * lines, nothing identifying) with a Copy button. */
+                    if (typeof window.notify === 'function') window.notify('Statement opened, but no transactions were found.', 'warn');
+                    try {
+                        if (window.WFHtmlStatement && window.WFHtmlStatement.showDiagnostic) {
+                            window.WFHtmlStatement.showDiagnostic(
+                                (_hres && _hres.diag) || (window.WFHtmlStatement.diagnose && _hres && _hres.html
+                                    ? window.WFHtmlStatement.diagnose(_hres.html) : null));
+                        }
+                    } catch (_) {}
+                    try { console.warn('[' + V + '] e-statement shape:', (_hres && _hres.diag) || null); } catch (_) {}
+                }
                 inputEl.value = '';
                 return; // never fall through to image/PDF processing for an HTML file
             } catch (_eH) {

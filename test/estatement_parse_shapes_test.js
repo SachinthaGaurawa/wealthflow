@@ -232,6 +232,151 @@ describe('direction is read from what the statement actually marks', () => {
     }
 });
 
+describe('dates, across every separator and order a statement uses', () => {
+    /* '.' was missing entirely, so 02.08.2026 dropped every row. Worse, a 4-digit
+     * first group fell through to the day-first branch and turned 2026/08/02 into
+     * 2002-08-26 — a WRONG date imported silently, which is worse than none. */
+    const DATES = [
+        ['02-Aug-2026', '2026-08-02'], ['02 Aug 2026', '2026-08-02'],
+        ['02/08/2026', '2026-08-02'], ['02-08-2026', '2026-08-02'],
+        ['02.08.2026', '2026-08-02'], ['2026-08-02', '2026-08-02'],
+        ['2026/08/02', '2026-08-02'], ['2026.08.02', '2026-08-02'],
+        ['Aug 02, 2026', '2026-08-02'], ['Aug 2 2026', '2026-08-02'],
+        ['02.Aug.2026', '2026-08-02'], ['2 August 2026', '2026-08-02'],
+        ['02/Aug/2026', '2026-08-02'], ['02082026', '2026-08-02'],
+    ];
+    for (const [raw, want] of DATES) {
+        it(`"${raw}" → ${want}`, () => {
+            const rows = W.htmlToTransactions(
+                `<table><tr><td>${raw}</td><td>ODEL COLOMBO</td><td>5,000.00 Dr</td></tr></table>`);
+            expect(rows, `"${raw}" was dropped — every row on such a statement is lost`).toHaveLength(1);
+            expect(rows[0].date, `"${raw}" parsed to the wrong date`).toBe(want);
+        });
+    }
+
+    it('a day past 12 settles a US-order statement', () => {
+        const rows = W.htmlToTransactions(
+            `<table><tr><td>07/25/2026</td><td>ODEL COLOMBO</td><td>5,000.00 Dr</td></tr></table>`);
+        expect(rows[0].date).toBe('2026-07-25');
+    });
+
+    it('refuses an impossible date rather than inventing one', () => {
+        expect(W.htmlToTransactions(
+            `<table><tr><td>45/45/2026</td><td>ODEL COLOMBO</td><td>5,000.00 Dr</td></tr></table>`)).toEqual([]);
+    });
+});
+
+describe('amounts, across every grouping convention', () => {
+    /* "1.234,56" was dropped: the old reader stripped commas then matched the first
+     * \d+(\.\d{1,2})?, which on "5.000,00" is "5.000" — five, not five thousand. */
+    const AMOUNTS = [
+        ['5,000.00 Dr', 5000, 'debit'], ['5000.00', 5000, 'debit'],
+        ['LKR 5,000.00', 5000, 'debit'], ['Rs. 5,000.00', 5000, 'debit'],
+        ['5.000,00', 5000, 'debit'], ['5 000,00', 5000, 'debit'],
+        ['1.234,56', 1234.56, 'debit'], ['1,234.56', 1234.56, 'debit'],
+        ['(5,000.00)', 5000, 'credit'], ['-5,000.00', 5000, 'credit'],
+        ['5,000.00-', 5000, 'credit'], ['5,000.00 CR', 5000, 'credit'],
+    ];
+    for (const [raw, amount, dir] of AMOUNTS) {
+        it(`"${raw}" → ${amount} ${dir}`, () => {
+            const rows = W.htmlToTransactions(
+                `<table><tr><td>02-Aug-2026</td><td>ODEL COLOMBO</td><td>${raw}</td></tr></table>`);
+            expect(rows, `"${raw}" was dropped`).toHaveLength(1);
+            expect(rows[0].amount, `"${raw}" parsed to the wrong amount`).toBe(amount);
+            expect(rows[0].direction).toBe(dir);
+        });
+    }
+});
+
+describe('the diagnostic reports the shape without leaking the contents', () => {
+    /* "Couldn't read transactions" named no cause, so the only way forward was to
+     * guess at layouts and ship another build. This reports what was actually
+     * seen — and must never carry an amount, a card number or a merchant. */
+    const SAMPLE = `<table>
+        <tr><td>03-Aug-2026</td><td>KEELLS SUPER COLOMBO</td><td>4,250.00 Dr</td></tr>
+        </table><script>var x=[1,2,3];</script>`;
+
+    it('counts what the parser saw', () => {
+        const d = W.diagnose(SAMPLE);
+        expect(d.tables).toBe(1);
+        expect(d.rows).toBe(1);
+        expect(d.cells).toBe(3);
+        expect(d.dateCells).toBe(1);
+        expect(d.moneyCells).toBe(1);
+        expect(d.scripts).toBe(1);
+        expect(d.chars).toBeGreaterThan(50);
+    });
+
+    it('masks every digit in the sample lines', () => {
+        const d = W.diagnose(SAMPLE);
+        for (const line of d.samples) {
+            expect(line, `a digit survived into "${line}"`).not.toMatch(/\d/);
+        }
+    });
+
+    it('never contains an amount or a date verbatim', () => {
+        const d = W.diagnose(SAMPLE);
+        const blob = JSON.stringify(d);
+        expect(blob).not.toContain('4,250.00');
+        expect(blob).not.toContain('03-Aug-2026');
+    });
+
+    it('summarises to one screenshot-able line', () => {
+        expect(W.diagLine(W.diagnose(SAMPLE))).toMatch(/tables 1 .* rows 1 .* scripts 1/);
+    });
+
+    it('does not throw on junk', () => {
+        for (const junk of ['', null, undefined, '<<<']) {
+            expect(() => W.diagnose(junk)).not.toThrow();
+        }
+    });
+});
+
+describe('a real statement is recognised, and a correct DOB is not called wrong', () => {
+    /* looksLikeStatement needed THREE keyword hits. A sparse but perfectly real
+     * statement — a heading, a table, nothing else — scores one. That matters
+     * twice, because the same function decides whether a DECRYPTION succeeded: a
+     * correct Date of Birth on such a file was reported as incorrect, three times,
+     * and then gave up. */
+    const SPARSE = `<html><body><h1>Card Statement</h1><table>
+        <tr><td>02-Aug-2026</td><td>ODEL COLOMBO</td><td>5,000.00</td></tr>
+        </table></body></html>`;
+
+    it('accepts a sparse statement that scores only one keyword', () => {
+        expect(W.looksLikeStatement(SPARSE),
+            'a real statement is rejected as "not a bank statement"').toBe(true);
+    });
+
+    it('accepts on TWO keywords alone, with no date/amount anywhere', () => {
+        // Isolates the keyword threshold: the structural signal cannot rescue this
+        // one, so raising the bar back to three fails here and nowhere else.
+        const words = '<html><body><h2>Account Summary</h2><p>Cardholder copy</p></body></html>';
+        expect(/\d[.,]\d{2}/.test(words), 'fixture leaked an amount — it would pass structurally').toBe(false);
+        expect(W.looksLikeStatement(words),
+            'a statement scoring two keywords is rejected as "not a bank statement"').toBe(true);
+    });
+
+    it('accepts one on the structural signal alone — a date beside an amount', () => {
+        expect(W.looksLikeStatement('<div>14/07/2026 SOME MERCHANT 1,250.00</div>')).toBe(true);
+    });
+
+    it('still rejects a page that is neither', () => {
+        expect(W.looksLikeStatement('<html><body><p>Hello world</p></body></html>')).toBe(false);
+        expect(W.looksLikeStatement('')).toBe(false);
+    });
+
+    it('detects an encrypted file however the payload variable is spelled', () => {
+        for (const decl of ['var embedded', 'let embedded', 'const payload', 'var cipherText', 'const encrypted']) {
+            const file = `<script>${decl} = "AAAA"; CryptoJS.PBKDF2(p, s, {keySize:4});</script>`;
+            expect(W.isEncryptedHtmlStatement(file), `${decl} was not recognised as encrypted`).toBe(true);
+        }
+    });
+
+    it('does not call an ordinary page encrypted', () => {
+        expect(W.isEncryptedHtmlStatement('<html><body>hi</body></html>')).toBe(false);
+    });
+});
+
 describe('it does not invent transactions', () => {
     it('returns nothing for a page with no rows at all', () => {
         expect(W.htmlToTransactions('<html><body><h1>Statement</h1><p>No activity.</p></body></html>')).toEqual([]);
