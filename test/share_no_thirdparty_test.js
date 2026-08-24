@@ -119,3 +119,68 @@ describe('the share chain uploads to no third party', () => {
             'a plain GET is being counted as an upload').toBe(false);
     });
 });
+
+/* The SERVER side of the same rule. index.html was only half the exposure: the
+ * share endpoints could upload too. statement-store.js had a Strategy 3 that
+ * POSTed the statement to 0x0.st, and share-upload.js existed solely to POST an
+ * Elite Report to file.io / 0x0.st / tmpfiles. The first is removed (large PDFs
+ * chunk onto Firestore instead); the second is deleted outright. This block
+ * fails if either returns. */
+describe('the server share endpoints upload to no third party', () => {
+    const STORE = executable(fs.readFileSync(path.join(ROOT, 'statement-store.js'), 'utf8'));
+
+    /** The same direction-aware detector as above: a fetch whose arguments name a
+     *  banned host AND carry a method or a body is an upload. */
+    function uploadsTo(src, host) {
+        const lines = [];
+        for (const m of src.matchAll(/\bfetch\s*\(/g)) {
+            const open = src.indexOf('(', m.index);
+            let depth = 0, end = open;
+            for (let i = open; i < src.length && i < open + 800; i++) {
+                if (src[i] === '(') depth++;
+                else if (src[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
+            }
+            const args = src.slice(open, end);
+            if (!args.includes(host)) continue;
+            if (/method\s*:\s*["']POST["']|body\s*:/i.test(args)) lines.push(src.slice(0, m.index).split('\n').length);
+        }
+        return lines;
+    }
+
+    it('the scan is reading real code (guards a vacuous pass)', () => {
+        expect(STORE.length).toBeGreaterThan(3000);
+        expect(STORE, 'statement-store no longer creates Firestore docs — retarget this test').toMatch(/documentId=/);
+    });
+
+    for (const host of BANNED.filter((h) => h !== 'pastebin.com')) {
+        it(`statement-store.js never uploads to ${host}`, () => {
+            expect(uploadsTo(STORE, host),
+                `statement-store.js uploads a statement to ${host}`).toEqual([]);
+        });
+    }
+
+    it('share-upload.js is gone (it existed only to upload to those hosts)', () => {
+        expect(fs.existsSync(path.join(ROOT, 'share-upload.js')),
+            'share-upload.js is back').toBe(false);
+    });
+
+    it('the router no longer routes to share-upload', () => {
+        const router = fs.readFileSync(path.join(ROOT, 'api', 'router.js'), 'utf8');
+        expect(router, 'a route to the deleted share-upload endpoint remains').not.toMatch(/share-upload/);
+    });
+
+    it('the Elite Report share posts only to statement-store, and has no Stage B', () => {
+        // The client half: after the size gate and Stage B were removed, the Elite
+        // Report makes a single POST to /api/statement-store and nothing else.
+        expect(HTML, 'the Elite Report no longer stores through statement-store').toMatch(/api\/statement-store/);
+        expect(HTML, 'a route to the deleted share-upload endpoint remains in the client')
+            .not.toMatch(/api\/share-upload/);
+    });
+
+    it('the upload detector can still fail on server code (guards the guard)', () => {
+        const withUpload = `await fetch('https://0x0.st', { method: 'POST', body: fd });`;
+        expect(uploadsTo(withUpload, '0x0.st'), 'the server detector misses a real upload').toHaveLength(1);
+        const read = `await fetch('https://0x0.st/' + id);`;
+        expect(uploadsTo(read, '0x0.st'), 'a plain GET is counted as an upload').toEqual([]);
+    });
+});

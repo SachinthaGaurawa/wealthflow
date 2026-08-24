@@ -94,7 +94,6 @@ const HANDLERS = {
     'predict-wealth': () => import('../predict-wealth.js'),
     'release-brain': () => import('../release-brain.js'),
     'send-otp': () => import('../send-otp.js'),
-    'share-upload': () => import('../share-upload.js'),
     'shorten': () => import('../shorten.js'),
     'sms-ingest': () => import('../sms-ingest.js'),
     'statement-store': () => import('../statement-store.js'),

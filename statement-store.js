@@ -15,10 +15,11 @@
 //   Content-Type: application/pdf so iOS Safari / Chrome / WhatsApp etc.
 //   display it natively (no iframe / data: URL hacks that iOS blocks).
 //
-// Strategy order (reliability-first):
-//   1. Firestore REST 's' collection (PRIMARY — your own infra)
-//   2. Firestore REST 'shared_statements' (redundancy)
-//   3. 0x0.st           (last-resort external host)
+// Strategy order (reliability-first). Both paths are WealthFlow's own Firestore;
+// there is no third-party host — a share that cannot be stored here fails and
+// says so (see the note where a 0x0.st fallback used to be):
+//   1. Firestore REST 's' collection (PRIMARY). PDFs chunk here when large.
+//   2. Firestore REST 'shared_statements' (single-doc redundancy; HTML / small PDF)
 //
 // =====================================================================
 
@@ -55,6 +56,21 @@ const FS_BASE     = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/
 const APP_URL     = 'https://wealthflow-personal.vercel.app/';
 const MAX_DOC_FS  = 900 * 1024;     // Firestore single-document soft cap
 const EXPIRY_DAYS = 30;
+
+// A Firestore document is capped at ~1 MiB, counting the field value plus name
+// and index overhead. A base64 PDF above the single-doc threshold is split into
+// sibling documents s/<id>-0 … s/<id>-<parts-1>, and a manifest s/<id> written
+// LAST records how many. The manifest's existence is therefore the proof that
+// every chunk landed: a reader that finds it can trust all parts are present, so
+// a half-finished upload can never be read as a whole PDF (see the write order
+// below). This keeps large Elite Report PDFs entirely on WealthFlow's own
+// Firestore — the reason the old 0x0.st fallback existed — with no third party.
+//
+// '-' separates id from index deliberately: randomId()'s alphabet excludes it,
+// so a chunk id can never collide with some other statement's manifest id.
+const SINGLE_MAX  = 700 * 1024;     // inline in one doc at or below this many base64 chars
+const CHUNK_SIZE  = 700 * 1024;     // base64 chars per chunk document
+const MAX_PARTS   = 16;             // ceiling: 16 × 700 KiB ≈ 10.9 MB base64
 
 /* This id IS the access control. `?s=<id>` is the only thing standing between
  * the public internet and someone's loan statement or Elite Report PDF, so it
@@ -130,6 +146,77 @@ async function fsDeleteDoc(docPath, timeoutMs = 8000) {
 function wrapHtml(html, name) {
     if (html.trim().startsWith('<!') || html.trim().startsWith('<html')) return html;
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} — WealthFlow</title></head><body style="margin:0;background:#0a0e1a;">${html}</body></html>`;
+}
+
+/**
+ * Create ONE Firestore document with a client-chosen id, and REPORT whether it
+ * landed. `POST …/s?documentId=<id>` is a create, not an upsert — which is the
+ * point: firestore.rules allows `create: if true` on s/ but restricts `update`
+ * to the view counter, so a chunk write must be a create or the rules reject it.
+ * A create against an id that already exists answers 409, surfaced here as a
+ * throw rather than a silent overwrite. No result is discarded — the same
+ * discipline fsDeleteDoc applies to deletes.
+ */
+async function fsCreateDoc(collection, docId, fields, signal) {
+    const r = await fetch(`${FS_BASE}/${collection}?documentId=${docId}&key=${API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+        signal,
+    });
+    if (!r.ok) {
+        const t = await r.text().catch(() => '');
+        throw new Error(`${collection}/${docId} status ${r.status}: ${_scrubKey(t)}`);
+    }
+    return r;
+}
+
+/**
+ * Store a base64 PDF under s/<id>, chunking across sibling documents when it is
+ * too large for one. THE WRITE ORDER IS THE INTEGRITY MODEL: every chunk is
+ * written first, and only once ALL of them are confirmed is the manifest s/<id>
+ * written. So a reader that finds the manifest is guaranteed every part exists —
+ * a half-written upload leaves orphan chunks with no manifest pointing at them,
+ * which are unreachable (the id is random and only the manifest is handed out)
+ * and expire on the same clock. Nothing partial is ever served as a whole PDF.
+ */
+async function storePdf(id, pdfBase64, meta, signal) {
+    const base = {
+        n: { stringValue: meta.name },
+        t: { integerValue: String(meta.now) },
+        x: { integerValue: String(meta.expiresMs) },
+        v: { integerValue: '0' },
+        kind: { stringValue: 'pdf' },
+    };
+
+    if (pdfBase64.length <= SINGLE_MAX) {
+        // Small enough for one document — inline, exactly as before.
+        await fsCreateDoc('s', id, { ...base, pdf: { stringValue: pdfBase64 } }, signal);
+        return;
+    }
+
+    const parts = Math.ceil(pdfBase64.length / CHUNK_SIZE);
+    if (parts > MAX_PARTS) throw new Error(`pdf needs ${parts} chunks, over the ${MAX_PARTS} ceiling`);
+
+    // Chunks first, in parallel. If any rejects, Promise.all rejects and the
+    // manifest below is never written — the whole point. Sibling writes that did
+    // succeed become harmless orphans.
+    const writes = [];
+    for (let i = 0; i < parts; i++) {
+        const slice = pdfBase64.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        writes.push(fsCreateDoc('s', `${id}-${i}`, {
+            d: { stringValue: slice },
+            x: { integerValue: String(meta.expiresMs) },   // parts age out with the manifest
+        }, signal));
+    }
+    await Promise.all(writes);
+
+    // Manifest LAST. No payload of its own; it names the part count.
+    await fsCreateDoc('s', id, {
+        ...base,
+        chunked: { booleanValue: true },
+        parts: { integerValue: String(parts) },
+    }, signal);
 }
 
 export default async function handler(req, res) {
@@ -225,32 +312,26 @@ export default async function handler(req, res) {
         const expiresMs = now + EXPIRY_DAYS * 24 * 60 * 60 * 1000;
 
         // ── STRATEGY 1: Firestore 's' collection (PRIMARY) ─────────────────
+        //  PDFs go through storePdf, which stores small ones inline and chunks
+        //  large ones across sibling documents — so a big Elite Report stays on
+        //  WealthFlow's own Firestore instead of a third-party host. The write
+        //  budget is generous because a chunked PDF is several sequential-ish
+        //  writes; maxDuration is 25s.
         try {
             const link = await withTimeout(async (signal) => {
-                const fields = {
-                    n: { stringValue: cleanName },
-                    t: { integerValue: String(now) },
-                    x: { integerValue: String(expiresMs) },
-                    v: { integerValue: '0' }
-                };
                 if (isPdf) {
-                    fields.kind = { stringValue: 'pdf' };
-                    fields.pdf  = { stringValue: pdfBase64 };  // base64
+                    await storePdf(id, pdfBase64, { name: cleanName, now, expiresMs }, signal);
                 } else {
                     const pageHtml = wrapHtml(html, cleanName);
                     if (pageHtml.length > MAX_DOC_FS) throw new Error('html exceeds firestore soft cap');
-                    fields.kind = { stringValue: 'html' };
-                    fields.h    = { stringValue: pageHtml };
-                }
-                const r = await fetch(`${FS_BASE}/s?documentId=${id}&key=${API_KEY}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fields }),
-                    signal
-                });
-                if (!r.ok) {
-                    const t = await r.text().catch(() => '');
-                    throw new Error(`firestore-s status ${r.status}: ${t.slice(0,200)}`);
+                    await fsCreateDoc('s', id, {
+                        n: { stringValue: cleanName },
+                        t: { integerValue: String(now) },
+                        x: { integerValue: String(expiresMs) },
+                        v: { integerValue: '0' },
+                        kind: { stringValue: 'html' },
+                        h: { stringValue: pageHtml },
+                    }, signal);
                 }
                 // URL format:
                 //   - HTML  → ?s=ID (rendered by the SPA reader)
@@ -259,7 +340,7 @@ export default async function handler(req, res) {
                 return isPdf
                     ? `${APP_URL}api/statement-view?id=${id}`
                     : `${APP_URL}?s=${id}`;
-            }, 14000);
+            }, 22000);
             return res.status(200).json({
                 url: link, id, days: EXPIRY_DAYS,
                 via: 'firestore', kind: isPdf ? 'pdf' : 'html'
@@ -267,7 +348,10 @@ export default async function handler(req, res) {
         } catch (e) { console.warn('[statement-store] firestore s/ failed:', e && e.message); }
 
         // ── STRATEGY 2: Firestore 'shared_statements' (legacy/redundancy) ──
-        try {
+        //  A single-document redundancy path. It cannot hold a chunked PDF, so a
+        //  PDF that needed chunking skips it rather than pointlessly attempting a
+        //  doomed single-doc write (and burning its timeout).
+        if (!(isPdf && pdfBase64.length > SINGLE_MAX)) try {
             const link = await withTimeout(async (signal) => {
                 const fields = {
                     loanName:  { stringValue: cleanName },
@@ -297,33 +381,19 @@ export default async function handler(req, res) {
             });
         } catch (e) { console.warn('[statement-store] shared_statements failed:', e && e.message); }
 
-        // ── STRATEGY 3: 0x0.st (last-resort external — gives non-wealthflow URL) ──
-        try {
-            const link = await withTimeout(async (signal) => {
-                const fd = new FormData();
-                if (isPdf) {
-                    const buf = Buffer.from(pdfBase64, 'base64');
-                    fd.append('file', new Blob([buf], { type: 'application/pdf' }), `${cleanName}.pdf`);
-                } else {
-                    const buf = Buffer.from(wrapHtml(html, cleanName), 'utf8');
-                    fd.append('file', new Blob([buf], { type: 'text/html' }), `${cleanName}.html`);
-                }
-                const up = await fetch('https://0x0.st', {
-                    method: 'POST', body: fd,
-                    headers: { 'User-Agent': 'WealthFlow/8.0' },
-                    signal
-                });
-                if (!up.ok) throw new Error('0x0 status ' + up.status);
-                const t = (await up.text()).trim();
-                if (!t.startsWith('http')) throw new Error('0x0 bad body');
-                return t;
-            }, 14000);
-            return res.status(200).json({
-                url: link, id, days: 365,
-                via: '0x0', kind: isPdf ? 'pdf' : 'html'
-            });
-        } catch (e) { console.warn('[statement-store] 0x0 failed:', e && e.message); }
-
+        // NO THIRD-PARTY FALLBACK.
+        //  There used to be a Strategy 3 here that uploaded the statement — a loan
+        //  statement or an Elite Report, with balances and lender details — to
+        //  0x0.st, a public zero-auth file host, and returned that host's own URL.
+        //  It was the server-side twin of the client-side pastebin fallbacks
+        //  removed in #115, and it ran automatically whenever both Firestore
+        //  writes above failed. A share that fails and says so is strictly better
+        //  than one that silently succeeds somewhere the owner never chose. Large
+        //  PDFs, the only reason it was reached, now chunk onto Firestore in
+        //  Strategy 1, so nothing legitimate needed it.
+        //
+        //  `all_hosts_failed` is the literal the loan-share caller in index.html
+        //  matches to raise SHARE_ALL_FAILED, so the string is preserved.
         return res.status(502).json({ error: 'all_hosts_failed' });
     } catch (e) {
         console.error('[statement-store] error:', e && e.message);

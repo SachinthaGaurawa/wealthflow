@@ -23021,90 +23021,55 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     const proxyBase = 'https://wealthflow-personal.vercel.app';
                     const eliteName = 'Elite Report — ' + MONTHS[month] + ' ' + year;
 
-                    // Two-stage upload chain — guarantees a working URL:
+                    // ONE path, on WealthFlow's own servers. POST the PDF to
+                    // /api/statement-store, which stores it in Firestore — inline
+                    // when it fits one document, chunked across sibling documents
+                    // when it does not — and returns a branded
+                    // wealthflow-personal.vercel.app link that /api/statement-view
+                    // serves as a native PDF (rendered directly by iOS Safari,
+                    // Chrome, WhatsApp, Gmail).
                     //
-                    //  Stage A (preferred): /api/statement-store with the
-                    //    PDF — gives a branded wealthflow-personal.vercel.app
-                    //    URL served by /api/statement-view as native PDF.
-                    //    Works for PDFs that fit Firestore's per-doc limit
-                    //    (~900 KB after base64 expansion).
+                    // There is NO second stage. The old Stage B posted the report —
+                    // a full month of finances — to file.io / 0x0.st / tmpfiles,
+                    // public zero-auth file hosts, and returned their domain as the
+                    // "share" link. It ran whenever Stage A did not produce a URL,
+                    // including the large-PDF case, so the more detailed the report
+                    // the likelier it was published to a pastebin. Chunked storage
+                    // removes the size limit that was its only real justification;
+                    // if statement-store still cannot store the report, the share
+                    // fails honestly and the PDF is offered for local download
+                    // below, rather than being sent somewhere the owner never chose.
                     //
-                    //  Stage B (fallback): /api/share-upload — the SAME
-                    //    proven path the Loan Statement uses. Posts the PDF
-                    //    to file.io → 0x0.st → tmpfiles and returns a direct
-                    //    PDF link. Used when the PDF is too large for
-                    //    Firestore, or when Stage A is momentarily unreachable.
-                    //
-                    // The screenshot's "File stored locally" came from BOTH
-                    // failing because Vercel's default 1 MB body limit
-                    // rejected the request. That's now lifted to 10 MB on
-                    // share-upload, and Stage B is always reached as a real
-                    // fallback (not just a silent error path).
+                    // The client makes a single request and lets the server do the
+                    // chunking, so the timeout is generous.
                     let result = null;
 
-                    // ── Stage A: statement-store (branded URL) ────────────
-                    if (base64.length < 850 * 1024) {
-                        setProgress(55, 'Storing on WealthFlow servers…');
-                        const ctrlA = new AbortController();
-                        const tmA = setTimeout(() => ctrlA.abort(), 18000);
-                        try {
-                            const resp = await fetch(proxyBase + '/api/statement-store', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ pdfBase64: base64, name: eliteName }),
-                                signal: ctrlA.signal
-                            });
-                            if (resp.ok) {
-                                const data = await resp.json();
-                                if (data && data.url) {
-                                    result = {
-                                        url: data.url,
-                                        days: data.days || 30,
-                                        via: data.via || 'firestore',
-                                        kind: data.kind || 'pdf',
-                                        shortId: data.id
-                                    };
-                                }
-                            } else {
-                                console.warn('[Elite Report] statement-store HTTP', resp.status);
+                    setProgress(60, 'Storing on WealthFlow servers…');
+                    const ctrlA = new AbortController();
+                    const tmA = setTimeout(() => ctrlA.abort(), 45000);
+                    try {
+                        const resp = await fetch(proxyBase + '/api/statement-store', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ pdfBase64: base64, name: eliteName }),
+                            signal: ctrlA.signal
+                        });
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            if (data && data.url) {
+                                result = {
+                                    url: data.url,
+                                    days: data.days || 30,
+                                    via: data.via || 'firestore',
+                                    kind: data.kind || 'pdf',
+                                    shortId: data.id
+                                };
                             }
-                        } catch (eA) { console.warn('[Elite Report] statement-store failed:', eA && eA.message); }
-                        finally { clearTimeout(tmA); }
-                    } else {
-                        console.log('[Elite Report] PDF too large for statement-store, going straight to share-upload');
-                    }
-
-                    // ── Stage B: share-upload (file.io / 0x0.st / tmpfiles) ─
-                    if (!result || !result.url) {
-                        if (cancelled) return;
-                        setProgress(70, 'Uploading PDF (large file path)…');
-                        const safeMonth = MONTHS[month].replace(/[^a-zA-Z]/g, '');
-                        const fileName = `WealthFlow_Elite_Report_${safeMonth}_${year}.pdf`;
-                        const ctrlB = new AbortController();
-                        const tmB = setTimeout(() => ctrlB.abort(), 25000);
-                        try {
-                            const resp = await fetch(proxyBase + '/api/share-upload', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ base64, fileName }),
-                                signal: ctrlB.signal
-                            });
-                            if (resp.ok) {
-                                const data = await resp.json();
-                                if (data && data.url) {
-                                    result = {
-                                        url: data.url,
-                                        days: data.permanent ? 3650 : 14,
-                                        via: data.service || 'share-upload',
-                                        kind: 'pdf'
-                                    };
-                                }
-                            } else {
-                                console.warn('[Elite Report] share-upload HTTP', resp.status);
-                            }
-                        } catch (eB) { console.warn('[Elite Report] share-upload failed:', eB && eB.message); }
-                        finally { clearTimeout(tmB); }
-                    }
+                        } else {
+                            console.warn('[Elite Report] statement-store HTTP', resp.status);
+                        }
+                    } catch (eA) { console.warn('[Elite Report] statement-store failed:', eA && eA.message); }
+                    finally { clearTimeout(tmA); }
 
                     if (cancelled) return;
 
