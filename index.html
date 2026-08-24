@@ -11456,6 +11456,43 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 //  fall back to the proven legacy bridge — nothing breaks.
 // ═════════════════════════════════════════════════════════════════════════
 
+/* ── one malformed expense must not blank a page ──────────────────────────────
+ * This was written for the Expenses tab and lived INSIDE renderExpenses() as an
+ * IIFE, with a comment promising "the Expenses tab can NEVER crash on bad data
+ * again". That promise was kept, and it covered exactly one tab. renderDash()
+ * reads the same DB.get('expenses') array raw and did this:
+ *
+ *     DB.get('expenses').filter(e => e.month.startsWith(year))
+ *
+ * so a single record without a `month` — an old import, a partial cloud merge, a
+ * row written by another module — threw TypeError out of renderDash and left the
+ * DASHBOARD blank. The dashboard is the page the app opens on, so the app looked
+ * dead from the first screen, with no error anywhere a user could see it.
+ *
+ * Hoisted here so every reader gets the same repair. It fixes records IN PLACE,
+ * so the repair persists on the next write rather than being redone forever. */
+function _wfNormaliseExpenseArray(arr) {
+    if (!Array.isArray(arr)) return [];
+    const d = new Date();
+    const nowYm = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    for (let i = arr.length - 1; i >= 0; i--) {
+        const x = arr[i];
+        if (!x || typeof x !== 'object') { arr.splice(i, 1); continue; }
+        if (typeof x.amount !== 'number' || !isFinite(x.amount)) {
+            const n = parseFloat(String(x.amount == null ? '' : x.amount).replace(/[^0-9.\-]/g, ''));
+            x.amount = isFinite(n) ? n : 0;
+        }
+        if (typeof x.month !== 'string' || !/^\d{4}-\d{2}$/.test(x.month)) {
+            x.month = (typeof x.date === 'string' && x.date.length >= 7) ? x.date.slice(0, 7) : nowYm;
+        }
+        if (typeof x.cat !== 'string' || !x.cat) x.cat = 'Other';
+        if (typeof x.desc !== 'string') x.desc = String(x.desc == null ? '' : x.desc);
+        if (x.id == null) x.id = (typeof uid === 'function') ? uid() : String(Date.now()) + i;
+    }
+    return arr;
+}
+window._wfNormaliseExpenseArray = _wfNormaliseExpenseArray;
+
 // ---- small utilities -----------------------------------------------------
 function _wfApiBase() {
     try {
@@ -13589,7 +13626,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 // PRIMARY: ?s= format (ultra-short Firestore)
                 if (sId) {
                     // Try server-side API first (works even if Firebase SDK doesn't load)
-                    fetch('https://wealthflow-personal.vercel.app/api/statement-view?id=' + encodeURIComponent(sId))
+                    /* _wfApiBase() exists precisely for this and returns '' on a
+                     * real deployment, so the call stays same-origin. Hardcoding the
+                     * production host meant every PREVIEW build read and wrote
+                     * PRODUCTION's statements and view counters, cross-origin — so a
+                     * preview could never be trusted to show what it would do live. */
+                    fetch(_wfApiBase() + '/api/statement-view?id=' + encodeURIComponent(sId))
                         .then(resp => {
                             if (resp.status === 410) {
                                 _showError('This statement link has expired. Please ask the sender to generate a new one.', true);
@@ -18670,7 +18712,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         
                         // Fetch real-time views if it's a Firestore/Server link
                         if (h.shortId && (h.via === 'server' || h.via === 'client-firestore' || h.via === 'firestore')) {
-                            fetch('https://wealthflow-personal.vercel.app/api/statement-view?meta=1&id=' + h.shortId)
+                            fetch(_wfApiBase() + '/api/statement-view?meta=1&id=' + encodeURIComponent(h.shortId))
                                 .then(r => r.json())
                                 .then(data => {
                                     const vSpan = overlay.querySelector('#' + viewsSpanId);
@@ -19870,32 +19912,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 } catch (_) {}
             }
             let arr = DB.get('expenses');
-            // ── v7.42.0 — DEFENSIVE NORMALISATION (root-cause hardening) ────
-            // A SINGLE malformed expense record used to make this whole render
-            // throw — which blanked the Expenses tab AND (because forceSyncFromCloud
-            // re-renders inside its network try{}) surfaced as a false "Offline".
-            // Causes seen in the wild: amount saved as a string ("1,500"), a missing
-            // month/category from an old import, or a null array slot. We coerce every
-            // record to a safe shape here (in place, so the fix persists) so the
-            // Expenses tab can NEVER crash on bad data again.
+            // Defensive normalisation — see _wfNormaliseExpenseArray. It used to be
+            // an IIFE right here, which meant it protected THIS tab and nothing else.
             if (!Array.isArray(arr)) arr = [];
-            (function _wfNormaliseExpenses() {
-                const nowYm = `${new Date().getFullYear()}-${p2(new Date().getMonth() + 1)}`;
-                for (let i = arr.length - 1; i >= 0; i--) {
-                    const x = arr[i];
-                    if (!x || typeof x !== 'object') { arr.splice(i, 1); continue; }
-                    if (typeof x.amount !== 'number' || !isFinite(x.amount)) {
-                        const n = parseFloat(String(x.amount == null ? '' : x.amount).replace(/[^0-9.\-]/g, ''));
-                        x.amount = isFinite(n) ? n : 0;
-                    }
-                    if (typeof x.month !== 'string' || !/^\d{4}-\d{2}$/.test(x.month)) {
-                        x.month = (typeof x.date === 'string' && x.date.length >= 7) ? x.date.slice(0, 7) : nowYm;
-                    }
-                    if (typeof x.cat !== 'string' || !x.cat) x.cat = 'Other';
-                    if (typeof x.desc !== 'string') x.desc = String(x.desc == null ? '' : x.desc);
-                    if (x.id == null) x.id = uid();
-                }
-            })();
+            _wfNormaliseExpenseArray(arr);
             // ── v7.39.0 — checkmark semantics ──────────────────────────────
             // The "mark paid" checkmark is ONLY for MANUALLY-added expenses that
             // are due in the CURRENT or an UPCOMING month. Bank-statement imports
@@ -20643,7 +20663,9 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             // dashPeriod setting drives the blue stat card's scope
             const _dashPeriod = (DB.getObj('settings', {}).dashPeriod) || 'thisMonth';
-            const _allExp = (DB.get('expenses') || []).filter(e => e);
+            // Repair before reading. Without this the dashboard — the page the app
+            // opens on — throws on one record that is missing a field.
+            const _allExp = _wfNormaliseExpenseArray(DB.get('expenses') || []).filter(e => e);
             let periodExp = curMonthExp;
             let periodLabel = `${MONTHS[nowD.getMonth()]} ${nowD.getFullYear()}`;
             let periodCardTitle = 'This Month Expenses';
@@ -20744,7 +20766,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
 
             const catMap = {};
-            DB.get('expenses').filter(e => e.month.startsWith(year)).forEach(e => { catMap[e.cat] = (catMap[e.cat] || 0) + e.amount; });
+            // _allExp is already normalised; reading DB.get('expenses') raw here is
+            // what threw. Belt and braces: the fallback still counts the row rather
+            // than silently dropping money out of the chart.
+            _allExp.filter(e => (e.month || (e.date || '').slice(0, 7)).startsWith(year))
+                .forEach(e => { catMap[e.cat || 'Other'] = (catMap[e.cat || 'Other'] || 0) + (e.amount || 0); });
             const pCtx = $('dashPie');
             if (dashPieInst) dashPieInst.destroy();
             if (pCtx && typeof Chart !== 'undefined') {

@@ -267,3 +267,112 @@ describe('the app is usable on a phone, whatever the OS', () => {
         expect(HTML).toMatch(/<meta[^>]+name="viewport"[^>]+width=device-width/i);
     });
 });
+
+/* ── 4. one bad record must not blank a page ─────────────────────────────── */
+
+/* FOUND BY DRIVING THE APP, NOT BY READING IT
+ *
+ * The app was booted in a real browser with a stubbed backend, every one of its
+ * 21 pages was rendered, and then a single expense record missing a field was
+ * put into the store. renderDash() threw:
+ *
+ *     TypeError: Cannot read properties of undefined (reading 'startsWith')
+ *       at renderDash  →  DB.get('expenses').filter(e => e.month.startsWith(year))
+ *
+ * The repair for exactly this already existed. It was written as an IIFE INSIDE
+ * renderExpenses(), under a comment promising "the Expenses tab can NEVER crash
+ * on bad data again" — a promise it kept, for one tab. renderDash reads the same
+ * array raw, and the dashboard is the page the app opens on, so one old import
+ * or one partial cloud merge left the app looking dead from the first screen
+ * with no error anywhere a user could see it.
+ *
+ * The repair is now a shared function that every reader calls. */
+
+function loadNormaliser() {
+    const src = blockAt('function _wfNormaliseExpenseArray(arr)');
+    return new Function('uid', 'window', src + '; return _wfNormaliseExpenseArray;')(
+        () => 'generated-id', {});
+}
+
+describe('a malformed expense cannot blank a page', () => {
+    const N = loadNormaliser();
+
+    it('the extraction found the real function (guards a vacuous suite)', () => {
+        expect(typeof N).toBe('function');
+    });
+
+    it('fills in a missing month from the date', () => {
+        // A date in a DIFFERENT month from today on purpose: with today's month
+        // the fixture cannot tell "read the date" from "give up and use now",
+        // and a mutation replacing one with the other passed unnoticed.
+        const a = [{ id: 1, amount: 100, date: '2024-03-15' }];
+        N(a);
+        expect(a[0].month, 'the month is not being read off the date — an old import '
+            + 'silently moves to the current month, which moves the money with it')
+            .toBe('2024-03');
+    });
+
+    it('falls back to the current month when there is no date either', () => {
+        const a = [{ id: 1, amount: 100 }];
+        N(a);
+        expect(a[0].month).toMatch(/^\d{4}-\d{2}$/);
+    });
+
+    it('coerces an amount saved as a string, which is what an import produces', () => {
+        const a = [{ id: 1, amount: '1,500.50', date: '2026-08-24' }];
+        N(a);
+        expect(a[0].amount).toBe(1500.5);
+    });
+
+    it('gives an amount that cannot be read at all a number, not NaN', () => {
+        const a = [{ id: 1, amount: 'not money', date: '2026-08-24' }];
+        N(a);
+        expect(a[0].amount).toBe(0);
+        expect(Number.isFinite(a[0].amount)).toBe(true);
+    });
+
+    it('drops null slots rather than letting them through', () => {
+        const a = [null, { id: 1, amount: 5, date: '2026-08-24' }, undefined];
+        N(a);
+        expect(a).toHaveLength(1);
+    });
+
+    it('supplies a category and a description', () => {
+        const a = [{ id: 1, amount: 5, date: '2026-08-24' }];
+        N(a);
+        expect(a[0].cat).toBe('Other');
+        expect(typeof a[0].desc).toBe('string');
+    });
+
+    it('repairs IN PLACE so the fix persists on the next write', () => {
+        const row = { id: 1, amount: 5, date: '2024-03-15' };
+        const a = [row];
+        N(a);
+        expect(row.month, 'a copy was repaired and the stored record was left broken')
+            .toBe('2024-03');
+    });
+
+    it('survives being handed something that is not an array', () => {
+        expect(() => N(null)).not.toThrow();
+        expect(() => N(undefined)).not.toThrow();
+        expect(N('nonsense')).toEqual([]);
+    });
+
+    it('the dashboard repairs before it reads', () => {
+        const dash = blockAt('function renderDash()');
+        expect(dash, 'renderDash reads the raw array again — one bad record blanks '
+            + 'the page the app opens on').toMatch(/_wfNormaliseExpenseArray\(DB\.get\('expenses'\)/);
+    });
+
+    it('the category chart no longer reads the raw store', () => {
+        const dash = blockAt('function renderDash()');
+        expect(dash, "the pie chart is back on DB.get('expenses') — the exact line that threw")
+            .not.toMatch(/DB\.get\('expenses'\)\.filter\(e => e\.month\.startsWith/);
+    });
+
+    it('the repair is shared, not sealed inside one tab again', () => {
+        expect(HTML, 'the normaliser went back to being an IIFE inside renderExpenses, '
+            + 'where it protects that tab and nothing else')
+            .not.toMatch(/\(function _wfNormaliseExpenses\(\)/);
+    });
+});
