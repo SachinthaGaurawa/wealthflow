@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 103,
-  "updated": "2026-08-23",
+  "version": 104,
+  "updated": "2026-08-24",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -43,7 +43,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 910,
+  "count": 911,
   "merchants": [
     {
       "key": "bake house",
@@ -765,6 +765,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "esoft",
+      "category": "Education",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "gateway college",
