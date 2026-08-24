@@ -283,6 +283,86 @@ describe('the files the gate protects are actually in the repository', () => {
         expect(m[1], 'wf-inbox should deny outright').toMatch(/if\s+false/i);
     });
 
+    it('firestore.rules carries no unresolved placeholder', () => {
+        // The file shipped for months with a commented-out
+        // 'PASTE_YOUR_ADMIN_FIREBASE_UID_HERE' inside isAdmin(). It was harmless
+        // (an empty `in []` list is always false) and that is exactly why it was
+        // never noticed: a placeholder that fails closed looks identical to a
+        // decision. isAdmin() is now a custom claim, which needs nothing pasted
+        // in and can be revoked without redeploying rules.
+        const src = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8');
+        expect(src, 'firestore.rules still contains a PASTE_/YOUR_ placeholder')
+            .not.toMatch(/PASTE_[A-Z_]+|YOUR_[A-Z_]+_HERE/);
+        const m = src.match(/function\s+isAdmin\(\)\s*\{([^}]*)\}/);
+        expect(m, 'isAdmin() is gone entirely — /feedback would lose its admin branch').toBeTruthy();
+        expect(m[1], 'isAdmin() is back to an inline uid list, which drifts and needs a '
+            + 'rules redeploy to revoke').not.toMatch(/uid\s+in\s+\[/);
+        expect(m[1], 'isAdmin() no longer checks a custom claim').toMatch(/request\.auth\.token\.admin/);
+    });
+
+    it('the public share collections cannot be enumerated or tampered with', () => {
+        /* These four hold statements a user chose to share, and every one of them
+         * used to be `allow read: if true` with `allow create, update: if true`.
+         *
+         * Two separate holes, both invisible because sharing still worked:
+         *
+         *  · `read` is `get` + `list`. Nothing in the codebase ever lists these
+         *    collections — every reader fetches one document by a random id — so
+         *    granting `list` widened the surface for no caller at all.
+         *
+         *  · `update` exists here for exactly one caller: statement-view.js bumps
+         *    a view counter over unauthenticated REST. Left unpinned it also
+         *    covers the payload field, which is not something an anonymous
+         *    counter should be able to reach.
+         *
+         * create stays open on s/ and shared_statements/ because statement-store.js
+         * still mints them over REST with the public Web API key. That is the last
+         * HARDENING TODO, and it gets its assertion in the PR that closes it. */
+        const src = fs.readFileSync(path.join(ROOT, 'firestore.rules'), 'utf8');
+        const body = (coll) => {
+            const m = src.match(new RegExp(`match\\s+/${coll}/\\{\\w+\\}[^\\n]*\\{([^}]*)\\}`));
+            expect(m, `firestore.rules does not scope /${coll} at all`).toBeTruthy();
+            return m[1];
+        };
+        for (const coll of ['shared_statements', 'shared_stmts', 's', 'links']) {
+            const b = body(coll);
+            expect(b, `/${coll} still uses a blanket \`read\`, which permits listing the whole `
+                + 'collection — every reader in the codebase fetches a single document by id')
+                .not.toMatch(/allow[^:\n]*\bread\b[^:\n]*:\s*if\s+true/i);
+            expect(b, `/${coll} does not allow the single-document get its share links need`)
+                .toMatch(/allow[^:\n]*\bget\b[^:\n]*:\s*if\s+true/i);
+            expect(b, `/${coll} permits deletion`).not.toMatch(/allow[^:\n]*\bdelete\b[^:\n]*:\s*if\s+true/i);
+        }
+        // The two counters: update is allowed, but only for the counter field.
+        for (const [coll, field] of [['shared_statements', 'views'], ['s', 'v']]) {
+            const b = body(coll);
+            expect(b, `/${coll} allows an unrestricted update — anyone could rewrite the shared `
+                + 'statement itself, not just the view counter')
+                .not.toMatch(/allow[^:\n]*\bupdate\b[^:\n]*:\s*if\s+true/i);
+            expect(b, `/${coll} no longer pins its update to the '${field}' counter`)
+                .toMatch(new RegExp(`allow\\s+update:\\s*if\\s+onlyChanges\\(\\['${field}'\\]\\)`));
+        }
+        // links/ has no writer left anywhere in the codebase; it must stay sealed.
+        expect(body('links'), 'links/ accepts writes again — nothing in the codebase writes it')
+            .toMatch(/allow[^:\n]*\bwrite\b[^:\n]*:\s*if\s+false/i);
+        expect(src, 'onlyChanges() helper is missing, so the update rules above cannot evaluate')
+            .toMatch(/function\s+onlyChanges\(fields\)/);
+    });
+
+    it('nothing in the browser bundle lists a share collection', () => {
+        // The guard above is only safe because of this fact. If a future change
+        // adds a .where()/.orderBy() on one of these, `allow list: if false`
+        // silently breaks it — so the two are asserted together.
+        const files = ['index.html', ...fs.readdirSync(ROOT).filter((f) => /^wealthflow-.*\.js$/.test(f))];
+        for (const f of files) {
+            const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+            for (const coll of ['shared_statements', 'shared_stmts', 's', 'links']) {
+                expect(src, `${f} runs a query against /${coll}, which \`allow list: if false\` denies`)
+                    .not.toMatch(new RegExp(`collection\\('${coll}'\\)\\s*\\.(where|orderBy|limit|onSnapshot|get)\\b`));
+            }
+        }
+    });
+
     it('the inbox endpoints no longer depend on that hole being open', () => {
         // The rule above may only be sealed because the code stopped needing it.
         // If an endpoint went back to the REST API with an apiKey, sealing the rule
