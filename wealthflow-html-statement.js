@@ -302,8 +302,10 @@
     function promptPassword() {
         return new Promise(function (resolve) {
             var ov = document.createElement('div');
-            ov.className = 'mo';
-            ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(3,6,14,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px;opacity:0;transition:opacity .2s;';
+            /* NO `mo` class: pointer-events:none unless `.mo.open`, never added
+             * here — it rendered but was inert. See the matching test. */
+            ov.setAttribute('data-wfhs-modal', '1');
+            ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(3,6,14,.72);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px;opacity:0;transition:opacity .2s;pointer-events:auto;';
             ov.innerHTML =
                 '<div style="width:100%;max-width:380px;background:var(--card,#0f1626);border:1px solid var(--border2,#243049);border-radius:18px;padding:22px;">' +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' +
@@ -311,7 +313,8 @@
                 '<div style="font-size:17px;font-weight:800;color:var(--text,#e8edf5);">Unlock e-statement</div></div>' +
                 '<div style="font-size:12.5px;color:var(--text3,#8a97ad);line-height:1.55;margin-bottom:14px;">This bank statement is password-protected. Enter the cardholder\u2019s <b>Date of Birth</b> in <b>DDMMYYYY</b> format (e.g. 05071990).</div>' +
                 '<input id="_wfhsPw" type="tel" inputmode="numeric" maxlength="8" placeholder="DDMMYYYY" autofocus ' +
-                'style="width:100%;box-sizing:border-box;font-family:var(--mono,monospace);font-size:20px;letter-spacing:6px;text-align:center;padding:12px;border-radius:12px;border:1px solid var(--border2,#243049);background:var(--bg2,#0a0f1a);color:var(--text,#e8edf5);">' +
+                /* >=16px or iOS zooms; select/pointer-events vs inherited none. */
+                'style="width:100%;box-sizing:border-box;font-family:var(--mono,monospace);font-size:20px;letter-spacing:6px;text-align:center;padding:12px;border-radius:12px;border:1px solid var(--border2,#243049);background:var(--bg2,#0a0f1a);color:var(--text,#e8edf5);pointer-events:auto;-webkit-user-select:text;user-select:text;touch-action:manipulation;">' +
                 '<div id="_wfhsErr" style="color:#ef4444;font-size:12px;text-align:center;min-height:18px;margin-top:8px;"></div>' +
                 '<div style="display:flex;gap:10px;margin-top:8px;">' +
                 '<button id="_wfhsCancel" style="flex:1;padding:12px;border-radius:12px;border:1px solid var(--border2,#243049);background:transparent;color:var(--text2,#aeb9cc);font-weight:700;cursor:pointer;">Cancel</button>' +
