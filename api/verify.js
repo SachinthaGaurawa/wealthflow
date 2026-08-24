@@ -28,7 +28,11 @@
  *  Mark them Sensitive. They are read server-side only and never reach the browser.
  * ============================================================================= */
 
-const CATEGORIES = ['Telecom', 'Insurance', 'Streaming', 'Software', 'Internet', 'Utilities', 'Groceries', 'Dining', 'Health', 'Transport', 'Fuel', 'Education', 'Government', 'Shopping', 'Gold', 'Gym/Fitness', 'Leasing'];
+// Must stay identical to WFMerchants.CATEGORIES in wealthflow-merchants.js — this
+// runs on the server and cannot import the browser module, so the two are pinned
+// to each other by test/merchant_taxonomy_test.js instead of by an import. They had
+// already drifted: a cash advance and a bank fee had no category here at all.
+const CATEGORIES = ['Telecom', 'Insurance', 'Streaming', 'Software', 'Internet', 'Utilities', 'Groceries', 'Dining', 'Health', 'Transport', 'Fuel', 'Education', 'Government', 'Shopping', 'Gold', 'Gym/Fitness', 'Leasing', 'Cash Advance', 'Cash Withdrawal', 'Bank Charges', 'Other'];
 const SUBSCRIPTION_CATS = { Telecom: 1, Insurance: 1, Streaming: 1, Internet: 1, Utilities: 1, Software: 1, 'Gym/Fitness': 1, Leasing: 1 };
 
 // Google's knowledgeGraph.type says "Insurance company" or "Supermarket"; a model will

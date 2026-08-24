@@ -17,7 +17,24 @@
     if (W.WF_VERIFY_PANEL === '1.0') return;
     W.WF_VERIFY_PANEL = '1.0';
 
-    var CATS = ['Telecom', 'Insurance', 'Streaming', 'Software', 'Internet', 'Utilities', 'Groceries', 'Dining', 'Health', 'Transport', 'Fuel', 'Education', 'Government', 'Shopping', 'Gold', 'Gym/Fitness', 'Leasing'];
+    /* The picker offers whatever WFMerchants says the taxonomy is, so a category
+     * can never again exist in the classifier and be unofferable here.
+     *
+     * That gap was not theoretical. A credit-card cash advance and its own fee
+     * were the only two lines the system asked the user to categorise, and there
+     * was no "Cash Advance" and no "Bank Charges" in this list to pick — so the
+     * one question it could not answer itself was also the one it made
+     * unanswerable. The literal below is only a fallback for the case where this
+     * panel somehow loads without WFMerchants; test/merchant_taxonomy_test.js
+     * pins the two to each other so the fallback cannot rot. */
+    var CATS_FALLBACK = ['Telecom', 'Insurance', 'Streaming', 'Software', 'Internet', 'Utilities', 'Groceries', 'Dining', 'Health', 'Transport', 'Fuel', 'Education', 'Government', 'Shopping', 'Gold', 'Gym/Fitness', 'Leasing', 'Cash Advance', 'Cash Withdrawal', 'Bank Charges', 'Other'];
+    function cats() {
+        try {
+            var c = W.WFMerchants && W.WFMerchants.CATEGORIES;
+            if (Array.isArray(c) && c.length) return c;
+        } catch (_) {}
+        return CATS_FALLBACK;
+    }
     var ICON = {
         shield: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
         x: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>',
@@ -78,7 +95,7 @@
         var srcs = (p.evidence || []).map(safeUrl).filter(Boolean).slice(0, 3).map(function (u) {
             return '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + ICON.link + esc(host(u)) + '</a>';
         }).join('');
-        var opts = CATS.map(function (c) {
+        var opts = cats().map(function (c) {
             return '<option value="' + esc(c) + '"' + (c === p.type ? ' selected' : '') + '>' + esc(c) + '</option>';
         }).join('');
         return '<div class="wfv-card" data-k="' + esc(p.key) + '">' +

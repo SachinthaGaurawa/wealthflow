@@ -4781,6 +4781,25 @@
             .ai-vision-card__btns { flex-direction: column; }
             .ai-vision-card__btn  { flex: 1 1 auto; }
         }
+
+        /* ================== TOUCH TARGETS ==================
+           Measured in a real browser at 320/390/412/768/1440/2560 px: the modal
+           close button came out 28x28, .btn-sm rows 24-29 px tall and .auth-link
+           15 px. Apple asks for 44 pt and Android for 48 dp, so anything near
+           24 px is a miss-tap on every phone whatever the OS — and a miss-tap in
+           a finance app deletes or confirms the wrong row.
+           Only COARSE pointers are affected, so mouse layouts are untouched, and
+           only the MINIMUM grows: nothing is moved or resized down. */
+        @media (pointer: coarse) {
+            .btn { min-height: 40px; }
+            .btn-sm, .install-tab { min-height: 40px; padding-top: 9px; padding-bottom: 9px; }
+            .md-x { width: 40px; height: 40px; }
+            .auth-link { padding: 9px 4px; margin-top: 2px; }
+            /* Fields are tap targets too — 34 px is a miss on a phone, and a
+               mistyped amount is worse than a mistyped search. */
+            .fi, .fs { min-height: 42px; }
+        }
+
     </style>
 </head>
 
@@ -7350,6 +7369,69 @@
         }
         try { window._wfApplyCloudData = _wfApplyCloudData; } catch (_) {}
 
+        /* ── the one place a record write can fail ────────────────────────────
+         * DB.set is the write path for every expense, every income row, every
+         * setting and every imported statement in the app, and its middle line
+         * was a bare localStorage.setItem. That throws for real:
+         * QuotaExceededError on iOS Safari, whose localStorage ceiling is about
+         * 5 MB and which evicts under storage pressure. When it threw:
+         *
+         *   · appData[k] had ALREADY been updated, so the screen showed the new
+         *     value while the disk did not have it;
+         *   · the throw escaped DB.set into the click handler that called it, so
+         *     the rest of that handler — the re-render, the modal close — never
+         *     ran, and the app looked frozen. This is a crash with no error
+         *     message, which is what makes it hard to report;
+         *   · setDirty(true) and debouncedSync() sit BELOW that line, so the
+         *     change never reached Firestore either. The data was gone on reload.
+         *
+         * wealthflow-notifications.js already guards its own two writes against
+         * exactly this. The core never did.
+         *
+         * Now: never throw. Keep the in-memory value, let the caller carry on to
+         * the cloud (which has no 5 MB ceiling), free the two caches that are
+         * genuinely re-derivable and retry ONCE, and say so out loud rather than
+         * swallowing it. Nothing belonging to the user is ever dropped to make
+         * room — the prune list is a merchant cache with its own re-sync function
+         * and two diagnostic logs, and nothing else. */
+        let _wfLocalWriteBlocked = false;
+        function _persistLocal(key, value) {
+            let str;
+            try { str = JSON.stringify(value); }
+            catch (e) { console.error('[DB] could not serialise', key, e && e.message); return false; }
+            try {
+                localStorage.setItem(key, str);
+                _wfLocalWriteBlocked = false;
+                return true;
+            } catch (e) {
+                // Re-derivable ONLY. Never user data.
+                try {
+                    localStorage.removeItem('wf_merchants_remote_v1');
+                    localStorage.removeItem('wf_merchants_remote_ts');
+                    localStorage.removeItem('wf_error_log');
+                    localStorage.removeItem('wf_crash_log');
+                    localStorage.setItem(key, str);
+                    console.warn('[DB] local storage was full; freed re-fetchable caches and retried');
+                    _wfLocalWriteBlocked = false;
+                    return true;
+                } catch (e2) {
+                    if (!_wfLocalWriteBlocked) {
+                        _wfLocalWriteBlocked = true;   // say it once, not on every keystroke
+                        console.error('[DB] local storage is full —', key, e2 && e2.name);
+                        try {
+                            if (typeof notify === 'function') {
+                                notify('This device is out of storage, so changes are not being saved '
+                                    + 'on the phone. They are still syncing to your account. Free some '
+                                    + 'space, or export and clear old statements.', 'error');
+                            }
+                        } catch (_) {}
+                    }
+                    return false;
+                }
+            }
+        }
+        window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
+
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
             getObj(k, def = {}) { return appData[k] !== undefined ? appData[k] : def; },
@@ -7367,7 +7449,11 @@
                     try { v = _wfStampAndTomb(k, v); } catch (_) {}
                 }
                 appData[k] = v;
-                localStorage.setItem('wf2_' + k, JSON.stringify(v));
+                // Persist. See _persistLocal: this line used to be bare, and a full
+                // localStorage threw out of DB.set into whatever click handler called
+                // it — so the button appeared to do nothing AND the change never
+                // reached the cloud, because setDirty/debouncedSync are below it.
+                _persistLocal('wf2_' + k, v);
                 if (!silent) _lastLocalWriteTs = Date.now(); // Mark that we just wrote locally
                 // ====== v5 GUARD HOOK — track local writes so the snapshot listener can protect them ======
                 try {
@@ -7393,7 +7479,7 @@
                 if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
                     if (key in obj) delete obj[key];
                     appData[field] = obj;
-                    localStorage.setItem('wf2_' + field, JSON.stringify(obj));
+                    _persistLocal('wf2_' + field, obj);
                 }
                 _queueCloudDelete(field, key);
                 if (!silent) _lastLocalWriteTs = Date.now();
@@ -7833,10 +7919,34 @@
             } catch (e) { console.warn('[Migrate] CCOT paid-fix failed:', e && e.message); }
         }
 
+        /* ── WHY THIS RETURNS SOMETHING NOW ──────────────────────────────────
+         * It used to return undefined in every case, and it still returns before
+         * the write in three of them. backupNow() did this:
+         *
+         *     setDirty(true);
+         *     await Promise.resolve(syncToCloud());
+         *     cloudOk = true;
+         *
+         * `cloudOk = true` was reached whether the user was signed out, offline,
+         * or Firestore had rejected the write — because none of those tell the
+         * caller anything, and the await resolved on `undefined` BEFORE the write
+         * was even attempted. So every auto-backup "succeeded": the timestamp was
+         * stamped, "Auto-Backup Complete" was sent, and the status card said the
+         * data was safe. That is the whole of the reported bug — the schedule was
+         * running the entire time and reporting a backup that never happened.
+         *
+         * It now resolves TRUE only after Firestore has acknowledged the write,
+         * FALSE otherwise, and never rejects, so the many fire-and-forget callers
+         * are unaffected. */
+        let _lastCloudPushError = '';
         function syncToCloud() {
-            if (!userDocRef) return;
-            if (!navigator.onLine) { setSyncStatus('offline'); return; }
-            if (!isDirty) { setSyncStatus('online'); return; }
+            _lastCloudPushError = '';
+            if (!userDocRef) return Promise.resolve(false);
+            if (!navigator.onLine) { setSyncStatus('offline'); return Promise.resolve(false); }
+            // Nothing to push: the cloud already holds what is on this device.
+            // setDirty(false) is only ever reached after a write is acknowledged,
+            // so this is genuinely "already backed up", not "gave up".
+            if (!isDirty) { setSyncStatus('online'); return Promise.resolve(true); }
 
             setSyncStatus('syncing');
 
@@ -7854,16 +7964,19 @@
             });
 
             // Use merge:true so we never accidentally drop fields that exist in cloud but not in local appData
-            userDocRef.set(syncPayload, { merge: true }).then(() => {
+            return userDocRef.set(syncPayload, { merge: true }).then(() => {
                 setDirty(false);
                 lastSyncTime = Date.now();
                 _lastLocalWriteTs = Date.now(); // Refresh echo-suppression window
                 console.log('[SYNC] ✅ Pushed to cloud at', new Date().toLocaleTimeString());
                 setTimeout(() => setSyncStatus('online'), 300);
+                return true;
             }).catch(err => {
-                console.error('[SYNC] ❌ Push failed:', err.code, err.message);
+                console.error('[SYNC] ❌ Push failed:', err && err.code, err && err.message);
                 // Don't set offline — Firestore will retry automatically via persistence
                 setTimeout(() => setSyncStatus(navigator.onLine ? 'online' : 'offline'), 1000);
+                _lastCloudPushError = (err && (err.code || err.message)) || 'unknown';
+                return false;
             });
         }
 
@@ -11793,14 +11906,29 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 if (!silent) { notify('☁️ Backing up…', 'info'); triggerHaptic('medium'); }
                 const s = DB.getObj('settings', {});
 
-                // 1. Cloud (Firestore) — always
+                // 1. Cloud (Firestore) — always.
+                //    cloudOk comes from what syncToCloud ACTUALLY did. It used to
+                //    be set to true unconditionally, which is why a backup that
+                //    never happened still reported success.
+                let cloudReason = '';
                 try {
                     setDirty(true);
                     if (typeof syncToCloud === 'function') {
-                        await Promise.resolve(syncToCloud());
+                        cloudOk = (await Promise.resolve(syncToCloud())) === true;
+                        if (!cloudOk) {
+                            cloudReason = !window.currentUser ? 'not signed in'
+                                : (!navigator.onLine ? 'offline'
+                                : (_lastCloudPushError ? 'Firestore rejected the write: ' + _lastCloudPushError
+                                : 'the cloud write did not complete'));
+                        }
+                    } else {
+                        cloudReason = 'the cloud sync function is not loaded';
                     }
-                    cloudOk = true;
-                } catch (ce) { console.warn('[backup] cloud failed', ce && ce.message); }
+                } catch (ce) {
+                    cloudOk = false;
+                    cloudReason = (ce && ce.message) || 'cloud sync threw';
+                    console.warn('[backup] cloud failed', cloudReason);
+                }
 
                 // 2. Google Drive — ensure we have a valid token, refreshing
                 //    SILENTLY if it expired (scheduled backups happen long
@@ -11895,7 +12023,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     s.lastBackupAttempt = {
                         success: false,
                         at: nowIso,
-                        reason: 'No backup target reachable (Firestore + Drive both failed). The scheduler will retry automatically.'
+                        // Name the actual cause. "No backup target reachable" was
+                        // true but useless — there was nothing to act on in it.
+                        reason: 'Backup did not complete — cloud: ' + (cloudReason || 'failed')
+                            + (driveOk ? '' : '; Drive: not connected or upload failed')
+                            + '. The scheduler will retry automatically.'
                     };
                     DB.set('settings', s);
                 }
@@ -14743,16 +14875,28 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function setupOnlineStatus() {
             let lastKnownState = null;
 
+            /* This probe is what decides whether the app believes it is online.
+             * Its URL was a literal MARKDOWN LINK —
+             *     '[https://firestore.googleapis.com](https://firestore.googleapis.com)'
+             * — which is not a URL. The browser resolved it as a RELATIVE PATH on
+             * our own origin, so the probe never touched the internet: it asked
+             * our own server for a file with brackets in its name, got an answer
+             * (a 404 page, or the SPA shell through the rewrite), and reported
+             * "online" every single time. The offline banner therefore never
+             * appeared, the status pill said Online with no connection at all,
+             * and every reconnect pushed a sync at a network that was not there.
+             * Caught by loading the real page and reading the request log. */
             async function probeConnection() {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 5000);
                 try {
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 5000);
-                    await fetch('[https://firestore.googleapis.com](https://firestore.googleapis.com)', { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
-                    clearTimeout(timeout);
+                    await fetch('https://firestore.googleapis.com/', {
+                        method: 'HEAD', mode: 'no-cors', cache: 'no-store', signal: controller.signal
+                    });
                     return true;
                 } catch (e) {
                     return false;
-                }
+                } finally { clearTimeout(timeout); }
             }
 
             async function updateStatus() {
