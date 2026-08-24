@@ -24,35 +24,22 @@
 // =====================================================================
 
 import { randomFillSync } from 'node:crypto';
-import { fetchWithTimeout, withTimeout } from './fetch-timeout.mjs';
+import { withTimeout } from './fetch-timeout.mjs';
+import { getAdminDb, withDeadline } from './admin-db.mjs';
 
 export const config = {
     maxDuration: 25,
     api: { bodyParser: { sizeLimit: '12mb' } }
 };
 
-const PROJECT_ID  = 'wealthflow-6dffb';
-// The Firebase Web apiKey is a public project identifier, not a secret — but it is
-// read from the environment here so no credential-shaped literal lives in the repo.
-// That keeps the CI secret scanner strict: it can reject every AIzaSy... literal
-// outright, instead of needing an allowlist that a real Gemini key could hide behind.
-const API_KEY     = process.env.FIREBASE_API_KEY;
-
-// Fail loudly, not mysteriously. This value moved from a hardcoded literal to an
-// environment variable; if it is not configured, say so plainly instead of
-// issuing Firestore requests with `key=undefined` and returning a confusing 400.
-function _requireFirebaseKey(res) {
-    if (API_KEY) return true;
-    const msg = 'FIREBASE_API_KEY is not configured on this deployment. '
-        + 'Set it in Vercel → Project → Settings → Environment Variables. '
-        + '(It is the public Firebase Web apiKey — no longer hardcoded in the repo.)';
-    try {
-        if (res && res.status) { res.status(503).json({ ok: false, error: 'firebase_key_not_configured', detail: msg }); return false; }
-    } catch (_) {}
-    throw new Error(msg);
-}
-
-const FS_BASE     = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+// FIREBASE_API_KEY IS NO LONGER USED HERE. Every write and delete in this file
+// now goes through the Admin SDK (admin-db.mjs), which authenticates with
+// FIREBASE_SERVICE_ACCOUNT and bypasses security rules — that is what lets
+// firestore.rules seal `create` on the share collections and still refuse
+// `delete` to the internet while revocation keeps working. Guarding startup on
+// the public Web key would 503 this endpoint over a credential it does not use;
+// a missing service account is reported by getAdminDb() at the point of use, with
+// a reason. statement-view.js still reads over REST and still needs the Web key.
 const APP_URL     = 'https://wealthflow-personal.vercel.app/';
 const MAX_DOC_FS  = 900 * 1024;     // Firestore single-document soft cap
 const EXPIRY_DAYS = 30;
@@ -125,19 +112,24 @@ function _scrubKey(s) {
 /**
  * Delete one document, and REPORT WHAT HAPPENED. The previous code discarded
  * this outcome entirely, which is what let a refused delete read as a completed
- * one. Firestore's REST DELETE is idempotent, so a document that was never there
- * answers 200 and is correctly treated as gone.
+ * one.
+ *
+ * NOW VIA THE ADMIN SDK. Over REST this delete carried only the public Web API
+ * key, so rules saw it as unauthenticated — and `allow delete: if false` refused
+ * it. Revoking a share was therefore impossible against the deployed rules: the
+ * endpoint answered an honest 502 and the document stayed public forever. The
+ * service account bypasses rules, so revocation works WITHOUT reopening delete to
+ * the internet. A delete of a document that is not there is a success, which is
+ * the normal case (a statement lives in only one collection).
  */
 async function fsDeleteDoc(docPath, timeoutMs = 8000) {
     try {
-        const r = await fetchWithTimeout(`${FS_BASE}/${docPath}?key=${API_KEY}`,
-            { method: 'DELETE' }, timeoutMs);
-        if (r.ok) return { ok: true, detail: null };
-        let detail = '';
-        try { const j = await r.json(); detail = (j && j.error && j.error.message) || ''; } catch (_) {}
-        return { ok: false, detail: _scrubKey(detail) || `HTTP ${r.status}` };
+        const { db, reason } = await getAdminDb();
+        if (!db) return { ok: false, detail: _scrubKey(reason) };
+        await withDeadline(db.doc(docPath).delete(), timeoutMs, 'Firestore delete');
+        return { ok: true, detail: null };
     } catch (e) {
-        // fetchWithTimeout throws a named TimeoutError on expiry; both that and a
+        // withDeadline throws a named TimeoutError on expiry; both that and a
         // transport error mean the document's state is unknown, which is not success.
         return { ok: false, detail: _scrubKey((e && e.message) || e) };
     }
@@ -149,26 +141,25 @@ function wrapHtml(html, name) {
 }
 
 /**
- * Create ONE Firestore document with a client-chosen id, and REPORT whether it
- * landed. `POST …/s?documentId=<id>` is a create, not an upsert — which is the
- * point: firestore.rules allows `create: if true` on s/ but restricts `update`
- * to the view counter, so a chunk write must be a create or the rules reject it.
- * A create against an id that already exists answers 409, surfaced here as a
- * throw rather than a silent overwrite. No result is discarded — the same
- * discipline fsDeleteDoc applies to deletes.
+ * Create ONE Firestore document with a server-chosen id, via the Admin SDK.
+ *
+ * `create()` is deliberate: it is not an upsert, so an id collision throws rather
+ * than silently overwriting somebody else's shared statement. Ids come from
+ * randomId()'s CSPRNG, so a collision means something is wrong and must be loud.
+ *
+ * Plain JS values, not REST `{stringValue:…}` wrappers — the Admin SDK takes
+ * native types. Timestamps stay NUMBERS so statement-view.js, which still reads
+ * over REST, keeps seeing integerValue exactly as before; changing them to
+ * Firestore Timestamps here would silently break every existing reader.
  */
-async function fsCreateDoc(collection, docId, fields, signal) {
-    const r = await fetch(`${FS_BASE}/${collection}?documentId=${docId}&key=${API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields }),
-        signal,
-    });
-    if (!r.ok) {
-        const t = await r.text().catch(() => '');
-        throw new Error(`${collection}/${docId} status ${r.status}: ${_scrubKey(t)}`);
-    }
-    return r;
+async function fsCreateDoc(collection, docId, data) {
+    const { db, reason } = await getAdminDb();
+    if (!db) throw new Error(reason || 'Firestore unavailable');
+    await withDeadline(
+        db.collection(collection).doc(docId).create(data),
+        12000,
+        `Firestore create ${collection}/${docId}`,
+    );
 }
 
 /**
@@ -180,18 +171,12 @@ async function fsCreateDoc(collection, docId, fields, signal) {
  * which are unreachable (the id is random and only the manifest is handed out)
  * and expire on the same clock. Nothing partial is ever served as a whole PDF.
  */
-async function storePdf(id, pdfBase64, meta, signal) {
-    const base = {
-        n: { stringValue: meta.name },
-        t: { integerValue: String(meta.now) },
-        x: { integerValue: String(meta.expiresMs) },
-        v: { integerValue: '0' },
-        kind: { stringValue: 'pdf' },
-    };
+async function storePdf(id, pdfBase64, meta) {
+    const base = { n: meta.name, t: meta.now, x: meta.expiresMs, v: 0, kind: 'pdf' };
 
     if (pdfBase64.length <= SINGLE_MAX) {
         // Small enough for one document — inline, exactly as before.
-        await fsCreateDoc('s', id, { ...base, pdf: { stringValue: pdfBase64 } }, signal);
+        await fsCreateDoc('s', id, { ...base, pdf: pdfBase64 });
         return;
     }
 
@@ -205,22 +190,17 @@ async function storePdf(id, pdfBase64, meta, signal) {
     for (let i = 0; i < parts; i++) {
         const slice = pdfBase64.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
         writes.push(fsCreateDoc('s', `${id}-${i}`, {
-            d: { stringValue: slice },
-            x: { integerValue: String(meta.expiresMs) },   // parts age out with the manifest
-        }, signal));
+            d: slice,
+            x: meta.expiresMs,   // parts age out with the manifest
+        }));
     }
     await Promise.all(writes);
 
     // Manifest LAST. No payload of its own; it names the part count.
-    await fsCreateDoc('s', id, {
-        ...base,
-        chunked: { booleanValue: true },
-        parts: { integerValue: String(parts) },
-    }, signal);
+    await fsCreateDoc('s', id, { ...base, chunked: true, parts: parts });
 }
 
 export default async function handler(req, res) {
-    if (!_requireFirebaseKey(res)) return;
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -230,8 +210,8 @@ export default async function handler(req, res) {
     //
     // v3.1 — THIS PATH USED TO CLAIM SUCCESS IT HAD NOT ACHIEVED:
     //
-    //     await fetch(`${FS_BASE}/s/${id}?key=${API_KEY}`, { method:'DELETE' }).catch(()=>{});
-    //     await fetch(`${FS_BASE}/shared_statements/${id}...`, ...).catch(()=>{});
+    //     await fetch(`<firestore>/s/${id}?key=<webkey>`, { method:'DELETE' }).catch(()=>{});
+    //     await fetch(`<firestore>/shared_statements/${id}...`, ...).catch(()=>{});
     //     return res.status(200).json({ success: true });
     //
     // Both results were discarded — `.catch(()=>{})` swallowed the throw and the
@@ -258,6 +238,27 @@ export default async function handler(req, res) {
             // idempotent — removing a document that is not there answers 200 — so
             // "absent from one collection" is a success and needs no special case.
             const targets = [`s/${id}`, `shared_statements/${id}`];
+
+            // A chunked PDF's payload lives in sibling documents s/<id>-0 … -<n-1>.
+            // Deleting only the manifest would revoke the LINK while leaving the
+            // statement itself in the database, which is not what the owner was
+            // told happened. The manifest names the part count, so read it first;
+            // if it is unreadable, fall back to sweeping the whole ceiling — a
+            // delete of a document that does not exist is a success, so sweeping
+            // costs nothing and cannot report a false failure.
+            try {
+                const { db } = await getAdminDb();
+                if (db) {
+                    const snap = await withDeadline(db.doc(`s/${id}`).get(), 8000, 'Firestore read');
+                    const d = snap && snap.exists ? snap.data() : null;
+                    if (d && d.chunked) {
+                        const n = Number(d.parts) || 0;
+                        const upto = n > 0 && n <= MAX_PARTS ? n : MAX_PARTS;
+                        for (let i = 0; i < upto; i++) targets.push(`s/${id}-${i}`);
+                    }
+                }
+            } catch (_) { /* unreadable manifest — the two base targets still go */ }
+
             const failed = [];
             for (const t of targets) {
                 const gone = await fsDeleteDoc(t);
@@ -320,18 +321,14 @@ export default async function handler(req, res) {
         try {
             const link = await withTimeout(async (signal) => {
                 if (isPdf) {
-                    await storePdf(id, pdfBase64, { name: cleanName, now, expiresMs }, signal);
+                    await storePdf(id, pdfBase64, { name: cleanName, now, expiresMs });
                 } else {
                     const pageHtml = wrapHtml(html, cleanName);
                     if (pageHtml.length > MAX_DOC_FS) throw new Error('html exceeds firestore soft cap');
                     await fsCreateDoc('s', id, {
-                        n: { stringValue: cleanName },
-                        t: { integerValue: String(now) },
-                        x: { integerValue: String(expiresMs) },
-                        v: { integerValue: '0' },
-                        kind: { stringValue: 'html' },
-                        h: { stringValue: pageHtml },
-                    }, signal);
+                        n: cleanName, t: now, x: expiresMs, v: 0,
+                        kind: 'html', h: pageHtml,
+                    });
                 }
                 // URL format:
                 //   - HTML  → ?s=ID (rendered by the SPA reader)
@@ -352,25 +349,11 @@ export default async function handler(req, res) {
         //  PDF that needed chunking skips it rather than pointlessly attempting a
         //  doomed single-doc write (and burning its timeout).
         if (!(isPdf && pdfBase64.length > SINGLE_MAX)) try {
-            const link = await withTimeout(async (signal) => {
-                const fields = {
-                    loanName:  { stringValue: cleanName },
-                    createdAt: { integerValue: String(now) },
-                    expiresAt: { integerValue: String(expiresMs) }
-                };
-                if (isPdf) {
-                    fields.kind = { stringValue: 'pdf' };
-                    fields.pdf  = { stringValue: pdfBase64 };
-                } else {
-                    fields.html = { stringValue: wrapHtml(html, cleanName) };
-                }
-                const r = await fetch(`${FS_BASE}/shared_statements?documentId=${id}&key=${API_KEY}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fields }),
-                    signal
-                });
-                if (!r.ok) throw new Error('shared_statements status ' + r.status);
+            const link = await withTimeout(async () => {
+                const fields = { loanName: cleanName, createdAt: now, expiresAt: expiresMs };
+                if (isPdf) { fields.kind = 'pdf'; fields.pdf = pdfBase64; }
+                else { fields.html = wrapHtml(html, cleanName); }
+                await fsCreateDoc('shared_statements', id, fields);
                 return isPdf
                     ? `${APP_URL}api/statement-view?id=${id}`
                     : `${APP_URL}?s=${id}`;

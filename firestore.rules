@@ -30,11 +30,12 @@ rules_version = '2';
 //     the Firebase Admin SDK (service account) -> they BYPASS these rules
 //     entirely. That is why system/* and wf-inbox/** can be write:false here
 //     while the server still writes them.
-//   • statement-store.js and statement-view.js still call the Firestore REST
-//     API with only the public Web API key -> those requests are
-//     UNAUTHENTICATED as far as rules are concerned (request.auth == null).
-//     That is the ONLY reason s/ and shared_statements/ still allow
-//     unauthenticated create below. See HARDENING TODO on that section.
+//   • statement-view.js still calls the Firestore REST API with only the public
+//     Web API key -> those requests are UNAUTHENTICATED (request.auth == null).
+//     It only READS a share and bumps a view counter, which is why get stays
+//     public and update is pinned to that counter. statement-store.js no longer
+//     uses REST at all: every share write and delete goes through the Admin SDK,
+//     which is what allows create and delete to be sealed below.
 //
 //  DEPLOY:  firebase deploy --only firestore:rules
 // =============================================================================
@@ -138,7 +139,7 @@ service cloud.firestore {
     //  These hold content the user explicitly chose to SHARE. Share links are
     //  opened without signing in, so reads must be public.
     //
-    //  THREE THINGS ARE DELIBERATELY NARROWED HERE vs. a plain `if true`:
+    //  FOUR THINGS ARE DELIBERATELY NARROWED HERE vs. a plain `if true`:
     //
     //  1. `get` not `read`. `read` is `get` + `list`. Every reader in the
     //     codebase fetches ONE document by id (index.html ?s=/?stmt=/?go=
@@ -156,32 +157,31 @@ service cloud.firestore {
     //     only reads it for the ?go= redirect), so existing short links keep
     //     resolving while no new ones can be injected.
     //
-    //  Document ids are random (crypto.getRandomValues, 8 chars) so a `set()`
-    //  from the client is always a create, never an overwrite.
+    //  4. create is SEALED. That HARDENING TODO is now done: statement-store.js
+    //     writes through the Admin SDK (admin-db.mjs), and index.html's
+    //     client-side fallback that wrote s/ directly is deleted, so no browser
+    //     and no unauthenticated REST call mints a share document any more. The
+    //     server bypasses these rules, exactly as release-brain.js does for
+    //     system/*, so sealing create costs the app nothing.
     //
-    //  HARDENING TODO (the last one left): create is still unauthenticated
-    //  because statement-store.js mints these over the REST API with the public
-    //  Web API key. Move it to the Admin SDK (as inbox-store.mjs did) and
-    //  index.html's client-side fallback write to s/, then create can become
-    //  `if false` and only the server can mint share docs. Do NOT seal create
-    //  before that migration - it breaks sharing.
+    //  delete stays `if false` and revocation still works, for the same reason:
+    //  the Admin SDK is not subject to these rules. Reopening delete would let
+    //  anyone holding a link destroy someone else's shared statement.
     match /shared_statements/{id} {
       allow get: if true;
       allow list: if false;
-      allow create: if true;
+      allow create, delete: if false;
       allow update: if onlyChanges(['views']);
-      allow delete: if false;
     }
     match /shared_stmts/{id} {            // legacy top-level map - read-only
       allow get: if true;
       allow list, write: if false;
     }
-    match /s/{shortId} {                  // short-code -> statement (client + server create)
+    match /s/{shortId} {                  // short-code -> statement (Admin SDK writes only)
       allow get: if true;
       allow list: if false;
-      allow create: if true;
+      allow create, delete: if false;
       allow update: if onlyChanges(['v']);
-      allow delete: if false;
     }
     match /links/{goId} {                 // short-link redirect map - no writers remain
       allow get: if true;

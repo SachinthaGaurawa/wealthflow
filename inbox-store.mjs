@@ -49,100 +49,19 @@
  * instead of consuming the budget.
  * ===========================================================================*/
 
-/** Under the maxDuration: 60 ceiling, with room left to answer honestly. */
-export const DEFAULT_DEADLINE_MS = 8000;
+/* THE BOOTSTRAP LIVES IN admin-db.mjs. statement-store.js needs identical
+ * credential handling to seal `create` on the share collections, and two copies
+ * of a security-relevant policy is one more than can be kept in step — the same
+ * reason fetch-timeout.mjs was extracted. These names are re-exported unchanged
+ * so inbox-push/pull/ack and their tests are untouched. */
+export { DEFAULT_DEADLINE_MS, withDeadline } from './admin-db.mjs';
+import { getAdminDb, _resetAdminDb } from './admin-db.mjs';
 
-/**
- * Stop waiting after `ms`. The underlying RPC is not cancellable, so this bounds
- * OUR wait rather than the call — which is the part that matters: a handler that
- * answers "the database did not respond in 8s" is strictly better than one that
- * is killed at 60s with nothing recorded.
- */
-export async function withDeadline(promise, ms = DEFAULT_DEADLINE_MS, what = 'Firestore') {
-    let timer;
-    try {
-        return await Promise.race([
-            promise,
-            new Promise((_res, rej) => {
-                timer = setTimeout(() => {
-                    const e = new Error(`${what} did not answer within ${ms}ms`);
-                    e.name = 'TimeoutError';
-                    e.timedOut = true;
-                    rej(e);
-                }, ms);
-            }),
-        ]);
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-let _db = null;
-
-/**
- * The Firestore handle, or a reason it is unavailable — never a throw, and never
- * a null with no explanation. Same shape and same failure discipline as
- * release-brain.js's getAdmin(), deliberately: a missing credential must read as
- * "not configured", not as "empty inbox".
- *
- * NOTE the credential change. These endpoints used to need FIREBASE_API_KEY (the
- * public Web key); they now need FIREBASE_SERVICE_ACCOUNT, the same secret
- * release-brain.js already uses. If it is absent the endpoints report 503 rather
- * than degrading to something that looks like success.
- */
-export async function getInboxDb() {
-    if (_db) return { db: _db, reason: null };
-
-    let admin;
-    try {
-        admin = (await import('firebase-admin')).default;
-    } catch (e) {
-        return { db: null, reason: 'firebase-admin could not be loaded: ' + ((e && e.message) || e) };
-    }
-    if (!admin || !admin.apps) {
-        return { db: null, reason: 'firebase-admin loaded but exposes no app registry — wrong module shape.' };
-    }
-
-    if (!admin.apps.length) {
-        const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
-        if (!raw || !String(raw).trim()) {
-            return {
-                db: null,
-                reason: 'FIREBASE_SERVICE_ACCOUNT is not configured on this deployment. '
-                    + 'The inbox endpoints now use the Firebase Admin SDK so that wf-inbox can be '
-                    + 'closed to unauthenticated access; set it in Vercel → Settings → Environment Variables.',
-            };
-        }
-        let cred;
-        try {
-            cred = JSON.parse(raw);
-        } catch (e) {
-            // NEVER pass a JSON.parse message through: V8 embeds the first ~10
-            // bytes of the input in it, which here is the head of a private key.
-            const at = String((e && e.message) || '').match(/at position (\d+)/);
-            return {
-                db: null,
-                reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON ('
-                    + (at ? 'malformed at position ' + at[1] : 'malformed') + ').',
-            };
-        }
-        try {
-            admin.initializeApp({ credential: admin.credential.cert(cred) });
-        } catch (e) {
-            return { db: null, reason: 'firebase-admin rejected that credential: ' + ((e && e.message) || e) };
-        }
-    }
-
-    try {
-        _db = admin.firestore();
-    } catch (e) {
-        return { db: null, reason: 'firebase-admin initialised but Firestore is unavailable: ' + ((e && e.message) || e) };
-    }
-    return { db: _db, reason: null };
-}
+/** The Firestore handle, or a reason it is unavailable — never a throw. */
+export async function getInboxDb() { return getAdminDb(); }
 
 /** Reset the cached handle. Tests only — production wants the warm instance. */
-export function _resetInboxDb() { _db = null; }
+export function _resetInboxDb() { _resetAdminDb(); }
 
 export const INBOX_ROOT = 'wf-inbox';
 export const ITEMS = 'items';
