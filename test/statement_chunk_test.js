@@ -23,8 +23,17 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
+import { makeFakeAdmin, FAKE_SERVICE_ACCOUNT } from './fake-admin.mjs';
 
 process.env.FIREBASE_API_KEY = 'test-key-not-a-real-credential';
+process.env.FIREBASE_SERVICE_ACCOUNT = FAKE_SERVICE_ACCOUNT;
+
+/* WRITES go through the Admin SDK now, so firebase-admin is mocked. READS stay on
+ * the REST API — statement-view.js serves a public link and has no service
+ * account — so fetch is still stubbed, and the split is itself the assertion:
+ * a write that reached for fetch, or a read that reached the real network, fails
+ * the test that did it. */
+const fake = makeFakeAdmin();
 
 const realFetch = globalThis.fetch;
 const FS_HOST = 'firestore.googleapis.com';
@@ -33,64 +42,44 @@ function jsonRes(status, obj) {
     return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-/** An in-memory Firestore that honours exactly the REST shapes the two handlers
- *  use: create-with-id (POST …/<coll>?documentId=<id>), get (GET …/<coll>/<id>)
- *  and the fire-and-forget view-count PATCH. Records write order so "manifest
- *  written last" is checkable. */
-function makeFirestore() {
-    const docs = new Map();   // 's/<id>' | 'shared_statements/<id>' → fields
-    const order = [];         // keys in the order they were created
-    let failOn = () => false; // (url, method) → true to force a 500
-
-    async function handle(input, init) {
-        const url = String(input && input.url ? input.url : input);
-        const method = String((init && init.method) || 'GET').toUpperCase();
-        if (failOn(url, method)) return jsonRes(500, { error: { message: 'injected failure' } });
-
-        const after = url.split('/documents/')[1] || '';
-        const [pathPart, queryPart] = after.split('?');
-        const query = new URLSearchParams(queryPart || '');
-
-        if (method === 'POST') {                       // create-with-id
-            const coll = pathPart;                     // 's' | 'shared_statements'
-            const id = query.get('documentId');
-            const key = `${coll}/${id}`;
-            if (docs.has(key)) return jsonRes(409, { error: { message: 'ALREADY_EXISTS' } });
-            const fields = (JSON.parse(init.body) || {}).fields || {};
-            docs.set(key, fields);
-            order.push(key);
-            return jsonRes(200, { name: key, fields });
-        }
-        if (method === 'GET') {                         // read one doc
-            const key = pathPart;                       // 's/<id>' | 's/<id>-<i>'
-            if (docs.has(key)) return jsonRes(200, { name: key, fields: docs.get(key) });
-            return jsonRes(404, { error: { message: 'NOT_FOUND' } });
-        }
-        if (method === 'PATCH') return jsonRes(200, {}); // view counter — accept
-        return jsonRes(400, { error: { message: 'unexpected ' + method } });
+/** Serve statement-view's REST GETs out of the SAME store the Admin writes went
+ *  into, so a store→view round-trip is genuinely end to end. */
+function restRead(url) {
+    const after = url.split('/documents/')[1] || '';
+    const path = after.split('?')[0];
+    if (!fake.docs.has(path)) return jsonRes(404, { error: { message: 'NOT_FOUND' } });
+    const data = fake.docs.get(path);
+    const fields = {};
+    for (const [k, v] of Object.entries(data)) {
+        if (typeof v === 'string') fields[k] = { stringValue: v };
+        else if (typeof v === 'boolean') fields[k] = { booleanValue: v };
+        else if (typeof v === 'number') fields[k] = { integerValue: String(v) };
     }
-
-    return { docs, order, handle, setFailOn(fn) { failOn = fn; } };
+    return jsonRes(200, { name: path, fields });
 }
 
-let fsx, calls, blocked;
+let calls, blocked;
 
-beforeEach(() => {
-    fsx = makeFirestore();
+beforeEach(async () => {
+    fake.reset();
     calls = [];
     blocked = [];
+    const { _setAdminModule } = await import('../admin-db.mjs');
+    _setAdminModule(fake.admin);           // inject the in-memory Firestore
     globalThis.fetch = async (input, init) => {
         const url = String(input && input.url ? input.url : input);
+        const method = String((init && init.method) || 'GET').toUpperCase();
         calls.push(url);
-        if (url.includes(FS_HOST)) return fsx.handle(input, init);
-        blocked.push(url);                       // anything off Firestore is a failure
+        if (url.includes(FS_HOST) && method === 'GET') return restRead(url);
+        if (url.includes(FS_HOST) && method === 'PATCH') return jsonRes(200, {});  // view counter
+        blocked.push(`${method} ${url}`);
         throw new Error('network blocked in tests: ' + url);
     };
 });
 
 afterEach(() => {
     globalThis.fetch = realFetch;
-    expect(blocked, `a test reached a non-Firestore host:\n  ${blocked.join('\n  ')}`).toEqual([]);
+    expect(blocked, `a test reached the network or wrote over REST:\n  ${blocked.join('\n  ')}`).toEqual([]);
 });
 
 function mkRes() {
@@ -141,9 +130,9 @@ describe('a small PDF is stored inline in one document and served back', () => {
         const id = s.body.id;
 
         // exactly one document, inline, not chunked
-        expect(fsx.order).toEqual([`s/${id}`]);
-        const doc = fsx.docs.get(`s/${id}`);
-        expect(doc.pdf.stringValue).toBe(b64);
+        expect(fake.order).toEqual([`s/${id}`]);
+        const doc = fake.docs.get(`s/${id}`);
+        expect(doc.pdf).toBe(b64);
         expect(doc.chunked).toBeUndefined();
 
         const v = await view({ id });
@@ -164,16 +153,16 @@ describe('a large PDF chunks across sibling documents and reassembles', () => {
         expect(s.status).toBe(200);
         const id = s.body.id;
 
-        const manifest = fsx.docs.get(`s/${id}`);
+        const manifest = fake.docs.get(`s/${id}`);
         expect(manifest, 'no manifest was written').toBeTruthy();
-        expect(manifest.chunked.booleanValue).toBe(true);
-        const parts = parseInt(manifest.parts.integerValue, 10);
+        expect(manifest.chunked).toBe(true);
+        const parts = manifest.parts;
         expect(parts).toBeGreaterThan(1);
         expect(manifest.pdf, 'the manifest must not also carry the payload').toBeUndefined();
 
         // every part exists, and the manifest is the LAST thing written
-        for (let i = 0; i < parts; i++) expect(fsx.docs.has(`s/${id}-${i}`), `part ${i} missing`).toBe(true);
-        expect(fsx.order[fsx.order.length - 1], 'manifest was not written last').toBe(`s/${id}`);
+        for (let i = 0; i < parts; i++) expect(fake.docs.has(`s/${id}-${i}`), `part ${i} missing`).toBe(true);
+        expect(fake.order[fake.order.length - 1], 'manifest was not written last').toBe(`s/${id}`);
 
         const v = await view({ id });
         expect(v.status).toBe(200);
@@ -197,7 +186,7 @@ describe('the manifest is the proof of a complete upload', () => {
     it('a failed chunk write leaves NO manifest, so nothing partial can be read', async () => {
         // Fail the write of chunk -1. Promise.all rejects, the manifest is never
         // written, and there is no third-party fallback — the share fails honestly.
-        fsx.setFailOn((url, method) => method === 'POST' && /documentId=[^&]*-1(&|$)/.test(url));
+        fake.setFailOn((path, op) => (op === 'create' && /-1$/.test(path)) ? new Error('injected failure') : null);
 
         const original = crypto.randomBytes(1_200_000);
         const s = await store({ pdfBase64: original.toString('base64'), name: 'Broken' });
@@ -206,7 +195,7 @@ describe('the manifest is the proof of a complete upload', () => {
         expect(s.body.error).toBe('all_hosts_failed');
 
         // orphan chunks may exist, but NO manifest (8-char alnum id, no dash)
-        const manifestKeys = [...fsx.docs.keys()].filter((k) => /^s\/[A-Za-z0-9]{8}$/.test(k));
+        const manifestKeys = [...fake.docs.keys()].filter((k) => /^s\/[A-Za-z0-9]{8}$/.test(k));
         expect(manifestKeys, 'a manifest was written despite an incomplete upload').toEqual([]);
         assertNoThirdParty();
     });
@@ -216,7 +205,7 @@ describe('the manifest is the proof of a complete upload', () => {
         const s = await store({ pdfBase64: original.toString('base64'), name: 'Losspart' });
         const id = s.body.id;
 
-        fsx.docs.delete(`s/${id}-1`);            // simulate a part becoming unreadable
+        fake.docs.delete(`s/${id}-1`);            // simulate a part becoming unreadable
         const v = await view({ id });
         expect(v.status).toBe(502);
         expect(v.body.error).toBe('chunk_unavailable');
@@ -228,7 +217,7 @@ describe('statement-store reaches for no third-party host at all', () => {
         const original = crypto.randomBytes(2_000_000);   // base64 ≈ 2.7 MB → 4 chunks
         const s = await store({ pdfBase64: original.toString('base64'), name: 'Big' });
         expect(s.status).toBe(200);
-        expect(calls.every((u) => u.includes(FS_HOST)), 'a non-Firestore URL was fetched').toBe(true);
+        expect(calls.filter((u) => !u.includes(FS_HOST)), 'a non-Firestore URL was fetched').toEqual([]);
         assertNoThirdParty();
     });
 });

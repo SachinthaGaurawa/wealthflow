@@ -149,7 +149,12 @@ describe('the server share endpoints upload to no third party', () => {
 
     it('the scan is reading real code (guards a vacuous pass)', () => {
         expect(STORE.length).toBeGreaterThan(3000);
-        expect(STORE, 'statement-store no longer creates Firestore docs — retarget this test').toMatch(/documentId=/);
+        // Anchored on the Admin-SDK create. This used to look for the REST
+        // `documentId=` query parameter, which disappeared when the writes moved
+        // off REST — the guard correctly refused to keep passing against a file
+        // it no longer recognised, which is exactly what a vacuous-pass check is for.
+        expect(STORE, 'statement-store no longer creates Firestore docs — retarget this test')
+            .toMatch(/fsCreateDoc\(/);
     });
 
     for (const host of BANNED.filter((h) => h !== 'pastebin.com')) {
