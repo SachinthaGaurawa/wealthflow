@@ -25,6 +25,8 @@
  *    decrypt(fileText, password)           → Promise<string htmlOrEmpty>
  *    htmlToText(html)                      → string
  *    htmlToTransactions(html)              → [{date,narration,amount,direction}]
+ *    htmlToTransactionsAsync(html)         → Promise<{transactions,rendered,renderedHtml}>
+ *    renderInSandbox(html)                 → Promise<string>  (runs it, see below)
  *    promptPassword()                      → Promise<string|null>  (DDMMYYYY UI)
  *    getStatementText(file)                → Promise<{ok,html,text,transactions,meta}>
  *  ===========================================================================*/
@@ -346,6 +348,19 @@
         return '';
     }
 
+    /* A Dr/Cr marker standing alone in its OWN cell or field. _dirOf only ever
+     * looked INSIDE the amount ("15,000.00 Cr"), so the six-column layout that
+     * puts the marker in a column of its own read every payment as a charge —
+     * which silently inflates what the card appears to owe, and looks like
+     * nothing is wrong. Found by rendering a real statement in a real browser;
+     * every fixture until then happened to merge the marker into the amount. */
+    function _markerDir(s) {
+        var t = String(s || '').trim().replace(/\.$/, '');
+        if (/^(?:CR|CREDIT)$/i.test(t)) return 'credit';
+        if (/^(?:DR|DEBIT)$/i.test(t)) return 'debit';
+        return '';
+    }
+
     var _DATE_TOKEN = '(?:\\d{1,2}[\\/\\-\\s](?:\\d{1,2}|[A-Za-z]{3,9})[\\/\\-\\s]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})';
 
     function _cleanNarr(s) {
@@ -421,7 +436,16 @@
                     if (c.length > narr.length) narr = c;
                 });
 
-                var row = (date && amtRaw != null) ? _mkRow(date, narr, amtRaw, '') : null;
+                var dirHint = _dirOf(amtRaw);
+                if (!dirHint) {
+                    for (var m = cells.length - 1; m >= 0; m--) {
+                        if (m === di) continue;
+                        dirHint = _markerDir(cells[m]);
+                        if (dirHint) break;
+                    }
+                }
+
+                var row = (date && amtRaw != null) ? _mkRow(date, narr, amtRaw, dirHint) : null;
                 // Merged cells ("02-Aug-2026 ODEL COLOMBO" | "5,000.00 Dr") do not
                 // decompose by column; the line parser handles them.
                 if (!row) row = _fromLine(cells.join(' '));
@@ -471,26 +495,72 @@
         return _mkRow(val(dk), val(nk), val(ak), dir);
     }
 
+    /** One POSITIONAL row — ["03-Aug-2026","KEELLS","4,250.00","Dr"] — which is
+     *  every bit as common as an array of objects and was rejected outright,
+     *  because the span scan required a '{' before it would even try to parse. */
+    function _fromArrayRow(a) {
+        if (!Array.isArray(a) || a.length < 2) return null;
+        var v = a.map(function (x) {
+            return (x == null || typeof x === 'object') ? '' : String(x);
+        });
+        var di = -1, ai = -1, ni = -1, i;
+        for (i = 0; i < v.length; i++) { if (_toISO(v[i])) { di = i; break; } }
+        if (di < 0) return null;
+        // Right to left: the rightmost money column is the amount, not a quantity
+        // embedded in the description — the same rule the table layer uses.
+        for (i = v.length - 1; i >= 0; i--) {
+            if (i !== di && _isMoney(v[i]) && _num(v[i]) != null) { ai = i; break; }
+        }
+        if (ai < 0) return null;
+        for (i = 0; i < v.length; i++) {
+            var t = v[i].trim();
+            if (i === di || i === ai || !t) continue;
+            if (_isMoney(t) || _isCur(t) || _toISO(t)) continue;
+            if (ni < 0 || t.length > v[ni].trim().length) ni = i;
+        }
+        if (ni < 0) return null;
+        var dir = _dirOf(v[ai]);
+        for (i = 0; i < v.length && !dir; i++) {
+            if (i !== ni) dir = _dirOf(v[i]) || _markerDir(v[i]);
+        }
+        return _mkRow(v[di], v[ni], v[ai], dir);
+    }
+
+    /* A minified bundle is millions of characters of '[' that never balance in a
+     * scan this naive, so the work done per block is capped. Without a cap this
+     * is quadratic and would hang the phone on a 3 MB statement. */
+    var _SCAN_BUDGET = 2000000;
+
     /** Every balanced [...] span inside a <script>, parsed as data if it can be. */
     function _fromScripts(html) {
         var out = [];
         var blocks = String(html).match(/<script[^>]*>[\s\S]*?<\/script>/gi) || [];
         blocks.forEach(function (block) {
             var body = block.replace(/^<script[^>]*>/i, '').replace(/<\/script>\s*$/i, '');
+            var work = 0;
             for (var i = 0; i < body.length; i++) {
                 if (body[i] !== '[') continue;
                 var depth = 0, inStr = false, q = '', j = i;
                 for (; j < body.length; j++) {
+                    /* Bounded, not unbounded: see _SCAN_BUDGET. */
+                    if (++work > _SCAN_BUDGET) return;
                     var ch = body[j];
                     if (inStr) { if (ch === '\\') { j++; continue; } if (ch === q) inStr = false; continue; }
                     if (ch === '"' || ch === "'") { inStr = true; q = ch; continue; }
                     if (ch === '[') depth++;
                     else if (ch === ']') { depth--; if (depth === 0) break; }
                 }
-                if (depth !== 0) break;                      // unbalanced — give up on this block
+                /* This '[' never closed — a regex literal or a template string
+                 * desynced the scan. Abandoning the whole BLOCK here meant one
+                 * such '[' anywhere above the data hid every array below it, and
+                 * in minified code there is always one. Move on to the next '['
+                 * instead; _SCAN_BUDGET is what keeps that affordable. */
+                if (depth !== 0) continue;
                 var span = body.slice(i, j + 1);
                 i = j;
-                if (span.length < 20 || span.indexOf('{') < 0) continue;
+                if (span.length < 20) continue;
+                // Objects OR positional rows. Requiring '{' dropped [[...],[...]].
+                if (span.indexOf('{') < 0 && !/\[\s*["'\-\d]/.test(span)) continue;
                 var arr = null;
                 try { arr = JSON.parse(span); } catch (_) {
                     // Tolerate JS object literals; anything else is skipped.
@@ -502,7 +572,10 @@
                     } catch (__) { arr = null; }
                 }
                 if (!Array.isArray(arr)) continue;
-                arr.forEach(function (o) { var r = _fromObject(o); if (r) out.push(r); });
+                arr.forEach(function (o) {
+                    var r = Array.isArray(o) ? _fromArrayRow(o) : _fromObject(o);
+                    if (r) out.push(r);
+                });
             }
         });
         return out;
@@ -548,6 +621,160 @@
         return out;
     }
 
+    /* ── run the statement, do not merely read it ─────────────────────────────
+     *
+     * A Smart Statement is an APPLICATION. Its transactions live in JavaScript
+     * and are drawn into the page on load. DOMParser does not execute scripts,
+     * so every static layer above has been reading an empty shell. That is not a
+     * theory — it is what the field diagnostic reported on the real file:
+     *
+     *     tables 2 / rows 3 / cells 17 / date-cells 0 / money-cells 0 /
+     *     scripts 14 / script-rows 0 / chars 3104263
+     *
+     * Three million characters, fourteen scripts, and three table rows between
+     * them, not one of which holds a date or an amount. No amount of extra
+     * layout guessing reaches data that has not been rendered yet.
+     *
+     * So render it, the way a viewer app does — but held far more tightly, because
+     * this is executable code that arrived as an email attachment:
+     *
+     *   • sandbox="allow-scripts" and NOTHING else. WITHOUT allow-same-origin the
+     *     frame gets an opaque origin: it cannot read this page's DOM, its
+     *     localStorage, its IndexedDB or the signed-in session, and it cannot call
+     *     anything here. Adding allow-same-origin would hand a stranger's script
+     *     the user's entire account, so the tests assert that it is absent.
+     *   • An injected CSP of default-src 'none', ahead of any of the statement's
+     *     own markup: no fetch, no XHR, no WebSocket, no beacon, no remote image,
+     *     no remote script. A statement has no reason to touch the network, and
+     *     the user's financial data must not leave the device.
+     *   • No allow-forms, allow-popups, allow-modals or allow-top-navigation: it
+     *     cannot submit, open, block or navigate.
+     *   • The frame is off-screen, and removed the moment it answers or the
+     *     deadline passes.
+     *
+     * It reports back by postMessage carrying a per-run nonce. The parent never
+     * reaches into the frame; it only reads the string the frame chose to send.
+     * ------------------------------------------------------------------------ */
+    var _SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; "
+        + "style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; "
+        + "form-action 'none'; base-uri 'none'; frame-src 'none'; child-src 'none'";
+
+    /* Runs INSIDE the frame. It has to survive the statement calling
+     * document.write() after load — which implies document.open() and wipes every
+     * node and every document listener — so no state is kept in the DOM and the
+     * loop is driven by setTimeout, which document.open() does not touch.
+     *
+     * Script bodies are stripped from the snapshot before it is sent: after the
+     * page has run, the rows are in the DOM, and posting three megabytes of
+     * library source back across the boundary is pure cost. */
+    function _bootstrapSrc(nonce, budgetMs) {
+        return '(function(){'
+            + 'var N=' + JSON.stringify(String(nonce)) + ',D=' + Number(budgetMs) + ';'
+            + 'var T=Date.now(),last=-1,still=0,sent=0,BL=[],ER=0,E1="";'
+            /* The likeliest way this fix fails is the CSP refusing something the
+             * statement needed — and a silent refusal would put us straight back
+             * to guessing. Report the DIRECTIVE and the blocked origin, never the
+             * path or query, which is where data would be. */
+            + 'function onv(e){try{var d=e.violatedDirective||e.effectiveDirective||"?";'
+            + 'var u=String(e.blockedURI||"").split("/").slice(0,3).join("/");'
+            + 'var k=d+(u?" "+u:"");if(BL.length<6&&BL.indexOf(k)<0)BL.push(k);}catch(x){}}'
+            + 'try{window.addEventListener("securitypolicyviolation",onv,true);}catch(e){}'
+            + 'try{document.addEventListener("securitypolicyviolation",onv,true);}catch(e){}'
+            + 'var SC=new RegExp("<scr"+"ipt[\\\\s\\\\S]*?</scr"+"ipt>","gi");'
+            + 'function post(o){try{o.__wfhs=N;parent.postMessage(o,"*");}catch(e){}}'
+            + 'function snap(){if(sent)return;sent=1;var h="";'
+            + 'try{h=document.documentElement?document.documentElement.outerHTML:"";}catch(e){}'
+            + 'try{h=h.replace(SC,"");}catch(e){}'
+            + 'post({html:h,ms:Date.now()-T,blocked:BL,errs:ER,err1:E1});}'
+            + 'function tick(){var n=0;'
+            + 'try{n=(document.body&&document.body.innerHTML.length)||0;}catch(e){}'
+            + 'if(n===last){still++;}else{still=0;last=n;}'
+            + 'if((still>=2&&n>0)||Date.now()-T>=D){snap();return;}'
+            + 'setTimeout(tick,160);}'
+            /* Swallow the statement's own errors — one throw must not stop the
+             * snapshot — but COUNT them, and keep the first message with every
+             * digit masked, because "it rendered nothing" and "it threw on line
+             * one" need different fixes. */
+            + 'try{window.onerror=function(m){ER++;if(!E1)E1=String(m).replace(/[0-9]/g,"#").slice(0,90);return true;};}catch(e){}'
+            + 'setTimeout(tick,100);'
+            + '})();';
+    }
+
+    /* The statement goes in the BODY of a document we control, so the CSP and the
+     * bootstrap are guaranteed to come first. Its own <html>/<head>/<body> tags are
+     * dropped by the parser while their contents stay inline, and its scripts still
+     * run — which is the whole point. */
+    function _buildSandboxDoc(inner, nonce, budgetMs) {
+        return '<!doctype html><html><head><meta charset="utf-8">'
+            + '<meta http-equiv="Content-Security-Policy" content="' + _SANDBOX_CSP + '">'
+            + '<script>' + _bootstrapSrc(nonce, budgetMs) + '<\/script>'
+            + '</head><body>' + String(inner == null ? '' : inner) + '</body></html>';
+    }
+
+    var _RENDER_MS = 9000;
+
+    /** Resolves with the rendered HTML, or '' if it could not be rendered.
+     *  Never rejects: rendering is an enhancement, and the static layers stand. */
+    function renderInSandbox(html, opts) {
+        opts = opts || {};
+        var doc = opts.document || (typeof document !== 'undefined' ? document : null);
+        var win = opts.window || (typeof window !== 'undefined' ? window : null);
+        var budget = opts.timeoutMs || _RENDER_MS;
+        if (!html || !doc || !win || typeof doc.createElement !== 'function'
+            || typeof win.addEventListener !== 'function') return Promise.resolve('');
+        return new Promise(function (resolve) {
+            var nonce = 'wfhs' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+            var frame, timer = null, done = false;
+
+            function finish(out) {
+                if (done) return;
+                done = true;
+                try { win.removeEventListener('message', onMsg); } catch (_) {}
+                if (timer) { try { clearTimeout(timer); } catch (_) {} }
+                try { if (frame && frame.parentNode) frame.parentNode.removeChild(frame); } catch (_) {}
+                resolve(typeof out === 'string' ? out : '');
+            }
+
+            function onMsg(e) {
+                var d = e && e.data;
+                if (!d || typeof d !== 'object' || d.__wfhs !== nonce) return;
+                /* The nonce is unguessable, but if a source is available it must be
+                 * our own frame — a message is only ever trusted for one reason. */
+                if (e.source && frame && frame.contentWindow && e.source !== frame.contentWindow) return;
+                if (typeof opts.onReport === 'function') {
+                    try {
+                        opts.onReport({
+                            blocked: Array.isArray(d.blocked) ? d.blocked.slice(0, 6).map(String) : [],
+                            errs: Number(d.errs) || 0,
+                            /* Masked in the frame already; masked again here, because
+                             * a value that must never carry digits is not something
+                             * to take on trust from the document being examined. */
+                            err1: String(d.err1 || '').replace(/[0-9]/g, '#').slice(0, 90),
+                            ms: Number(d.ms) || 0
+                        });
+                    } catch (_) {}
+                }
+                finish(typeof d.html === 'string' ? d.html : '');
+            }
+
+            try {
+                frame = doc.createElement('iframe');
+                win.addEventListener('message', onMsg);
+                timer = setTimeout(function () { finish(''); }, budget + 1500);
+                // allow-scripts ALONE. See the block comment above: adding
+                // allow-same-origin would give the statement this page's origin.
+                frame.setAttribute('sandbox', 'allow-scripts');
+                frame.setAttribute('referrerpolicy', 'no-referrer');
+                frame.setAttribute('aria-hidden', 'true');
+                frame.setAttribute('tabindex', '-1');
+                frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1024px;'
+                    + 'height:900px;opacity:0;pointer-events:none;border:0;';
+                frame.srcdoc = _buildSandboxDoc(html, nonce, budget);
+                (doc.body || doc.documentElement).appendChild(frame);
+            } catch (_) { finish(''); }
+        });
+    }
+
     function htmlToTransactions(html) {
         if (!html) return [];
         var doc = null;
@@ -560,6 +787,27 @@
         return _dedupe(rows);
     }
 
+    /* The static read first — it is instant, and a statement that really is a
+     * table needs no frame at all. Only when it yields NOTHING and the document
+     * carries scripts is it worth paying for a render. */
+    function htmlToTransactionsAsync(html, opts) {
+        var empty = { transactions: [], rendered: false, renderedHtml: '' };
+        if (!html) return Promise.resolve(empty);
+        var rows = [];
+        try { rows = htmlToTransactions(html); } catch (_) { rows = []; }
+        if (rows.length) return Promise.resolve({ transactions: rows, rendered: false, renderedHtml: '' });
+        if (!/<script[\s>]/i.test(String(html))) return Promise.resolve(empty);
+        var report = null, o = {}, k;
+        for (k in (opts || {})) { if (Object.prototype.hasOwnProperty.call(opts, k)) o[k] = opts[k]; }
+        o.onReport = function (x) { report = x; };
+        return renderInSandbox(html, o).then(function (out) {
+            if (!out) return { transactions: [], rendered: false, renderedHtml: '', report: report };
+            var r2 = [];
+            try { r2 = htmlToTransactions(out); } catch (_) { r2 = []; }
+            return { transactions: r2, rendered: true, renderedHtml: out, report: report };
+        })['catch'](function () { return empty; });
+    }
+
     /* WHAT THE DOCUMENT ACTUALLY LOOKED LIKE.
      *
      * "Couldn't read transactions" is a dead end: it names no cause, so the only
@@ -569,11 +817,35 @@
      * It is deliberately SHAPE ONLY — counts, and lines with every digit masked —
      * so a diagnostic can be shared without exposing an amount, a card number or a
      * merchant the owner banks with. */
-    function diagnose(html) {
-        var d = { tables: 0, rows: 0, cells: 0, scripts: 0, arrays: 0, chars: 0, dateCells: 0, moneyCells: 0, samples: [] };
+    /* What KIND of thing is in a <script>. On the real file this is the question
+     * that matters: fourteen scripts and three table rows means the rows are built
+     * at runtime — and if one of those scripts is a megabyte of base64 rather than
+     * code, there is a second-stage payload behind it. Sizes and kinds only; no
+     * content is ever reported. */
+    function _scriptKind(body) {
+        var t = String(body || '').replace(/^[\s;]+/, '');
+        if (!t) return 'empty';
+        if (/^[[{]/.test(t) && /["']\s*:/.test(t.slice(0, 4000))) return 'json';
+        var b = t.match(/[A-Za-z0-9+/=]{512,}/);
+        if (b) return 'b64-' + b[0].length;
+        if (/\bdocument\.write\s*\(/.test(t)) return 'doc-write';
+        if (/\batob\s*\(/.test(t)) return 'atob';
+        if (/\bfunction\b|=>|\bvar\b|\blet\b|\bconst\b/.test(t)) return 'js';
+        return 'other';
+    }
+
+    function diagnose(html, extra) {
+        var d = { tables: 0, rows: 0, cells: 0, scripts: 0, arrays: 0, chars: 0, dateCells: 0,
+                  moneyCells: 0, bodyChars: 0, topScripts: [], rendered: false,
+                  renderedChars: 0, renderedRows: 0, blocked: [], errs: 0, err1: '',
+                  samples: [] };
         var src = String(html || '');
         d.chars = src.length;
         d.scripts = (src.match(/<script[^>]*>/gi) || []).length;
+        d.topScripts = (src.match(/<script[^>]*>[\s\S]*?<\/script>/gi) || []).map(function (b) {
+            var body = b.replace(/^<script[^>]*>/i, '').replace(/<\/script>\s*$/i, '');
+            return { n: body.length, k: _scriptKind(body) };
+        }).sort(function (a, b2) { return b2.n - a.n; }).slice(0, 5);
         try {
             var doc = new DOMParser().parseFromString(src, 'text/html');
             var tables = _slice(doc.querySelectorAll('table'));
@@ -607,16 +879,35 @@
             if (!/\d[.,]\d{2}\b/.test(L) && !/[A-Za-z]{3}/.test(L)) continue;
             d.samples.push(L.replace(/\d/g, '#').slice(0, 120));
         }
+        d.bodyChars = text.replace(/\s+/g, ' ').trim().length;
+        if (extra) {
+            d.rendered = !!extra.rendered;
+            d.renderedChars = Number(extra.renderedChars) || 0;
+            d.renderedRows = Number(extra.renderedRows) || 0;
+            var rp = extra.report;
+            if (rp) {
+                d.blocked = Array.isArray(rp.blocked) ? rp.blocked.slice(0, 6).map(String) : [];
+                d.errs = Number(rp.errs) || 0;
+                d.err1 = String(rp.err1 || '').replace(/[0-9]/g, '#').slice(0, 90);
+            }
+        }
         return d;
     }
 
     /** One line a person can screenshot. */
     function diagLine(d) {
         if (!d) return '';
+        var top = (d.topScripts || []).map(function (x) { return x.n + ':' + x.k; }).join('  ');
         return 'tables ' + d.tables + ' / rows ' + d.rows + ' / cells ' + d.cells
             + ' / date-cells ' + d.dateCells + ' / money-cells ' + d.moneyCells
             + ' / scripts ' + d.scripts + ' / script-rows ' + d.arrays
-            + ' / chars ' + d.chars;
+            + ' / chars ' + d.chars + ' / body ' + d.bodyChars
+            + '\nrendered ' + (d.rendered ? 'yes' : 'no')
+            + ' / rendered-chars ' + d.renderedChars
+            + ' / rendered-rows ' + d.renderedRows
+            + ((d.blocked && d.blocked.length) ? '\nblocked ' + d.blocked.join(' | ') : '')
+            + (d.errs ? '\nerrors ' + d.errs + (d.err1 ? ' — ' + d.err1 : '') : '')
+            + (top ? '\nscripts ' + top : '');
     }
 
     /* Shown when the statement opened but yielded nothing. The shape line and the
@@ -631,8 +922,8 @@
             ov.innerHTML =
                 '<div style="width:100%;max-width:420px;background:var(--card,#0f1626);border:1px solid var(--border2,#243049);border-radius:18px;padding:20px;">'
                 + '<div style="font-size:16px;font-weight:800;color:var(--text,#e8edf5);margin-bottom:6px;">Statement opened, but no transactions found</div>'
-                + '<div style="font-size:12.5px;color:var(--text3,#8a97ad);line-height:1.5;margin-bottom:12px;">It unlocked correctly — this is a layout the reader does not recognise yet. Send this to support and it can be added. All digits are masked.</div>'
-                + '<textarea readonly id="_wfhsDiag" style="width:100%;box-sizing:border-box;height:132px;font-family:var(--mono,monospace);font-size:11.5px;padding:10px;border-radius:10px;border:1px solid var(--border2,#243049);background:var(--bg2,#0a0f1a);color:var(--text2,#aeb9cc);pointer-events:auto;-webkit-user-select:text;user-select:text;"></textarea>'
+                + '<div style="font-size:12.5px;color:var(--text3,#8a97ad);line-height:1.5;margin-bottom:12px;">It unlocked correctly, and it was also opened and run in a sealed offline frame — this is a layout the reader does not recognise yet. Send this to support and it can be added. All digits are masked.</div>'
+                + '<textarea readonly id="_wfhsDiag" style="width:100%;box-sizing:border-box;height:176px;font-family:var(--mono,monospace);font-size:11.5px;padding:10px;border-radius:10px;border:1px solid var(--border2,#243049);background:var(--bg2,#0a0f1a);color:var(--text2,#aeb9cc);pointer-events:auto;-webkit-user-select:text;user-select:text;"></textarea>'
                 + '<div style="display:flex;gap:10px;margin-top:12px;">'
                 + '<button id="_wfhsDClose" style="flex:1;padding:11px;border-radius:11px;border:1px solid var(--border2,#243049);background:transparent;color:var(--text2,#aeb9cc);font-weight:700;">Close</button>'
                 + '<button id="_wfhsDCopy" style="flex:1;padding:11px;border-radius:11px;border:none;background:var(--accent,#f5a623);color:#1a1300;font-weight:800;">Copy</button>'
@@ -652,10 +943,12 @@
         } catch (_) {}
     }
 
+    /* Split from _meta so the caller can pass the RENDERED text: after a render
+     * the header fields exist, and re-parsing three megabytes to find them again
+     * is a cost with nothing to show for it. */
     // pull a few header fields for display / dedup
-    function _meta(html) {
+    function _metaFromText(text) {
         var meta = { card_last4: '', period: '', holder: '' };
-        var text = htmlToText(html);
         var m;
         m = text.match(/Card\s*No\.?\s*[:#]?\s*([0-9X*]{8,})/i);
         if (m) { var d = m[1].replace(/[^0-9]/g, ''); meta.card_last4 = d.slice(-4); }
@@ -707,6 +1000,36 @@
         });
     }
 
+    /* ONE place that turns a document into a result, so the render, the text
+     * fallback and the diagnostic can never end up describing different documents
+     * — which is how a confident report about work that never happened starts. */
+    function _finish(html, encrypted, opts) {
+        return htmlToTransactionsAsync(html, opts).then(function (r) {
+            var t0 = '', t1 = '';
+            try { t0 = htmlToText(html); } catch (_) {}
+            if (r.renderedHtml) { try { t1 = htmlToText(r.renderedHtml); } catch (_) {} }
+            /* Whichever document actually has words in it. Even when row extraction
+             * still finds nothing, a RENDERED page gives the text fallback in
+             * wealthflow-ai-v4.js something real to read; before this it was handed
+             * the empty shell and never had a chance either. */
+            var text = t1.length > t0.length ? t1 : t0;
+            return {
+                ok: true,
+                encrypted: !!encrypted,
+                html: html,
+                text: text,
+                transactions: r.transactions,
+                meta: _metaFromText(text),
+                diag: diagnose(html, {
+                    rendered: r.rendered,
+                    renderedChars: (r.renderedHtml || '').length,
+                    renderedRows: r.rendered ? r.transactions.length : 0,
+                    report: r.report
+                })
+            };
+        });
+    }
+
     // ── top-level: read a File, detect, decrypt (retrying password), parse ──────
     function _readFileText(file) {
         return new Promise(function (resolve, reject) {
@@ -721,9 +1044,7 @@
         return _readFileText(file).then(function (text) {
             // Plain (already-decrypted) statement HTML?
             if (!isEncryptedHtmlStatement(text)) {
-                if (looksLikeStatement(text)) {
-                    return { ok: true, encrypted: false, html: text, text: htmlToText(text), transactions: htmlToTransactions(text), meta: _meta(text), diag: diagnose(text) };
-                }
+                if (looksLikeStatement(text)) return _finish(text, false);
                 return { ok: false, notStatement: true, reason: 'Not a bank statement HTML file.' };
             }
             // Encrypted → prompt for DOB, retry up to 3 times.
@@ -735,7 +1056,7 @@
                         if (html && _decryptedOk(html)) {
                             // success — close the active overlay if still open
                             try { if (window.__wfhsActiveOverlay) { window.__wfhsActiveOverlay.style.opacity = '0'; setTimeout(function () { window.__wfhsActiveOverlay && window.__wfhsActiveOverlay.remove(); window.__wfhsActiveOverlay = null; }, 150); } } catch (_) {}
-                            return { ok: true, encrypted: true, html: html, text: htmlToText(html), transactions: htmlToTransactions(html), meta: _meta(html), diag: diagnose(html) };
+                            return _finish(html, true);
                         }
                         attempts++;
                         if (attempts >= 3) {
@@ -757,7 +1078,7 @@
                                     decrypt(text, v).then(function (h2) {
                                         if (h2 && _decryptedOk(h2)) {
                                             ov2.style.opacity = '0'; setTimeout(function () { ov2.remove(); window.__wfhsActiveOverlay = null; }, 150);
-                                            res({ ok: true, encrypted: true, html: h2, text: htmlToText(h2), transactions: htmlToTransactions(h2), meta: _meta(h2), diag: diagnose(h2) });
+                                            _finish(h2, true).then(res);
                                         } else {
                                             attempts++;
                                             if (attempts >= 3) { ov2.remove(); window.__wfhsActiveOverlay = null; res({ ok: false, wrongPassword: true, reason: 'Incorrect Date of Birth (3 attempts).' }); }
@@ -797,6 +1118,9 @@
         decrypt: decrypt,
         htmlToText: htmlToText,
         htmlToTransactions: htmlToTransactions,
+        htmlToTransactionsAsync: htmlToTransactionsAsync,
+        renderInSandbox: renderInSandbox,
+        _buildSandboxDoc: _buildSandboxDoc,
         promptPassword: promptPassword,
         getStatementText: getStatementText,
         _params: _params
