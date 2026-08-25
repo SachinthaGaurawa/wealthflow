@@ -8239,7 +8239,7 @@
                             <span style="font-weight:800;color:var(--text);">Combined total to repay:</span>           <span style="font-family:var(--mono);font-weight:800;color:var(--accent);">LKR ${fmt(total)}</span>
                         </div>
                         <div style="margin-top:6px;font-size:10px;color:var(--text3);font-style:italic;line-height:1.4;">
-                            ℹ️ ${r.note} Fee is auto-added when you save. You can override it below.
+                            ℹ️ ${_wfEsc(r.note)} Fee is auto-added when you save. You can override it below.
                         </div>
                         <div class="fr" style="margin-top:8px;gap:8px;">
                             <div class="fg" style="margin-bottom:0;"><label class="fl" style="font-size:10px;">Override service fee (optional)</label><input class="fi money-input" id="ot_fee_override" placeholder="${fmt(r.fee)}" inputmode="decimal"></div>
@@ -8263,7 +8263,7 @@
                             <span style="font-weight:800;color:var(--text);">Combined total to repay:</span> <span style="font-family:var(--mono);font-weight:800;color:var(--accent);">LKR ${fmt(total)}</span>
                         </div>
                         <div style="margin-top:6px;font-size:10px;color:var(--text3);font-style:italic;line-height:1.4;">
-                            ℹ️ ${r.note} Surcharge is auto-added when you save. You can override it below.
+                            ℹ️ ${_wfEsc(r.note)} Surcharge is auto-added when you save. You can override it below.
                         </div>
                         <div class="fr" style="margin-top:8px;gap:8px;">
                             <div class="fg" style="margin-bottom:0;"><label class="fl" style="font-size:10px;">Override surcharge (optional)</label><input class="fi money-input" id="ot_fee_override" placeholder="${fmt(r.fee)}" inputmode="decimal"></div>
@@ -10013,11 +10013,11 @@ Be conversational and precise.`;
                 subscriptionsMonthly: subsMonthly,
                 ccOneTimePending: ccPending,
                 cribSummary: cribSummary,
-                incomeDetails: activeIncome.map(i => `${i.name}: LKR ${(i.monthly || 0).toLocaleString()}`).join(', '),
-                loanDetails: activeLoans.map(l => `${l.name}: LKR ${(l.monthly || 0).toLocaleString()}/mo`).join(', '),
+                incomeDetails: activeIncome.map(i => `${_wfEsc(i.name)}: LKR ${(i.monthly || 0).toLocaleString()}`).join(', '),
+                loanDetails: activeLoans.map(l => `${_wfEsc(l.name)}: LKR ${(l.monthly || 0).toLocaleString()}/mo`).join(', '),
                 targetDetails: targets.map(t => {
                     const saved = t.savings ? t.savings.reduce((a, b) => a + b.amount, 0) : 0;
-                    return `${t.name}: LKR ${saved.toLocaleString()}/${(t.amount || 0).toLocaleString()}`;
+                    return `${_wfEsc(t.name)}: LKR ${saved.toLocaleString()}/${(t.amount || 0).toLocaleString()}`;
                 }).join(', '),
                 topExpenses: Object.entries(expByCategory).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => `${k}: LKR ${v.toLocaleString()}`).join(', ')
             };
@@ -11189,7 +11189,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 incomes.forEach(inc => {
                     const notifKey = `wf_notif_salary_${inc.id}_${curMonth}`;
                     if (!localStorage.getItem(notifKey)) {
-                        sendSmartNotification('💰 Salary Day!', `Expected: LKR ${(inc.monthly || 0).toLocaleString()} from ${inc.name}. Have you received it?`, null);
+                        sendSmartNotification('💰 Salary Day!', `Expected: LKR ${(inc.monthly || 0).toLocaleString()} from ${_wfEsc(inc.name)}. Have you received it?`, null);
                         localStorage.setItem(notifKey, '1');
                     }
                 });
@@ -11204,7 +11204,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     if (!localStorage.getItem(notifKey)) {
                         sendSmartNotification(
                             `⚠️ Loan Payment Due in ${daysUntil} Day${daysUntil > 1 ? 's' : ''}`,
-                            `${loan.name}: LKR ${(loan.monthly || 0).toLocaleString()} due on ${p2(loan.payDay)}/${now.getMonth() + 1}`,
+                            `${_wfEsc(loan.name)}: LKR ${(loan.monthly || 0).toLocaleString()} due on ${p2(loan.payDay)}/${now.getMonth() + 1}`,
                             null
                         );
                         localStorage.setItem(notifKey, '1');
@@ -11577,6 +11577,31 @@ function _wfCapMore(key) {
 }
 window._wfCap = _wfCap;
 window._wfCapMore = _wfCapMore;
+
+/* ── text from outside must not be rendered as markup ─────────────────────────
+ * A bank statement is a file from outside this app. Its narrations become the
+ * `desc` on an expense, its payee names become `name`, and those were
+ * interpolated straight into innerHTML on the pages that list records. Free text
+ * from an imported file therefore reached the HTML parser as HTML.
+ *
+ * That matters more here than on an ordinary page: this document holds the
+ * signed-in Firestore session, and the browser's local storage holds an OAuth
+ * token for the user's Drive backups. It also persists — an imported record
+ * syncs, so it is re-rendered on every device the account is used from.
+ *
+ * Seven other modules in this repo already had an esc(); the pages that render
+ * records did not use one. This is that function, and every interpolation of
+ * free text now goes through it. Verified by rendering every page with hostile
+ * text in every free-text field and checking that nothing was parsed as markup.
+ *
+ * It escapes rather than strips, so a description that genuinely contains "<"
+ * still reads correctly — the stored data is never altered, only its rendering. */
+function _wfEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+window._wfEsc = _wfEsc;
 
 // ---- small utilities -----------------------------------------------------
 function _wfApiBase() {
@@ -14980,9 +15005,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const payday = income.find(i => i.monthly > 0);
                 if (payday) {
                     const templates = [
-                        `Today is payday! LKR ${fmtN(payday.monthly)} from ${payday.name} is scheduled to arrive.`,
-                        `Your investment in ${payday.name} matures yielding LKR ${fmtN(payday.monthly)}. Great job!`,
-                        `Reminder: LKR ${fmtN(payday.monthly)} return expected today from ${payday.name}.`
+                        `Today is payday! LKR ${fmtN(payday.monthly)} from ${_wfEsc(payday.name)} is scheduled to arrive.`,
+                        `Your investment in ${_wfEsc(payday.name)} matures yielding LKR ${fmtN(payday.monthly)}. Great job!`,
+                        `Reminder: LKR ${fmtN(payday.monthly)} return expected today from ${_wfEsc(payday.name)}.`
                     ];
                     const msg = templates[Math.floor(Math.random() * templates.length)];
                     notify(msg, 'success');
@@ -16044,7 +16069,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const _capT = _wfCap('incRecv', sortItems(arr));
                 const rowsT = _capT.rows.map(x => `
                     <tr>
-                        <td><div style="font-weight:600;">${x.name || ''}</div>${x.notes ? `<div style="font-size:11px;color:var(--text3);">${x.notes}</div>` : ''}</td>
+                        <td><div style="font-weight:600;">${_wfEsc(x.name || '')}</div>${x.notes ? `<div style="font-size:11px;color:var(--text3);">${_wfEsc(x.notes)}</div>` : ''}</td>
                         <td><span class="badge exp-badge ${incTypeBadge[x.type] || 'bg-gr'}" style="font-size:10px;">${x.type || 'Other'}</span></td>
                         <td>${x.month ? monthStrFmt(x.month + '-01') : '—'}</td>
                         <td style="font-family:var(--mono);font-weight:700;color:var(--green);white-space:nowrap;">+${fmt(x.amount)}</td>
@@ -16076,8 +16101,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;">
                         <span class="badge exp-badge ${incTypeBadge[x.type] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.type || 'Other'}</span>
                         <div class="exp-desc" style="flex:1 1 0;min-width:0;overflow:hidden;">
-                            <div style="font-weight:600;font-size:13px;overflow-wrap:break-word;line-height:1.35;">${x.name}</div>
-                            ${x.notes ? `<div style="font-size:11px;color:var(--text3);overflow-wrap:break-word;margin-top:2px;">${x.notes}</div>` : ''}
+                            <div style="font-weight:600;font-size:13px;overflow-wrap:break-word;line-height:1.35;">${_wfEsc(x.name)}</div>
+                            ${x.notes ? `<div style="font-size:11px;color:var(--text3);overflow-wrap:break-word;margin-top:2px;">${_wfEsc(x.notes)}</div>` : ''}
                         </div>
                         <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:var(--green);flex-shrink:0;white-space:nowrap;font-size:12px;">+${fmt(x.amount)}</div>
                         <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
@@ -16240,7 +16265,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                 return `<div class="inc-card${isArchived ? ' income-archive-card' : ''}">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;">
-                <div><div style="font-size:15px;font-weight:700;">${source.name}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${source.company} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
+                <div><div style="font-size:15px;font-weight:700;">${_wfEsc(source.name)}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${source.company} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
                     <div style="text-align:right;"><div style="font-size:21px;font-weight:800;font-family:var(--mono);color:var(--green);">${fmt(source.monthly)}</div><div style="font-size:11px;color:var(--text3);">${freqL}</div></div>
                     <div class="act-btns"><button class="ib e" onclick="editIncome('${source.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteIncome('${source.id}')"><i data-wfi="trash"></i></button></div>
@@ -16274,7 +16299,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     </button>
                 </div>
             </div>` : ''}
-            ${source.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${source.notes}</div>` : ''}
+            ${source.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${_wfEsc(source.notes)}</div>` : ''}
         </div>`;
             };
 
@@ -16500,7 +16525,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         <div class="md-body" style="text-align:center;padding:30px 20px;">
                             <div style="font-size:38px;margin-bottom:10px;">✨</div>
                             <div style="font-weight:600;margin-bottom:6px;">All caught up</div>
-                            <div style="font-size:12px;color:var(--text3);">There are no past months to confirm for ${source.name}.</div>
+                            <div style="font-size:12px;color:var(--text3);">There are no past months to confirm for ${_wfEsc(source.name)}.</div>
                         </div>
                     </div>`;
                 overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -16517,7 +16542,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 return `
                     <div class="pm-row${cls}" data-ym="${m.ym}">
                         <input type="checkbox" class="pm-check" data-ym="${m.ym}" ${m.confirmed ? 'checked disabled' : ''}>
-                        <div class="pm-month">${m.label}</div>
+                        <div class="pm-month">${_wfEsc(m.label)}</div>
                         ${tag}
                         <div style="flex:1;"></div>
                         <input type="text" class="pm-amount" data-ym="${m.ym}"
@@ -16530,7 +16555,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
-                        <div class="md-title">📅 Confirm past months — ${source.name}</div>
+                        <div class="md-title">📅 Confirm past months — ${_wfEsc(source.name)}</div>
                         <button class="md-x" aria-label="Close" id="_pm_close"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
@@ -16597,7 +16622,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 }
                 DB.set('incomeReceived', received);
                 triggerHaptic('success');
-                notify(`✅ ${saved} past month${saved > 1 ? 's' : ''} confirmed for ${source.name}.`, 'success');
+                notify(`✅ ${saved} past month${saved > 1 ? 's' : ''} confirmed for ${_wfEsc(source.name)}.`, 'success');
                 closeOvl();
                 try { renderIncome(); } catch (_) {}
                 try { renderDash(); } catch (_) {}
@@ -16635,7 +16660,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             <button class="md-x" aria-label="Close" id="_pi_close"><i data-wfi="x"></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
-                            Source: <b>${s.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${s.company}</span><br>
+                            Source: <b>${_wfEsc(s.name)}</b> · <span style="color:var(--accent);font-family:var(--mono);">${s.company}</span><br>
                             Expected Amount: <b>${fmt(s.monthly)}</b><br>
                             <span style="font-size:11px;color:var(--text3);">Did you receive more or less than expected? Enter the exact amount.</span>
                         </div>
@@ -17261,7 +17286,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             <button class="md-x" aria-label="Close" id="_pp_close"><i data-wfi="x"></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
-                            Loan: <b>${l.name}</b> · <span style="color:var(--accent);font-family:var(--mono);">${l.bank}</span><br>
+                            Loan: <b>${_wfEsc(l.name)}</b> · <span style="color:var(--accent);font-family:var(--mono);">${_wfEsc(l.bank)}</span><br>
                             Method: <b>${isReducing ? 'Reducing Balance (floating)' : 'EMI (fixed)'}</b> · Rate: <b>${l.rate}% p.a.</b><br>
                             Scheduled this month: <b>${fmt(scheduledForMonth)}</b> · Balance: <b style="color:var(--red);">${fmt(curBal)}</b><br>
                             <span style="font-size:11px;color:var(--text3);">${isReducing
@@ -17441,7 +17466,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             });
 
             const activeLoans = arr.filter(l => loanEndDate(l) > new Date());
-            $('skip_plan_loan').innerHTML = '<option value="">Select loan...</option>' + activeLoans.map(x => `<option value="${x.id}">${x.name} (${x.bank})</option>`).join('');
+            $('skip_plan_loan').innerHTML = '<option value="">Select loan...</option>' + activeLoans.map(x => `<option value="${x.id}">${_wfEsc(x.name)} (${_wfEsc(x.bank)})</option>`).join('');
 
             const el = $('loansList');
             if (!arr.length) { el.innerHTML = emptyState('🏦', 'No loans added', 'Add your bank loans to track monthly payments'); return; }
@@ -17491,7 +17516,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                 return `<div class="loan-card">
             <div class="loan-top">
-                <div><div class="loan-name">${l.name}</div><div class="loan-bank">🏦 ${l.bank}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
+                <div><div class="loan-name">${_wfEsc(l.name)}</div><div class="loan-bank">🏦 ${_wfEsc(l.bank)}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="loan-monthly">${fmt(displayMonthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div>${monthlyHint}<div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
                     <div class="act-btns"><button class="ib e" onclick="editLoan('${l.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteLoan('${l.id}')"><i data-wfi="trash"></i></button></div>
@@ -17587,7 +17612,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 </div>`;
                     })()}
 
-            ${l.notes ? `<div style="margin-top:8px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${l.notes}</div>` : ''}
+            ${l.notes ? `<div style="margin-top:8px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${_wfEsc(l.notes)}</div>` : ''}
 
             <!-- Monthly installment buttons -->
             <div style="margin-top:14px;border-top:1px dashed var(--border2);padding-top:12px;">
@@ -17621,7 +17646,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         return `<button class="loan-month-btn ${btnClass}"
                             onclick="clickLoanMonthBtn('${l.id}','${m.key}')"
                             title="${tooltip}">
-                            ${isPaid ? (isUnder ? '⚠️' : '✅') : (isOverdue ? '🔴' : '⏰')} ${m.label} ${currentDot}${overdueDot}${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
+                            ${isPaid ? (isUnder ? '⚠️' : '✅') : (isOverdue ? '🔴' : '⏰')} ${_wfEsc(m.label)} ${currentDot}${overdueDot}${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
                         </button>`;
                     }).join('')}
                 </div>
@@ -17669,7 +17694,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             modal.innerHTML = `
                 <div class="md" style="max-width:720px;max-height:92vh;display:flex;flex-direction:column;padding:0;">
                     <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
-                        <div class="md-title">📅 ${l.name} — Live Amortization</div>
+                        <div class="md-title">📅 ${_wfEsc(l.name)} — Live Amortization</div>
                         <div style="display:flex;gap:6px;align-items:center;">
                             <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${l.id}')" title="Generate professional PDF statement">📄 Statement</button>
                             <button class="md-x" aria-label="Close" onclick="closeModal('mdLoanInstallments')"><i data-wfi="x"></i></button>
@@ -18190,7 +18215,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             overlay.innerHTML = `
                 <div class="md" style="max-width:920px;width:96%;height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden;">
                     <div class="md-hdr" style="padding:14px 18px;border-bottom:1px solid var(--border2);flex-shrink:0;">
-                        <div class="md-title">📄 Loan Statement — ${l.name}</div>
+                        <div class="md-title">📄 Loan Statement — ${_wfEsc(l.name)}</div>
                         <div style="display:flex;gap:6px;align-items:center;">
                             <button class="btn btn-ghost btn-sm" id="_ls_print">🖨 Print / PDF</button>
                             <button class="btn btn-ghost btn-sm" id="_ls_share">🔗 Share</button>
@@ -19110,11 +19135,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div style="padding:6px 0 16px;">
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                             <span style="color:var(--text3);font-size:12px;">Loan</span>
-                            <span style="font-weight:700;">${l.name}</span>
+                            <span style="font-weight:700;">${_wfEsc(l.name)}</span>
                         </div>
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                             <span style="color:var(--text3);font-size:12px;">Bank</span>
-                            <span style="font-family:var(--mono);color:var(--accent);">${l.bank}</span>
+                            <span style="font-family:var(--mono);color:var(--accent);">${_wfEsc(l.bank)}</span>
                         </div>
                         <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
                             <span style="color:var(--text3);font-size:12px;">Scheduled EMI</span>
@@ -19132,7 +19157,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <span style="color:var(--text3);font-size:12px;">Recorded On</span>
                             <span style="font-family:var(--mono);">${fmtDatePretty(d.toISOString().slice(0, 10))}</span>
                         </div>
-                        ${pay.notes ? `<div style="margin-top:10px;padding:10px;background:var(--bg2);border-radius:8px;border-left:3px solid var(--accent);font-size:12px;color:var(--text2);">📝 ${pay.notes}</div>` : ''}
+                        ${pay.notes ? `<div style="margin-top:10px;padding:10px;background:var(--bg2);border-radius:8px;border-left:3px solid var(--accent);font-size:12px;color:var(--text2);">📝 ${_wfEsc(pay.notes)}</div>` : ''}
                     </div>
                     <div class="md-ftr">
                         <button class="btn btn-ghost" id="_vli_undo" style="color:var(--red);border-color:rgba(239,68,68,0.25);">↺ Undo Payment</button>
@@ -19293,7 +19318,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-blue"><div class="stat-label">Active Plans</div><div class="stat-val">${active.length}</div></div>
         <div class="stat-card sc-purple" style="opacity:.7;"><div class="stat-label">Completed</div><div class="stat-val">${arr.length - active.length}</div></div>
     `;
-            $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${x.id}">${x.product} (${x.bank})</option>`).join('');
+            $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${x.id}">${x.product} (${_wfEsc(x.bank)})</option>`).join('');
             const tbody = $('cciBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('💳', 'No installments', 'Add credit card installment plans to track payments')}</td></tr>`; return; }
             const _cap = _wfCap('ccinstall', arr);
@@ -19303,9 +19328,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const isActive = end > new Date() && !item.completed;
                 const skipCount = item.skipped?.length || 0;
                 return `<tr class="${item.completed ? 'done-row' : ''}">
-            <td><div style="font-weight:600;">${item.product}</div>${item.notes ? `<div class="td-m">${item.notes}</div>` : ''}</td>
+            <td><div style="font-weight:600;">${item.product}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td>${item.buyer}</td>
-            <td><span class="badge bg-b">${item.bank}</span></td>
+            <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
             <td class="td-a">${fmt(item.total)}</td>
             <td class="td-mono">${item.rate > 0 ? item.rate + '%' : '0% Free'}</td>
             <td class="td-r">${fmt(item.monthly)}</td>
@@ -19646,8 +19671,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             // capping the rows drawn cannot change any of them.
             const _capP = _wfCap('ccPayments', pays.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)));
             const rows = _capP.rows.map(p => `
-                <tr><td style="font-weight:600;">${p.desc || 'Payment'}</td>
-                    <td><span class="badge bg-b">${p.bank || '—'}</span></td>
+                <tr><td style="font-weight:600;">${_wfEsc(p.desc || 'Payment')}</td>
+                    <td><span class="badge bg-b">${_wfEsc(p.bank || '—')}</span></td>
                     <td class="td-a" style="color:var(--green,#16a34a);font-weight:700;">+${fmt(p.amount || 0)}</td>
                     <td class="td-m">${p.date || ''}</td>
                     <td><button class="ib d" onclick="deleteCCPayment('${p.id}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('') + _capP.row;
@@ -19757,8 +19782,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 ? `<span class="badge" style="background:rgba(59,130,246,.16);color:#3b82f6;">${typeL}</span>`
                                 : `<span class="badge bg-gr">${typeL}</span>`;
                 return `<tr class="${item.paid ? 'done-row' : ''}">
-            <td><div style="font-weight:600;">${item.desc}</div>${item.notes ? `<div class="td-m">${item.notes}</div>` : ''}</td>
-            <td><span class="badge bg-b">${item.bank}</span></td>
+            <td><div style="font-weight:600;">${_wfEsc(item.desc)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
+            <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
             <td>${typeBadge}</td>
             <td class="td-a">${amountCell}</td>
             <td class="td-m">${item.date}</td>
@@ -19788,7 +19813,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>
                 <div style="margin-top:10px;padding:8px 10px;background:var(--bg2);border-radius:8px;font-size:11px;color:var(--text2);line-height:1.55;">
                     <b>How this fee was calculated:</b><br>
-                    ${m.note || 'No explanation captured for this record.'}
+                    ${_wfEsc(m.note || 'No explanation captured for this record.')}
                     ${m.source === 'override' ? '<br><span style="color:var(--accent);">⚠ Manually overridden.</span>' : ''}
                 </div>`;
             showConfirm('💳', 'Cash Advance Breakdown — ' + item.bank, html, 'btn-primary', 'OK', () => {});
@@ -19874,13 +19899,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return `<tr class="${item.status !== 'pending' ? 'done-row' : ''}">
             <td class="td-mono">${item.no}</td>
             <td style="font-weight:600;">${item.party}</td>
-            <td><span class="badge bg-b">${item.bank}</span></td>
+            <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
             <td class="td-a">${fmt(item.amount)}</td>
             <td class="td-m">${item.issue}</td>
             <td class="td-m">${item.release}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
             <td>${statusMap[item.status] || ''}</td>
-            <td class="td-m">${item.notes || ''}</td>
+            <td class="td-m">${_wfEsc(item.notes || '')}</td>
             <td><div class="act-btns">
                 ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${item.id}')" title="Clear"><i data-wfi="check"></i></button><button class="ib d" onclick="markChequeBounced('${item.id}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
                 <button class="ib e" onclick="editCheque('${item.id}')"><i data-wfi="edit"></i></button>
@@ -20222,8 +20247,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
                             <span class="badge exp-badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.cat}</span>
                             <div class="exp-desc" style="flex:1 1 0;min-width:0;overflow:hidden;">
-                                <div style="font-weight:600;font-size:13px;word-wrap:break-word;overflow-wrap:break-word;line-height:1.35;">${x.desc}</div>
-                                ${x.notes ? `<div style="font-size:11px;color:var(--text3);word-wrap:break-word;overflow-wrap:break-word;margin-top:2px;">${x.notes}</div>` : ''}
+                                <div style="font-weight:600;font-size:13px;word-wrap:break-word;overflow-wrap:break-word;line-height:1.35;">${_wfEsc(x.desc)}</div>
+                                ${x.notes ? `<div style="font-size:11px;color:var(--text3);word-wrap:break-word;overflow-wrap:break-word;margin-top:2px;">${_wfEsc(x.notes)}</div>` : ''}
                             </div>
                             <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
                             ${_expActBtns(x)}
@@ -20243,8 +20268,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 <div class="exp-sub-row${x.completed ? ' is-paid' : ''}" style="display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:8px;background:var(--bg);margin-bottom:5px;position:relative;${x.completed ? 'opacity:.62;' : ''}">
                                     <span style="flex:0 0 auto;width:14px;text-align:center;color:var(--text3);font-size:13px;opacity:.5;">&#8627;</span>
                                     <div style="flex:1 1 0;min-width:0;overflow:hidden;">
-                                        <div style="font-weight:600;font-size:12.5px;overflow-wrap:break-word;line-height:1.35;">${x.desc}</div>
-                                        <div style="font-size:11px;color:var(--text3);margin-top:1px;">${x.date ? fmtDatePretty(x.date) : (x.month || '')}${x.notes ? ' · ' + x.notes : ''}</div>
+                                        <div style="font-weight:600;font-size:12.5px;overflow-wrap:break-word;line-height:1.35;">${_wfEsc(x.desc)}</div>
+                                        <div style="font-size:11px;color:var(--text3);margin-top:1px;">${x.date ? fmtDatePretty(x.date) : (x.month || '')}${x.notes ? ' · ' + _wfEsc(x.notes) : ''}</div>
                                     </div>
                                     <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:${x.completed ? 'var(--green)' : 'var(--red)'};flex-shrink:0;white-space:nowrap;font-size:12px;">${fmt(x.amount)}</div>
                                     ${_expActBtns(x)}
@@ -20291,7 +20316,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="7">${emptyState('🧾', 'No expenses', 'Add daily and monthly expenses to track spending')}</td></tr>`; return; }
             tbody.innerHTML = filtered.map(x => `<tr class="${x.completed ? 'done-row' : ''}">
-        <td><div style="font-weight:600;">${x.desc}</div>${x.notes ? `<div class="td-m">${x.notes}</div>` : ''}</td>
+        <td><div style="font-weight:600;">${_wfEsc(x.desc)}</div>${x.notes ? `<div class="td-m">${_wfEsc(x.notes)}</div>` : ''}</td>
         <td><span class="badge ${catBadge[x.cat] || 'bg-gr'}">${x.cat}</span></td>
         <td class="td-m">${monthStrFmt((x.month || '') + '-01')}</td>
         <td class="td-r">${fmt(x.amount)}</td>
@@ -20378,7 +20403,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('savHistTitle').textContent = t.name + ' - Full History';
             const content = t.savings.slice().reverse();
             $('savHistContent').innerHTML = content.length ? content.map(s => `<div class="sav-entry">
-        <span style="color:var(--text2);">${s.date}${s.note ? ' · ' + s.note : ''}</span>
+        <span style="color:var(--text2);">${s.date}${s.note ? ' · ' + _wfEsc(s.note) : ''}</span>
         <div style="display:flex;align-items:center;gap:8px;">
             <span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span>
             <button class="ib d" onclick="deleteSaving('${tid}','${s.id}')"><i data-wfi="x"></i></button>
@@ -20387,7 +20412,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             openModal('mdSavHistory');
         }
         function showCelebration(target) {
-            $('celebSub').textContent = `You have achieved: "${target.name}"! 🏆`;
+            $('celebSub').textContent = `You have achieved: "${_wfEsc(target.name)}"! 🏆`;
             $('celebAmt').textContent = fmt(target.amount);
             $('celeb').classList.add('show');
             const colors = ['#d4af37', '#f5a623', '#ffd166', '#10b981', '#3b82f6'];
@@ -20405,7 +20430,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         function renderTargets() {
             // Repair before reading — see _wfNormaliseTargetArray.
             const arr = _wfNormaliseTargetArray(DB.get('targets') || []);
-            $('sav_tgt').innerHTML = arr.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+            $('sav_tgt').innerHTML = arr.map(t => `<option value="${t.id}">${_wfEsc(t.name)}</option>`).join('');
             const el = $('targetsList');
             if (!arr.length) { el.innerHTML = emptyState('🎯', 'No targets yet', 'Create savings targets to track your financial goals'); return; }
             const _cap = _wfCap('targets', arr);
@@ -20436,7 +20461,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 return `<div class="tgt-card">
             <div class="tgt-top">
-                <div><div class="tgt-name">${done ? '🏆 ' : ''} ${t.name}</div><div class="tgt-dates">📅 ${fmtDatePretty(t.start)} → ${fmtDatePretty(t.end)}</div></div>
+                <div><div class="tgt-name">${done ? '🏆 ' : ''} ${_wfEsc(t.name)}</div><div class="tgt-dates">📅 ${fmtDatePretty(t.start)} → ${fmtDatePretty(t.end)}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="tgt-big">${fmtS(t.amount)}</div><div style="font-size:11px;color:var(--text3);">Target · ${fmt(t.amount)}</div><div class="tgt-rem">${fmtS(remain)}</div><div style="font-size:11px;color:var(--text3);">Remaining</div></div>
                     <div class="act-btns"><button class="ib e" onclick="editTarget('${t.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteTarget('${t.id}')"><i data-wfi="trash"></i></button></div>
@@ -20477,10 +20502,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="ld"><div class="ld-l">PROGRESS</div><div class="ld-v">${pct}%</div></div>
             </div>
             ${recent.length ? `<div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.5px;">Recent Savings</div>
-            ${recent.map(s => `<div class="sav-entry"><span style="color:var(--text2);">${s.date}${s.note ? ' · ' + s.note : ''}</span><span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span></div>`).join('')}
+            ${recent.map(s => `<div class="sav-entry"><span style="color:var(--text2);">${s.date}${s.note ? ' · ' + _wfEsc(s.note) : ''}</span><span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span></div>`).join('')}
             ${t.savings.length > 3 ? `<button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:6px;" onclick="showSavHistory('${t.id}')">📋 See All ${t.savings.length} Entries</button>` : ''}
             </div>`: ''}
-            ${t.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${t.notes}</div>` : ''}
+            ${t.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${_wfEsc(t.notes)}</div>` : ''}
         </div>`;
             }).join('') + _cap.bar;
         }
@@ -20511,7 +20536,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ? targets.map(tg => {
                         const saved = (tg.savings || []).reduce((a, b) => a + b.amount, 0);
                         const remaining = (tg.amount || 0) - saved;
-                        return `<option value="${tg.id}">${tg.name} — Remaining: ${fmt(remaining)}</option>`;
+                        return `<option value="${tg.id}">${_wfEsc(tg.name)} — Remaining: ${fmt(remaining)}</option>`;
                     }).join('')
                     : '<option value="">No active targets — create one first</option>';
             } else {
@@ -20548,7 +20573,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     targets[ti].savings.push({ id: savId, amount, date, source: 'balance', balanceFlowId: null });
                     DB.set('targets', targets);
                     // The flow stores the target name + reference — type 'out' for the math, but tag with targetId for traceability
-                    const flow = { id: uid(), type: 'out', subtype: 'target', targetId, savingId: savId, company: '🎯 ' + targets[ti].name, amount, date, notes: notes || `Saved toward "${targets[ti].name}"` };
+                    const flow = { id: uid(), type: 'out', subtype: 'target', targetId, savingId: savId, company: '🎯 ' + targets[ti].name, amount, date, notes: notes || `Saved toward "${_wfEsc(targets[ti].name)}"` };
                     data.flows.push(flow);
                     // back-link the saving entry
                     targets[ti].savings[targets[ti].savings.length - 1].balanceFlowId = flow.id;
@@ -20622,7 +20647,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const cls = f.type === 'set' ? 'bg-a' : isTarget ? 'bg-b' : f.type === 'out' ? 'bg-r' : 'bg-g';
                 return `<div class="flow-item">
                     <div class="flow-dot ${f.type === 'set' ? 'in' : f.type}">${dot}</div>
-                    <div class="flow-info"><div class="flow-name">${f.company}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + f.notes : ''}</div></div>
+                    <div class="flow-info"><div class="flow-name">${f.company}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + _wfEsc(f.notes) : ''}</div></div>
                     <div class="flow-right"><div class="flow-amt ${f.type === 'out' ? 'out' : 'in'}">${f.type === 'out' ? '-' : '+'}${fmt(f.amount)}</div><div><span class="badge ${cls}">${lbl}</span></div></div>
                     <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${f.id}')"><i data-wfi="edit"></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${f.id}')"><i data-wfi="trash"></i></button></div>
                 </div>`;
@@ -20776,13 +20801,13 @@ table.amort tbody tr { page-break-inside: avoid; }
         </div>
         <div class="g2">
             <div class="card"><div class="card-header"><div class="card-title">🏦 Loan Payments</div><div class="card-sub">${fmt(data.loanTotal)}</div></div>
-                ${data.loanItems.length ? data.loanItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${x.name} <span class="td-m">(${x.bank})</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No loan payments</div></div>`}
+                ${data.loanItems.length ? data.loanItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No loan payments</div></div>`}
             </div>
             <div class="card"><div class="card-header"><div class="card-title">💳 CC Installments</div><div class="card-sub">${fmt(data.ccTotal)}</div></div>
-                ${data.ccItems2.length ? data.ccItems2.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${x.name} <span class="td-m">(${x.bank})</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No CC installments</div></div>`}
+                ${data.ccItems2.length ? data.ccItems2.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No CC installments</div></div>`}
             </div>
             <div class="card"><div class="card-header"><div class="card-title">🧾 Other Expenses</div><div class="card-sub">${fmt(data.expTotal)}</div></div>
-                ${data.expItems.length ? data.expItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${x.name} <span class="badge bg-gr">${x.cat}</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No expenses</div></div>`}
+                ${data.expItems.length ? data.expItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="badge bg-gr">${x.cat}</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No expenses</div></div>`}
             </div>
         </div>
     `;
@@ -20976,7 +21001,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             wrap.innerHTML = upcoming.map(u => {
                 const days = Math.ceil((u.date - todayObj) / 86400000);
                 return `<div class="li-item">
-            <div><div class="li-title">${u.title}</div><div class="li-sub">${u.sub}</div></div>
+            <div><div class="li-title">${_wfEsc(u.title)}</div><div class="li-sub">${u.sub}</div></div>
             <div style="text-align:right;"><div class="li-amt" style="color:${u.color};">${fmt(u.amt)}</div><div class="li-date">${days === 0 ? 'Today' : days + ' days'}</div></div>
         </div>`;
             }).join('');
@@ -21018,7 +21043,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return;
             }
             wrap.innerHTML = top8.map(u => `<div class="li-item">
-        <div><div class="li-title">${u.title}</div><div class="li-sub">${u.sub}</div></div>
+        <div><div class="li-title">${_wfEsc(u.title)}</div><div class="li-sub">${u.sub}</div></div>
         <div style="text-align:right;"><div class="li-amt" style="color:${u.color};">${fmt(u.amt)}</div><div class="li-date">${u.date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</div></div>
     </div>`).join('');
 
@@ -21089,7 +21114,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const active = loanEndDate(l) > new Date();
                 if (active) {
                     activeLoans.push(l);
-                    html += `<option value="${l.monthly}">${l.name} (${l.bank}) - ${fmt(l.monthly)}/mo</option>`;
+                    html += `<option value="${l.monthly}">${_wfEsc(l.name)} (${_wfEsc(l.bank)}) - ${fmt(l.monthly)}/mo</option>`;
                 }
             });
             select.innerHTML = html;
@@ -21892,7 +21917,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const when = (function(){ try { const d = new Date(b.at); return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } })();
                     return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border2);border-radius:10px;background:var(--bg2);margin-bottom:6px;">
                         <div style="flex:1;min-width:0;">
-                            <div style="font-weight:600;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(b.label || 'Statement')}</div>
+                            <div style="font-weight:600;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_wfEsc(b.label || 'Statement')}</div>
                             <div style="font-size:11px;color:var(--text3);margin-top:2px;">${when}${bits.length ? ' · ' + bits.join(' · ') : ''}</div>
                         </div>
                         <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,0.3);flex-shrink:0;" onclick="undoBatch('${b.id}')"><i data-wfi="refresh"></i> Undo</button>
@@ -22401,8 +22426,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 (name, data) => `🏆 ${data.pct >= 90 ? 'So close!' : 'Making progress!'} "${data.target}" — ${data.pct}% saved.`
             ],
             overdue: [
-                (name, data) => `🔴 ${name}, your CC payment "${data.desc}" is overdue by ${Math.abs(data.days)} days!`,
-                (name, data) => `⚠️ Urgent: "${data.desc}" overdue! Pay immediately to avoid interest, ${name}.`
+                (name, data) => `🔴 ${name}, your CC payment "${_wfEsc(data.desc)}" is overdue by ${Math.abs(data.days)} days!`,
+                (name, data) => `⚠️ Urgent: "${_wfEsc(data.desc)}" overdue! Pay immediately to avoid interest, ${name}.`
             ],
             general: [
                 (name) => `✨ Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, ${name}! Your WealthFlow dashboard is ready.`,
@@ -22876,7 +22901,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 showActionableBanner({
                     id,
                     title: '🏦 Loan Installment — ' + l.name,
-                    message: `Did you pay this month's installment of <b>${fmt(l.monthly)}</b> to <b>${l.bank}</b>?`,
+                    message: `Did you pay this month's installment of <b>${fmt(l.monthly)}</b> to <b>${_wfEsc(l.bank)}</b>?`,
                     primary: 'Yes — Mark Paid',
                     secondary: 'Not Yet',
                     icon: '🏦',
@@ -22918,7 +22943,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     if (dl >= 0 && dl <= 10 && !seen.ids.includes('ccot:' + x.id + ':' + dl)) {
                         sendOSNotification(
                             dl <= 3 ? '🔴 Urgent: CC Payment Due' : '⏰ CC Payment Reminder',
-                            `${userName}, "${x.desc}" (${fmt(x.amount)}) is due in ${dl} day${dl === 1 ? '' : 's'}.`,
+                            `${userName}, "${_wfEsc(x.desc)}" (${fmt(x.amount)}) is due in ${dl} day${dl === 1 ? '' : 's'}.`,
                             'wf-ccot-' + x.id
                         );
                         seen.ids.push('ccot:' + x.id + ':' + dl);
@@ -22936,7 +22961,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         if (!seen.ids.includes(k)) {
                             sendOSNotification(
                                 daysDiff === 1 ? '🔴 Loan Payment Tomorrow' : '🏦 Loan Payment Reminder',
-                                `${userName}, ${l.name} EMI of ${fmt(l.monthly)} is due in ${daysDiff} day${daysDiff === 1 ? '' : 's'}.`,
+                                `${userName}, ${_wfEsc(l.name)} EMI of ${fmt(l.monthly)} is due in ${daysDiff} day${daysDiff === 1 ? '' : 's'}.`,
                                 'wf-loan-' + l.id
                             );
                             seen.ids.push(k);
@@ -22975,7 +23000,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             if (!seen.ids.includes(k)) {
                                 sendOSNotification(
                                     milestone === 100 ? '🎉 Target Achieved!' : `🎯 ${milestone}% Milestone!`,
-                                    `${userName}, "${t.name}" is at ${pct}% (${fmt(saved)} saved). ${milestone === 100 ? 'Congratulations!' : 'Keep going!'}`,
+                                    `${userName}, "${_wfEsc(t.name)}" is at ${pct}% (${fmt(saved)} saved). ${milestone === 100 ? 'Congratulations!' : 'Keep going!'}`,
                                     'wf-tgt-' + t.id
                                 );
                                 seen.ids.push(k);
@@ -23024,9 +23049,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             let csv = `WEALTHFLOW ANALYTICS REPORT,${MONTHS[month].toUpperCase()} ${year}\n\n`;
 
             csv += "TYPE,CATEGORY/BANK,DESCRIPTION,AMOUNT (LKR)\n";
-            md.loanItems.forEach(l => csv += `LOAN,${l.bank},${l.name},${l.amount}\n`);
-            md.ccItems2.forEach(c => csv += `CC INSTALLMENT,${c.bank},${c.name},${c.amount}\n`);
-            md.expItems.forEach(e => csv += `EXPENSE,${e.cat},${e.name},${e.amount}\n`);
+            md.loanItems.forEach(l => csv += `LOAN,${_wfEsc(l.bank)},${_wfEsc(l.name)},${l.amount}\n`);
+            md.ccItems2.forEach(c => csv += `CC INSTALLMENT,${_wfEsc(c.bank)},${_wfEsc(c.name)},${c.amount}\n`);
+            md.expItems.forEach(e => csv += `EXPENSE,${e.cat},${_wfEsc(e.name)},${e.amount}\n`);
 
             csv += `\nSUMMARY\nTotal Income,,${md.income}\nTotal Expenses,,${md.totalExp}\nNet Balance,,${md.balance}\n`;
 
@@ -23097,7 +23122,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </table>`;
                 }
                 
-                const ths = headers.map(h => `<th class="${h.r ? 'r' : ''}">${h.label}</th>`).join('');
+                const ths = headers.map(h => `<th class="${h.r ? 'r' : ''}">${_wfEsc(h.label)}</th>`).join('');
                 return `
                     <div class="section-title" style="margin-top:22px;">
                         <span style="display:inline-block;width:10px;height:10px;background:${colorNavy};border-radius:2px;margin-right:6px;vertical-align:middle;"></span>
@@ -23703,7 +23728,7 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                     ${factors.map((f, i) => `
                         <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px dashed var(--border2);">
                             <div class="score-factor" style="margin-bottom:6px;">
-                                <div style="min-width:160px;"><div style="font-size:13px;font-weight:600;">${factorIcons[i]} ${f.label}</div><div style="font-size:10px;color:var(--text3);">${f.score} / ${f.max} pts</div></div>
+                                <div style="min-width:160px;"><div style="font-size:13px;font-weight:600;">${factorIcons[i]} ${_wfEsc(f.label)}</div><div style="font-size:10px;color:var(--text3);">${f.score} / ${f.max} pts</div></div>
                                 <div class="score-factor-bar"><div class="score-factor-fill" style="width:${(f.score / f.max * 100).toFixed(0)}%;background:${factorColors[i]};"></div></div>
                                 <div style="font-size:14px;font-weight:700;font-family:var(--mono);min-width:50px;text-align:right;color:${factorColors[i]};">${f.score}</div>
                             </div>
@@ -23733,7 +23758,7 @@ ${buildTable('Section III — Operations & Card Installments', combinedExp.lengt
                 const factors = [sc.dscr, sc.savings, sc.liquidity, sc.targets, sc.dti, sc.discipline, sc.diversification];
                 // Sort weakest factors first
                 const weakest = factors.slice().sort((a, b) => (a.score / a.max) - (b.score / b.max)).slice(0, 3);
-                const weakestSummary = weakest.map(f => `- ${f.label}: ${f.score}/${f.max} (${Math.round(f.score / f.max * 100)}%)`).join('\n');
+                const weakestSummary = weakest.map(f => `- ${_wfEsc(f.label)}: ${f.score}/${f.max} (${Math.round(f.score / f.max * 100)}%)`).join('\n');
 
                 const prompt = `You are a Sri Lankan personal finance coach. The user has a WealthFlow Score of ${sc.total}/1000 (rated ${sc.total >= 800 ? 'ELITE' : sc.total >= 600 ? 'STRONG' : sc.total >= 400 ? 'GROWING' : 'AT RISK'}).
 
@@ -23862,7 +23887,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 const cur = m.isCurrent ? '<span style="font-size:10px;background:rgba(212,175,55,.18);color:var(--accent);padding:2px 7px;border-radius:8px;margin-left:6px;font-weight:700;">THIS MONTH</span>' : '';
                 return `
                     <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg2);border-radius:10px;margin-bottom:8px;border:1px solid var(--border);">
-                        <div style="font-weight:700;font-size:13px;min-width:110px;">${m.label}${cur}</div>
+                        <div style="font-weight:700;font-size:13px;min-width:110px;">${_wfEsc(m.label)}${cur}</div>
                         <input type="text" class="sm-amount money-input" data-ym="${m.ym}"
                                value="${v === '' ? '' : v.toFixed(2)}"
                                placeholder="${placeholder}"
@@ -23878,7 +23903,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             overlay.innerHTML = `
                 <div class="md md-sm" style="max-width:560px;max-height:88vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
-                        <div class="md-title">📊 Monthly amounts — ${s.name}</div>
+                        <div class="md-title">📊 Monthly amounts — ${_wfEsc(s.name)}</div>
                         <button class="md-x" aria-label="Close" id="_sm_close"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
@@ -23942,7 +23967,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 if (i > -1) arr[i] = s;
                 DB.set('subscriptions', arr);
                 triggerHaptic('success');
-                notify(`✅ Updated ${changed} month${changed > 1 ? 's' : ''} for ${s.name}.`, 'success');
+                notify(`✅ Updated ${changed} month${changed > 1 ? 's' : ''} for ${_wfEsc(s.name)}.`, 'success');
                 closeOvl();
                 renderSubscriptions();
             };
@@ -24051,7 +24076,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 return `<div class="sub-card">
                     <div class="sub-icon">${catIcons[s.category] || '📋'}</div>
                     <div style="flex:1 1 0;min-width:0;">
-                        <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${s.name}</div>
+                        <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${_wfEsc(s.name)}</div>
                         <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${s.category} · Day ${s.dueDay} · ${s.cycle}</div>
                         ${notesHtml}
                         ${variableBadge}
@@ -24303,8 +24328,8 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="debt-item ${i === 0 ? 'focus' : ''}">
                         <div class="debt-priority" style="background:${i === 0 ? 'var(--accent)' : i === 1 ? 'var(--blue)' : 'var(--text3)'};">${i + 1}</div>
                         <div style="flex:1;">
-                            <div style="font-size:13px;font-weight:700;">${loan.name}</div>
-                            <div style="font-size:11px;color:var(--text3);">${loan.bank} · ${loan.rate}% APR · pays off in ${plMonths} mo</div>
+                            <div style="font-size:13px;font-weight:700;">${_wfEsc(loan.name)}</div>
+                            <div style="font-size:11px;color:var(--text3);">${_wfEsc(loan.bank)} · ${loan.rate}% APR · pays off in ${plMonths} mo</div>
                         </div>
                         <div style="text-align:right;">
                             <div style="font-size:14px;font-weight:800;font-family:var(--mono);">${fmt(loan.monthly)}/mo</div>
@@ -24463,7 +24488,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                 const loanDetails = rawLoans.map(l => {
                     const bal = loanCurrentBalance(l);
                     const intPaid = loanTotalInterestPaid(l);
-                    return `- [Loan] ${l.name} (${l.bank}): Balance LKR ${Math.round(bal).toLocaleString()}, Rate ${l.rate || 0}%, Monthly ${l.monthly.toLocaleString()}, Interest paid so far: ${Math.round(intPaid).toLocaleString()}`;
+                    return `- [Loan] ${_wfEsc(l.name)} (${_wfEsc(l.bank)}): Balance LKR ${Math.round(bal).toLocaleString()}, Rate ${l.rate || 0}%, Monthly ${l.monthly.toLocaleString()}, Interest paid so far: ${Math.round(intPaid).toLocaleString()}`;
                 }).join('\n');
 
                 const ccDetails = ccInstalls.map(c => {
@@ -24471,7 +24496,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     const remainingMonths = c.duration - prog.paid;
                     const bal = remainingMonths > 0 ? (c.monthly * remainingMonths) : 0;
                     if (bal <= 0) return '';
-                    return `- [CC Installment] ${c.product} (${c.bank}): Balance LKR ${Math.round(bal).toLocaleString()}, Rate ${c.rate || 0}%, Monthly ${c.monthly.toLocaleString()}`;
+                    return `- [CC Installment] ${c.product} (${_wfEsc(c.bank)}): Balance LKR ${Math.round(bal).toLocaleString()}, Rate ${c.rate || 0}%, Monthly ${c.monthly.toLocaleString()}`;
                 }).filter(Boolean).join('\n');
 
                 const allDebtDetails = loanDetails + (ccDetails ? '\n' + ccDetails : '');

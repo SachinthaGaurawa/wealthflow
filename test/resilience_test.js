@@ -610,3 +610,73 @@ describe('a target with no savings does not blank the Targets page', () => {
             .toMatch(/t\.amount\s*>\s*0\s*\?\s*Math\.min\(100/);
     });
 });
+
+/* ── 7. text from an imported file is text, not markup ───────────────────── */
+
+/* A bank statement is a file from outside the app. Its narrations become the
+ * `desc` on an expense and its payee names become `name`, and those were
+ * interpolated straight into innerHTML by the pages that list records — so free
+ * text from an imported file reached the HTML parser as HTML.
+ *
+ * That matters more here than on an ordinary page: this document holds the
+ * signed-in Firestore session, and local storage holds an OAuth token for the
+ * user's Drive backups. It also persists — an imported record syncs, so it is
+ * re-rendered on every device the account is used from.
+ *
+ * Seven other modules in this repo already had an esc(). The pages that render
+ * records did not use one.
+ *
+ * Verified by rendering all 21 pages, in both list views, with hostile text in
+ * every free-text field, and checking that nothing was parsed as markup: before,
+ * five pages parsed it; after, none of the 42 combinations did.
+ *
+ * The scan below is the drift guard. Escaping applied by hand to 82 places comes
+ * back undone the moment someone adds the eighty-third. */
+describe('free text is escaped before it reaches innerHTML', () => {
+    const FIELDS = ['desc', 'notes', 'name', 'bank', 'narration', 'note'];
+
+    /* blockAt() brace-matches, and _wfEsc's body contains /[&<>"']/g — the
+     * apostrophe inside that character class reads as the start of a string and
+     * desyncs the matcher. A limitation of the test helper, not of the code, so
+     * this one is sliced between markers instead. */
+    function loadEsc() {
+        const i = HTML.indexOf('function _wfEsc(s) {');
+        expect(i, '_wfEsc is gone — retarget this test').toBeGreaterThan(-1);
+        const end = HTML.indexOf('window._wfEsc', i);
+        expect(end).toBeGreaterThan(i);
+        return new Function(HTML.slice(i, end) + '; return _wfEsc;')();
+    }
+
+    it('there is one escaper, and it escapes what matters', () => {
+        const esc = loadEsc();
+        expect(esc('<img src=x>')).toBe('&lt;img src=x&gt;');
+        expect(esc('a & b')).toBe('a &amp; b');
+        expect(esc('"quoted"')).toBe('&quot;quoted&quot;');
+        expect(esc("it's")).toBe('it&#39;s');
+        expect(esc(null), 'null must not render as the word null').toBe('');
+        expect(esc(undefined)).toBe('');
+    });
+
+    it('does not alter ordinary text', () => {
+        const esc = loadEsc();
+        expect(esc('KEELLS SUPER COLOMBO')).toBe('KEELLS SUPER COLOMBO');
+        expect(esc('PAYMENT - THANK YOU')).toBe('PAYMENT - THANK YOU');
+    });
+
+    it('no record field is interpolated raw', () => {
+        // ${x.desc} with nothing around it is the shape that was exploitable.
+        const raw = [];
+        const re = new RegExp('\\$\\{([a-zA-Z_][\\w]*)\\.(' + FIELDS.join('|') + ')\\}', 'g');
+        let m;
+        while ((m = re.exec(HTML)) !== null) raw.push(m[0]);
+        expect(raw, 'a record field is interpolated into a template unescaped — text '
+            + 'from an imported statement would be parsed as markup again')
+            .toEqual([]);
+    });
+
+    it('the escaper is reachable from the templates that use it', () => {
+        expect(HTML).toMatch(/window\._wfEsc\s*=\s*_wfEsc/);
+        const uses = (HTML.match(/_wfEsc\(/g) || []).length;
+        expect(uses, 'the escaper is defined but barely used').toBeGreaterThan(60);
+    });
+});
