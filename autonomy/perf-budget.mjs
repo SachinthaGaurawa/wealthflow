@@ -60,7 +60,17 @@ export const BUDGETS = {
     // The +19 KB is the merge itself plus the reproduction written into the
     // comment, which is the part a later edit must not be able to undo quietly.
     // Moves ONCE, to the newly measured value with ~1.1% headroom.
-    htmlBytes: 1_599_000,        // measured 1,581,386
+    // Raised again for the taxonomy unification (#131) landing on top of the
+    // restore fix (#130). Each fit under 1_599_000 on its own; together they did
+    // not, which is only visible when the merged tree is built and measured — and
+    // is why it is built and measured before either is merged rather than after.
+    //
+    // The growth is the scan-path rewrite plus the comments recording why seven
+    // category vocabularies existed and what each missed one cost. Trimming those
+    // to fit a number would be optimising the metric and losing the reason, which
+    // this file already says elsewhere is the part a later edit must not be able to
+    // undo quietly. Moves ONCE, to the newly measured value with ~1% headroom.
+    htmlBytes: 1_618_000,        // measured 1,601,662
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
