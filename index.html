@@ -7164,7 +7164,7 @@
         let isDirty = localStorage.getItem('wf2_isDirty') === 'true';
         function setDirty(state) {
             isDirty = state;
-            localStorage.setItem('wf2_isDirty', state ? 'true' : 'false');
+            _persistRaw('wf2_isDirty', state ? 'true' : 'false');
         }
         let isSyncingFromCloud = false;
         let syncDebounceTimer = null;
@@ -7395,10 +7395,13 @@
          * room — the prune list is a merchant cache with its own re-sync function
          * and two diagnostic logs, and nothing else. */
         let _wfLocalWriteBlocked = false;
-        function _persistLocal(key, value) {
+        function _persistLocal(key, value, raw) {
             let str;
-            try { str = JSON.stringify(value); }
-            catch (e) { console.error('[DB] could not serialise', key, e && e.message); return false; }
+            if (raw) { str = String(value); }
+            else {
+                try { str = JSON.stringify(value); }
+                catch (e) { console.error('[DB] could not serialise', key, e && e.message); return false; }
+            }
             try {
                 localStorage.setItem(key, str);
                 _wfLocalWriteBlocked = false;
@@ -7430,7 +7433,14 @@
                 }
             }
         }
-        window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
+        /* Same protection, for the writes that store a raw string rather than JSON.
+ * Routing those through _persistLocal would JSON-encode them and change what is
+ * on disk — a number stored as `123` would come back as `"123"` and every reader
+ * doing parseInt would break. So the value is passed through untouched. */
+function _persistRaw(key, str) {
+    return _persistLocal(key, String(str == null ? '' : str), true);
+}
+window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
@@ -9825,7 +9835,7 @@ Be conversational and precise.`;
 
         function _getDeviceId() {
             let id = localStorage.getItem('wf_device_id');
-            if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 9); localStorage.setItem('wf_device_id', id); }
+            if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 9); _persistRaw('wf_device_id', id); }
             return id;
         }
 
@@ -9862,10 +9872,10 @@ Be conversational and precise.`;
                     const localMs = parseInt(localStorage.getItem('wf_ai_synced_at') || '0');
                     // Most-recent-write wins (not length).
                     if (remoteMs > localMs) {
-                        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
-                        localStorage.setItem('wf_ai_synced_at', String(remoteMs));
-                        if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
-                        if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
+                        _persistLocal(AI_HISTORY_KEY, remoteHist);
+                        _persistRaw('wf_ai_synced_at', String(remoteMs));
+                        if (data.persona) _persistLocal(AI_PERSONA_KEY, data.persona);
+                        if (data.memory) _persistLocal(AI_MEMORY_KEY, data.memory);
                         if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
                     }
                 }
@@ -9885,12 +9895,12 @@ Be conversational and precise.`;
                     if (myClearedAt && myClearedAt >= remoteMs) return;
                     // Most-recent-write wins (timestamp, not length).
                     if (remoteMs > localMs) {
-                        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
-                        if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
-                        if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
-                        localStorage.setItem('wf_ai_synced_at', String(remoteMs || Date.now()));
+                        _persistLocal(AI_HISTORY_KEY, remoteHist);
+                        if (data.persona) _persistLocal(AI_PERSONA_KEY, data.persona);
+                        if (data.memory) _persistLocal(AI_MEMORY_KEY, data.memory);
+                        _persistRaw('wf_ai_synced_at', String(remoteMs || Date.now()));
                         if (data._clearedAt && data._clearedAt > myClearedAt) {
-                            localStorage.setItem('wf_ai_cleared_at', String(data._clearedAt));
+                            _persistRaw('wf_ai_cleared_at', String(data._clearedAt));
                         }
                         _updateAISyncBadge('synced');
                         if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
@@ -9925,7 +9935,7 @@ Be conversational and precise.`;
             try { return JSON.parse(localStorage.getItem(AI_MEMORY_KEY) || '{}'); } catch (e) { return {}; }
         }
         function saveAIMemory(data) {
-            localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data));
+            _persistLocal(AI_MEMORY_KEY, data);
             _scheduleAISync();
         }
         function getAIHistory() {
@@ -9934,18 +9944,18 @@ Be conversational and precise.`;
         function saveAIHistory(hist) {
             // Keep rolling window
             if (hist.length > MAX_HISTORY_MSGS) hist = hist.slice(hist.length - MAX_HISTORY_MSGS);
-            localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(hist));
+            _persistLocal(AI_HISTORY_KEY, hist);
             // A new message after a clear/reset means the user wants history
             // again — drop the "cleared" marker so normal sync resumes.
             if (hist.length > 0) localStorage.removeItem('wf_ai_cleared_at');
-            localStorage.setItem('wf_ai_synced_at', String(Date.now()));
+            _persistRaw('wf_ai_synced_at', String(Date.now()));
             _scheduleAISync();
         }
         function getAIPersona() {
             try { return JSON.parse(localStorage.getItem(AI_PERSONA_KEY) || 'null'); } catch (e) { return null; }
         }
         function saveAIPersona(p) {
-            localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(p));
+            _persistLocal(AI_PERSONA_KEY, p);
             _scheduleAISync();
         }
 
@@ -10639,8 +10649,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         async function clearAIChat() {
             const clearedAt = Date.now();
             localStorage.removeItem(AI_HISTORY_KEY);
-            localStorage.setItem('wf_ai_cleared_at', String(clearedAt));
-            localStorage.setItem('wf_ai_synced_at', String(clearedAt));
+            _persistRaw('wf_ai_cleared_at', String(clearedAt));
+            _persistRaw('wf_ai_synced_at', String(clearedAt));
 
             // Wipe the cloud copy too, otherwise it returns on refresh.
             try {
@@ -11190,7 +11200,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const notifKey = `wf_notif_salary_${inc.id}_${curMonth}`;
                     if (!localStorage.getItem(notifKey)) {
                         sendSmartNotification('💰 Salary Day!', `Expected: LKR ${(inc.monthly || 0).toLocaleString()} from ${_wfEsc(inc.name)}. Have you received it?`, null);
-                        localStorage.setItem(notifKey, '1');
+                        _persistRaw(notifKey, '1');
                     }
                 });
             }
@@ -11207,7 +11217,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             `${_wfEsc(loan.name)}: LKR ${(loan.monthly || 0).toLocaleString()} due on ${p2(loan.payDay)}/${now.getMonth() + 1}`,
                             null
                         );
-                        localStorage.setItem(notifKey, '1');
+                        _persistRaw(notifKey, '1');
                     }
                 }
             });
@@ -11219,7 +11229,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const spentPct = Math.round((ctx.thisMonthExpenses / ctx.totalMonthlyIncome) * 100);
                     if (spentPct > 60) {
                         sendSmartNotification('📊 Mid-Month Budget Alert', `You've spent ${spentPct}% of income. LKR ${ctx.netMonthlyCashFlow.toLocaleString()} remaining. Review your expenses!`, null);
-                        localStorage.setItem(notifKey, '1');
+                        _persistRaw(notifKey, '1');
                     }
                 }
             }
@@ -11229,7 +11239,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const notifKey = `wf_notif_lowbal_${curMonth}_${day}`;
                 if (!localStorage.getItem(notifKey)) {
                     sendSmartNotification('⚠️ Balance Alert', `Your balance (LKR ${ctx.balanceOnHand.toLocaleString()}) may not cover upcoming payments. Take action!`, null);
-                    localStorage.setItem(notifKey, '1');
+                    _persistRaw(notifKey, '1');
                 }
             }
         }
@@ -11864,7 +11874,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (tokenResponse && tokenResponse.access_token) {
                         gapiToken = tokenResponse.access_token;
                         const expiry = Date.now() + ((tokenResponse.expires_in - 10) * 1000);
-                        localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
+                        _persistLocal('wf_drive_token', { token: gapiToken, expiry });
                         try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
                         _wfDriveAuthPhase = 'idle';
                         // v7.50.0 — browser-bridge context: relay the freshly-minted token to
@@ -13968,7 +13978,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         function setDeviceBiometric(data) {
-            localStorage.setItem('wf2_device_biometric', JSON.stringify(data));
+            _persistLocal('wf2_device_biometric', data);
         }
 
         function clearDeviceBiometric() {
@@ -14985,7 +14995,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const lastCheck = localStorage.getItem('wf2_last_greet');
             const todayStr = today();
             if (lastCheck === todayStr) return; // Prevent spamming on every refresh
-            localStorage.setItem('wf2_last_greet', todayStr);
+            _persistRaw('wf2_last_greet', todayStr);
 
             const h = new Date().getHours();
             let greeting = "Good evening";
@@ -22443,7 +22453,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         function setSmartNotifHistory(h) {
-            localStorage.setItem('wf2_notif_history', JSON.stringify(h));
+            _persistLocal('wf2_notif_history', h);
         }
 
         function shuffleArray(arr) {
@@ -22633,7 +22643,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             try { return JSON.parse(localStorage.getItem(_NOTIF_QUEUE_KEY) || '[]'); } catch (e) { return []; }
         }
         function _saveNotifQueue(q) {
-            localStorage.setItem(_NOTIF_QUEUE_KEY, JSON.stringify(q));
+            _persistLocal(_NOTIF_QUEUE_KEY, q);
         }
 
         // Show one actionable banner at the top of the screen
@@ -22872,13 +22882,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         // Mark dismissed for now, will retry later in the day
                         const dq = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                         dq.push(id + ':snoozed');
-                        localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq));
+                        _persistLocal('wf_notif_dismissed_' + today, dq);
                         // Re-fire 4 hours later if app still open
                         setTimeout(() => {
                             const dq2 = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                             const idx = dq2.indexOf(id + ':snoozed');
                             if (idx > -1) dq2.splice(idx, 1);
-                            localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq2));
+                            _persistLocal('wf_notif_dismissed_' + today, dq2);
                             checkActionableReminders();
                         }, 4 * 60 * 60 * 1000);
                     }
@@ -22912,12 +22922,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                     onSecondary: () => {
                         const dq = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                         dq.push(id + ':snoozed');
-                        localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq));
+                        _persistLocal('wf_notif_dismissed_' + today, dq);
                         setTimeout(() => {
                             const dq2 = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                             const idx = dq2.indexOf(id + ':snoozed');
                             if (idx > -1) dq2.splice(idx, 1);
-                            localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq2));
+                            _persistLocal('wf_notif_dismissed_' + today, dq2);
                             checkActionableReminders();
                         }, 4 * 60 * 60 * 1000);
                     }
@@ -23010,7 +23020,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 });
             }
 
-            localStorage.setItem('wf_alerted_today', JSON.stringify(seen));
+            _persistLocal('wf_alerted_today', seen);
         }
 
         // ==================== EXPORT & REPORTING ====================
@@ -25198,7 +25208,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             catch (e) { return []; }
         }
         function _setRevokedSessions(list) {
-            localStorage.setItem('wf_revoked_sessions', JSON.stringify(list));
+            _persistLocal('wf_revoked_sessions', list);
         }
 
         // ISSUE 2 FIX — Debounced wrapper for renderSessions to prevent flicker on rapid Firestore updates
@@ -25252,7 +25262,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
 
         async function registerCurrentSession() {
-            const sessionId = localStorage.getItem('wf_session_id') || (() => { const id = uid(); localStorage.setItem('wf_session_id', id); return id; })();
+            const sessionId = localStorage.getItem('wf_session_id') || (() => { const id = uid(); _persistRaw('wf_session_id', id); return id; })();
             const revoked = _getRevokedSessions();
             let sessions = DB.get('sessions') || [];
 
@@ -26295,7 +26305,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 console.error('Factory reset cloud error:', err);
                 // Offline fallback — still wipe and reload
                 localStorage.clear();
-                Object.keys(appData).forEach(k => localStorage.setItem('wf2_' + k, JSON.stringify(appData[k])));
+                Object.keys(appData).forEach(k => _persistLocal('wf2_' + k, appData[k]));
                 const countText = $('fr_countdown');
                 countText.textContent = 'Rebooting (offline)...';
                 setTimeout(() => { window.location.href = window.location.href; }, 1500);
