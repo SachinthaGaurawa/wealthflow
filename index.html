@@ -7157,6 +7157,7 @@
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             cribReports: [], cribAnalyses: {},
             _tomb: {},   // v7.52.0 — per-key deletion tombstones {key:{id:deleteTs}} for convergent multi-device merge
+            _kut: {},    // v7.53.0 — per-KEY update stamps {key:ts} for the non-record fields (see _wfMergeKeyed)
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
         let isInitialised = false;
@@ -7164,7 +7165,7 @@
         let isDirty = localStorage.getItem('wf2_isDirty') === 'true';
         function setDirty(state) {
             isDirty = state;
-            localStorage.setItem('wf2_isDirty', state ? 'true' : 'false');
+            _persistRaw('wf2_isDirty', state ? 'true' : 'false');
         }
         let isSyncingFromCloud = false;
         let syncDebounceTimer = null;
@@ -7184,7 +7185,7 @@
         if (!Array.isArray(_pendingCloudDeletes)) _pendingCloudDeletes = [];
         let _deleteFlushInFlight = false;
         function _persistPendingDeletes() {
-            try { localStorage.setItem('wf2_pendingCloudDeletes', JSON.stringify(_pendingCloudDeletes)); } catch (_) {}
+            _persistRaw('wf2_pendingCloudDeletes', JSON.stringify(_pendingCloudDeletes));
         }
         function _queueCloudDelete(field, key) {
             if (!_pendingCloudDeletes.some(d => d[0] === field && d[1] === key)) {
@@ -7232,8 +7233,31 @@
         // the previously-persisted one (from localStorage, still holding the old state
         // at this point) to (a) stamp _ut on new/changed records and (b) tombstone
         // records that were removed. Mutates newArr's records in place and returns it.
+        // Two records that share an id are a uid() collision, not two versions of one
+        // record — the merge below keys by id and would silently drop one of them.
+        // Repaired HERE, on the write path, and nowhere else: this runs once, on the
+        // device that owns the data, before the array is persisted or pushed. Doing
+        // the same repair on the READ path would have each device mint a DIFFERENT
+        // replacement id for the same row, and the record would come back doubled.
+        function _wfDedupRecordIds(arr) {
+            const seen = new Set();
+            let fixed = 0;
+            for (let i = 0; i < arr.length; i++) {
+                const r = arr[i];
+                if (!r || typeof r !== 'object' || r.id == null) continue;
+                if (!seen.has(r.id)) { seen.add(r.id); continue; }
+                let n = uid();
+                while (seen.has(n)) n = uid();
+                r.id = n; seen.add(n); fixed++;
+            }
+            if (fixed) console.warn('[DB] re-issued ' + fixed + ' colliding record id(s) — '
+                + 'they would have been merged into one and the row lost');
+            return fixed;
+        }
         function _wfStampAndTomb(key, newArr) {
             if (!Array.isArray(newArr)) return newArr;
+            try { _wfDedupRecordIds(newArr); }
+            catch (e) { console.error('[DB] id de-duplication failed for ' + key, e && e.message); }
             let prev = [];
             try { prev = JSON.parse(localStorage.getItem('wf2_' + key) || '[]'); } catch (_) { prev = []; }
             if (!Array.isArray(prev)) prev = [];
@@ -7259,7 +7283,11 @@
             prevById.forEach((old, id) => { if (!seen.has(id)) { tk[id] = now; tombChanged = true; } });
             // A resurrected id (present again) clears its old tombstone.
             seen.forEach(id => { if (tk[id] != null) { delete tk[id]; tombChanged = true; } });
-            if (tombChanged) { try { localStorage.setItem('wf2__tomb', JSON.stringify(appData._tomb)); } catch (_) {} }
+            // A delete that fails to reach disk is a delete the app forgets on the
+            // next reload — and the record then walks back in from the cloud. Route
+            // it through the guarded writer, which frees re-fetchable caches, retries
+            // and tells the user once when the device is genuinely full.
+            if (tombChanged) _persistRaw('wf2__tomb', JSON.stringify(appData._tomb));
             return newArr;
         }
 
@@ -7310,6 +7338,69 @@
             return out;
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        // v7.53.0 — THE KEYS THAT HAD NO CLOCK
+        // ----------------------------------------------------------------------
+        // v7.52.0 gave every RECORD an update time and made record arrays converge.
+        // It left the rest of the document — incomeReceived, balance, cribAnalyses,
+        // settings and anything else the cloud carries — on the old rule: whatever
+        // the snapshot says, copy it over local. Those fields therefore still had
+        // the whole-document clobber that v7.52.0 was written to remove, and it is
+        // not a narrow race. Reproduced against this file's own merge code:
+        //
+        //   phone offline, user marks 2026-03, -04 and -05 received
+        //     → appData.incomeReceived = {01,02,03,04,05}
+        //   phone reconnects; the first snapshot to arrive is the laptop's, which
+        //   only knows {01,02}
+        //     → appData.incomeReceived = {01,02}, written to disk, needPush FALSE
+        //
+        // Three months of the user's marks gone, persisted over the good copy, and
+        // no flag set that would push the survivors back. The pending local sync
+        // then uploads the truncated map.
+        //
+        // Fix: give those keys the same clock the records have. _kut[key] is
+        // stamped on every local DB.set, travels in appData like _tomb, and the
+        // merge takes the side whose stamp is newer. Plain objects UNION rather
+        // than replace, so a key present on only one side is never lost — map-key
+        // REMOVAL has its own path (DB.delKey → a real server field-delete),
+        // because a merge-write cannot express a deletion at all.
+        const _WF_KUT_EXEMPT = { auth: 1 };   // credentials: dedicated PIN-conflict path above; never unioned across devices
+        function _wfStampKey(k) {
+            if (_WF_KUT_EXEMPT[k] || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
+            if (!appData._kut || typeof appData._kut !== 'object') appData._kut = {};
+            appData._kut[k] = Date.now();
+            _persistRaw('wf2__kut', JSON.stringify(appData._kut));
+        }
+        // Merge ONE non-record key. Newer stamp wins; equal stamps fall back to a
+        // deterministic content compare so both devices choose the same side. The
+        // result is commutative: a device holding (X@10, cloud Y@20) and a device
+        // holding (Y@20, cloud X@10) compute the identical value.
+        function _wfMergeKeyed(localVal, cloudVal, lts, cts) {
+            if (localVal === undefined) return cloudVal;
+            if (cloudVal === undefined) return localVal;
+            // Neither side has ever been stamped — a document written before this
+            // clock existed. Keep LOCAL, which is both the behaviour settings had
+            // before and the only answer that cannot destroy an unpushed edit. The
+            // first write on either device stamps the key and ends the ambiguity,
+            // so this branch is a migration window, not a permanent rule.
+            if (lts === 0 && cts === 0) {
+                const plain0 = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+                return (plain0(localVal) && plain0(cloudVal))
+                    ? Object.assign({}, cloudVal, localVal)
+                    : localVal;
+            }
+            const localWins = (lts !== cts)
+                ? lts > cts
+                : JSON.stringify(localVal) >= JSON.stringify(cloudVal);
+            const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+            if (plain(localVal) && plain(cloudVal)) {
+                // Union — the loser's keys survive, the winner's values win a clash.
+                return localWins ? Object.assign({}, cloudVal, localVal)
+                                 : Object.assign({}, localVal, cloudVal);
+            }
+            return localWins ? localVal : cloudVal;
+        }
+
         // ── THE ONE CLOUD APPLIER ───────────────────────────────────────────────
         // Every path that reads the user document (live snapshot, manual pull,
         // first sign-in hydration) funnels through THIS function, so there is one
@@ -7318,7 +7409,7 @@
         // local priority; everything else copies from cloud. Returns flags so the
         // caller can re-render and — when the merged truth is newer than the cloud
         // copy — push it back up so the cloud converges too.
-        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, driveBridge: 1, driveRefresh: 1 };
+        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, driveBridge: 1, driveRefresh: 1 };
         function _wfApplyCloudData(cloudData) {
             const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
             if (!cloudData || typeof cloudData !== 'object') return res;
@@ -7329,7 +7420,7 @@
             const mergedTombJson = JSON.stringify(mergedTomb);
             if (mergedTombJson !== JSON.stringify(localTomb)) {
                 appData._tomb = mergedTomb;
-                try { localStorage.setItem('wf2__tomb', mergedTombJson); } catch (_) {}
+                _persistRaw('wf2__tomb', mergedTombJson);
             }
             if (mergedTombJson !== JSON.stringify(cloudTomb)) res.needPush = true;   // cloud is missing our deletes
             // 2) Record arrays — per-record newest-wins with tombstoned deletions.
@@ -7339,32 +7430,62 @@
                 const mJson = JSON.stringify(merged);
                 if (mJson !== JSON.stringify(appData[key] !== undefined ? appData[key] : [])) {
                     appData[key] = merged;
-                    try { localStorage.setItem('wf2_' + key, mJson); } catch (_) {}
+                    _persistRaw('wf2_' + key, mJson);
                     if (key === 'sessions') res.sessionsChanged = true; else res.nonSessionChanged = true;
                 }
                 if (mJson !== JSON.stringify(cloudData[key] !== undefined ? cloudData[key] : [])) res.needPush = true;
             });
-            // 3) Everything else — settings deep-merge (local priority), rest cloud-copy.
-            Object.keys(cloudData).forEach(key => {
+            // 3) Everything else — newest-wins per key, unioned, never cloud-clobbered.
+            const localKut = (appData._kut && typeof appData._kut === 'object') ? appData._kut : {};
+            const cloudKut = (cloudData._kut && typeof cloudData._kut === 'object') ? cloudData._kut : {};
+            const _stampOf = (m, k) => (typeof m[k] === 'number' && isFinite(m[k]) ? m[k] : 0);
+            const _plainKeys = {};
+            Object.keys(cloudData).forEach(k => { _plainKeys[k] = 1; });
+            Object.keys(appData).forEach(k => { _plainKeys[k] = 1; });
+            Object.keys(_plainKeys).forEach(key => {
                 if (_WF_SYNC_META_KEYS[key] || _WF_RECORD_KEYS.indexOf(key) !== -1) return;
-                if (key === 'settings') {
-                    const cloudSettings = cloudData.settings || {};
-                    const localSettings = appData.settings || {};
-                    const merged = Object.assign({}, cloudSettings, localSettings);
-                    if (JSON.stringify(merged) !== JSON.stringify(localSettings)) {
-                        appData.settings = merged;
-                        try { localStorage.setItem('wf2_settings', JSON.stringify(merged)); } catch (_) {}
+                if (!(key in cloudData)) {
+                    // We hold something the cloud has never seen — send it, change nothing here.
+                    if (appData[key] !== undefined) res.needPush = true;
+                    return;
+                }
+                if (_WF_KUT_EXEMPT[key]) {
+                    // auth only. Left on cloud-copy deliberately: the PIN-conflict
+                    // branch in the snapshot listener owns that decision, and merging
+                    // two devices' credentials into one object is not a safe default.
+                    const cjA = JSON.stringify(cloudData[key]);
+                    if (cjA !== JSON.stringify(appData[key])) {
+                        appData[key] = cloudData[key];
+                        _persistRaw('wf2_' + key, cjA);
                         res.nonSessionChanged = true;
                     }
                     return;
                 }
-                const cj = JSON.stringify(cloudData[key]);
-                if (cj !== JSON.stringify(appData[key])) {
-                    appData[key] = cloudData[key];
-                    try { localStorage.setItem('wf2_' + key, cj); } catch (_) {}
+                const merged = _wfMergeKeyed(appData[key], cloudData[key],
+                    _stampOf(localKut, key), _stampOf(cloudKut, key));
+                const mj = JSON.stringify(merged);
+                if (mj !== JSON.stringify(appData[key])) {
+                    appData[key] = merged;
+                    _persistRaw('wf2_' + key, mj);
                     res.nonSessionChanged = true;
                 }
+                if (mj !== JSON.stringify(cloudData[key])) res.needPush = true;
             });
+            // 4) Converge the key-stamps themselves — max per key, so the next merge
+            //    on either device starts from the same clock. Decided AFTER step 3,
+            //    which needs the two sides' original stamps to pick a winner.
+            const mergedKut = {};
+            Object.keys(localKut).forEach(k => { mergedKut[k] = _stampOf(localKut, k); });
+            Object.keys(cloudKut).forEach(k => {
+                const t = _stampOf(cloudKut, k);
+                if (mergedKut[k] == null || t > mergedKut[k]) mergedKut[k] = t;
+            });
+            const mkJson = JSON.stringify(mergedKut);
+            if (mkJson !== JSON.stringify(localKut)) {
+                appData._kut = mergedKut;
+                _persistRaw('wf2__kut', mkJson);
+            }
+            if (mkJson !== JSON.stringify(cloudKut)) res.needPush = true;
             return res;
         }
         try { window._wfApplyCloudData = _wfApplyCloudData; } catch (_) {}
@@ -7395,10 +7516,13 @@
          * room — the prune list is a merchant cache with its own re-sync function
          * and two diagnostic logs, and nothing else. */
         let _wfLocalWriteBlocked = false;
-        function _persistLocal(key, value) {
+        function _persistLocal(key, value, raw) {
             let str;
-            try { str = JSON.stringify(value); }
-            catch (e) { console.error('[DB] could not serialise', key, e && e.message); return false; }
+            if (raw) { str = String(value); }
+            else {
+                try { str = JSON.stringify(value); }
+                catch (e) { console.error('[DB] could not serialise', key, e && e.message); return false; }
+            }
             try {
                 localStorage.setItem(key, str);
                 _wfLocalWriteBlocked = false;
@@ -7430,7 +7554,14 @@
                 }
             }
         }
-        window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
+        /* Same protection, for the writes that store a raw string rather than JSON.
+ * Routing those through _persistLocal would JSON-encode them and change what is
+ * on disk — a number stored as `123` would come back as `"123"` and every reader
+ * doing parseInt would break. So the value is passed through untouched. */
+function _persistRaw(key, str) {
+    return _persistLocal(key, String(str == null ? '' : str), true);
+}
+window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
 
         const DB = {
             get(k, def = []) { return appData[k] !== undefined ? appData[k] : def; },
@@ -7448,6 +7579,11 @@
                 if (!isSyncingFromCloud && _WF_RECORD_KEYS.indexOf(k) !== -1) {
                     try { v = _wfStampAndTomb(k, v); } catch (_) {}
                 }
+                // v7.53.0 — and the same for the keys that are NOT record arrays.
+                // Without this stamp the merge has no way to tell a fresh local edit
+                // from a stale cloud copy, and step 3 of the applier simply took the
+                // cloud's word for it.
+                if (!isSyncingFromCloud) { try { _wfStampKey(k); } catch (_) {} }
                 appData[k] = v;
                 // Persist. See _persistLocal: this line used to be bare, and a full
                 // localStorage threw out of DB.set into whatever click handler called
@@ -7482,6 +7618,7 @@
                     _persistLocal('wf2_' + field, obj);
                 }
                 _queueCloudDelete(field, key);
+                if (!isSyncingFromCloud) { try { _wfStampKey(field); } catch (_) {} }
                 if (!silent) _lastLocalWriteTs = Date.now();
                 try { if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(field, appData[field]); } catch (_) { }
                 // Fast path: try to remove it on the server immediately (common online
@@ -7849,7 +7986,7 @@
                 const obj = appData[f];
                 if (obj && typeof obj === 'object' && !Array.isArray(obj) && (k in obj)) {
                     delete obj[k];
-                    try { localStorage.setItem('wf2_' + f, JSON.stringify(obj)); } catch (_) { }
+                    _persistRaw('wf2_' + f, JSON.stringify(obj));
                     changed = true;
                 }
             });
@@ -8068,7 +8205,28 @@
 
         // ==================== UTILITIES ====================
         const $ = id => document.getElementById(id);
-        const uid = () => '_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+        /* Record ids. The old generator was the timestamp plus five random base-36
+         * characters, and a bulk import creates hundreds of records inside the SAME
+         * millisecond — so the whole id reduces to those five characters, about 60
+         * million values, against n rows drawn at once. Measured over 20,000
+         * simulated imports:
+         *
+         *      50 rows   0.00%     400 rows   0.13%
+         *     100 rows   0.01%     800 rows   0.43%
+         *     200 rows   0.03%    1600 rows   1.19%   ← a year of statements
+         *
+         * A duplicate id is not a cosmetic problem. Both rows render locally, so the
+         * import looks correct; then the cloud merge keys by id, collapses the pair,
+         * and one real transaction is gone — measured at Rs 9,000 in the test that
+         * found this. No error, and it only shows up after a sync, which reads as
+         * "the app and the website disagree about my statement".
+         *
+         * A per-page sequence removes the collision instead of making it rarer: two
+         * ids minted in the same millisecond on the same page can no longer match at
+         * all, and a different page cannot be inside that same millisecond. */
+        let _uidSeq = 0;
+        const uid = () => '_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
+            + ((_uidSeq = (_uidSeq + 1) % 46656) + 46656).toString(36).slice(1);
         const sleep = ms => new Promise(r => setTimeout(r, ms));
         const today = () => { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
         const p2 = n => String(n).padStart(2, '0');
@@ -9825,7 +9983,7 @@ Be conversational and precise.`;
 
         function _getDeviceId() {
             let id = localStorage.getItem('wf_device_id');
-            if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 9); localStorage.setItem('wf_device_id', id); }
+            if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 9); _persistRaw('wf_device_id', id); }
             return id;
         }
 
@@ -9862,10 +10020,10 @@ Be conversational and precise.`;
                     const localMs = parseInt(localStorage.getItem('wf_ai_synced_at') || '0');
                     // Most-recent-write wins (not length).
                     if (remoteMs > localMs) {
-                        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
-                        localStorage.setItem('wf_ai_synced_at', String(remoteMs));
-                        if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
-                        if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
+                        _persistLocal(AI_HISTORY_KEY, remoteHist);
+                        _persistRaw('wf_ai_synced_at', String(remoteMs));
+                        if (data.persona) _persistLocal(AI_PERSONA_KEY, data.persona);
+                        if (data.memory) _persistLocal(AI_MEMORY_KEY, data.memory);
                         if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
                     }
                 }
@@ -9885,12 +10043,12 @@ Be conversational and precise.`;
                     if (myClearedAt && myClearedAt >= remoteMs) return;
                     // Most-recent-write wins (timestamp, not length).
                     if (remoteMs > localMs) {
-                        localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(remoteHist));
-                        if (data.persona) localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(data.persona));
-                        if (data.memory) localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data.memory));
-                        localStorage.setItem('wf_ai_synced_at', String(remoteMs || Date.now()));
+                        _persistLocal(AI_HISTORY_KEY, remoteHist);
+                        if (data.persona) _persistLocal(AI_PERSONA_KEY, data.persona);
+                        if (data.memory) _persistLocal(AI_MEMORY_KEY, data.memory);
+                        _persistRaw('wf_ai_synced_at', String(remoteMs || Date.now()));
                         if (data._clearedAt && data._clearedAt > myClearedAt) {
-                            localStorage.setItem('wf_ai_cleared_at', String(data._clearedAt));
+                            _persistRaw('wf_ai_cleared_at', String(data._clearedAt));
                         }
                         _updateAISyncBadge('synced');
                         if (document.getElementById('page-ai')?.classList.contains('active')) renderAIChatHistory();
@@ -9925,7 +10083,7 @@ Be conversational and precise.`;
             try { return JSON.parse(localStorage.getItem(AI_MEMORY_KEY) || '{}'); } catch (e) { return {}; }
         }
         function saveAIMemory(data) {
-            localStorage.setItem(AI_MEMORY_KEY, JSON.stringify(data));
+            _persistLocal(AI_MEMORY_KEY, data);
             _scheduleAISync();
         }
         function getAIHistory() {
@@ -9934,18 +10092,18 @@ Be conversational and precise.`;
         function saveAIHistory(hist) {
             // Keep rolling window
             if (hist.length > MAX_HISTORY_MSGS) hist = hist.slice(hist.length - MAX_HISTORY_MSGS);
-            localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(hist));
+            _persistLocal(AI_HISTORY_KEY, hist);
             // A new message after a clear/reset means the user wants history
             // again — drop the "cleared" marker so normal sync resumes.
             if (hist.length > 0) localStorage.removeItem('wf_ai_cleared_at');
-            localStorage.setItem('wf_ai_synced_at', String(Date.now()));
+            _persistRaw('wf_ai_synced_at', String(Date.now()));
             _scheduleAISync();
         }
         function getAIPersona() {
             try { return JSON.parse(localStorage.getItem(AI_PERSONA_KEY) || 'null'); } catch (e) { return null; }
         }
         function saveAIPersona(p) {
-            localStorage.setItem(AI_PERSONA_KEY, JSON.stringify(p));
+            _persistLocal(AI_PERSONA_KEY, p);
             _scheduleAISync();
         }
 
@@ -10639,8 +10797,8 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         async function clearAIChat() {
             const clearedAt = Date.now();
             localStorage.removeItem(AI_HISTORY_KEY);
-            localStorage.setItem('wf_ai_cleared_at', String(clearedAt));
-            localStorage.setItem('wf_ai_synced_at', String(clearedAt));
+            _persistRaw('wf_ai_cleared_at', String(clearedAt));
+            _persistRaw('wf_ai_synced_at', String(clearedAt));
 
             // Wipe the cloud copy too, otherwise it returns on refresh.
             try {
@@ -11190,7 +11348,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const notifKey = `wf_notif_salary_${inc.id}_${curMonth}`;
                     if (!localStorage.getItem(notifKey)) {
                         sendSmartNotification('💰 Salary Day!', `Expected: LKR ${(inc.monthly || 0).toLocaleString()} from ${_wfEsc(inc.name)}. Have you received it?`, null);
-                        localStorage.setItem(notifKey, '1');
+                        _persistRaw(notifKey, '1');
                     }
                 });
             }
@@ -11207,7 +11365,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                             `${_wfEsc(loan.name)}: LKR ${(loan.monthly || 0).toLocaleString()} due on ${p2(loan.payDay)}/${now.getMonth() + 1}`,
                             null
                         );
-                        localStorage.setItem(notifKey, '1');
+                        _persistRaw(notifKey, '1');
                     }
                 }
             });
@@ -11219,7 +11377,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const spentPct = Math.round((ctx.thisMonthExpenses / ctx.totalMonthlyIncome) * 100);
                     if (spentPct > 60) {
                         sendSmartNotification('📊 Mid-Month Budget Alert', `You've spent ${spentPct}% of income. LKR ${ctx.netMonthlyCashFlow.toLocaleString()} remaining. Review your expenses!`, null);
-                        localStorage.setItem(notifKey, '1');
+                        _persistRaw(notifKey, '1');
                     }
                 }
             }
@@ -11229,7 +11387,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 const notifKey = `wf_notif_lowbal_${curMonth}_${day}`;
                 if (!localStorage.getItem(notifKey)) {
                     sendSmartNotification('⚠️ Balance Alert', `Your balance (LKR ${ctx.balanceOnHand.toLocaleString()}) may not cover upcoming payments. Take action!`, null);
-                    localStorage.setItem(notifKey, '1');
+                    _persistRaw(notifKey, '1');
                 }
             }
         }
@@ -11864,7 +12022,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (tokenResponse && tokenResponse.access_token) {
                         gapiToken = tokenResponse.access_token;
                         const expiry = Date.now() + ((tokenResponse.expires_in - 10) * 1000);
-                        localStorage.setItem('wf_drive_token', JSON.stringify({ token: gapiToken, expiry }));
+                        _persistLocal('wf_drive_token', { token: gapiToken, expiry });
                         try { localStorage.setItem('wf_drive_ever_granted', '1'); } catch (_) {}
                         _wfDriveAuthPhase = 'idle';
                         // v7.50.0 — browser-bridge context: relay the freshly-minted token to
@@ -13968,7 +14126,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         function setDeviceBiometric(data) {
-            localStorage.setItem('wf2_device_biometric', JSON.stringify(data));
+            _persistLocal('wf2_device_biometric', data);
         }
 
         function clearDeviceBiometric() {
@@ -14985,7 +15143,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const lastCheck = localStorage.getItem('wf2_last_greet');
             const todayStr = today();
             if (lastCheck === todayStr) return; // Prevent spamming on every refresh
-            localStorage.setItem('wf2_last_greet', todayStr);
+            _persistRaw('wf2_last_greet', todayStr);
 
             const h = new Date().getHours();
             let greeting = "Good evening";
@@ -22443,7 +22601,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         function setSmartNotifHistory(h) {
-            localStorage.setItem('wf2_notif_history', JSON.stringify(h));
+            _persistLocal('wf2_notif_history', h);
         }
 
         function shuffleArray(arr) {
@@ -22633,7 +22791,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             try { return JSON.parse(localStorage.getItem(_NOTIF_QUEUE_KEY) || '[]'); } catch (e) { return []; }
         }
         function _saveNotifQueue(q) {
-            localStorage.setItem(_NOTIF_QUEUE_KEY, JSON.stringify(q));
+            _persistLocal(_NOTIF_QUEUE_KEY, q);
         }
 
         // Show one actionable banner at the top of the screen
@@ -22872,13 +23030,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         // Mark dismissed for now, will retry later in the day
                         const dq = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                         dq.push(id + ':snoozed');
-                        localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq));
+                        _persistLocal('wf_notif_dismissed_' + today, dq);
                         // Re-fire 4 hours later if app still open
                         setTimeout(() => {
                             const dq2 = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                             const idx = dq2.indexOf(id + ':snoozed');
                             if (idx > -1) dq2.splice(idx, 1);
-                            localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq2));
+                            _persistLocal('wf_notif_dismissed_' + today, dq2);
                             checkActionableReminders();
                         }, 4 * 60 * 60 * 1000);
                     }
@@ -22912,12 +23070,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                     onSecondary: () => {
                         const dq = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                         dq.push(id + ':snoozed');
-                        localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq));
+                        _persistLocal('wf_notif_dismissed_' + today, dq);
                         setTimeout(() => {
                             const dq2 = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
                             const idx = dq2.indexOf(id + ':snoozed');
                             if (idx > -1) dq2.splice(idx, 1);
-                            localStorage.setItem('wf_notif_dismissed_' + today, JSON.stringify(dq2));
+                            _persistLocal('wf_notif_dismissed_' + today, dq2);
                             checkActionableReminders();
                         }, 4 * 60 * 60 * 1000);
                     }
@@ -23010,7 +23168,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 });
             }
 
-            localStorage.setItem('wf_alerted_today', JSON.stringify(seen));
+            _persistLocal('wf_alerted_today', seen);
         }
 
         // ==================== EXPORT & REPORTING ====================
@@ -25198,7 +25356,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             catch (e) { return []; }
         }
         function _setRevokedSessions(list) {
-            localStorage.setItem('wf_revoked_sessions', JSON.stringify(list));
+            _persistLocal('wf_revoked_sessions', list);
         }
 
         // ISSUE 2 FIX — Debounced wrapper for renderSessions to prevent flicker on rapid Firestore updates
@@ -25252,7 +25410,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         }
 
         async function registerCurrentSession() {
-            const sessionId = localStorage.getItem('wf_session_id') || (() => { const id = uid(); localStorage.setItem('wf_session_id', id); return id; })();
+            const sessionId = localStorage.getItem('wf_session_id') || (() => { const id = uid(); _persistRaw('wf_session_id', id); return id; })();
             const revoked = _getRevokedSessions();
             let sessions = DB.get('sessions') || [];
 
@@ -26295,7 +26453,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 console.error('Factory reset cloud error:', err);
                 // Offline fallback — still wipe and reload
                 localStorage.clear();
-                Object.keys(appData).forEach(k => localStorage.setItem('wf2_' + k, JSON.stringify(appData[k])));
+                Object.keys(appData).forEach(k => _persistLocal('wf2_' + k, appData[k]));
                 const countText = $('fr_countdown');
                 countText.textContent = 'Rebooting (offline)...';
                 setTimeout(() => { window.location.href = window.location.href; }, 1500);

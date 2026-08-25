@@ -49,7 +49,18 @@ export const BUDGETS = {
     // Most of the growth is the comments recording WHY, which is the part a
     // later edit must not be able to undo quietly.
     // Moves ONCE, to the newly measured value with ~1.1% headroom.
-    htmlBytes: 1_580_000,        // measured 1,562,010
+    //
+    // Raised again from 1_580_000 (measured 1,562,010) for v7.53.0, the per-key
+    // sync clock. The record arrays already converged across devices; every
+    // other field — incomeReceived, balance, cribAnalyses, settings — was still
+    // on "whatever the snapshot says, copy it over local", so one incoming
+    // snapshot could erase months the user had marked received while offline and
+    // set no flag that would push the survivors back. _kut gives those keys the
+    // recency the records had, and plain objects now union rather than replace.
+    // The +19 KB is the merge itself plus the reproduction written into the
+    // comment, which is the part a later edit must not be able to undo quietly.
+    // Moves ONCE, to the newly measured value with ~1.1% headroom.
+    htmlBytes: 1_599_000,        // measured 1,581,386
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

@@ -680,3 +680,75 @@ describe('free text is escaped before it reaches innerHTML', () => {
         expect(uses, 'the escaper is defined but barely used').toBeGreaterThan(60);
     });
 });
+
+/* ── 8. every local write is protected, not just the ones on the record path ── */
+
+/* DB.set was fixed earlier in this session; a sweep afterwards found 34 MORE
+ * localStorage.setItem calls sitting outside any try — among them setDirty(),
+ * which is called from inside DB.set and from backupNow, and a full-state write
+ * that rewrites every key in one loop.
+ *
+ * On a full device each of those throws, and the throw escapes into whatever
+ * called it. That is the same silent freeze the record path had: the action half
+ * happens, nothing is said, and the log nobody reads gets a line.
+ *
+ * They now go through _persistLocal (JSON) or _persistRaw (a value already a
+ * string — routing those through the JSON helper would store `"123"` where `123`
+ * was, and every reader doing parseInt would break).
+ *
+ * The count below is the drift guard. Thirty-four fixed by hand come back the
+ * moment someone adds the thirty-fifth. */
+describe('no local write can throw into its caller', () => {
+    /** Is this offset inside a try { } block? */
+    function insideTry(src, pos) {
+        let depth = 0;
+        for (let i = pos; i > 0; i--) {
+            const c = src[i];
+            if (c === '}') depth++;
+            else if (c === '{') {
+                if (depth === 0) {
+                    let j = i - 1;
+                    while (j > 0 && ' \n\t'.includes(src[j])) j--;
+                    if (src.slice(Math.max(0, j - 2), j + 1).endsWith('try')) return true;
+                } else depth--;
+            }
+        }
+        return false;
+    }
+
+    it('the two protected helpers exist', () => {
+        expect(HTML).toMatch(/function _persistLocal\(key, value, raw\)/);
+        expect(HTML, '_persistRaw is gone — the string writes would have to be '
+            + 'JSON-encoded, which changes what is on disk')
+            .toMatch(/function _persistRaw\(key, str\)/);
+    });
+
+    it('a raw write is stored unchanged, not JSON-encoded', () => {
+        const i = HTML.indexOf('function _persistRaw(key, str)');
+        const body = HTML.slice(i, i + 260);
+        // `[^)]*` stopped at the paren inside String(...), so the first version of
+        // this assertion failed against correct code. Match the trailing flag.
+        expect(body, 'the raw helper JSON-encodes, so a number written as 123 comes '
+            + 'back as "123" and parseInt readers break').toMatch(/_persistLocal\(.*,\s*true\s*\)/);
+    });
+
+    it('no localStorage.setItem is left outside a try', () => {
+        const lines = HTML.split('\n');
+        const offs = [];
+        let p = 0;
+        for (const l of lines) { offs.push(p); p += l.length + 1; }
+        const bad = [];
+        lines.forEach((l, i) => {
+            if (!l.includes('localStorage.setItem')) return;
+            if (l.includes('_persistLocal') || l.includes('_persistRaw')) return;
+            const t = l.trim();
+            if (t.startsWith('*') || t.startsWith('//')) return;
+            if (/try\s*\{[^}]*localStorage\.setItem/.test(l)) return;
+            if (insideTry(HTML, offs[i] + l.indexOf('localStorage.setItem'))) return;
+            bad.push(i + 1 + ': ' + t.slice(0, 70));
+        });
+        expect(bad, 'an unguarded local write is back — on a full device it throws '
+            + 'into its caller and the rest of that handler never runs')
+            .toEqual([]);
+    });
+});
