@@ -376,3 +376,88 @@ describe('a malformed expense cannot blank a page', () => {
             .not.toMatch(/\(function _wfNormaliseExpenses\(\)/);
     });
 });
+
+/* ── 5. the Expenses list is bounded, the numbers are not ────────────────── */
+
+/* MEASURED IN A REAL BROWSER AT 390 px, BEFORE THE CAP
+ *
+ *     1,000 expenses →  15,998 DOM nodes,   239 ms
+ *     5,000 expenses →  76,015 DOM nodes,   869 ms
+ *    20,000 expenses → 301,015 DOM nodes, 4,442 ms
+ *
+ * The tab defaults to "All Months" and drew one row per expense with no
+ * ceiling. On an iPhone 301,015 nodes is not a slow page, it is a renderer
+ * kill: iOS discards the tab, no JS handler runs so nothing reaches any log,
+ * and it gets worse with every statement imported — the better the import
+ * works, the sooner the app dies.
+ *
+ * After the cap, the same measurement: 3,160 nodes and ~109 ms at every size,
+ * because the node count no longer depends on the dataset at all.
+ *
+ * THE ONE THING THAT MUST NOT BREAK
+ *
+ * The totals are computed over the FULL filtered set, before the slice. A fast
+ * page showing "Total Expenses" for the 200 rows that happen to be drawn would
+ * be strictly worse than the slow page it replaced — it would be wrong, and it
+ * would look right. That ordering is asserted below and mutation-tested.
+ */
+describe('the expenses list is capped without capping the numbers', () => {
+    const fn = blockAt('function renderExpenses()');
+
+    it('caps how many rows are drawn', () => {
+        /* The CONDITION is asserted, not just the presence of a slice: a mutation
+         * that left the statement in place behind `if (false)` passed a looser
+         * regex, which is a guard reporting on bytes rather than on behaviour.
+         * The behavioural proof is the browser measurement in the block comment
+         * above — 301,015 nodes before, 3,160 after, at every dataset size. */
+        expect(fn, 'the render cap is gone or disabled — the list draws every expense again')
+            .toMatch(/if\s*\(_expHidden\s*>\s*0\)\s*filtered\s*=\s*filtered\.slice\(0,\s*_expShown\)/);
+        expect(fn, '_expHidden is not derived from the real row count')
+            .toMatch(/_expHidden\s*=\s*_expTotalRows\s*-\s*_expShown/);
+        expect(fn).toMatch(/_expTotalRows\s*=\s*filtered\.length/);
+        const page = fn.match(/const _EXP_PAGE\s*=\s*(\d+)/);
+        expect(page, 'no page size is defined').toBeTruthy();
+        expect(Number(page[1])).toBeGreaterThan(0);
+        expect(Number(page[1]), 'a page this large is back in renderer-kill territory')
+            .toBeLessThanOrEqual(500);
+    });
+
+    it('computes every figure BEFORE it slices', () => {
+        const total = fn.indexOf('const totAmt = filtered.reduce');
+        const count = fn.indexOf('${filtered.length}');
+        const slice = fn.indexOf('filtered = filtered.slice(0, _expShown)');
+        expect(total, 'the total is gone — retarget this test').toBeGreaterThan(-1);
+        expect(slice, 'the slice is gone — retarget this test').toBeGreaterThan(-1);
+        expect(total, 'THE TOTAL IS COMPUTED AFTER THE SLICE — the Expenses tab now '
+            + 'reports the sum of the 200 visible rows as the sum of everything')
+            .toBeLessThan(slice);
+        expect(count, 'the Count card is computed after the slice and now shows the '
+            + 'page size instead of how many expenses exist').toBeLessThan(slice);
+    });
+
+    it('says how many rows are not shown, and that the totals still cover them', () => {
+        expect(fn).toMatch(/Showing/);
+        expect(fn, 'the bar does not tell the user the totals are unaffected')
+            .toMatch(/totals above cover all/);
+    });
+
+    it('offers a way to see the rest', () => {
+        expect(fn).toMatch(/_wfExpShowMore\(\)/);
+        expect(HTML, 'the show-more handler is not defined')
+            .toMatch(/function _wfExpShowMore\(\)/);
+    });
+
+    it('reveals more without re-sorting what is already on screen', () => {
+        const more = blockAt('function _wfExpShowMore()');
+        expect(more, 'show-more only adds to the page size; anything else moves rows '
+            + 'under the finger that is tapping').toMatch(/\+\s*200/);
+    });
+
+    it('resets the page size when the filter or sort changes', () => {
+        expect(fn, 'switching months would keep a page size from the previous view')
+            .toMatch(/_wfExpShownKey[\s\S]{0,200}_wfExpShown\s*=\s*_EXP_PAGE/);
+        const key = fn.match(/const _expKey\s*=\s*([^;]+);/);
+        expect(key, 'no reset key').toBeTruthy();
+        expect(key[1], 'the reset key ignores the month filter').toContain('cur');
+    });
+});

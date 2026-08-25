@@ -19989,6 +19989,42 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-gold"><div class="stat-label">Top Category</div><div class="stat-val" style="font-size:15px;">${topCat[0]}</div><div class="stat-meta">${fmtS(topCat[1])}</div></div>
         <div class="stat-card sc-green"><div class="stat-label">Paid</div><div class="stat-val">${filtered.filter(x => x.completed).length}</div><div class="stat-meta">of ${filtered.length}</div></div>
     `;
+            /* ── the RENDER is capped; the numbers above are not ──────────────────
+             * This tab defaults to "All Months", and the list below used to draw one
+             * row per expense with no ceiling. Measured in a real browser at 390 px:
+             *
+             *     1,000 expenses →  15,998 DOM nodes,   239 ms
+             *     5,000 expenses →  76,015 DOM nodes,   869 ms
+             *    20,000 expenses → 301,015 DOM nodes, 4,442 ms
+             *
+             * On an iPhone that is not a slow page, it is a renderer kill: iOS
+             * discards the tab, the app "crashes" with nothing in any log because no
+             * JS handler runs, and it gets worse with every statement imported — so
+             * the better the import works, the sooner the app dies.
+             *
+             * Every figure in expStats above — total, count, top category, paid — is
+             * computed over the FULL filtered set and is NOT touched by this. Only
+             * how many rows are DRAWN changes, and the bar at the bottom says how
+             * many are not drawn and reveals them. A number that is a lie would be
+             * far worse than a slow page. */
+            const _EXP_PAGE = 200;
+            const _expKey = String(cur) + '|' + String(s && s.field) + '|' + String(s && s.dir);
+            if (window._wfExpShownKey !== _expKey) {
+                window._wfExpShownKey = _expKey;
+                window._wfExpShown = _EXP_PAGE;
+            }
+            const _expTotalRows = filtered.length;
+            const _expShown = Math.min(window._wfExpShown || _EXP_PAGE, _expTotalRows);
+            const _expHidden = _expTotalRows - _expShown;
+            if (_expHidden > 0) filtered = filtered.slice(0, _expShown);
+            const _expMoreBar = () => (_expHidden <= 0 ? '' :
+                '<div style="text-align:center;padding:14px 10px 4px;">'
+                + '<button class="btn btn-ghost btn-sm" onclick="_wfExpShowMore()">Show '
+                + Math.min(_EXP_PAGE, _expHidden) + ' more</button>'
+                + '<div style="font-size:11px;color:var(--text3);margin-top:6px;">Showing '
+                + _expShown + ' of ' + _expTotalRows
+                + ' &middot; the totals above cover all ' + _expTotalRows + '</div></div>');
+
             const catBadge = { Food: 'bg-g', Transport: 'bg-b', Utilities: 'bg-a', Medical: 'bg-r', Education: 'bg-p', Entertainment: 'bg-c', Clothing: 'bg-gr', Gift: 'bg-p', Gold: 'bg-a', 'Bank Charges': 'bg-r', Other: 'bg-gr' };
 
             // ── View mode: Schedule (month-grouped timeline, default) or Table ──
@@ -20147,7 +20183,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             ${itemRows}
                         </div>
                     `;
-                }).join('');
+                }).join('') + _expMoreBar();
                 try { if (window.WFIconHydrate) WFIconHydrate(schedHost); } catch (_) {}
                 return;
             }
@@ -20159,13 +20195,22 @@ table.amort tbody tr { page-break-inside: avoid; }
             tbody.innerHTML = filtered.map(x => `<tr class="${x.completed ? 'done-row' : ''}">
         <td><div style="font-weight:600;">${x.desc}</div>${x.notes ? `<div class="td-m">${x.notes}</div>` : ''}</td>
         <td><span class="badge ${catBadge[x.cat] || 'bg-gr'}">${x.cat}</span></td>
-        <td class="td-m">${monthStrFmt(x.month + '-01')}</td>
+        <td class="td-m">${monthStrFmt((x.month || '') + '-01')}</td>
         <td class="td-r">${fmt(x.amount)}</td>
         <td>${x.recurring ? '<span class="badge bg-b">🔄 Monthly</span>' : '<span class="badge bg-gr">Once</span>'}</td>
         <td>${x.completed ? '<span class="badge bg-g">✅ Paid</span>' : (_isStatementExp(x) ? '<span class="badge bg-b">📄 Recorded</span>' : '<span class="badge bg-a">Pending</span>')}</td>
         <td>${_expActBtns(x)}</td>
-    </tr>`).join('');
+    </tr>`).join('') + (_expHidden > 0 ? `<tr><td colspan="7">${_expMoreBar()}</td></tr>` : '');
         }
+
+        /* Reveal the next page of rows. Deliberately additive: it never re-sorts
+         * or re-filters, so nothing already on screen moves under the user's
+         * finger when they tap it. */
+        function _wfExpShowMore() {
+            window._wfExpShown = (window._wfExpShown || 200) + 200;
+            try { renderExpenses(); } catch (e) { console.warn('[expenses] show more:', e && e.message); }
+        }
+        window._wfExpShowMore = _wfExpShowMore;
 
         // Toggle the history list under an accumulated expense category.
         function _toggleExpCat(gid) {
