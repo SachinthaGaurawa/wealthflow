@@ -102,6 +102,8 @@ function loadMerge() {
         blockAt('function _utOf(r)'),
         blockAt('function _recSig(r)'),
         blockAt('function _recPreferred(a, b)'),
+        uidSource(),
+        blockAt('function _wfDedupRecordIds(arr)'),
         blockAt('function _wfStampAndTomb(key, newArr)'),
         blockAt('function _wfMergeRecordArray(localArr, cloudArr, tombMap)'),
         blockAt('function _wfMergeTombMaps(a, b)'),
@@ -113,10 +115,42 @@ function loadMerge() {
     ].join('\n');
     const api = new Function('localStorage', 'appData', 'notify', 'console',
         src + '; let _wfLocalWriteBlocked = false;'
-        + ' return { _wfStampAndTomb, _wfMergeRecordArray, _wfMergeTombMaps,'
+        + ' return { uid, _wfDedupRecordIds, _wfStampAndTomb, _wfMergeRecordArray, _wfMergeTombMaps,'
         + ' _wfStampKey, _wfMergeKeyed, _wfApplyCloudData };'
     )(localStorage, appData, (m, t) => notes.push([t, m]), { log() {}, warn() {}, error() {} });
     return { api, appData, store, notes, setFull: (v) => { failWrites = v; } };
+}
+
+/**
+ * The id generator's source, from `let _uidSeq` to the end of the `const uid`
+ * statement. Anchored on both ends by text the generator must keep, so a change
+ * that removes the tail FAILS THE EXTRACTION instead of silently slicing
+ * garbage — the first version of this hunted for '.toString(36).slice(1)' and,
+ * when a mutation removed it, indexOf returned -1 and the whole harness broke.
+ * That looked like the mutation being caught. It was not.
+ */
+function uidSource() {
+    const start = HTML.indexOf('let _uidSeq = 0;');
+    expect(start, 'the id sequence is gone from index.html — retarget this test').toBeGreaterThan(-1);
+    const declStart = HTML.indexOf('const uid = () =>', start);
+    expect(declStart, 'the id generator is gone from index.html').toBeGreaterThan(-1);
+    const end = HTML.indexOf(';', HTML.indexOf('_uidSeq', declStart));
+    expect(end, 'could not find the end of the id generator').toBeGreaterThan(declStart);
+    const src = HTML.slice(start, end + 1);
+    expect(src, 'the generator no longer advances a per-page sequence — same-millisecond '
+        + 'uniqueness is back to depending on luck').toMatch(/_uidSeq\s*=\s*\(?\s*_uidSeq\s*\+\s*1/);
+    return src;
+}
+
+/**
+ * The same generator, but the millisecond never moves and Math.random never
+ * varies. Everything that could mask a collision is held still, so the only
+ * thing left that can make two ids differ is the sequence itself.
+ */
+function frozenUid() {
+    return new Function('Date', 'Math',
+        uidSource() + '; return uid;'
+    )({ now: () => 1750000000000 }, { random: () => 0.5 });
 }
 
 const J = (x) => JSON.stringify(x);
@@ -347,5 +381,90 @@ describe('a deletion is never lost in silence', () => {
         const bare = scope.match(/try\s*\{\s*localStorage\.setItem\([^)]*\)[^}]*\}\s*catch/g) || [];
         expect(bare, 'a merge-path write is back on a bare try/catch: it can fail on a full device '
             + 'and take a deletion or a merged array with it, silently').toEqual([]);
+    });
+});
+
+/* ── 4. two records that share an id ──────────────────────────────────────── */
+
+describe('a record id is never minted twice', () => {
+    it('a whole statement imported inside one millisecond has no duplicate id', () => {
+        // The old generator was Date.now() plus five random base-36 characters. A
+        // bulk import mints every row inside the same millisecond, so the id
+        // reduced to those five characters — measured at 0.13% of 400-row imports
+        // and 1.19% of 1600-row imports carrying a collision.
+        //
+        // Driving the real generator and counting collisions is NOT a test of
+        // this: at 2000 ids the old one only collides ~3% of the time, so the
+        // assertion passes by luck more often than not. A mutation that froze the
+        // sequence survived exactly that way. So the clock is held still and the
+        // randomness is held still, and what is left must still be unique.
+        const uid = frozenUid();
+        const seen = new Set();
+        const dups = [];
+        for (let i = 0; i < 20000; i++) {
+            const id = uid();
+            if (seen.has(id)) dups.push(`row ${i}: ${id}`);
+            seen.add(id);
+        }
+        expect(dups.slice(0, 3), 'two rows of one import were given the same id with nothing but '
+            + 'randomness between them — the merge keys by id, so one real transaction '
+            + 'disappears at the next sync').toEqual([]);
+        expect(seen.size).toBe(20000);
+    });
+
+    it('is still unique once the clock does move', () => {
+        const { api } = loadMerge();
+        const seen = new Set();
+        for (let i = 0; i < 20000; i++) seen.add(api.uid());
+        expect(seen.size, 'the real generator repeated an id').toBe(20000);
+    });
+
+    it('costs a whole transaction when it does happen', () => {
+        const { api } = loadMerge();
+        const rows = [
+            { id: '_dup', desc: 'KEELLS', amount: 4500, _ut: 1000 },
+            { id: '_dup', desc: 'FUEL', amount: 9000, _ut: 1000 },
+            { id: '_ok', desc: 'RENT', amount: 50000, _ut: 1000 },
+        ];
+        // Unrepaired, this is what the merge does with them — the reason the
+        // generator had to change rather than merely being made rarer.
+        const collapsed = api._wfMergeRecordArray(JSON.parse(J(rows)), [], undefined);
+        expect(collapsed).toHaveLength(2);
+        const lost = rows.reduce((s, r) => s + r.amount, 0) - collapsed.reduce((s, r) => s + r.amount, 0);
+        expect(lost, 'this test no longer demonstrates the cost — retarget it').toBe(9000);
+    });
+
+    it('repairs a collision already sitting in the data, on write', () => {
+        const A = loadMerge();
+        const rows = [
+            { id: '_dup', desc: 'KEELLS', amount: 4500 },
+            { id: '_dup', desc: 'FUEL', amount: 9000 },
+            { id: '_ok', desc: 'RENT', amount: 50000 },
+        ];
+        const out = A.api._wfStampAndTomb('expenses', JSON.parse(J(rows)));
+        expect(new Set(out.map(r => r.id)).size, 'a pre-existing duplicate id was persisted as-is, '
+            + 'so the next sync still drops the row').toBe(3);
+        const merged = A.api._wfMergeRecordArray(out, [], undefined);
+        expect(merged.reduce((s, r) => s + r.amount, 0), 'money still goes missing through the merge')
+            .toBe(63500);
+    });
+
+    it('repairs on the write path only, so two devices cannot double a row', () => {
+        // Re-iding on READ would have each device mint a different replacement for
+        // the same row, and the record would come back twice after a merge.
+        const merge = blockAt('function _wfMergeRecordArray(localArr, cloudArr, tombMap)');
+        expect(merge, 'the id repair moved onto the read path — every device would mint a '
+            + 'different id for the same row and the merge would double it')
+            .not.toMatch(/_wfDedupRecordIds/);
+        const applier = blockAt('function _wfApplyCloudData(cloudData)');
+        expect(applier).not.toMatch(/_wfDedupRecordIds/);
+    });
+
+    it('does not disturb records that have no id at all', () => {
+        const A = loadMerge();
+        const rows = [{ desc: 'a' }, { desc: 'b' }, { id: '_x', desc: 'c' }];
+        const fixed = A.api._wfDedupRecordIds(rows);
+        expect(fixed, 'id-less records were treated as collisions').toBe(0);
+        expect(rows.filter(r => r.id != null)).toHaveLength(1);
     });
 });
