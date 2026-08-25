@@ -7157,6 +7157,7 @@
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             cribReports: [], cribAnalyses: {},
             _tomb: {},   // v7.52.0 — per-key deletion tombstones {key:{id:deleteTs}} for convergent multi-device merge
+            _kut: {},    // v7.53.0 — per-KEY update stamps {key:ts} for the non-record fields (see _wfMergeKeyed)
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
         let isInitialised = false;
@@ -7184,7 +7185,7 @@
         if (!Array.isArray(_pendingCloudDeletes)) _pendingCloudDeletes = [];
         let _deleteFlushInFlight = false;
         function _persistPendingDeletes() {
-            try { localStorage.setItem('wf2_pendingCloudDeletes', JSON.stringify(_pendingCloudDeletes)); } catch (_) {}
+            _persistRaw('wf2_pendingCloudDeletes', JSON.stringify(_pendingCloudDeletes));
         }
         function _queueCloudDelete(field, key) {
             if (!_pendingCloudDeletes.some(d => d[0] === field && d[1] === key)) {
@@ -7259,7 +7260,11 @@
             prevById.forEach((old, id) => { if (!seen.has(id)) { tk[id] = now; tombChanged = true; } });
             // A resurrected id (present again) clears its old tombstone.
             seen.forEach(id => { if (tk[id] != null) { delete tk[id]; tombChanged = true; } });
-            if (tombChanged) { try { localStorage.setItem('wf2__tomb', JSON.stringify(appData._tomb)); } catch (_) {} }
+            // A delete that fails to reach disk is a delete the app forgets on the
+            // next reload — and the record then walks back in from the cloud. Route
+            // it through the guarded writer, which frees re-fetchable caches, retries
+            // and tells the user once when the device is genuinely full.
+            if (tombChanged) _persistRaw('wf2__tomb', JSON.stringify(appData._tomb));
             return newArr;
         }
 
@@ -7310,6 +7315,69 @@
             return out;
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        // v7.53.0 — THE KEYS THAT HAD NO CLOCK
+        // ----------------------------------------------------------------------
+        // v7.52.0 gave every RECORD an update time and made record arrays converge.
+        // It left the rest of the document — incomeReceived, balance, cribAnalyses,
+        // settings and anything else the cloud carries — on the old rule: whatever
+        // the snapshot says, copy it over local. Those fields therefore still had
+        // the whole-document clobber that v7.52.0 was written to remove, and it is
+        // not a narrow race. Reproduced against this file's own merge code:
+        //
+        //   phone offline, user marks 2026-03, -04 and -05 received
+        //     → appData.incomeReceived = {01,02,03,04,05}
+        //   phone reconnects; the first snapshot to arrive is the laptop's, which
+        //   only knows {01,02}
+        //     → appData.incomeReceived = {01,02}, written to disk, needPush FALSE
+        //
+        // Three months of the user's marks gone, persisted over the good copy, and
+        // no flag set that would push the survivors back. The pending local sync
+        // then uploads the truncated map.
+        //
+        // Fix: give those keys the same clock the records have. _kut[key] is
+        // stamped on every local DB.set, travels in appData like _tomb, and the
+        // merge takes the side whose stamp is newer. Plain objects UNION rather
+        // than replace, so a key present on only one side is never lost — map-key
+        // REMOVAL has its own path (DB.delKey → a real server field-delete),
+        // because a merge-write cannot express a deletion at all.
+        const _WF_KUT_EXEMPT = { auth: 1 };   // credentials: dedicated PIN-conflict path above; never unioned across devices
+        function _wfStampKey(k) {
+            if (_WF_KUT_EXEMPT[k] || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
+            if (!appData._kut || typeof appData._kut !== 'object') appData._kut = {};
+            appData._kut[k] = Date.now();
+            _persistRaw('wf2__kut', JSON.stringify(appData._kut));
+        }
+        // Merge ONE non-record key. Newer stamp wins; equal stamps fall back to a
+        // deterministic content compare so both devices choose the same side. The
+        // result is commutative: a device holding (X@10, cloud Y@20) and a device
+        // holding (Y@20, cloud X@10) compute the identical value.
+        function _wfMergeKeyed(localVal, cloudVal, lts, cts) {
+            if (localVal === undefined) return cloudVal;
+            if (cloudVal === undefined) return localVal;
+            // Neither side has ever been stamped — a document written before this
+            // clock existed. Keep LOCAL, which is both the behaviour settings had
+            // before and the only answer that cannot destroy an unpushed edit. The
+            // first write on either device stamps the key and ends the ambiguity,
+            // so this branch is a migration window, not a permanent rule.
+            if (lts === 0 && cts === 0) {
+                const plain0 = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+                return (plain0(localVal) && plain0(cloudVal))
+                    ? Object.assign({}, cloudVal, localVal)
+                    : localVal;
+            }
+            const localWins = (lts !== cts)
+                ? lts > cts
+                : JSON.stringify(localVal) >= JSON.stringify(cloudVal);
+            const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+            if (plain(localVal) && plain(cloudVal)) {
+                // Union — the loser's keys survive, the winner's values win a clash.
+                return localWins ? Object.assign({}, cloudVal, localVal)
+                                 : Object.assign({}, localVal, cloudVal);
+            }
+            return localWins ? localVal : cloudVal;
+        }
+
         // ── THE ONE CLOUD APPLIER ───────────────────────────────────────────────
         // Every path that reads the user document (live snapshot, manual pull,
         // first sign-in hydration) funnels through THIS function, so there is one
@@ -7318,7 +7386,7 @@
         // local priority; everything else copies from cloud. Returns flags so the
         // caller can re-render and — when the merged truth is newer than the cloud
         // copy — push it back up so the cloud converges too.
-        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, driveBridge: 1, driveRefresh: 1 };
+        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, driveBridge: 1, driveRefresh: 1 };
         function _wfApplyCloudData(cloudData) {
             const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
             if (!cloudData || typeof cloudData !== 'object') return res;
@@ -7329,7 +7397,7 @@
             const mergedTombJson = JSON.stringify(mergedTomb);
             if (mergedTombJson !== JSON.stringify(localTomb)) {
                 appData._tomb = mergedTomb;
-                try { localStorage.setItem('wf2__tomb', mergedTombJson); } catch (_) {}
+                _persistRaw('wf2__tomb', mergedTombJson);
             }
             if (mergedTombJson !== JSON.stringify(cloudTomb)) res.needPush = true;   // cloud is missing our deletes
             // 2) Record arrays — per-record newest-wins with tombstoned deletions.
@@ -7339,32 +7407,62 @@
                 const mJson = JSON.stringify(merged);
                 if (mJson !== JSON.stringify(appData[key] !== undefined ? appData[key] : [])) {
                     appData[key] = merged;
-                    try { localStorage.setItem('wf2_' + key, mJson); } catch (_) {}
+                    _persistRaw('wf2_' + key, mJson);
                     if (key === 'sessions') res.sessionsChanged = true; else res.nonSessionChanged = true;
                 }
                 if (mJson !== JSON.stringify(cloudData[key] !== undefined ? cloudData[key] : [])) res.needPush = true;
             });
-            // 3) Everything else — settings deep-merge (local priority), rest cloud-copy.
-            Object.keys(cloudData).forEach(key => {
+            // 3) Everything else — newest-wins per key, unioned, never cloud-clobbered.
+            const localKut = (appData._kut && typeof appData._kut === 'object') ? appData._kut : {};
+            const cloudKut = (cloudData._kut && typeof cloudData._kut === 'object') ? cloudData._kut : {};
+            const _stampOf = (m, k) => (typeof m[k] === 'number' && isFinite(m[k]) ? m[k] : 0);
+            const _plainKeys = {};
+            Object.keys(cloudData).forEach(k => { _plainKeys[k] = 1; });
+            Object.keys(appData).forEach(k => { _plainKeys[k] = 1; });
+            Object.keys(_plainKeys).forEach(key => {
                 if (_WF_SYNC_META_KEYS[key] || _WF_RECORD_KEYS.indexOf(key) !== -1) return;
-                if (key === 'settings') {
-                    const cloudSettings = cloudData.settings || {};
-                    const localSettings = appData.settings || {};
-                    const merged = Object.assign({}, cloudSettings, localSettings);
-                    if (JSON.stringify(merged) !== JSON.stringify(localSettings)) {
-                        appData.settings = merged;
-                        try { localStorage.setItem('wf2_settings', JSON.stringify(merged)); } catch (_) {}
+                if (!(key in cloudData)) {
+                    // We hold something the cloud has never seen — send it, change nothing here.
+                    if (appData[key] !== undefined) res.needPush = true;
+                    return;
+                }
+                if (_WF_KUT_EXEMPT[key]) {
+                    // auth only. Left on cloud-copy deliberately: the PIN-conflict
+                    // branch in the snapshot listener owns that decision, and merging
+                    // two devices' credentials into one object is not a safe default.
+                    const cjA = JSON.stringify(cloudData[key]);
+                    if (cjA !== JSON.stringify(appData[key])) {
+                        appData[key] = cloudData[key];
+                        _persistRaw('wf2_' + key, cjA);
                         res.nonSessionChanged = true;
                     }
                     return;
                 }
-                const cj = JSON.stringify(cloudData[key]);
-                if (cj !== JSON.stringify(appData[key])) {
-                    appData[key] = cloudData[key];
-                    try { localStorage.setItem('wf2_' + key, cj); } catch (_) {}
+                const merged = _wfMergeKeyed(appData[key], cloudData[key],
+                    _stampOf(localKut, key), _stampOf(cloudKut, key));
+                const mj = JSON.stringify(merged);
+                if (mj !== JSON.stringify(appData[key])) {
+                    appData[key] = merged;
+                    _persistRaw('wf2_' + key, mj);
                     res.nonSessionChanged = true;
                 }
+                if (mj !== JSON.stringify(cloudData[key])) res.needPush = true;
             });
+            // 4) Converge the key-stamps themselves — max per key, so the next merge
+            //    on either device starts from the same clock. Decided AFTER step 3,
+            //    which needs the two sides' original stamps to pick a winner.
+            const mergedKut = {};
+            Object.keys(localKut).forEach(k => { mergedKut[k] = _stampOf(localKut, k); });
+            Object.keys(cloudKut).forEach(k => {
+                const t = _stampOf(cloudKut, k);
+                if (mergedKut[k] == null || t > mergedKut[k]) mergedKut[k] = t;
+            });
+            const mkJson = JSON.stringify(mergedKut);
+            if (mkJson !== JSON.stringify(localKut)) {
+                appData._kut = mergedKut;
+                _persistRaw('wf2__kut', mkJson);
+            }
+            if (mkJson !== JSON.stringify(cloudKut)) res.needPush = true;
             return res;
         }
         try { window._wfApplyCloudData = _wfApplyCloudData; } catch (_) {}
@@ -7458,6 +7556,11 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 if (!isSyncingFromCloud && _WF_RECORD_KEYS.indexOf(k) !== -1) {
                     try { v = _wfStampAndTomb(k, v); } catch (_) {}
                 }
+                // v7.53.0 — and the same for the keys that are NOT record arrays.
+                // Without this stamp the merge has no way to tell a fresh local edit
+                // from a stale cloud copy, and step 3 of the applier simply took the
+                // cloud's word for it.
+                if (!isSyncingFromCloud) { try { _wfStampKey(k); } catch (_) {} }
                 appData[k] = v;
                 // Persist. See _persistLocal: this line used to be bare, and a full
                 // localStorage threw out of DB.set into whatever click handler called
@@ -7492,6 +7595,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     _persistLocal('wf2_' + field, obj);
                 }
                 _queueCloudDelete(field, key);
+                if (!isSyncingFromCloud) { try { _wfStampKey(field); } catch (_) {} }
                 if (!silent) _lastLocalWriteTs = Date.now();
                 try { if (typeof window._wfV5TrackWrite === 'function') window._wfV5TrackWrite(field, appData[field]); } catch (_) { }
                 // Fast path: try to remove it on the server immediately (common online
@@ -7859,7 +7963,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 const obj = appData[f];
                 if (obj && typeof obj === 'object' && !Array.isArray(obj) && (k in obj)) {
                     delete obj[k];
-                    try { localStorage.setItem('wf2_' + f, JSON.stringify(obj)); } catch (_) { }
+                    _persistRaw('wf2_' + f, JSON.stringify(obj));
                     changed = true;
                 }
             });
