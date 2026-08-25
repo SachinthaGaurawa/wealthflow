@@ -158,6 +158,20 @@ jobs:
           echo "has_human_approval=$HAS" >> "$GITHUB_OUTPUT"
           echo "human-approved: $HAS"
 
+          # WHEN it went on. The label list carries no time, and the freshness
+          # check below needs one: a label is attached to the PULL REQUEST, not
+          # to a commit, so without a timestamp there is no way to tell whether
+          # it was granted before or after the code it is being read against.
+          # The timeline's created_at is assigned by GitHub, not by a client.
+          LAT=""
+          if [ "$HAS" = "true" ] && [ -n "${PR:-}" ]; then
+            LAT=$(gh api "repos/$REPO/issues/$PR/timeline" --paginate \
+                    --jq '[.[] | select(.event == "labeled" and .label.name == "human-approved") | .created_at] | last // ""' \
+                  2>/dev/null) || LAT=""
+          fi
+          echo "labeled_at=$LAT" >> "$GITHUB_OUTPUT"
+          echo "approved at: ${LAT:-<unknown>}"
+
       # Merge-base-correct, and it fails rather than guessing. Replaces the
       # `git fetch --depth=1` + `git diff base...HEAD` pattern that aborted with
       # "fatal: origin/main...HEAD: no merge base" as soon as main advanced —
@@ -168,6 +182,7 @@ jobs:
         uses: ./.github/actions/changed-files
 
       - name: Classify changed files
+        id: classify
         if: steps.scope.outputs.gate == 'yes'
         env:
           # PRs carrying this label have a human approver and may touch sensitive paths.
@@ -218,12 +233,98 @@ jobs:
             echo "::group::Sensitive paths touched"
             echo "$HITS"
             echo "::endgroup::"
+            # Published so the freshness step can ask, per file, whether it moved
+            # after the approval was granted.
+            {
+              echo "sensitive=yes"
+              echo "sensitive_files<<WF_EOF"
+              echo "$HITS"
+              echo "WF_EOF"
+            } >> "$GITHUB_OUTPUT"
             if [ "$HAS_HUMAN_APPROVAL" = "true" ]; then
-              echo "✓ Sensitive change is carrying the 'human-approved' label — allowed."
+              echo "✓ Sensitive change is carrying the 'human-approved' label — checking that the label is not older than the change."
             else
               echo "::error::This PR changes money/auth/security/data-rule files. It must be reviewed and labelled 'human-approved' before merge. Auto-merge is blocked for these paths by design."
               exit 1
             fi
           else
+            echo "sensitive=no" >> "$GITHUB_OUTPUT"
             echo "✓ No sensitive paths touched — eligible for auto-merge once tests are green."
           fi
+
+      # ── AN APPROVAL CANNOT COVER CODE THAT DID NOT EXIST WHEN IT WAS GIVEN ──
+      #
+      # A label belongs to the PULL REQUEST, not to a commit. Once `human-approved`
+      # is on it stays on through every later push, so an approval granted for one
+      # diff silently covers every diff that follows it.
+      #
+      # Not hypothetical. On PR #127 the label was applied at 12:03; two commits
+      # after it changed index.html and autonomy/perf-budget.mjs, and the step
+      # above printed
+      #     ✓ Sensitive change is carrying the 'human-approved' label — allowed.
+      # for a head the approver had never seen. That is the same family as every
+      # other defect this file's history records: a control that is present,
+      # reports cleanly, and does not hold.
+      #
+      # The label is NOT removed automatically on push. That would demand a fresh
+      # approval after every single commit, which is the opposite of batching work
+      # and getting one decision on it. Instead: a batch of commits followed by one
+      # labelling is approved, and a sensitive commit AFTER the labelling is not.
+      #
+      # The `since` filter compares against each commit's committer date, which is
+      # written by the committer's own clock rather than by GitHub. That is enough
+      # to stop an approval being extended by later work — which is what this
+      # guards — and it is not a defence against someone who can set that clock.
+      # The label's own timestamp is server-assigned.
+      #
+      # `since` is INCLUSIVE — checked against the live API, which returned the
+      # 12:03:29 commit for since=12:03:29Z. So a commit landing in the same second
+      # as the labelling counts as stale and a fresh label is asked for. That is the
+      # safe direction, and labelling always follows the push it approves anyway.
+      - name: Refuse an approval that predates the sensitive change
+        if: steps.scope.outputs.gate == 'yes' && steps.classify.outputs.sensitive == 'yes' && steps.approval.outputs.has_human_approval == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LABELED_AT: ${{ steps.approval.outputs.labeled_at }}
+          SENSITIVE_FILES: ${{ steps.classify.outputs.sensitive_files }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          # FAIL CLOSED, exactly as the label read does. If we cannot establish
+          # WHEN the approval was given, we cannot claim it covers this code.
+          if [ -z "${LABELED_AT:-}" ]; then
+            echo "::error::The 'human-approved' label is present but its timestamp could not be read, so there is no way to tell whether it predates these changes. Remove and re-apply the label."
+            exit 1
+          fi
+          echo "approval granted at: $LABELED_AT"
+
+          STALE=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if N=$(gh api -X GET "repos/$REPO/commits" \
+                     -f sha="$HEAD_SHA" -f path="$f" -f since="$LABELED_AT" \
+                     --jq 'length' 2>/dev/null); then
+              :
+            else
+              echo "::error::Could not check whether $f changed after the approval — treating it as unapproved."
+              exit 1
+            fi
+            case "$N" in
+              ''|*[!0-9]*)
+                echo "::error::Unreadable commit count for $f — treating it as unapproved."
+                exit 1 ;;
+            esac
+            if [ "$N" -gt 0 ]; then STALE="$(printf '%s%s\n' "$STALE" "$f")"; fi
+          done <<< "$SENSITIVE_FILES"
+
+          if [ -n "$STALE" ]; then
+            echo "::group::Changed AFTER the approval was given"
+            printf '%s\n' "$STALE"
+            echo "::endgroup::"
+            echo "::error::These sensitive files changed after 'human-approved' was applied, so the label covers code the approver never saw. Remove the label and re-apply it to approve the current head."
+            exit 1
+          fi
+          echo "✓ Every sensitive file predates the approval — the label covers this head."
