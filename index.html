@@ -11493,6 +11493,91 @@ function _wfNormaliseExpenseArray(arr) {
 }
 window._wfNormaliseExpenseArray = _wfNormaliseExpenseArray;
 
+/* The same story as expenses, one page over. Two readers already guard it —
+ *     const saved = t.savings ? t.savings.reduce(…) : 0;
+ * — while renderTargets() reads t.savings.reduce() raw, so a target created by
+ * an older version, or restored from a partial cloud merge, throws
+ * "Cannot read properties of undefined (reading 'reduce')" and blanks the whole
+ * Targets page. Found by seeding records and rendering every page.
+ *
+ * t.amount is repaired too: the progress bar computes saved / t.amount * 100,
+ * which on a zero or missing target renders "NaN%" — wrong output rather than a
+ * crash, which is the harder kind to notice. */
+function _wfNormaliseTargetArray(arr) {
+    if (!Array.isArray(arr)) return [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+        const t = arr[i];
+        if (!t || typeof t !== 'object') { arr.splice(i, 1); continue; }
+        if (!Array.isArray(t.savings)) t.savings = [];
+        t.savings = t.savings.filter((x) => x && typeof x === 'object');
+        /* Strip the separators BEFORE parsing. parseFloat('2,500') is 2, not 2500 —
+         * it stops at the comma — so a saved amount stored as a formatted string
+         * would have been silently reduced to two rupees. Caught by a test written
+         * against this function, not by reading it. The expenses normaliser above
+         * already does the same strip; this one did not. */
+        const _num = (v) => {
+            if (typeof v === 'number' && isFinite(v)) return v;
+            const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, ''));
+            return isFinite(n) ? n : 0;
+        };
+        t.savings.forEach((x) => { x.amount = _num(x.amount); });
+        t.amount = _num(t.amount);
+        if (typeof t.name !== 'string') t.name = String(t.name == null ? 'Target' : t.name);
+        if (t.id == null) t.id = (typeof uid === 'function') ? uid() : String(Date.now()) + i;
+    }
+    return arr;
+}
+window._wfNormaliseTargetArray = _wfNormaliseTargetArray;
+
+/* ── one cap for every long list ──────────────────────────────────────────────
+ * Measured in a real browser at 390 px, seeding 2,000 records into every store
+ * and rendering each page. Nine pages grew their DOM in step with the data:
+ *
+ *     loans 146,027 nodes · targets 110,006 · income 104,062 · cconetime 78,101
+ *     sessions 66,033 · ccinstall 62,044 · cheques 60,043 · subscriptions 44,043
+ *     incRecv 36,187                       (at fifty records each was ~1-4k)
+ *
+ * On an iPhone that is not a slow page, it is a renderer kill: iOS discards the
+ * tab, no JS handler runs so nothing reaches any log, and the app "crashes" with
+ * nothing to report. It gets worse with every statement imported.
+ *
+ * This caps how many rows are DRAWN. It must never be used to compute a figure:
+ * every total, count and average on these pages is calculated over the full
+ * array before this is called. A fast page showing the sum of the visible rows
+ * as the sum of everything would be worse than the slow page it replaced — it
+ * would be wrong, and it would look right. */
+const _WF_LIST_PAGE = 150;
+function _wfCap(key, rows) {
+    const all = Array.isArray(rows) ? rows : [];
+    const total = all.length;
+    const shown = Math.min(window['_wfCap_' + key] || _WF_LIST_PAGE, total);
+    const hidden = total - shown;
+    const note = hidden <= 0 ? '' :
+        '<div style="text-align:center;padding:14px 10px 4px;">'
+        + '<button class="btn btn-ghost btn-sm" onclick="_wfCapMore(\'' + key + '\')">Show '
+        + Math.min(_WF_LIST_PAGE, hidden) + ' more</button>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:6px;">Showing '
+        + shown + ' of ' + total + ' &middot; the figures above cover all '
+        + total + '</div></div>';
+    return {
+        rows: hidden > 0 ? all.slice(0, shown) : all,
+        total: total, shown: shown, hidden: hidden,
+        bar: note,
+        // Same notice, inside a table body.
+        row: hidden <= 0 ? '' : '<tr><td colspan="99">' + note + '</td></tr>'
+    };
+}
+/* Additive only: it never re-sorts or re-filters, so nothing already on screen
+ * moves under the finger that is tapping. */
+function _wfCapMore(key) {
+    window['_wfCap_' + key] = (window['_wfCap_' + key] || _WF_LIST_PAGE) + _WF_LIST_PAGE;
+    try { if (window._wfActivePage) renderPage(window._wfActivePage); } catch (e) {
+        try { console.warn('[list] show more:', e && e.message); } catch (_) {}
+    }
+}
+window._wfCap = _wfCap;
+window._wfCapMore = _wfCapMore;
+
 // ---- small utilities -----------------------------------------------------
 function _wfApiBase() {
     try {
@@ -15570,6 +15655,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
 
         function renderPage(name) {
+            // _wfCapMore needs to know which page to repaint.
+            window._wfActivePage = name;
             const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv, crib: () => { try { if (window.WFCrib) window.WFCrib.render(); } catch (_) {} } };
             if (fn[name]) fn[name]();
             // v7.69.0 — ONE hook for every screen. Whatever page you open, its intelligence
@@ -15954,7 +16041,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             // ── TABLE view (mirrors Expenses table) ──
             if (view === 'table') {
-                const rowsT = sortItems(arr).map(x => `
+                const _capT = _wfCap('incRecv', sortItems(arr));
+                const rowsT = _capT.rows.map(x => `
                     <tr>
                         <td><div style="font-weight:600;">${x.name || ''}</div>${x.notes ? `<div style="font-size:11px;color:var(--text3);">${x.notes}</div>` : ''}</td>
                         <td><span class="badge exp-badge ${incTypeBadge[x.type] || 'bg-gr'}" style="font-size:10px;">${x.type || 'Other'}</span></td>
@@ -15966,7 +16054,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             <button class="ib e" onclick="editIncomeRecv('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
                             <button class="ib d" onclick="deleteIncomeRecv('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
                         </div></td>
-                    </tr>`).join('');
+                    </tr>`).join('') + _capT.row;
                 host.innerHTML = `<div class="tbl-wrap"><table>
                     <thead><tr><th>Source</th><th>Type</th><th>Month</th><th>Amount</th><th>Status</th><th></th></tr></thead>
                     <tbody>${rowsT}</tbody></table></div>`;
@@ -15975,7 +16063,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
 
             // ── SCHEDULE view (month-grouped, newest first) ──
-            const groups = {}; arr.forEach(x => { (groups[x.month || ''] = groups[x.month || ''] || []).push(x); });
+            const _capS = _wfCap('incRecv', sortItems(arr));
+            const groups = {}; _capS.rows.forEach(x => { (groups[x.month || ''] = groups[x.month || ''] || []).push(x); });
             const keys = Object.keys(groups).sort((a, b) => b.localeCompare(a));
             host.innerHTML = keys.map(ym => {
                 const items = sortItems(groups[ym]);
@@ -16010,7 +16099,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             </div>
                         </div>${rows}
                     </div>`;
-            }).join('');
+            }).join('') + _capS.bar;
             try { if (window.WFIconHydrate) WFIconHydrate(host); } catch (_) {}
         }
 
@@ -16198,12 +16287,14 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             if (activeArr.length) {
                 el.innerHTML += `<div class="income-section-label">💰 Active Income Sources (${activeArr.length})</div>`;
-                el.innerHTML += activeArr.map(src => renderCard(src, false)).join('');
+                const _capA = _wfCap('incomeActive', activeArr);
+                el.innerHTML += _capA.rows.map(src => renderCard(src, false)).join('') + _capA.bar;
             }
 
             if (endedArr.length) {
                 el.innerHTML += `<div class="income-section-label" style="margin-top:20px;color:var(--text3);">📁 Archived / Ended Sources (${endedArr.length}) <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px;" onclick="toggleEndedIncome()">${($('endedIncomeWrap') ? 'Hide' : 'Show')}</button></div>`;
-                el.innerHTML += `<div id="endedIncomeWrap">` + endedArr.map(src => renderCard(src, true)).join('') + `</div>`;
+                const _capE = _wfCap('incomeEnded', endedArr);
+                el.innerHTML += `<div id="endedIncomeWrap">` + _capE.rows.map(src => renderCard(src, true)).join('') + _capE.bar + `</div>`;
             }
         }
 
@@ -17360,7 +17451,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         <div class="stat-card sc-red"><div class="stat-label">Monthly Loan Payments</div><div class="stat-val">${fmtS(totM)}</div><div class="stat-meta">${fmt(totM)}</div></div>
         <div class="stat-card sc-blue"><div class="stat-label">Total Principal</div><div class="stat-val">${fmtS(totA)}</div></div>
         <div class="stat-card sc-purple"><div class="stat-label">Active Loans</div><div class="stat-val">${activeLoans.length}</div></div>
-    </div>` + arr.map(l => {
+    </div>` + (function () { window._capLoans = _wfCap('loans', arr); return window._capLoans.rows; })().map(l => {
                 const prog = loanProgress(l), end = loanEndDate(l), active = end > new Date();
                 const months = _loanInstallmentMonths(l);
                 const payments = l.payments || [];
@@ -17536,7 +17627,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 </div>
             </div>
         </div>`;
-            }).join('');
+            }).join('') + (window._capLoans ? window._capLoans.bar : '');
         }
 
         // Modal showing all installments for a loan (Amortization Table)
@@ -19205,7 +19296,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${x.id}">${x.product} (${x.bank})</option>`).join('');
             const tbody = $('cciBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('💳', 'No installments', 'Add credit card installment plans to track payments')}</td></tr>`; return; }
-            tbody.innerHTML = arr.map(item => {
+            const _cap = _wfCap('ccinstall', arr);
+            tbody.innerHTML = _cap.rows.map(item => {
                 const prog = cciProgress(item);
                 const end = new Date(item.date + 'T00:00:00'); end.setMonth(end.getMonth() + item.duration);
                 const isActive = end > new Date() && !item.completed;
@@ -19225,7 +19317,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="ib e" onclick="editCCI('${item.id}')"><i data-wfi="edit"></i></button>
                 <button class="ib d" onclick="deleteCCI('${item.id}')"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
-            }).join('');
+            }).join('') + _cap.row;
         }
 
         // ==================== CC ONE-TIME ====================
@@ -19549,12 +19641,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div style="font-size:12px;color:var(--text2);line-height:1.5;">💳 <b>No card payments recorded yet.</b> Import a statement (payments auto-detected) or add one — charges then turn ✅ automatically, oldest first.</div>${addBtn}</div>`;
                 return;
             }
-            const rows = pays.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).map(p => `
+            // Every figure above — total paid, total charged, auto-matched, surplus —
+            // is computed from the full `pays`/`scoped` arrays before this point, so
+            // capping the rows drawn cannot change any of them.
+            const _capP = _wfCap('ccPayments', pays.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)));
+            const rows = _capP.rows.map(p => `
                 <tr><td style="font-weight:600;">${p.desc || 'Payment'}</td>
                     <td><span class="badge bg-b">${p.bank || '—'}</span></td>
                     <td class="td-a" style="color:var(--green,#16a34a);font-weight:700;">+${fmt(p.amount || 0)}</td>
                     <td class="td-m">${p.date || ''}</td>
-                    <td><button class="ib d" onclick="deleteCCPayment('${p.id}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('');
+                    <td><button class="ib d" onclick="deleteCCPayment('${p.id}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('') + _capP.row;
             const surplus = totalPaid - totalCharged;
             host.innerHTML = `
                 <div style="background:var(--card);border:1px solid var(--border2);border-radius:var(--r2);padding:14px 16px;margin-bottom:14px;">
@@ -19629,7 +19725,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             else arr.sort(_cmpNewest); // ↓ Newest (default)
             const tbody = $('ccotBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="9">${emptyState('⏱️', _ccotBankFilter === 'all' ? 'No one-time payments' : 'No payments for ' + _ccotBankFilter, 'Track CC purchases with the 50-day repayment rule')}</td></tr>`; return; }
-            tbody.innerHTML = arr.map(item => {
+            const _cap = _wfCap('cconetime', arr);
+            tbody.innerHTML = _cap.rows.map(item => {
                 const dl = dLeft(item.deadline);
                 let cdCls = 'cd-safe', cdTxt = dl + ' days';
                 if (item.paid) { cdCls = 'cd-done'; cdTxt = item.autoPaid ? '✅ Auto-matched' : '✅ Paid'; }
@@ -19672,7 +19769,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit"><i data-wfi="edit"></i></button>
                 <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
-            }).join('');
+            }).join('') + _cap.row;
         }
         // Show a popup explaining the cash-advance fee breakdown.
         function _showCCOTBreakdown(id) {
@@ -19765,7 +19862,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             const tbody = $('chequeBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="10">${emptyState('📄', 'No cheques tracked', 'Add received or issued cheques to monitor them')}</td></tr>`; return; }
             const todayDate = today();
-            tbody.innerHTML = arr.map(item => {
+            const _cap = _wfCap('cheques', arr);
+            tbody.innerHTML = _cap.rows.map(item => {
                 const daysToRelease = Math.ceil((new Date(item.release + 'T00:00:00') - new Date()) / 86400000);
                 let cdCls = 'cd-safe', cdTxt = daysToRelease > 0 ? daysToRelease + ' days' : 'Today';
                 if (item.status === 'cleared') { cdCls = 'cd-done'; cdTxt = '✅ Cleared'; }
@@ -19789,7 +19887,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="ib d" onclick="deleteCheque('${item.id}')"><i data-wfi="trash"></i></button>
             </div></td>
         </tr>`;
-            }).join('');
+            }).join('') + _cap.row;
         }
 
         // ==================== EXPENSES ====================
@@ -20305,14 +20403,17 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('celeb').querySelectorAll('.conf-piece').forEach(c => c.remove());
         }
         function renderTargets() {
-            const arr = DB.get('targets');
+            // Repair before reading — see _wfNormaliseTargetArray.
+            const arr = _wfNormaliseTargetArray(DB.get('targets') || []);
             $('sav_tgt').innerHTML = arr.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
             const el = $('targetsList');
             if (!arr.length) { el.innerHTML = emptyState('🎯', 'No targets yet', 'Create savings targets to track your financial goals'); return; }
-            el.innerHTML = arr.map(t => {
+            const _cap = _wfCap('targets', arr);
+            el.innerHTML = _cap.rows.map(t => {
                 const saved = t.savings.reduce((sum, x) => sum + x.amount, 0);
                 const remain = Math.max(0, t.amount - saved);
-                const pct = Math.min(100, Math.round(saved / t.amount * 100));
+                // A target of zero produced NaN% on the bar rather than an error.
+                const pct = t.amount > 0 ? Math.min(100, Math.round(saved / t.amount * 100)) : 0;
                 const now = new Date(); const end = new Date(t.end + 'T00:00:00');
                 const start = new Date(t.start + 'T00:00:00');
                 const daysRem = Math.ceil((end - now) / 86400000);
@@ -20381,7 +20482,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>`: ''}
             ${t.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${t.notes}</div>` : ''}
         </div>`;
-            }).join('');
+            }).join('') + _cap.bar;
         }
 
         // ==================== BALANCE ====================
@@ -23899,7 +24000,8 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             const catIcons = { Streaming: '📺', Telecom: '📱', Utilities: '💡', Insurance: '🛡️', Leasing: '🚗', Software: '💻', 'Gym/Fitness': '💪', Other: '📋' };
 
-            $('subscriptionList').innerHTML = sorted.map(s => {
+            const _cap = _wfCap('subscriptions', sorted);
+            $('subscriptionList').innerHTML = _cap.rows.map(s => {
                 const daysUntil = s.dueDay - day;
                 let badgeClass = 'sub-due-ok', badgeText = `Due in ${daysUntil} days`;
                 if (daysUntil < 0) { badgeClass = 'sub-due-urgent'; badgeText = `Overdue ${Math.abs(daysUntil)}d`; }
@@ -23965,7 +24067,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                         <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${s.id}')" title="Delete"><i data-wfi="trash"></i></button>
                     </div>
                 </div>`;
-            }).join('');
+            }).join('') + _cap.bar;
         }
 
         // ==================== DEBT DEMOLISHER (UPGRADED — Issue 3) ====================
@@ -25277,7 +25379,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         <div class="card-title">📱 Connected Devices</div>
                         <div class="card-sub">${sessions.length} session(s) active · Auto-revoked: ${revoked.length}</div>
                     </div>
-                    ${sessions.map(s => {
+                    ${(window._capSessions = _wfCap('sessions', sessions)).rows.map(s => {
                         const isCurrent = s.id === sessionId;
                         const lastPulse = new Date(s.lastActive).getTime();
                         // 75-second threshold for online status (since heartbeat is 60s)
@@ -25327,7 +25429,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 <span style="color:var(--text2);">IP:</span> ${s.ip || 'Unknown'} <span style="margin:0 6px;">|</span> <span style="color:var(--text2);">ID:</span> ${s.id.substring(0, 10)}…
                             </div>
                         </div>
-                    `}).join('')}
+                    `}).join('')}${window._capSessions ? window._capSessions.bar : ''}
                 </div>
                 <style>@keyframes pulseGreen { 0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.7); } 70% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } }</style>
                 <div class="card" style="margin-top:14px;">

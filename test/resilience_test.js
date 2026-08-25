@@ -461,3 +461,152 @@ describe('the expenses list is capped without capping the numbers', () => {
         expect(key[1], 'the reset key ignores the month filter').toContain('cur');
     });
 });
+
+/* ── 6. every long list is bounded, and nine pages were not ──────────────── */
+
+/* MEASURED, NOT REVIEWED
+ *
+ * 2,000 records were seeded into every store and each of the app's 21 pages was
+ * rendered in a real browser at 390 px. Nine grew their DOM in step with the
+ * data — the Expenses tab was only the one that had been noticed:
+ *
+ *     loans 146,027 · targets 110,006 · income 104,062 · cconetime 78,101
+ *     sessions 66,033 · ccinstall 62,044 · cheques 60,043 · subscriptions 44,043
+ *     incRecv 36,187            (at fifty records each was between 1k and 4k)
+ *
+ * After a single shared cap, the same measurement: every page between 2,769 and
+ * 10,980 nodes, and nothing above 3.6x growth. Nothing is unbounded any more.
+ *
+ * A tenth thing fell out of the same sweep: renderTargets threw
+ * "Cannot read properties of undefined (reading 'reduce')" on a target with no
+ * savings array — while two OTHER readers of the same field already guarded it
+ * with `t.savings ? … : 0`. The guard existed everywhere except in the renderer.
+ */
+function loadCap() {
+    const src = blockAt('function _wfCap(key, rows)');
+    return new Function('window', '_WF_LIST_PAGE', src + '; return _wfCap;')({}, 150);
+}
+
+describe('the shared list cap', () => {
+    const cap = loadCap();
+    const rows = (n) => Array.from({ length: n }, (_, i) => ({ id: i }));
+
+    it('the extraction found the real helper (guards a vacuous suite)', () => {
+        expect(typeof cap).toBe('function');
+    });
+
+    it('leaves a short list alone and shows no bar', () => {
+        const r = cap('k', rows(10));
+        expect(r.rows).toHaveLength(10);
+        expect(r.hidden).toBe(0);
+        expect(r.bar).toBe('');
+        expect(r.row).toBe('');
+    });
+
+    it('bounds a long list', () => {
+        const r = cap('k', rows(5000));
+        expect(r.rows.length, 'the list is unbounded again — 2,000 records measured '
+            + 'up to 146,027 DOM nodes, which is a renderer kill on a phone')
+            .toBeLessThanOrEqual(150);
+        expect(r.hidden).toBe(4850);
+    });
+
+    it('reports the REAL total, not the number it drew', () => {
+        // The bar is the only place the user learns the list is truncated. If it
+        // reported the visible count as the total it would be a lie that looks
+        // like a fact.
+        const r = cap('k', rows(5000));
+        expect(r.total).toBe(5000);
+        expect(r.bar).toContain('Showing 150 of 5000');
+        expect(r.bar, 'the bar does not say the figures above are unaffected')
+            .toContain('the figures above cover all 5000');
+    });
+
+    it('offers a way to see more, in both a div list and a table', () => {
+        const r = cap('k', rows(5000));
+        expect(r.bar).toContain('_wfCapMore(');
+        expect(r.row, 'a table needs the notice inside a row or it breaks the layout')
+            .toMatch(/^<tr><td colspan="\d+">/);
+    });
+
+    it('survives a missing or non-array list', () => {
+        expect(() => cap('k', null)).not.toThrow();
+        expect(cap('k', null).rows).toEqual([]);
+        expect(cap('k', undefined).total).toBe(0);
+    });
+
+    it('is additive when asked for more', () => {
+        const more = blockAt('function _wfCapMore(key)');
+        expect(more, 'show-more re-sorts or re-filters, which moves rows under the '
+            + 'finger that is tapping').toMatch(/\+\s*_WF_LIST_PAGE/);
+        expect(more, 'it does not repaint the page that is on screen')
+            .toContain('_wfActivePage');
+    });
+
+    it('renderPage records which page is on screen for it to repaint', () => {
+        expect(blockAt('function renderPage(name)')).toMatch(/window\._wfActivePage\s*=\s*name/);
+    });
+});
+
+describe('every list that measured unbounded is capped', () => {
+    for (const key of ['loans', 'targets', 'incomeActive', 'incomeEnded', 'cconetime',
+        'sessions', 'ccinstall', 'cheques', 'subscriptions', 'incRecv', 'ccPayments']) {
+        it(`${key} goes through the cap`, () => {
+            expect(HTML, `${key} renders its rows straight from the array again`)
+                .toContain(`_wfCap('${key}'`);
+        });
+    }
+
+    it('the capped renders all show their bar', () => {
+        // A cap with no notice would silently hide rows, which is worse than a
+        // slow page: the user would believe they were seeing everything.
+        const bars = (HTML.match(/_cap\w*\.(bar|row)/g) || []).length;
+        expect(bars, 'rows are being hidden with no notice that they are hidden')
+            .toBeGreaterThanOrEqual(11);
+    });
+});
+
+describe('a target with no savings does not blank the Targets page', () => {
+    const N = new Function('uid', 'window',
+        blockAt('function _wfNormaliseTargetArray(arr)') + '; return _wfNormaliseTargetArray;')(
+        () => 'gen', {});
+
+    it('gives a target with no savings array an empty one', () => {
+        const a = [{ id: 1, name: 'Car', amount: 100 }];
+        N(a);
+        expect(Array.isArray(a[0].savings), 'the exact crash: t.savings.reduce on undefined')
+            .toBe(true);
+        expect(() => a[0].savings.reduce((s, x) => s + x.amount, 0)).not.toThrow();
+    });
+
+    it('drops savings entries that are not objects', () => {
+        const a = [{ id: 1, amount: 100, savings: [null, { amount: 5 }, 'nonsense'] }];
+        N(a);
+        expect(a[0].savings).toHaveLength(1);
+    });
+
+    it('coerces a savings amount stored as a string', () => {
+        const a = [{ id: 1, amount: 100, savings: [{ amount: '2,500' }] }];
+        N(a);
+        expect(a[0].savings[0].amount).toBe(2500);
+    });
+
+    it('repairs in place so the fix persists', () => {
+        const t = { id: 1, amount: 100 };
+        N([t]);
+        expect(t.savings).toEqual([]);
+    });
+
+    it('renderTargets repairs before it reads', () => {
+        expect(blockAt('function renderTargets()'),
+            'renderTargets reads DB.get("targets") raw again')
+            .toMatch(/_wfNormaliseTargetArray\(DB\.get\('targets'\)/);
+    });
+
+    it('a target of zero shows 0%, not NaN%', () => {
+        expect(blockAt('function renderTargets()'),
+            'saved / t.amount * 100 on a zero target renders "NaN%" — wrong output '
+            + 'rather than an error, which is the harder kind to notice')
+            .toMatch(/t\.amount\s*>\s*0\s*\?\s*Math\.min\(100/);
+    });
+});
