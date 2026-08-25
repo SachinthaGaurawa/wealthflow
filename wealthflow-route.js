@@ -120,9 +120,39 @@
         return { isSubscription: false };
     }
 
+    /* ── THE ROUTING TABLE'S NAMES ARE NOT ALL APP CATEGORIES ────────────────
+     * EXPENSE_CATS is a routing table, written before the app's category list was
+     * settled, and three of the thirteen names it can emit do not exist anywhere
+     * else: Gift, Entertainment and Transfer. expenseCategory() feeds
+     * WFChargeIntel.classify(), which returns them at 0.97 confidence — so a
+     * Netflix charge was classified "Entertainment" while the merchant table, the
+     * dropdown and merchants.json all call that "Streaming", and a routed
+     * transaction could land under a name nothing downstream recognises.
+     *
+     * Aliased rather than renamed in the table, so the routing intent above stays
+     * readable and the flattening is visible in exactly one place.
+     *
+     * TWO OF THESE LOSE INFORMATION AND THAT IS DELIBERATE:
+     *   Entertainment  the regex covers streaming brands AND cinema, bowling,
+     *                  karaoke, lottery. Streaming is right for the first group and
+     *                  approximate for the rest — the app has no leisure category.
+     *   Transfer       an outward CEFT is not a spending category at all. Other is
+     *                  the only honest home for it today.
+     *   Gift           Shopping is a genuine fit.
+     *
+     * Adding "Leisure" and "Transfer" as real categories would remove the guessing,
+     * but new categories change what the user sees and what merchants.json carries,
+     * so that is a product decision and is proposed rather than taken here. */
+    var ROUTE_CAT_ALIAS = { Entertainment: 'Streaming', Gift: 'Shopping', Transfer: 'Other' };
+
     function expenseCategory(desc) {
         var d = norm(desc);
-        for (var i = 0; i < EXPENSE_CATS.length; i++) if (EXPENSE_CATS[i][1].test(d)) return EXPENSE_CATS[i][0];
+        for (var i = 0; i < EXPENSE_CATS.length; i++) {
+            if (EXPENSE_CATS[i][1].test(d)) {
+                var c = EXPENSE_CATS[i][0];
+                return ROUTE_CAT_ALIAS[c] || c;
+            }
+        }
         return 'Other';
     }
 

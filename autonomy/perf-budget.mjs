@@ -60,7 +60,17 @@ export const BUDGETS = {
     // The +19 KB is the merge itself plus the reproduction written into the
     // comment, which is the part a later edit must not be able to undo quietly.
     // Moves ONCE, to the newly measured value with ~1.1% headroom.
-    htmlBytes: 1_599_000,        // measured 1,581,386
+    // Raised again for the taxonomy unification (#131) landing on top of the
+    // restore fix (#130). Each fit under 1_599_000 on its own; together they did
+    // not, which is only visible when the merged tree is built and measured — and
+    // is why it is built and measured before either is merged rather than after.
+    //
+    // The growth is the scan-path rewrite plus the comments recording why seven
+    // category vocabularies existed and what each missed one cost. Trimming those
+    // to fit a number would be optimising the metric and losing the reason, which
+    // this file already says elsewhere is the part a later edit must not be able to
+    // undo quietly. Moves ONCE, to the newly measured value with ~1% headroom.
+    htmlBytes: 1_618_000,        // measured 1,601,662
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -108,14 +118,21 @@ export const BUDGETS = {
     // Moves ONCE, to the newly measured value with ~1.4% headroom — TIGHTER than
     // the ~1.7% the original carried, deliberately, because a ceiling raised to
     // cover work already done should not also buy room for work not yet started.
-    totalJsBytes: 1_348_000,     // measured 1,329,833 across 46 modules
+    // LOWERED, not raised. wealthflow-ai-v3.js (60 KB) and wealthflow-autopilot.js
+    // (16 KB) were referenced by nothing in the repository — not index.html, not
+    // another module, not a test — while being measured and budgeted like live code.
+    // Deleting them dropped the payload by 76 KB, and the ceiling follows it down:
+    // a ratchet that only ever moves up stops being a ratchet. A test now fails if
+    // any module ships without something referencing it, so this cannot silently
+    // refill.
+    totalJsBytes: 1_290_000,     // measured 1273099 across 44 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely
     // fired — the Data Health and Crash Forensics modules (#53, #54) take the
     // count to 47 — so it moves, once, to the measured value.
-    moduleCount: 47,             // measured 46 (tightened: one module removed)
+    moduleCount: 46,   // 44 on disk after ai-v3 + autopilot were deleted             // measured 46 (tightened: one module removed)
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
