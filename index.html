@@ -289,6 +289,12 @@
          AES-256-GCM ciphertext in localStorage under wf_vault_enc, and never touches
          appData, so it is not synced to Firestore. -->
     <script src="wealthflow-intelligence.js" defer></script>
+    <!-- Ledger audit (Step 2) is loaded ON DEMAND, not here: see
+         _wfLoadLedgerAudit(). It is an occasional maintenance tool, and the
+         payload budget counts script requests for a reason — a 51st request on
+         every boot to support something run once in a while is a cost worth not
+         paying. READ-ONLY either way: it never writes a record, and applying a
+         change is a separate explicit act, one row at a time. -->
     <!-- v7.10.0 — Time-bucketed allocator. MUST load AFTER autonomous.js.
          Adds window.wfAllocate, window.wfFindDuplicate, window.wfTimeBucket
          so every transaction lands in its OWN month/year (not today's).
@@ -9605,6 +9611,30 @@ Keep total under 200 words. No markdown, no asterisks.`;
          * The prompt is built from the canonical list now, and the answer is refined
          * through the same merchant table the statement path uses, so both doors
          * reach the same conclusion about the same merchant. */
+        /* The ledger audit ships as a module but is not on the boot path — it is
+         * needed when someone asks for it, not on every page load. Rejects rather
+         * than resolving undefined so a caller cannot mistake "failed to load" for
+         * "loaded and found nothing". */
+        function _wfLoadLedgerAudit() {
+            if (window.WFLedgerAudit) return Promise.resolve(window.WFLedgerAudit);
+            if (window._wfAuditLoading) return window._wfAuditLoading;
+            window._wfAuditLoading = new Promise(function (resolve, reject) {
+                var s = document.createElement('script');
+                s.src = 'wealthflow-ledger-audit.js';
+                s.onload = function () {
+                    if (window.WFLedgerAudit) resolve(window.WFLedgerAudit);
+                    else { window._wfAuditLoading = null; reject(new Error('ledger audit loaded but exported nothing')); }
+                };
+                s.onerror = function () {
+                    window._wfAuditLoading = null;
+                    reject(new Error('ledger audit could not be loaded'));
+                };
+                document.head.appendChild(s);
+            });
+            return window._wfAuditLoading;
+        }
+        try { window._wfLoadLedgerAudit = _wfLoadLedgerAudit; } catch (_) {}
+
         function _scanCategoryList() {
             try {
                 var C = window.WFMerchants && window.WFMerchants.CATEGORIES;
