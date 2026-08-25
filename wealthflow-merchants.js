@@ -377,9 +377,19 @@
      * hit, and one that is not simply ages out. */
     var CLS_CACHE_MAX = 3000;
     var _clsCache = Object.create(null), _clsOld = Object.create(null), _clsCount = 0;
+    /* Anything downstream that caches something DERIVED from a classification has
+     * the same staleness problem and no way to know about it. wealthflow-insights
+     * keeps a merchant-key cache of exactly that kind, and it was never cleared —
+     * so after the user corrected a merchant, the analytics kept grouping it under
+     * the brand the classifier had guessed before the correction. A counter is
+     * enough: a reader stores the epoch alongside its cache and drops it when the
+     * number moves. No registration, no coupling beyond an integer. */
+    var _clsEpoch = 1;
+    function epoch() { return _clsEpoch; }
     function _clsForget() {
         _clsCache = Object.create(null); _clsOld = Object.create(null); _clsCount = 0;
         _clsHits = 0; _clsMisses = 0;
+        _clsEpoch++;
     }
     /* Counted, so the two-generation behaviour can be asserted rather than
      * described. Without this the difference between retiring the older half and
@@ -902,6 +912,6 @@
     try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
     try { verify(); } catch (_) {}                          // heal any learned conflicts on load
     try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
-    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, _clsForget: _clsForget, _clsStats: _clsStats, VERSION: VERSION };
+    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, _clsForget: _clsForget, _clsStats: _clsStats, epoch: epoch, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

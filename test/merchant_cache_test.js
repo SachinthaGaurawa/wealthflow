@@ -228,3 +228,58 @@ describe('the cache is bounded and does not fall off a cliff', () => {
             .toBeLessThan(8000);
     });
 });
+
+/* ── the epoch, so downstream caches can be dropped too ──────────────────── */
+
+/* wealthflow-insights caches the BRAND KEY it derives from a classification, and
+ * kept it forever. After the user corrected a merchant the classifier answered
+ * differently and that cache went on returning the key derived from the old
+ * answer, so the merchant analytics kept grouping the shop under the brand the
+ * app had guessed before being told it was wrong. Same staleness family as the
+ * classification cache itself, one layer up, and with no way to know about it.
+ *
+ * A counter is enough. No registration, no coupling beyond an integer. */
+describe('downstream caches can tell when to drop themselves', () => {
+    it('exposes an epoch', () => {
+        expect(typeof M.epoch).toBe('function');
+        expect(Number.isFinite(M.epoch())).toBe(true);
+    });
+
+    it('does not move for ordinary classification', () => {
+        const before = M.epoch();
+        M.classify('KEELLS SUPER COLOMBO', 'debit');
+        M.classify('NETFLIX.COM', 'debit');
+        expect(M.epoch(), 'the epoch moves on every classify, so every downstream '
+            + 'cache would be thrown away constantly').toBe(before);
+    });
+
+    it('moves when the user corrects a merchant', () => {
+        const before = M.epoch();
+        M.learn('ODEL COLOMBO', 'expenses', 'Education', 0.99);
+        expect(M.epoch(), 'a correction leaves every derived cache stale with no '
+            + 'way to know').toBeGreaterThan(before);
+    });
+
+    it('moves when a new merchant list arrives', () => {
+        const { M: M2 } = load([{ key: 'zzqx trading', category: 'Health', goesTo: 'expenses' }]);
+        const before = M2.epoch();
+        return M2.syncRemote('/merchants.json', true).then(() => {
+            expect(M2.epoch()).toBeGreaterThan(before);
+        });
+    });
+});
+
+describe('the insights merchant-key cache honours it', () => {
+    const INS = fs.readFileSync(
+        path.resolve(import.meta.dirname, '..', 'wealthflow-insights.js'), 'utf8');
+
+    it('reads the epoch and drops its cache when it moves', () => {
+        const i = INS.indexOf('function _mkey(d)');
+        expect(i, '_mkey is gone — retarget this test').toBeGreaterThan(-1);
+        const body = INS.slice(i, i + 700);
+        expect(body, 'the merchant-key cache no longer checks the epoch, so a '
+            + 'corrected merchant keeps being grouped under the old brand')
+            .toMatch(/WFMerchants\.epoch\(\)/);
+        expect(body).toMatch(/_mkCache\s*=\s*\{\}/);
+    });
+});

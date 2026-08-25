@@ -373,9 +373,19 @@
     // Group by the BRAND the classifier recognised, not the raw line. "Cargills Food City
     // Kuliyapitiya" and "Cargills 01" are the SAME shop — counting them as two different
     // merchants hides where your money actually goes.
-    var _mkCache = {};
+    /* This caches the BRAND KEY derived from a classification, and it used to be
+     * kept forever. When the user corrected a merchant's category the classifier
+     * started answering differently, and this kept handing back the key it had
+     * derived from the old answer — so the merchant analytics went on grouping the
+     * shop under the brand the app had guessed before being told it was wrong.
+     * WFMerchants.epoch() moves whenever anything that feeds a classification
+     * changes; when it moves, this is dropped. */
+    var _mkCache = {}, _mkEpoch = -1;
     function _mkey(d) {
         var raw = String(d || '');
+        var ep = -1;
+        try { ep = (W.WFMerchants && W.WFMerchants.epoch) ? W.WFMerchants.epoch() : -1; } catch (_) {}
+        if (ep !== _mkEpoch) { _mkCache = {}; _mkEpoch = ep; }
         if (_mkCache[raw] !== undefined) return _mkCache[raw];
         var k = '';
         try {
