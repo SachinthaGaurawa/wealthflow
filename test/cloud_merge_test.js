@@ -701,3 +701,92 @@ describe('panic mode is read-only in both directions', () => {
     });
 });
 
+/* ── 8. a restore is a reset with content in it ───────────────────────────── */
+
+describe('an announced document is adopted whole, content and all', () => {
+    const rows = (n, p = 'e') => Array.from({ length: n }, (_, i) => ({ id: p + i, amount: 100 + i, _ut: 1000 }));
+
+    it('a Drive restore reaches a second device in ONE snapshot', () => {
+        // The wipe tests above only ever sent an EMPTY announced document, so
+        // they could not tell "adopt what was announced" from "clear and stop".
+        // The first version cleared and returned, and a restore's content — in
+        // the same document as the marker — was thrown away: the device went to
+        // zero and only picked the restore up if a second snapshot arrived.
+        const B = loadMerge();
+        const old = rows(500);
+        B.appData.expenses = JSON.parse(J(old));
+        B.store.set('wf2_expenses', J(old));
+        B.appData.balance = { total: 250000, flows: [] };
+        B.appData.incomeReceived = { '2026-07': true };   // the stale copy, must not survive
+
+        const res = B.api._wfApplyCloudData({
+            expenses: rows(3, 'r'),
+            balance: { total: 4200, flows: [] },
+            incomeReceived: { '2025-11': true, '2025-12': true },
+            _wipedAt: Date.now(),
+        });
+
+        expect(B.appData.expenses.map((r) => r.id), 'the restored rows were discarded, or the '
+            + 'old ones survived alongside them').toEqual(['r0', 'r1', 'r2']);
+        expect(B.appData.balance.total, 'the announced balance was dropped — with no _kut on '
+            + 'either side the legacy branch keeps local, which after a clear is the empty value')
+            .toBe(4200);
+        expect(Object.keys(B.appData.incomeReceived).sort(), 'the announced MAPS were emptied '
+            + 'rather than adopted, so a restore silently loses every month the backup had '
+            + 'marked received').toEqual(['2025-11', '2025-12']);
+        expect(B.store.get('wf2_expenses'), 'memory took the restore but disk did not')
+            .toContain('r0');
+        expect(res.needPush, 'the device asks to push after adopting, which re-uploads what it '
+            + 'was just told to replace').toBe(false);
+    });
+
+    it('and stays there when the same document is redelivered', () => {
+        const B = loadMerge();
+        B.appData.expenses = JSON.parse(J(rows(500)));
+        B.store.set('wf2_expenses', J(rows(500)));
+        const t = Date.now();
+        B.api._wfApplyCloudData({ expenses: rows(3, 'r'), _wipedAt: t });
+        B.api._wfApplyCloudData({ expenses: rows(3, 'r'), _wipedAt: t });
+        expect(B.appData.expenses).toHaveLength(3);
+    });
+
+    it('an empty announced document still empties the device', () => {
+        // The factory-reset case, re-proved against the new adopt-in-full shape.
+        const B = loadMerge();
+        B.appData.expenses = JSON.parse(J(rows(500)));
+        B.store.set('wf2_expenses', J(rows(500)));
+        B.appData.incomeReceived = { '2026-01': true };
+        B.api._wfApplyCloudData({ _wipedAt: Date.now() });
+        expect(B.appData.expenses, 'a reset with nothing in it stopped emptying the device')
+            .toHaveLength(0);
+        expect(B.appData.incomeReceived).toEqual({});
+        expect(B.appData.balance).toEqual({ total: 0, flows: [] });
+    });
+
+    it('a restore that does NOT announce itself is the bug this replaces', () => {
+        // Kept as the counter-example: without the marker the merge unions, the
+        // old rows survive, and the device re-uploads them.
+        const B = loadMerge();
+        B.appData.expenses = JSON.parse(J(rows(500)));
+        B.store.set('wf2_expenses', J(rows(500)));
+        const res = B.api._wfApplyCloudData({ expenses: rows(3, 'r') });
+        expect(B.appData.expenses.length, 'this test no longer demonstrates why the marker is '
+            + 'needed — retarget it').toBe(503);
+        expect(res.needPush).toBe(true);
+    });
+
+    it('the Drive restore stamps the marker before it pushes', () => {
+        const at = HTML.indexOf('const restoredData = await res.json();');
+        expect(at, 'the Drive restore is gone — retarget this test').toBeGreaterThan(-1);
+        const body = HTML.slice(at, at + 2600);
+        const stamp = body.indexOf('appData._wipedAt = _restoreStamp');
+        const push = body.indexOf('userDocRef.set(');
+        expect(stamp, 'the restore no longer announces itself, so a second device merges its own '
+            + 'copy straight back and re-uploads it').toBeGreaterThan(-1);
+        expect(stamp, 'the marker is stamped after the push, which is too late')
+            .toBeLessThan(push);
+        expect(body, 'the restoring device does not ack its own marker, so it would adopt its '
+            + 'own announcement on the next snapshot').toMatch(/_wipedAck = _restoreStamp/);
+    });
+});
+
