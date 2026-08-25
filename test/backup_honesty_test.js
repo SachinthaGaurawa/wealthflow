@@ -109,6 +109,7 @@ function load(over = {}) {
         localStorage: {
             getItem: (k) => (store.has(k) ? store.get(k) : null),
             setItem: (k, v) => store.set(k, String(v)),
+            removeItem: (k) => store.delete(k),
         },
         tokenClient: null,
         window: { currentUser: over.signedIn === false ? null : { uid: 'u1', email: 'a@b.c' } },
@@ -119,11 +120,19 @@ function load(over = {}) {
         document: { getElementById: () => null },
         renderSettings: () => {},
     };
-    const body = fnSource('syncToCloud') + '\n' + fnSource('backupNow')
+    // _persistLocal/_persistRaw come along for the ride rather than being
+    // stubbed. backupNow stamps wf_last_auto_backup through the guarded writer,
+    // and a stub would let the test keep passing if that write ever went back to
+    // a bare setItem — which is the thing the guard exists to prevent. Leaving
+    // them out entirely is worse still: the first version of this harness did,
+    // and backupNow threw ReferenceError and reported a clean `false`.
+    const body = fnSource('_persistLocal') + '\n' + fnSource('_persistRaw') + '\n'
+        + fnSource('syncToCloud') + '\n' + fnSource('backupNow')
         + '\nreturn { syncToCloud: syncToCloud, backupNow: backupNow };';
-    // `let _lastCloudPushError` sits just above syncToCloud in the page; it is
-    // declared here so the two extracted functions share one binding.
-    const api = new Function(...DEPS, 'let _lastCloudPushError = "";\n' + body)(
+    // `let _lastCloudPushError` sits just above syncToCloud in the page, and
+    // `_wfLocalWriteBlocked` just above _persistLocal; both are declared here so
+    // the extracted functions share one binding each.
+    const api = new Function(...DEPS, 'let _lastCloudPushError = ""; let _wfLocalWriteBlocked = false;\n' + body)(
         ...DEPS.map((d) => env[d]));
     return { ...api, settings, store };
 }
