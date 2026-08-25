@@ -158,13 +158,22 @@ describe('the workflow really contains the logic these tests model', () => {
         expect(WF.slice(i, i + 500)).toMatch(/exit 1/);
     });
 
-    it('gates BOTH the diff resolution and the classification on it', () => {
-        // If either were left ungated the job would still explode on dispatch,
-        // or worse, classify an empty file list as "nothing sensitive".
-        const changed = /- name: Resolve changed files\n\s+id: changed\n\s+if: steps\.scope\.outputs\.gate == 'yes'/;
-        const classify = /- name: Classify changed files\n\s+if: steps\.scope\.outputs\.gate == 'yes'/;
-        expect(WF).toMatch(changed);
-        expect(WF).toMatch(classify);
+    it('gates EVERY step that reads the diff on it', () => {
+        // If any were left ungated the job would still explode on dispatch, or
+        // worse, classify an empty file list as "nothing sensitive".
+        //
+        // The `id:` lines are optional in these patterns on purpose: a step
+        // gaining an id is routine, a step losing its scope gate is not. What
+        // must hold is that each one carries `if: steps.scope.outputs.gate`.
+        const gated = (name) => new RegExp(
+            `- name: ${name}\\n(?:\\s+id: \\w+\\n)?\\s+if: steps\\.scope\\.outputs\\.gate == 'yes'`);
+        expect(WF, 'the diff resolution is no longer gated on scope')
+            .toMatch(gated('Resolve changed files'));
+        expect(WF, 'the classification is no longer gated on scope')
+            .toMatch(gated('Classify changed files'));
+        expect(WF, 'the approval-freshness check is no longer gated on scope — on a manual '
+            + 'run there is no PR, so it would read an empty file list and pass')
+            .toMatch(gated('Refuse an approval that predates the sensitive change'));
     });
 
     it('still refuses to guess a file list — that safeguard is untouched', () => {
