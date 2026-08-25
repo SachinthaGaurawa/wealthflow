@@ -49,6 +49,8 @@
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
+    const LS_CLAIM = 'wf_update_claimed';     // a CLAIM to have updated, settled against reality on the next boot
+    const LS_ANOMALY = 'wf_version_anomaly';  // stored version was ahead of the running code — kept as evidence
     const LS_AUTOSEC = 'wf_auto_security';    // user opted in to auto-install security updates
 
     function _esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -247,11 +249,79 @@
                 try { localStorage.setItem(LS_INSTALLED, CURRENT_VERSION); } catch (_) {}
                 return CURRENT_VERSION;
             }
+            if (_cmp(stored, CURRENT_VERSION) > 0) {
+                // STORED IS AHEAD OF THE CODE THAT IS RUNNING.
+                //
+                // Returning `stored` here is what made a failed update permanent.
+                // _updateAvailable() compares the latest version against this value,
+                // so a device that recorded 7.70.0 while still executing 7.69.24 was
+                // told it was current and STOPPED BEING OFFERED UPDATES — for good.
+                // That is the self-sealing half of "when a new update is released,
+                // app versions not yet updated".
+                //
+                // The evidence is worth keeping: it can mean a genuine rollback, or
+                // a stale cache, or an update that claimed success it never had. It
+                // is kept — in its own key, where it cannot suppress anything — and
+                // the answer to "what is installed" becomes the only thing that is
+                // actually verifiable: the version of the code executing right now.
+                try {
+                    localStorage.setItem(LS_ANOMALY, JSON.stringify({
+                        stored: stored, running: CURRENT_VERSION, at: Date.now()
+                    }));
+                    localStorage.setItem(LS_INSTALLED, CURRENT_VERSION);
+                } catch (_) {}
+                try { console.warn('[WFUpdate] stored version ' + stored + ' is ahead of the running build '
+                    + CURRENT_VERSION + ' — healing so updates are offered again'); } catch (_) {}
+                return CURRENT_VERSION;
+            }
             return stored;
         } catch (_) { return CURRENT_VERSION; }
     }
     function _markInstalled(v) {
         try { localStorage.setItem(LS_INSTALLED, v); } catch (_) {}
+    }
+
+    /* An update CLAIM is not an installation. The flow used to call
+     * _markInstalled(target) at the end regardless of whether a single byte had
+     * been fetched — every fetch failure was swallowed, the service-worker swap
+     * was best-effort, and the version number was written anyway. The app could
+     * report "Update complete — now on 7.70.0" while running byte-identical code.
+     *
+     * So the flow records a claim, and the next boot settles it against the only
+     * fact that cannot be faked: the version of the code that just loaded. */
+    function _claimUpdate(target, evidence) {
+        try {
+            localStorage.setItem(LS_CLAIM, JSON.stringify({
+                target: target, from: CURRENT_VERSION, at: Date.now(),
+                fetched: (evidence && evidence.fetched) || 0,
+                total: (evidence && evidence.total) || 0
+            }));
+        } catch (_) {}
+    }
+
+    /* Called once on boot. Resolves a pending claim into a fact. */
+    function _settleClaim() {
+        var raw = null;
+        try { raw = localStorage.getItem(LS_CLAIM); } catch (_) { return null; }
+        if (!raw) return null;
+        var c = null;
+        try { c = JSON.parse(raw); } catch (_) { c = null; }
+        try { localStorage.removeItem(LS_CLAIM); } catch (_) {}
+        if (!c || !c.target) return null;
+
+        if (_cmp(CURRENT_VERSION, c.target) >= 0) {
+            _markInstalled(CURRENT_VERSION);
+            try { console.log('[WFUpdate] ✓ update to ' + c.target + ' landed — running ' + CURRENT_VERSION); } catch (_) {}
+            return { ok: true, target: c.target, running: CURRENT_VERSION };
+        }
+
+        // The claim did not come true. Say so, and do NOT write the target into
+        // LS_INSTALLED — that write is precisely what made the failure permanent.
+        try {
+            console.error('[WFUpdate] ✗ update to ' + c.target + ' did NOT land — still running '
+                + CURRENT_VERSION + ' (' + c.fetched + '/' + c.total + ' files fetched)');
+        } catch (_) {}
+        return { ok: false, target: c.target, running: CURRENT_VERSION, fetched: c.fetched, total: c.total };
     }
 
     // The version available to move to: the newer of version.json and
@@ -662,6 +732,11 @@
         const setStep = (s) => { const e = document.getElementById('wfPgStep'); if (e) e.textContent = s; };
         const setEta = (sec) => { const e = document.getElementById('wfPgEta'); if (e) e.textContent = sec > 0 ? ('about ' + sec + 's remaining') : 'finishing…'; };
 
+        // What the download step actually achieved. The steps below report into
+        // this, and the end of the flow refuses to claim an update that did not
+        // fetch enough of the app to possibly be one.
+        const _dl = { fetched: 0, total: 0, failed: [] };
+
         const steps = [
             { pct: 12, eta: 9, label: 'Encrypting and backing up your data…', run: async () => {
                 try { if (typeof window.backupNow === 'function') await window.backupNow(true, 'pre-update'); } catch (_) {}
@@ -688,11 +763,22 @@
                 if (!files.length) return;            // nothing measurable; do not fake a delay
                 let done = 0;
                 const started = Date.now();
+                _dl.total = files.length;
                 await Promise.all(files.map(async (src) => {
                     // cache: 'reload' bypasses the browser's HTTP cache and, with the
                     // service worker's network-first fetch handler, populates the new
                     // version's cache as a side effect — so this really is the download.
-                    try { await fetch(src, { cache: 'reload' }); } catch (_) { /* offline/404: still counts as attempted */ }
+                    //
+                    // A FAILURE IS COUNTED AS A FAILURE. It used to be swallowed with
+                    // "still counts as attempted", and the flow then reported the
+                    // update complete whether or not anything had been downloaded.
+                    try {
+                        const r = await fetch(src, { cache: 'reload' });
+                        if (r && r.ok) _dl.fetched += 1;
+                        else _dl.failed.push(src + ' → HTTP ' + ((r && r.status) || '?'));
+                    } catch (e) {
+                        _dl.failed.push(src + ' → ' + ((e && e.message) || 'network error'));
+                    }
                     done += 1;
                     const frac = done / files.length;
                     const elapsed = (Date.now() - started) / 1000;
@@ -723,8 +809,32 @@
             setBar(st.pct);
         }
 
-        // Mark the new version installed and queue the post-update popup.
-        _markInstalled(version);
+        // REFUSE TO CLAIM AN UPDATE THAT CANNOT HAVE HAPPENED.
+        //
+        // If the app's own files did not come down, the reload cannot produce new
+        // code, and saying "Update complete" is a lie the device then acts on. The
+        // bar stops, the reason is shown, and nothing is written — so the update is
+        // still offered next time instead of the device believing it is current.
+        if (_dl.total > 0 && _dl.fetched === 0) {
+            setBar(100); setEta(0);
+            setStep('Update failed — no files could be downloaded. Check your connection and try again.');
+            try {
+                console.error('[WFUpdate] refusing to claim ' + version + ': 0/' + _dl.total
+                    + ' files fetched. First failures: ' + _dl.failed.slice(0, 3).join(' · '));
+            } catch (_) {}
+            try { localStorage.removeItem(LS_PENDING); } catch (_) {}
+            try {
+                if (typeof window.notify === 'function') {
+                    window.notify('Update could not be downloaded — you are still on ' + CURRENT_VERSION
+                        + '. Nothing was changed. Try again when you have a connection.', 'error');
+                }
+            } catch (_) {}
+            return { ok: false, reason: 'no-files-downloaded', fetched: 0, total: _dl.total };
+        }
+
+        // Record a CLAIM, not an installation. The next boot compares it against
+        // the version of the code that actually loaded and settles it either way.
+        _claimUpdate(version, _dl);
         try { localStorage.setItem(LS_SEEN_POPUP, ''); } catch (_) {}
         setBar(100); setEta(0);
         setStep('Update complete. Restarting…');
@@ -1520,6 +1630,27 @@
         // Software Update card from being injected (the "sometimes missing" bug).
         try { _watchServiceWorker(); } catch (_) {}
 
+        /* Settle any outstanding update claim FIRST, before anything reads the
+         * installed version. A claim written by the previous session is a promise
+         * that this boot either kept or broke, and the version of the code now
+         * executing is the only fact that can decide. Doing it here means every
+         * later reader — the settings card, the dashboard pill, _updateAvailable —
+         * sees the settled truth rather than the promise. */
+        var _settled = null;
+        try { _settled = _settleClaim(); } catch (e) {
+            try { console.error('[WFUpdate] could not settle the update claim', e && e.message); } catch (_) {}
+        }
+        if (_settled && _settled.ok === false) {
+            // Tell the user plainly. Silence here is what turned a failed update
+            // into a device that believed it was current and stopped asking.
+            try {
+                if (typeof window.notify === 'function') {
+                    window.notify('The update to ' + _settled.target + ' did not complete — you are still on '
+                        + _settled.running + '. It will be offered again.', 'warn');
+                }
+            } catch (_) {}
+        }
+
         const installed = _installedVersion();
         if (!installed) {
             _markInstalled(CURRENT_VERSION);
@@ -1682,6 +1813,15 @@
         // test that only greps the source cannot tell a reconciled value from a
         // stale one. Read-only.
         _installedVersion,
+        // The version string this build was compiled with. Exposed so a test can
+        // assert what _installedVersion() reports RELATIVE to the running code,
+        // rather than hardcoding a number that release.cjs rewrites every release.
+        CURRENT_VERSION: CURRENT_VERSION,
+        // The claim/settle pair. An update flow that asserts an installation it
+        // never verified is the defect these exist to remove, so a test has to be
+        // able to drive both halves: write a claim, then settle it against the
+        // version actually running.
+        _claimUpdate, _settleClaim,
         // Exposed so the test harness can prove which words a given server
         // response produces. The bug these replace was invisible to every test
         // that only read the source, because the logic was inline in an async

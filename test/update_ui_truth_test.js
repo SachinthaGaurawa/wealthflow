@@ -94,8 +94,13 @@ describe('the hardcoded release history is gone', () => {
     });
 
     it('took ~21 KB of duplicated history out of the bundle', () => {
+        // Raised from 105_000 when the update flow stopped asserting an
+        // installation it had not verified: the claim/settle pair, the download
+        // tally, and the comments recording what the old behaviour cost. The
+        // duplicated release history this ceiling was created to keep out has not
+        // come back — that is asserted separately, above and below.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(105_000);
+        expect(bytes).toBeLessThan(115_000);
     });
 });
 
@@ -141,12 +146,37 @@ describe('the installed version reports the code that is running', () => {
         expect(api._installedVersion()).toBe(shipped);
     });
 
-    it('does NOT rewrite a stored value that is ahead of the running code', () => {
-        // A device served older code than it once ran — a rollback or a stale
-        // cache. Silently lowering the record would erase the only evidence.
+    it('keeps the evidence when stored is ahead — WITHOUT suppressing updates', () => {
+        // The original rule here was "never lower the record": a device served
+        // older code than it once ran is a rollback or a stale cache, and erasing
+        // that would lose the only evidence. The intent was right; the mechanism
+        // had a consequence nobody had traced.
+        //
+        // _updateAvailable() compares the latest version against THIS value. So a
+        // device that recorded 7.70.0 while still executing 7.69.24 — which the
+        // update flow caused directly, by writing the target version whether or
+        // not a single file had downloaded — was told it was current and stopped
+        // being offered updates. Permanently. That is the self-sealing half of
+        // "when a new update is released, app versions not yet updated".
+        //
+        // So the evidence is kept, in a key that cannot suppress anything, and the
+        // answer to "what is installed" becomes the one fact that is verifiable:
+        // the version of the code executing right now.
         const { api, store } = loadModule({ stored: '9.9.9' });
-        expect(api._installedVersion()).toBe('9.9.9');
-        expect(store.get('wf_installed_version')).toBe('9.9.9');
+        expect(api._installedVersion(), 'a version ahead of the running code is still reported as '
+            + 'installed, so update checks compare against it and never fire again')
+            .toBe(api.CURRENT_VERSION || '7.69.24');
+        const anomaly = store.get('wf_version_anomaly');
+        expect(anomaly, 'the evidence of the mismatch was erased rather than moved').toBeTruthy();
+        expect(JSON.parse(anomaly).stored, 'the anomaly record does not name what was stored')
+            .toBe('9.9.9');
+        // The stored value itself must be corrected, not just reported around.
+        // Returning the right answer while leaving 9.9.9 on disk means every
+        // direct reader of wf_installed_version is still wrong, and the heal has
+        // to run again on every single call.
+        expect(store.get('wf_installed_version'), 'the poisoned value was left on disk — anything '
+            + 'reading it directly still sees a version ahead of the running code')
+            .toBe(api.CURRENT_VERSION || '7.69.24');
     });
 });
 
@@ -172,5 +202,102 @@ describe('version.json now carries real notes for v7.69.18', () => {
 
     it('carries no markdown — the renderer escapes its input', () => {
         expect(JSON.stringify(n)).not.toMatch(/\*\*/);
+    });
+});
+
+/* ── the update that claimed an installation it never had ────────────────────
+ *
+ * The flow ended with _markInstalled(target) — unconditionally. Every fetch
+ * failure in the download step was swallowed with "still counts as attempted",
+ * the service-worker swap was best-effort, and then the target version was
+ * written to localStorage whether or not a single byte had arrived.
+ *
+ * So the app could report "Update complete — now on 7.70.0" while running
+ * byte-identical code. And because _installedVersion() returned that stored
+ * value, _updateAvailable() then compared the latest release against it, found
+ * them equal, and never offered an update again. One failed tap and the device
+ * was stuck on old code believing it was current — which is what "the update
+ * system is a fake placebo" and "when a new update is released, app versions not
+ * yet updated" both describe.
+ * ---------------------------------------------------------------------------*/
+describe('an update is claimed, then settled against the code that loaded', () => {
+    it('a claim that came true is settled as installed', () => {
+        const { api, store } = loadModule({ stored: null });
+        const running = api.CURRENT_VERSION;
+        // claim an update to the version we are in fact running
+        api._claimUpdate(running, { fetched: 40, total: 40 });
+        const out = api._settleClaim();
+        expect(out.ok, 'an update that did land was not settled as installed').toBe(true);
+        expect(store.get('wf_installed_version')).toBe(running);
+        expect(store.get('wf_update_claimed'), 'the claim was left behind to be settled twice')
+            .toBeUndefined();
+    });
+
+    it('a claim that did NOT come true never becomes an installed version', () => {
+        const { api, store } = loadModule({ stored: null });
+        api._claimUpdate('99.0.0', { fetched: 0, total: 40 });
+        const out = api._settleClaim();
+        expect(out.ok, 'an update that did not land was settled as a success').toBe(false);
+        expect(out.running).toBe(api.CURRENT_VERSION);
+        expect(store.get('wf_installed_version'), 'the target version was written even though the '
+            + 'code never changed — this is exactly what stops the device updating again')
+            .not.toBe('99.0.0');
+        expect(store.get('wf_update_claimed'), 'the failed claim persists and will be re-settled')
+            .toBeUndefined();
+    });
+
+    it('settling is idempotent — a second boot has nothing left to settle', () => {
+        const { api } = loadModule({ stored: null });
+        api._claimUpdate('99.0.0', { fetched: 0, total: 40 });
+        expect(api._settleClaim().ok).toBe(false);
+        expect(api._settleClaim(), 'a settled claim was settled again').toBe(null);
+    });
+
+    it('carries the download evidence into the failure, so the reason is knowable', () => {
+        const { api } = loadModule({ stored: null });
+        api._claimUpdate('99.0.0', { fetched: 3, total: 41 });
+        const out = api._settleClaim();
+        expect(out.fetched).toBe(3);
+        expect(out.total).toBe(41);
+    });
+
+    it('the flow refuses to claim when nothing downloaded', () => {
+        // Source-level, because driving the whole update flow needs a live SW and
+        // a real network. The branch has to exist and it has to return before the
+        // claim: a claim written after a zero-byte download is the original bug.
+        const claimAt = SRC.indexOf('_claimUpdate(version, _dl)');
+        const refuseAt = SRC.indexOf("reason: 'no-files-downloaded'");
+        expect(refuseAt, 'the flow no longer refuses an update that downloaded nothing')
+            .toBeGreaterThan(-1);
+        expect(refuseAt, 'the refusal comes after the claim, so the claim is written anyway')
+            .toBeLessThan(claimAt);
+        // The branch must still be REACHABLE. Asserting only that the block exists
+        // let a mutation to `if (false)` through: the text stayed exactly where it
+        // was and the position check passed while the refusal was dead code.
+        expect(SRC, 'the zero-download refusal is present but can never run')
+            .toMatch(/if \(_dl\.total > 0 && _dl\.fetched === 0\) \{/);
+        // Comment-stripped: the fix's own comment quotes the old phrase to record
+        // what it replaced, and matching against the prose flagged that as the bug
+        // returning. What must not come back is the CODE — a bare fetch in a
+        // try/catch whose catch does nothing with the failure.
+        const code = SRC.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+        expect(code, 'a fetch failure is swallowed again in the download step, which is how the '
+            + 'flow reported success on zero downloads')
+            .not.toMatch(/await fetch\(src, \{ cache: 'reload' \}\); \} catch \(_\) \{ \}/);
+        expect(SRC, 'the download step no longer counts which fetches actually succeeded')
+            .toMatch(/if \(r && r\.ok\) _dl\.fetched \+= 1/);
+    });
+
+    it('init settles the claim before anything reads the installed version', () => {
+        const settle = SRC.indexOf('_settleClaim()');
+        const initAt = SRC.indexOf('async function init()');
+        const readAt = SRC.indexOf('const installed = _installedVersion();', initAt);
+        const settleInInit = SRC.indexOf('_settleClaim()', initAt);
+        expect(settle, '_settleClaim is never called').toBeGreaterThan(-1);
+        expect(settleInInit, 'init does not settle the claim, so a promise from the previous '
+            + 'session is read as fact by the settings card and the update check')
+            .toBeGreaterThan(-1);
+        expect(settleInInit, 'the claim is settled after the installed version is read')
+            .toBeLessThan(readAt);
     });
 });
