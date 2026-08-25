@@ -7512,15 +7512,44 @@
             const _wipedAt = (typeof cloudData._wipedAt === 'number' && isFinite(cloudData._wipedAt)) ? cloudData._wipedAt : 0;
             const _wipedAck = (typeof appData._wipedAck === 'number' && isFinite(appData._wipedAck)) ? appData._wipedAck : 0;
             if (_wipedAt > _wipedAck) {
-                console.warn('[SYNC] factory reset received (' + new Date(_wipedAt).toISOString() + ') — clearing this device');
-                _WF_RECORD_KEYS.forEach(k => { appData[k] = []; _persistRaw('wf2_' + k, '[]'); });
-                ['incomeReceived', 'cribAnalyses', 'subMerchantMap'].forEach(k => { appData[k] = {}; _persistRaw('wf2_' + k, '{}'); });
-                appData.balance = { total: 0, flows: [] }; _persistRaw('wf2_balance', JSON.stringify(appData.balance));
-                appData._tomb = {}; _persistRaw('wf2__tomb', '{}');
-                appData._kut = {}; _persistRaw('wf2__kut', '{}');
+                // ADOPT the announced document, whole. Not "clear and then merge".
+                //
+                // The first version of this cleared every key and returned before the
+                // merge below could run, which is correct for a factory reset (the
+                // announced document is empty) and wrong for anything else. A Drive
+                // restore announces itself the same way and carries CONTENT, and that
+                // content was thrown away: the device went to zero and only picked the
+                // restore up if a second snapshot happened to arrive.
+                //
+                // Clearing and falling THROUGH to the merge does not fix it either.
+                // The merge would compare an emptied local against the announced
+                // content, and for any key with no _kut on either side the legacy
+                // branch keeps local — so a restored balance would be discarded by
+                // the very code meant to install it.
+                //
+                // Adopting in one pass has neither problem, and says what a reset
+                // actually is: not a diff to be reconciled, but a statement that the
+                // account now looks like this.
+                console.warn('[SYNC] account reset announced (' + new Date(_wipedAt).toISOString() + ') — adopting it');
+                _WF_RECORD_KEYS.forEach(k => {
+                    const v = Array.isArray(cloudData[k]) ? cloudData[k] : [];
+                    appData[k] = v; _persistRaw('wf2_' + k, JSON.stringify(v));
+                });
+                ['incomeReceived', 'cribAnalyses', 'subMerchantMap'].forEach(k => {
+                    const c = cloudData[k];
+                    const v = (c && typeof c === 'object' && !Array.isArray(c)) ? c : {};
+                    appData[k] = v; _persistRaw('wf2_' + k, JSON.stringify(v));
+                });
+                appData.balance = (cloudData.balance && typeof cloudData.balance === 'object')
+                    ? cloudData.balance : { total: 0, flows: [] };
+                _persistRaw('wf2_balance', JSON.stringify(appData.balance));
+                appData._tomb = (cloudData._tomb && typeof cloudData._tomb === 'object') ? cloudData._tomb : {};
+                _persistRaw('wf2__tomb', JSON.stringify(appData._tomb));
+                appData._kut = (cloudData._kut && typeof cloudData._kut === 'object') ? cloudData._kut : {};
+                _persistRaw('wf2__kut', JSON.stringify(appData._kut));
                 appData._wipedAck = _wipedAt; _persistRaw('wf2__wipedAck', String(_wipedAt));
                 res.nonSessionChanged = true;
-                return res;   // nothing to merge into: the account was emptied on purpose
+                return res;   // adopted in full — there is nothing left to merge
             }
             // 1) Converge tombstones first — the record merge below depends on them.
             const localTomb = (appData._tomb && typeof appData._tomb === 'object') ? appData._tomb : {};
@@ -13400,8 +13429,22 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     }
                 });
 
-                // Push restored data to Firestore
+                // Push restored data to Firestore.
+                //
+                // A second device does not READ this document, it MERGES it — so
+                // without a marker the restore does not take. Measured against the
+                // shipped merge code: a device holding 500 expenses receives a
+                // 3-expense restore, ends up with 503, and comes back with
+                // needPush = true, re-uploading the 500 it was supposed to lose.
+                //
+                // A restore is the same KIND of operation as a factory reset: not a
+                // diff, but a statement that the account now looks like this. So it
+                // uses the same marker, and every device adopts the document once.
                 if (userDocRef) {
+                    const _restoreStamp = Date.now();
+                    appData._wipedAt = _restoreStamp;
+                    appData._wipedAck = _restoreStamp;   // we are already in this state
+                    _persistRaw('wf2__wipedAck', String(_restoreStamp));
                     setDirty(true);
                     await userDocRef.set(Object.assign({}, appData, {
                         _lastModified: firebase.firestore.FieldValue.serverTimestamp(),
