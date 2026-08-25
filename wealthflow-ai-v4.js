@@ -2410,8 +2410,33 @@
             return false;
         }
         if (window._wfV5GuardLoop) return true;
+        var _wfV5WasDecoy = false;
         window._wfV5GuardLoop = setInterval(function () {
             try {
+                // PANIC / DECOY MODE IS READ-ONLY, AND THIS LOOP WAS THE HOLE.
+                //
+                // Under the duress PIN index.html replaces appData's arrays with a
+                // small plausible-looking set and deliberately writes NOTHING to disk.
+                // This loop then compared appData against the last real array it had
+                // seen, decided the difference was a snapshot race, and restored every
+                // "missing" record — into memory, onto the screen via renderExpenses(),
+                // and onto DISK with the setItem below.
+                //
+                // Measured in a real browser, both before and after the v7.53 sync
+                // work: 500 seeded expenses, lock, duress PIN, and the app shows
+                //     memory 501 · disk 501 · "ROW 4" rendered on the Expenses page
+                // The feature exists so that a person being forced to unlock their
+                // finances shows a decoy. It was showing the real ledger.
+                if (window._isDecoyMode === true) { _wfV5WasDecoy = true; return; }
+                // Coming back OUT of decoy mode, everything cached here describes a
+                // ledger that no longer exists in appData. Restoring from it would
+                // stitch the decoy rows into the real data. Drop the lot and let the
+                // next genuine DB.set rebuild the baseline.
+                if (_wfV5WasDecoy) {
+                    _wfV5WasDecoy = false;
+                    _localWriteGuard.recentArrayHashes.clear();
+                    return;
+                }
                 var now = Date.now();
                 for (var pair of _localWriteGuard.recentArrayHashes) {
                     var collection = pair[0];

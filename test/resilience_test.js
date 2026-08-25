@@ -732,6 +732,127 @@ describe('no local write can throw into its caller', () => {
             + 'back as "123" and parseInt readers break').toMatch(/_persistLocal\(.*,\s*true\s*\)/);
     });
 
+    /* A write inside a DISTANT try is not the same as a guarded write.
+     *
+     * The check below only asks whether a setItem sits inside SOME try, and it
+     * passed while 36 calls sat inside a try up to 149 lines away. That is a
+     * materially weaker guarantee than it reads as:
+     *
+     *   · no retry, no cache-freeing, no notification — _persistLocal does all
+     *     three, a bare setItem in a distant try does none;
+     *   · and the throw abandons the REST of that block, because the catch is
+     *     nowhere near. Three of them mattered:
+     *
+     *       wf_last_auto_backup   the backup completion path aborts — the very
+     *                             feature that was reported as not working
+     *       wf2_auth              PIN-changed-on-another-device: the forced
+     *                             re-login below the write never runs
+     *       wf2_<key> (restore)   a failure on key 5 of 17 abandons 6..17, so
+     *                             the restore half-finishes and says nothing
+     *
+     * Three categories genuinely cannot use the helper, and are named rather
+     * than waved through:
+     */
+    const HELPER_EXEMPT = [
+        // The <head> boot script runs in a SEPARATE <script> block, before
+        // _persistLocal is defined. It cannot reach it.
+        (line) => line < 200,
+        // _persistLocal's own two writes — the original and the retry.
+        (line, text) => /localStorage\.setItem\(key, str\)/.test(text),
+        // The error log. _persistLocal prunes it as a re-derivable cache and
+        // notifies on failure, so routing the error-reporting path through it
+        // risks a notification storm raised by the reporting itself.
+        (line, text) => /wf_error_log/.test(text),
+    ];
+
+    /** Every unguarded write whose catch is not on its own line. */
+    function farFromCatch(src, { exempt = HELPER_EXEMPT } = {}) {
+        const lines = src.split('\n');
+        const offs = [];
+        let p2 = 0;
+        for (const l of lines) { offs.push(p2); p2 += l.length + 1; }
+        const far = [];
+        lines.forEach((l, i) => {
+            if (!l.includes('localStorage.setItem')) return;
+            if (l.includes('_persistLocal') || l.includes('_persistRaw')) return;
+            const t = l.trim();
+            if (t.startsWith('*') || t.startsWith('//')) return;
+            if (exempt.some((f) => f(i + 1, t))) return;
+            // A try on the same line is fine: nothing else in the block is lost.
+            if (/try\s*\{[^}]*localStorage\.setItem/.test(l)) return;
+            const guarded = insideTry(src, offs[i] + l.indexOf('localStorage.setItem'));
+            far.push(`${i + 1}: ${guarded ? 'try is far above' : 'no try at all'} — ${t.slice(0, 60)}`);
+        });
+        return far;
+    }
+
+    it('the detector actually detects — checked against known-bad input', () => {
+        // An allowlist guard cannot be tested against a clean codebase: making
+        // HELPER_EXEMPT return true for everything leaves the check green,
+        // because there is nothing left for it to miss. A mutation that did
+        // exactly that survived. So the detector is run against a sample that
+        // IS bad, and has to find each kind.
+        const sample = [
+            'function a() {',
+            '    try {',
+            '        doSomething();',
+            '        moreWork();',
+            "        localStorage.setItem('wf2_thing', JSON.stringify(x));",   // far from catch
+            '    } catch (e) { report(e); }',
+            '}',
+            'function b() {',
+            "    localStorage.setItem('wf2_other', '1');",                     // no try at all
+            '}',
+            'function c() {',
+            "    try { localStorage.setItem('wf2_ok', '1'); } catch (_) {}",   // tight — fine
+            '}',
+            'function d() {',
+            "    _persistRaw('wf2_fine', '1');",                              // guarded — fine
+            '}',
+        ].join('\n');
+        const found = farFromCatch(sample, { exempt: [] });
+        expect(found.some((f) => /try is far above/.test(f)),
+            'the detector no longer notices a write whose catch is lines away').toBe(true);
+        expect(found.some((f) => /no try at all/.test(f)),
+            'the detector no longer notices a completely unguarded write').toBe(true);
+        expect(found, 'the detector is flagging writes that are genuinely fine — a tight '
+            + 'try/catch on one line, or a call through the guarded helper').toHaveLength(2);
+    });
+
+    it('the exemption list cannot be quietly widened', () => {
+        // The self-check above proves the DETECTOR works, by passing exempt: [].
+        // That leaves the exemption list itself untested — a mutation changing
+        // `line < 200` to `true` hid every violation and stayed green, because
+        // on a clean file an over-broad allowlist has nothing to reveal. So each
+        // predicate is asked directly about a write it must never cover.
+        const ordinaryRecordWrite = [9999, "localStorage.setItem('wf2_expenses', JSON.stringify(rows));"];
+        HELPER_EXEMPT.forEach((f, i) => {
+            expect(f(...ordinaryRecordWrite), `exemption #${i} now covers an ordinary record `
+                + 'write, so the guard below can never fail again').toBeFalsy();
+        });
+        // …and the list is allowed to hide exactly the three named categories.
+        // Matched by CONTENT, not by line number: a line-number pin breaks on any
+        // unrelated edit to index.html, and a test that fails for the wrong reason
+        // is a test somebody loosens.
+        const NAMED = [
+            /wf2_settings|wf_theme_reverted|wf_img_crash_count|wf_img_safe_mode/,  // <head> boot script
+            /localStorage\.setItem\(key, str\)/,                                   // _persistLocal itself
+            /wf_error_log/,                                                        // the error log
+        ];
+        const withoutExemptions = farFromCatch(HTML, { exempt: [] });
+        const unnamed = withoutExemptions.filter((f) => !NAMED.some((re) => re.test(f)));
+        expect(unnamed, 'something outside the boot script, _persistLocal itself and the error '
+            + 'log is being hidden by the exemption list').toEqual([]);
+    });
+
+    it('no local write sits in a try far from its catch', () => {
+        expect(farFromCatch(HTML), 'a local write is back inside a try that is nowhere near it. '
+            + 'It will not throw into the caller, but it skips the retry and the notification '
+            + 'AND abandons the rest of that block — which is how the auto-backup stamp, the '
+            + 'forced re-login and the Drive restore loop each half-ran in silence')
+            .toEqual([]);
+    });
+
     it('no localStorage.setItem is left outside a try', () => {
         const lines = HTML.split('\n');
         const offs = [];
