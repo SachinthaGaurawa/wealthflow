@@ -7158,6 +7158,7 @@
             cribReports: [], cribAnalyses: {},
             _tomb: {},   // v7.52.0 — per-key deletion tombstones {key:{id:deleteTs}} for convergent multi-device merge
             _kut: {},    // v7.53.0 — per-KEY update stamps {key:ts} for the non-record fields (see _wfMergeKeyed)
+            _wipedAck: 0,// v7.54.0 — the newest factory-reset marker this device has already honoured
             settings: { backupFreq: 'weekly', lastBackup: null, theme: 'dark', autoLock: 15, haptics: true, currency: 'LKR', notifications: true, compactMode: false }
         };
         let isInitialised = false;
@@ -7254,6 +7255,38 @@
                 + 'they would have been merged into one and the row lost');
             return fixed;
         }
+        // ── A BULK REMOVAL HAS TO BE ANNOUNCED ─────────────────────────────────
+        // _wfStampAndTomb tombstones whatever disappeared between the previous array
+        // and the new one, and a tombstone is not a local event: it is pushed to the
+        // cloud and removes those rows on EVERY device for a hundred days. That is
+        // the correct behaviour for a delete the user asked for, and a catastrophe
+        // for one they did not.
+        //
+        // Driven against this function: appData holding an empty array while disk
+        // still holds 500 rows turns ONE ordinary "add an expense" into 500
+        // tombstones. No live path was found that reaches that state — the v5 guard
+        // and the hydration loops repair appData first — so this is a guard against
+        // the shape of the bug rather than a fix for a reproduced one. It is here
+        // because the failure is silent, total and irreversible, which is exactly
+        // the combination worth spending a few lines on.
+        //
+        // Deliberate bulk removals DO exist — "Undo this statement import" removes
+        // every row an import added across seven collections — so they announce
+        // themselves first. Anything else that trips the threshold is refused: the
+        // rows are kept, no tombstone is written, and the user is told. If some
+        // other legitimate bulk flow exists that this file has not found, it fails
+        // that way too: loudly, with the data intact.
+        const _WF_BULK_MIN = 25;        // fewer than this is never treated as a mass wipe
+        const _WF_BULK_FRACTION = 0.9;  // …and neither is anything short of near-total
+        let _wfBulkIntent = null;       // { keys: Set, until: ts }
+        function _wfExpectBulkRemoval(keys, ms) {
+            _wfBulkIntent = { keys: new Set(keys), until: Date.now() + (typeof ms === 'number' ? ms : 15000) };
+        }
+        function _wfBulkAnnounced(key) {
+            return !!(_wfBulkIntent && _wfBulkIntent.until > Date.now() && _wfBulkIntent.keys.has(key));
+        }
+        try { window._wfExpectBulkRemoval = _wfExpectBulkRemoval; } catch (_) {}
+
         function _wfStampAndTomb(key, newArr) {
             if (!Array.isArray(newArr)) return newArr;
             try { _wfDedupRecordIds(newArr); }
@@ -7276,11 +7309,31 @@
                 // legacy record — that could otherwise beat another device's real edit.
                 if (typeof r._ut !== 'number' && typeof old._ut === 'number') r._ut = old._ut;
             });
-            // Anything present before but gone now = a deletion -> tombstone it.
+            // Anything present before but gone now = a deletion -> tombstone it…
+            // …unless nearly EVERYTHING vanished at once and nothing announced it.
+            const _gone = [];
+            prevById.forEach((old, id) => { if (!seen.has(id)) _gone.push(id); });
+            if (_gone.length >= _WF_BULK_MIN
+                && _gone.length >= prevById.size * _WF_BULK_FRACTION
+                && !_wfBulkAnnounced(key)) {
+                console.error('[DB] refused to delete ' + _gone.length + ' of ' + prevById.size
+                    + ' ' + key + ' records — no bulk removal was announced. The rows are kept.');
+                try {
+                    if (typeof notify === 'function') {
+                        notify('Something tried to remove ' + _gone.length + ' of your ' + key
+                            + ' records at once. That was blocked and nothing was deleted.', 'error');
+                    }
+                } catch (_) {}
+                // Hand back everything: the new array plus the rows that vanished.
+                // No tombstone is written, so no other device is touched either.
+                const _keptBack = newArr.slice();
+                prevById.forEach((old, id) => { if (!seen.has(id)) _keptBack.push(old); });
+                return _keptBack;
+            }
             if (!appData._tomb || typeof appData._tomb !== 'object') appData._tomb = {};
             let tk = appData._tomb[key]; if (!tk || typeof tk !== 'object') { tk = {}; appData._tomb[key] = tk; }
             let tombChanged = false;
-            prevById.forEach((old, id) => { if (!seen.has(id)) { tk[id] = now; tombChanged = true; } });
+            _gone.forEach(id => { tk[id] = now; tombChanged = true; });
             // A resurrected id (present again) clears its old tombstone.
             seen.forEach(id => { if (tk[id] != null) { delete tk[id]; tombChanged = true; } });
             // A delete that fails to reach disk is a delete the app forgets on the
@@ -7401,6 +7454,25 @@
             return localWins ? localVal : cloudVal;
         }
 
+        // Re-read every appData key from localStorage, discarding whatever is in
+        // memory. Used when leaving decoy mode, where the in-memory copy is a
+        // fabrication and disk holds the truth. A key with nothing on disk is reset
+        // to an empty value of the right SHAPE rather than left as the decoy's — an
+        // array stays an array, a map stays a map — so no caller has to re-check.
+        function _wfRehydrateFromDisk() {
+            Object.keys(appData).forEach(k => {
+                const raw = localStorage.getItem('wf2_' + k);
+                if (raw == null) {
+                    if (_WF_RECORD_KEYS.indexOf(k) !== -1) appData[k] = [];
+                    else if (appData[k] && typeof appData[k] === 'object' && !Array.isArray(appData[k])) appData[k] = {};
+                    return;
+                }
+                try { appData[k] = JSON.parse(raw); }
+                catch (e) { console.warn('[DB] could not re-read wf2_' + k, e && e.message); }
+            });
+        }
+        try { window._wfRehydrateFromDisk = _wfRehydrateFromDisk; } catch (_) {}
+
         // ── THE ONE CLOUD APPLIER ───────────────────────────────────────────────
         // Every path that reads the user document (live snapshot, manual pull,
         // first sign-in hydration) funnels through THIS function, so there is one
@@ -7409,10 +7481,33 @@
         // local priority; everything else copies from cloud. Returns flags so the
         // caller can re-render and — when the merged truth is newer than the cloud
         // copy — push it back up so the cloud converges too.
-        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, driveBridge: 1, driveRefresh: 1 };
+        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, _wipedAt: 1, _wipedAck: 1, driveBridge: 1, driveRefresh: 1 };
         function _wfApplyCloudData(cloudData) {
             const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
             if (!cloudData || typeof cloudData !== 'object') return res;
+            // Panic/Decoy mode is READ-ONLY, and that has to include the way in as
+            // well as the way out. DB.set and DB.delKey refuse to write; this
+            // function did not, so one snapshot from the cloud would merge the real
+            // ledger into the decoy view, render it, AND persist it to disk — the
+            // exact data the duress PIN exists to hide.
+            if (window._isDecoyMode === true) return res;
+            // A factory reset is not a diff, so it is not merged. It is announced,
+            // and every device honours it exactly once — _wipedAck is what makes
+            // this idempotent, so a snapshot re-delivering the same marker does not
+            // wipe work the user has done since.
+            const _wipedAt = (typeof cloudData._wipedAt === 'number' && isFinite(cloudData._wipedAt)) ? cloudData._wipedAt : 0;
+            const _wipedAck = (typeof appData._wipedAck === 'number' && isFinite(appData._wipedAck)) ? appData._wipedAck : 0;
+            if (_wipedAt > _wipedAck) {
+                console.warn('[SYNC] factory reset received (' + new Date(_wipedAt).toISOString() + ') — clearing this device');
+                _WF_RECORD_KEYS.forEach(k => { appData[k] = []; _persistRaw('wf2_' + k, '[]'); });
+                ['incomeReceived', 'cribAnalyses', 'subMerchantMap'].forEach(k => { appData[k] = {}; _persistRaw('wf2_' + k, '{}'); });
+                appData.balance = { total: 0, flows: [] }; _persistRaw('wf2_balance', JSON.stringify(appData.balance));
+                appData._tomb = {}; _persistRaw('wf2__tomb', '{}');
+                appData._kut = {}; _persistRaw('wf2__kut', '{}');
+                appData._wipedAck = _wipedAt; _persistRaw('wf2__wipedAck', String(_wipedAt));
+                res.nonSessionChanged = true;
+                return res;   // nothing to merge into: the account was emptied on purpose
+            }
             // 1) Converge tombstones first — the record merge below depends on them.
             const localTomb = (appData._tomb && typeof appData._tomb === 'object') ? appData._tomb : {};
             const cloudTomb = (cloudData._tomb && typeof cloudData._tomb === 'object') ? cloudData._tomb : {};
@@ -8078,6 +8173,11 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         let _lastCloudPushError = '';
         function syncToCloud() {
             _lastCloudPushError = '';
+            // Same contract, the other direction. The payload below is
+            // Object.assign({}, appData, …) — under the duress PIN that is the decoy
+            // arrays, which would overwrite the real cloud document, plus whatever
+            // else appData is carrying at the time.
+            if (window._isDecoyMode === true) { console.log('[DECOY] cloud push blocked'); return Promise.resolve(false); }
             if (!userDocRef) return Promise.resolve(false);
             if (!navigator.onLine) { setSyncStatus('offline'); return Promise.resolve(false); }
             // Nothing to push: the cloud already holds what is on this device.
@@ -13334,14 +13434,27 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     window._isDecoyMode = true;
                     const decoyIndicator = $('decoyIndicator');
                     if (decoyIndicator) decoyIndicator.style.display = 'block';
-                    // Override appData with dummy data
-                    const realData = JSON.parse(JSON.stringify(appData));
+                    // Override appData with dummy data.
+                    //
+                    // This used to replace five keys — income, expenses, loans,
+                    // balance, targets — and leave the other eight record arrays and
+                    // every map exactly as they were. Credit-card instalments, one-off
+                    // charges, card payments, cheques, subscriptions, imported
+                    // statement batches, CRIB reports and the received-income map all
+                    // stayed on screen, real, under a PIN whose entire purpose is that
+                    // they should not be.
+                    //
+                    // It also stashed a complete copy of the real data on appData
+                    // itself (`_realData`). Nothing ever read it back — it was dead —
+                    // but syncToCloud builds its payload from Object.assign({},
+                    // appData, …), so a sync under duress would have uploaded the real
+                    // ledger into a new cloud field that nothing ever cleans up. That
+                    // push is now blocked outright, and the copy is not made at all.
+                    _WF_RECORD_KEYS.forEach(k => { appData[k] = []; });
+                    ['incomeReceived', 'cribAnalyses', 'subMerchantMap'].forEach(k => { appData[k] = {}; });
                     appData.income = [{ id: 'd1', name: 'Savings Account', company: 'Commercial Bank', amount: 500000, rate: 8, monthly: 3333, start: '2025-01-01', freq: 'monthly', day: '2025-01-05' }];
                     appData.expenses = [{ id: 'de1', desc: 'Groceries', cat: 'Food & Groceries', amount: 15000, month: new Date().toISOString().substr(0, 7), recurring: '1' }];
-                    appData.loans = [];
                     appData.balance = { total: 250000, flows: [] };
-                    appData.targets = [];
-                    appData._realData = realData;
                     launchApp();
                     notify('Welcome back! 👋', 'success');
                     return;
@@ -13349,7 +13462,16 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                 if (hash === stored) {
                     $('loginErr').textContent = '';
+                    // Leaving decoy mode has to DISCARD it, not merely stop flagging
+                    // it. The decoy arrays only ever lived in appData; launchApp()
+                    // renders and migrates but never re-reads localStorage, so
+                    // without this the decoy rows stayed in memory and the first
+                    // ordinary save wrote them into the real data. Measured: 500
+                    // seeded expenses went in, and after a duress session the real
+                    // list came back as 501 with the decoy row persisted among them.
+                    const _leavingDecoy = window._isDecoyMode === true;
                     window._isDecoyMode = false;
+                    if (_leavingDecoy) { try { _wfRehydrateFromDisk(); } catch (e) { console.error('[DECOY] re-hydrate failed, reloading instead', e); window.location.reload(); return; } }
                     const decoyIndicator = $('decoyIndicator');
                     if (decoyIndicator) decoyIndicator.style.display = 'none';
                     resetAutoLockTimer();
@@ -22088,7 +22210,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!b) { notify('That import is no longer available', 'warn'); return; }
             const c = b.counts || {}; const total = (c.cconetime || 0) + (c.expenses || 0) + (c.incomeRecv || 0) + (c.ccPayments || 0) + (c.cheques || 0) + (c.subscription || 0) + ((b.loans || []).length);
             showConfirm('🗑️', 'Undo this statement import?', 'This removes all ' + total + ' entr' + (total === 1 ? 'y' : 'ies') + ' this import added — across Expenses, Income, CC One-Time, Card Payments, Cheques, Loans and Subscriptions — and recalculates your dashboard. This cannot be redone.', 'btn-danger', 'Undo import', () => {
+                // Undoing an import legitimately removes every row it added, which on a
+                // year's statement is hundreds. Say so, or _wfStampAndTomb's bulk guard
+                // refuses it — correctly, since it cannot otherwise tell this apart
+                // from the accident it exists to stop.
+                try { _wfExpectBulkRemoval(['expenses', 'income', 'incomeRecv', 'cconetime', 'ccPayments', 'cheques', 'loans', 'subscriptions'], 30000); } catch (_) {}
                 let res = null; try { res = WFBatch.undo(batchId); } catch (e) { console.warn('[WFBatch] undo failed:', e); }
+                try { _wfExpectBulkRemoval([], 0); } catch (_) {}
                 if (!res) { notify('Undo failed', 'error'); return; }
                 try { _pruneOrphanPayments(); } catch (_) {}   // v7.29.0 — clear payments left orphaned by removing a statement's charges
                 // refresh every affected tab + dashboard
@@ -26389,10 +26517,37 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const currentAuth = DB.getObj('auth');
             const currentSettings = DB.getObj('settings', { backupFreq: 'weekly', theme: 'dark', autoLock: 15, haptics: true });
 
+            // WHY THIS CARRIES A MARKER AND A FULL KEY SET
+            //
+            // The old reset built a nine-key object and pushed it with set() (no
+            // merge), so the cloud document really was replaced. That is not enough,
+            // because a second device that is still online does not read the cloud
+            // document — it MERGES it. Measured against the shipped merge code: a
+            // device holding 500 expenses receives the wiped document and keeps all
+            // 500, keeps its balance, and comes back with needPush = true, so it
+            // then UPLOADS them again. A PIN-gated "secure factory reset" that
+            // leaves the data intact on the other phone and restores it to the
+            // cloud within seconds.
+            //
+            // Tombstones alone would not close it either: they cover record arrays,
+            // and a merge cannot express the removal of a map key at all. So the
+            // reset states what it is. _wipedAt is a marker every device honours
+            // once (tracked by _wipedAck, so it is idempotent and a device that has
+            // already wiped does not wipe again).
+            //
+            // It also names every key now. The old list was missing incomeRecv,
+            // subscriptions, sessions, importBatches, cribReports, incomeReceived,
+            // cribAnalyses and subMerchantMap — and since appData's OWN keys are what
+            // the hydration loops iterate, dropping them from the object also
+            // stopped them being re-read.
+            const _wipeStamp = Date.now();
             appData = {
                 auth: currentAuth,
-                income: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
-                cheques: [], expenses: [], targets: [], balance: { total: 0, flows: [] },
+                income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
+                cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
+                cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
+                cribAnalyses: {}, balance: { total: 0, flows: [] },
+                _tomb: {}, _kut: {}, _wipedAck: _wipeStamp, _wipedAt: _wipeStamp,
                 settings: currentSettings
             };
 

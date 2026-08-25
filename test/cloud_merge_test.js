@@ -81,7 +81,7 @@ function constAt(re, what) {
  * Nothing is stubbed except the browser: _persistLocal, _wfStampAndTomb,
  * _wfMergeKeyed and _wfApplyCloudData are the shipped source.
  */
-function loadMerge() {
+function loadMerge({ decoy = false } = {}) {
     const store = new Map();
     const notes = [];
     let failWrites = false;
@@ -93,7 +93,7 @@ function loadMerge() {
         },
         removeItem: (k) => store.delete(k),
     };
-    const appData = {};
+    const appData = { _wipedAck: 0 };
     const src = [
         constAt(/const _WF_RECORD_KEYS = \[[^\]]*\];/, '_WF_RECORD_KEYS'),
         constAt(/const _WF_TOMB_TTL = [^;]*;/, '_WF_TOMB_TTL'),
@@ -104,6 +104,11 @@ function loadMerge() {
         blockAt('function _recPreferred(a, b)'),
         uidSource(),
         blockAt('function _wfDedupRecordIds(arr)'),
+        constAt(/const _WF_BULK_MIN = \d+;/, '_WF_BULK_MIN'),
+        constAt(/const _WF_BULK_FRACTION = [\d.]+;/, '_WF_BULK_FRACTION'),
+        'let _wfBulkIntent = null;',
+        blockAt('function _wfExpectBulkRemoval(keys, ms)'),
+        blockAt('function _wfBulkAnnounced(key)'),
         blockAt('function _wfStampAndTomb(key, newArr)'),
         blockAt('function _wfMergeRecordArray(localArr, cloudArr, tombMap)'),
         blockAt('function _wfMergeTombMaps(a, b)'),
@@ -113,11 +118,11 @@ function loadMerge() {
         blockAt('function _wfMergeKeyed(localVal, cloudVal, lts, cts)'),
         blockAt('function _wfApplyCloudData(cloudData)'),
     ].join('\n');
-    const api = new Function('localStorage', 'appData', 'notify', 'console',
+    const api = new Function('localStorage', 'appData', 'notify', 'console', 'window',
         src + '; let _wfLocalWriteBlocked = false;'
-        + ' return { uid, _wfDedupRecordIds, _wfStampAndTomb, _wfMergeRecordArray, _wfMergeTombMaps,'
-        + ' _wfStampKey, _wfMergeKeyed, _wfApplyCloudData };'
-    )(localStorage, appData, (m, t) => notes.push([t, m]), { log() {}, warn() {}, error() {} });
+        + ' return { uid, _wfDedupRecordIds, _wfExpectBulkRemoval, _wfStampAndTomb,'
+        + ' _wfMergeRecordArray, _wfMergeTombMaps, _wfStampKey, _wfMergeKeyed, _wfApplyCloudData };'
+    )(localStorage, appData, (m, t) => notes.push([t, m]), { log() {}, warn() {}, error() {} }, { _isDecoyMode: decoy });
     return { api, appData, store, notes, setFull: (v) => { failWrites = v; } };
 }
 
@@ -468,3 +473,231 @@ describe('a record id is never minted twice', () => {
         expect(rows.filter(r => r.id != null)).toHaveLength(1);
     });
 });
+
+/* ── 5. a wipe that nobody asked for ──────────────────────────────────────── */
+
+describe('a mass deletion nobody announced is refused', () => {
+    const rows = (n) => Array.from({ length: n }, (_, i) => ({ id: 'e' + i, amount: 100 + i, _ut: 1000 }));
+
+    it('one ordinary "add an expense" cannot tombstone 500 records', () => {
+        // The shape of the accident: appData holding an empty array while disk
+        // still holds the real list. _wfStampAndTomb compares the two, calls the
+        // difference a deletion, and pushes 500 tombstones — which remove those
+        // rows on EVERY device for a hundred days.
+        const A = loadMerge();
+        A.store.set('wf2_expenses', J(rows(500)));
+        A.appData.expenses = [];
+        const out = A.api._wfStampAndTomb('expenses', [{ id: 'new1', amount: 9 }]);
+        expect(Object.keys((A.appData._tomb || {}).expenses || {}), 'a mass deletion was tombstoned '
+            + 'and is now on its way to every other device').toEqual([]);
+        expect(out, 'the rows were dropped locally instead of being kept').toHaveLength(501);
+        expect(A.notes.length, 'nothing was said to the user').toBeGreaterThan(0);
+        expect(A.notes[0][1]).toMatch(/blocked|nothing was deleted/i);
+    });
+
+    it('an announced bulk removal — undoing an import — still goes through', () => {
+        const A = loadMerge();
+        const seed = rows(500);
+        A.appData.expenses = JSON.parse(J(seed));
+        A.store.set('wf2_expenses', J(seed));
+        A.api._wfExpectBulkRemoval(['expenses'], 15000);
+        const out = A.api._wfStampAndTomb('expenses', []);
+        expect(out, 'the guard blocked a removal the user explicitly asked for').toHaveLength(0);
+        expect(Object.keys(A.appData._tomb.expenses), 'the deletion will not reach the other device')
+            .toHaveLength(500);
+    });
+
+    it('deleting one row is untouched by the guard', () => {
+        const A = loadMerge();
+        const seed = rows(500);
+        A.appData.expenses = JSON.parse(J(seed));
+        A.store.set('wf2_expenses', J(seed));
+        A.api._wfStampAndTomb('expenses', seed.filter((r) => r.id !== 'e7'));
+        expect(Object.keys(A.appData._tomb.expenses), 'an ordinary delete stopped propagating')
+            .toEqual(['e7']);
+    });
+
+    it('clearing most of a SMALL list is still a real deletion', () => {
+        // 22 of 30 is 73% — well short of near-total, and exactly the kind of
+        // tidy-up a person does by hand. It must not be mistaken for the accident.
+        const A = loadMerge();
+        const seed = rows(30);
+        A.appData.expenses = JSON.parse(J(seed));
+        A.store.set('wf2_expenses', J(seed));
+        A.api._wfStampAndTomb('expenses', seed.slice(0, 8));
+        expect(Object.keys(A.appData._tomb.expenses)).toHaveLength(22);
+    });
+
+    it('the announcement expires, and does not cover other collections', () => {
+        const stale = loadMerge();
+        stale.appData.expenses = JSON.parse(J(rows(500)));
+        stale.store.set('wf2_expenses', J(rows(500)));
+        stale.api._wfExpectBulkRemoval(['expenses'], -1);
+        stale.api._wfStampAndTomb('expenses', []);
+        expect(Object.keys((stale.appData._tomb || {}).expenses || {}),
+            'an expired announcement still authorised a mass deletion').toEqual([]);
+
+        const wrong = loadMerge();
+        wrong.appData.expenses = JSON.parse(J(rows(500)));
+        wrong.store.set('wf2_expenses', J(rows(500)));
+        wrong.api._wfExpectBulkRemoval(['loans'], 15000);
+        wrong.api._wfStampAndTomb('expenses', []);
+        expect(Object.keys((wrong.appData._tomb || {}).expenses || {}),
+            'announcing one collection authorised a mass deletion in another').toEqual([]);
+    });
+
+    it('undoing an import announces itself before it removes anything', () => {
+        const at = HTML.indexOf('function undoBatch(batchId)');
+        expect(at, 'undoBatch is gone — retarget this test').toBeGreaterThan(-1);
+        const body = HTML.slice(at, at + 2500);
+        const announce = body.indexOf('_wfExpectBulkRemoval');
+        const undo = body.indexOf('WFBatch.undo(batchId)');
+        expect(announce, 'the one legitimate bulk removal no longer announces itself, so the '
+            + 'guard will refuse it').toBeGreaterThan(-1);
+        expect(announce, 'the announcement comes AFTER the removal, which is too late')
+            .toBeLessThan(undo);
+        expect(body).toMatch(/'expenses'[\s\S]{0,120}'cheques'/);
+    });
+});
+
+/* ── 6. a factory reset that the other phone honours ──────────────────────── */
+
+describe('a factory reset reaches every device', () => {
+    const rows = (n) => Array.from({ length: n }, (_, i) => ({ id: 'e' + i, amount: 100 + i, _ut: 1000 }));
+
+    it('wipes a second device that is holding the old data', () => {
+        // A second device does not READ the cloud document, it MERGES it. Against
+        // the shipped merge code, a device holding 500 expenses kept all 500 when
+        // the wiped document arrived and came back with needPush = true — so it
+        // then uploaded them again, seconds after a PIN-gated secure wipe.
+        const B = loadMerge();
+        const seed = rows(500);
+        B.appData.expenses = JSON.parse(J(seed));
+        B.store.set('wf2_expenses', J(seed));
+        B.appData.incomeReceived = { '2026-01': true };
+        B.appData.balance = { total: 250000, flows: [{ id: 'f1' }] };
+
+        const t = Date.now();
+        const res = B.api._wfApplyCloudData({ expenses: [], balance: { total: 0, flows: [] }, incomeReceived: {}, _wipedAt: t });
+
+        expect(B.appData.expenses, 'the wipe did not reach the second device').toHaveLength(0);
+        expect(B.appData.incomeReceived, 'a map survived the wipe — a merge cannot express the '
+            + 'removal of a map key, which is why the reset is announced rather than merged')
+            .toEqual({});
+        expect(B.appData.balance.total).toBe(0);
+        expect(B.store.get('wf2_expenses'), 'memory was cleared but disk was not, so it all '
+            + 'comes back on the next reload').toBe('[]');
+        expect(res.needPush, 'the wiped device asks to push, which re-uploads what was just '
+            + 'destroyed').toBe(false);
+    });
+
+    it('honours the same marker once, not every time it arrives', () => {
+        const B = loadMerge();
+        B.appData.expenses = JSON.parse(J(rows(500)));
+        B.store.set('wf2_expenses', J(rows(500)));
+        const t = Date.now();
+        B.api._wfApplyCloudData({ expenses: [], _wipedAt: t });
+        B.appData.expenses = [{ id: 'after-the-reset', amount: 1, _ut: Date.now() }];
+        B.api._wfApplyCloudData({ expenses: [], _wipedAt: t });
+        expect(B.appData.expenses, 'a re-delivered snapshot wiped work done after the reset')
+            .toHaveLength(1);
+    });
+
+    it('the reset itself names every key and stamps the marker', () => {
+        const at = HTML.indexOf('async function executeFactoryReset()');
+        expect(at).toBeGreaterThan(-1);
+        const body = HTML.slice(at, at + 6000);
+        expect(body, 'the reset no longer announces itself, so a second device merges its own '
+            + 'copy straight back').toMatch(/_wipedAt: _wipeStamp/);
+        // The old list was missing eight keys, and appData's own keys are what the
+        // hydration loops iterate — so dropping them also stopped them being re-read.
+        ['incomeRecv', 'subscriptions', 'importBatches', 'cribReports', 'sessions',
+            'incomeReceived', 'cribAnalyses', 'subMerchantMap'].forEach((k) => {
+                expect(body, `the factory reset does not clear ${k}`).toMatch(new RegExp(k + ':'));
+            });
+    });
+});
+
+/* ── 7. the duress PIN ────────────────────────────────────────────────────── */
+
+describe('panic mode is read-only in both directions', () => {
+    it('an incoming snapshot cannot merge the real ledger into the decoy view', () => {
+        const A = loadMerge({ decoy: true });
+        A.appData.expenses = [{ id: 'decoy-row', amount: 15000 }];
+        const res = A.api._wfApplyCloudData({
+            expenses: Array.from({ length: 500 }, (_, i) => ({ id: 'real' + i, amount: 900 + i })),
+            incomeReceived: { '2026-01': true },
+        });
+        expect(A.appData.expenses, 'the real ledger was merged into the decoy view — under a PIN '
+            + 'whose entire purpose is that it should not be').toHaveLength(1);
+        expect(A.appData.incomeReceived, 'a real map arrived through the merge').toBeUndefined();
+        expect([...A.store.keys()], 'the decoy wrote to disk').toEqual([]);
+        expect(res.needPush).toBe(false);
+    });
+
+    it('nothing is pushed to the cloud under the duress PIN', () => {
+        const at = HTML.indexOf('function syncToCloud()');
+        expect(at).toBeGreaterThan(-1);
+        const head = HTML.slice(at, at + 900);
+        expect(head, 'syncToCloud builds its payload from appData — under the duress PIN that '
+            + 'is the decoy data, and it would overwrite the real cloud document')
+            .toMatch(/_isDecoyMode === true/);
+        expect(head.indexOf('_isDecoyMode'), 'the guard sits after the payload is built')
+            .toBeLessThan(head.indexOf('syncPayload') === -1 ? head.length : head.indexOf('syncPayload'));
+    });
+
+    it('the decoy blanks every record collection, not five of them', () => {
+        const at = HTML.indexOf("if (authData.decoyPin && hash === authData.decoyPin)");
+        expect(at, 'the decoy branch is gone — retarget this test').toBeGreaterThan(-1);
+        const body = HTML.slice(at, at + 3000);
+        expect(body, 'the decoy no longer clears every record collection — credit-card '
+            + 'instalments, cheques, subscriptions and imported statements stay on screen, '
+            + 'real, under a PIN whose whole purpose is that they should not be')
+            .toMatch(/_WF_RECORD_KEYS\.forEach\(k => \{ appData\[k\] = \[\]; \}\)/);
+        expect(body, 'the maps are left real').toMatch(/incomeReceived[\s\S]{0,80}\{\}/);
+        expect(body, 'a full copy of the real data is stashed on appData again — nothing reads '
+            + 'it back, and syncToCloud would have uploaded it')
+            .not.toMatch(/appData\._realData\s*=/);
+    });
+
+    it('leaving the decoy re-reads the real data from disk', () => {
+        // The first version of this asserted that the two lines were PRESENT. A
+        // mutation changing `if (_leavingDecoy)` to `if (false)` left both lines
+        // exactly where they were and survived. What has to be pinned is the
+        // CONDITION, not the text near it.
+        const at = HTML.indexOf('const _leavingDecoy = window._isDecoyMode === true;');
+        expect(at, 'returning to the real PIN no longer discards the decoy — launchApp() never '
+            + 're-reads localStorage, so the decoy rows stay in memory and the first ordinary '
+            + 'save writes them into the real data').toBeGreaterThan(-1);
+        expect(HTML.slice(at, at + 600), 'the re-hydration is no longer gated on actually having '
+            + 'been in the decoy — it either never runs, or runs on every single unlock')
+            .toMatch(/if \(_leavingDecoy\)\s*\{\s*try\s*\{\s*_wfRehydrateFromDisk\(\)/);
+    });
+
+    it('the re-hydrator restores an empty key to the right SHAPE', () => {
+        // Reachable: a record array with nothing on disk yet. Handing back the
+        // decoy's value, or a bare {} where an array belongs, moves the crash one
+        // caller downstream instead of fixing it.
+        const src = blockAt('function _wfRehydrateFromDisk()');
+        expect(src, 'a key with no stored value keeps whatever the decoy left in it')
+            .toMatch(/_WF_RECORD_KEYS\.indexOf\(k\) !== -1\) appData\[k\] = \[\]/);
+        expect(src, 'a map with no stored value is not restored as a map').toMatch(/appData\[k\] = \{\}/);
+        expect(src, 'a corrupt stored value throws out of the unlock path instead of being logged')
+            .toMatch(/catch \(e\)/);
+    });
+
+    it('the v5 restore loop stops rebuilding the real list under duress', () => {
+        const V5 = fs.readFileSync(path.join(ROOT, 'wealthflow-ai-v4.js'), 'utf8');
+        const at = V5.indexOf('window._wfV5GuardLoop = setInterval');
+        expect(at, 'the guard loop is gone — retarget this test').toBeGreaterThan(-1);
+        const body = V5.slice(at, at + 1800);
+        expect(body, 'the loop compares appData against the last real array it saw and restores '
+            + 'the difference — under the duress PIN that is the entire real ledger, put back '
+            + 'into memory, onto the screen and onto disk')
+            .toMatch(/_isDecoyMode === true.*return/);
+        expect(body, 'coming back out of the decoy, the cached arrays still describe it — '
+            + 'restoring from them stitches decoy rows into the real data')
+            .toMatch(/recentArrayHashes\.clear\(\)/);
+    });
+});
+
