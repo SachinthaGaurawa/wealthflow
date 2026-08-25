@@ -106,24 +106,54 @@
     // trailing characters, but only on long distinctive keys (never short ones).
     var _reCache = {};
     function _wordRe(k) { return _reCache[k] || (_reCache[k] = new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b')); }
+    /* glue() runs a regex over its argument. hasKey() called it on the KEY, and
+     * _matchRegistry walks 538 fixed keys for every record classified, so the same
+     * 538 strings were re-glued on every single call. A CPU profile of the app
+     * rendering 2,000 records put 23-30% of the whole main thread in glue() alone,
+     * and another 34-38% in hasKey() around it — those two were the app's largest
+     * single cost. The key set never changes, so it is computed once. */
+    /* EVERYTHING hasKey() derives from a key is a property of the key, and the key
+     * set is fixed: 538 of them, walked for every record classified. The old body
+     * re-did all of it on every call — String(key).trim() allocated, glue() ran a
+     * regex, and the two truncation prefixes were sliced fresh. Computed once per
+     * key instead. Behaviour is unchanged, deliberately and exactly:
+     *   short  = the length<=6 single-word rule, which must stay off the glued path
+     *   gOk    = the "never glue-match a short key" floor at 6
+     *   g1/g2  = the 1- and 2-character truncation prefixes, present only at the
+     *            lengths that were allowed to use them (8 and 10) */
+    var _keyInfo = {};
+    function _info(key) {
+        var v = _keyInfo[key];
+        if (v) return v;
+        var k = String(key).trim();
+        var g = glue(k);
+        v = {
+            k: k,
+            short: (k.length <= 6 && k.indexOf(' ') < 0),
+            gOk: g.length >= 6,
+            g: g,
+            g1: g.length >= 8 ? g.slice(0, g.length - 1) : null,
+            g2: g.length >= 10 ? g.slice(0, g.length - 2) : null
+        };
+        return (_keyInfo[key] = v);
+    }
     function hasKey(nd, gd, key) {
         if (!key) return false;
-        var k = String(key).trim();
-        if (!k) return false;
+        var i = _info(key);
+        if (!i.k) return false;
         // A SHORT single word may ONLY match on a word boundary in the normalised text.
         // It must NEVER take the glued path: glue() deletes every space, so "spar" would
         // match inside "SPARe part", "gold" inside "GOLDen Key Hospital" and "mart"
         // inside "walMART" — silently mis-filing real merchants.
-        if (k.length <= 6 && k.indexOf(' ') < 0) return _wordRe(k).test(nd);
-        if (nd.indexOf(k) >= 0) return true;
-        var kg = glue(k);
-        if (kg.length < 6) return false;                       // never glue-match a short key
-        if (gd.indexOf(kg) >= 0) return true;
+        if (i.short) return _wordRe(i.k).test(nd);
+        if (nd.indexOf(i.k) >= 0) return true;
+        if (!i.gOk) return false;                              // never glue-match a short key
+        if (gd.indexOf(i.g) >= 0) return true;
         // Banks TRUNCATE merchant names to fit a fixed field ("Aliexpress"->"Aliexpres",
         // "Vital Essence (Pvt) Ltd"->"Vital Essence (Pvt) Lt"). Allow up to 2 missing
         // trailing characters, but only on long distinctive keys.
-        if (kg.length >= 8 && gd.indexOf(kg.slice(0, kg.length - 1)) >= 0) return true;
-        if (kg.length >= 10 && gd.indexOf(kg.slice(0, kg.length - 2)) >= 0) return true;
+        if (i.g1 && gd.indexOf(i.g1) >= 0) return true;
+        if (i.g2 && gd.indexOf(i.g2) >= 0) return true;
         return false;
     }
 
@@ -201,8 +231,26 @@
     ];
 
     // learned overrides (user-confirmed) take precedence over the seed registry
-    function _loadLearned() { try { return JSON.parse(root.localStorage.getItem(LS_LEARN) || '{}') || {}; } catch (_) { return {}; } }
-    function _saveLearned(o) { try { root.localStorage.setItem(LS_LEARN, JSON.stringify(o)); } catch (_) {} }
+    /* classify() consults the learned map, so this used to read localStorage and
+     * JSON.parse it once per record. It is cached and dropped whenever anything
+     * writes it, which is the only way it can change from under us — a stale
+     * learned map would file a merchant into the category the user had just
+     * corrected, so the invalidation matters more than the speed does. */
+    var _learnedCache = null;
+    function _loadLearned() {
+        if (_learnedCache) return _learnedCache;
+        try { _learnedCache = JSON.parse(root.localStorage.getItem(LS_LEARN) || '{}') || {}; }
+        catch (_) { _learnedCache = {}; }
+        return _learnedCache;
+    }
+    function _saveLearned(o) {
+        _learnedCache = o || {};
+        _clsForget();          // the learned map is an input to every classification
+        try { root.localStorage.setItem(LS_LEARN, JSON.stringify(o)); } catch (_) {}
+    }
+    /* Anything that changes the map outside _saveLearned — another tab, a cloud
+     * sync, a manual edit — must be able to drop the cache. */
+    function _forgetLearned() { _learnedCache = null; _clsForget(); }
     // a stable merchant key from a noisy narration: strip prefix, drop trailing city/refs,
     // keep the first strong tokens.
     function merchantKey(desc) {
@@ -301,7 +349,90 @@
         return out;
     }
 
+    /* ── the answer for one narration does not change between renders ─────────
+     * A CPU profile of the app rendering 2,000 records put over half the main
+     * thread inside classify(): the insight strips classify every record, on every
+     * render, and _matchRegistry walks 538 keywords for each one. The same
+     * narration produces the same answer, and a re-render re-asks the identical
+     * questions, so the answers are kept.
+     *
+     * WHAT THE CACHE DEPENDS ON, AND WHERE EACH IS DROPPED
+     *   the learned map  → _saveLearned() and _forgetLearned()
+     *   the remote list  → _setRemote()
+     * Those are the only two inputs besides the narration and the direction. A
+     * stale entry would be worse than a slow one: it would re-file a merchant into
+     * the category the user had just corrected, which is precisely the complaint
+     * that made the learned map exist. The invalidation is the point; the speed is
+     * the side effect.
+     *
+     * Bounded, because a long import is thousands of distinct narrations and this
+     * must not become a memory leak on a phone.
+     *
+     * TWO GENERATIONS, NOT ONE, and that was measured rather than reasoned. The
+     * first version emptied the cache on reaching its ceiling, which on a store
+     * holding more distinct narrations than the ceiling made it fill, clear and
+     * refill: the dashboard timed 826 ms, then 53 ms, then 302 ms. Retiring the
+     * older half instead of dropping everything removes the cliff — a key that is
+     * still being asked for is promoted back into the live generation on its next
+     * hit, and one that is not simply ages out. */
+    var CLS_CACHE_MAX = 3000;
+    var _clsCache = Object.create(null), _clsOld = Object.create(null), _clsCount = 0;
+    /* Anything downstream that caches something DERIVED from a classification has
+     * the same staleness problem and no way to know about it. wealthflow-insights
+     * keeps a merchant-key cache of exactly that kind, and it was never cleared —
+     * so after the user corrected a merchant, the analytics kept grouping it under
+     * the brand the classifier had guessed before the correction. A counter is
+     * enough: a reader stores the epoch alongside its cache and drops it when the
+     * number moves. No registration, no coupling beyond an integer. */
+    var _clsEpoch = 1;
+    function epoch() { return _clsEpoch; }
+    function _clsForget() {
+        _clsCache = Object.create(null); _clsOld = Object.create(null); _clsCount = 0;
+        _clsHits = 0; _clsMisses = 0;
+        _clsEpoch++;
+    }
+    /* Counted, so the two-generation behaviour can be asserted rather than
+     * described. Without this the difference between retiring the older half and
+     * dropping everything is invisible from outside — both answer correctly, one
+     * just recomputes far more — and a guard that cannot see the difference is not
+     * guarding it. */
+    var _clsHits = 0, _clsMisses = 0;
+    function _clsStats() {
+        return { hits: _clsHits, misses: _clsMisses, live: _clsCount,
+                 retired: Object.keys(_clsOld).length, max: CLS_CACHE_MAX };
+    }
+    function _clsGet(k) {
+        var v = _clsCache[k];
+        if (v) { _clsHits++; return v; }
+        v = _clsOld[k];
+        if (v) { _clsCache[k] = v; _clsCount++; _clsHits++; return v; }   // still wanted — promote it
+        _clsMisses++;
+        return v;
+    }
+    function _clsPut(k, v) {
+        if (_clsCount >= CLS_CACHE_MAX) { _clsOld = _clsCache; _clsCache = Object.create(null); _clsCount = 0; }
+        _clsCache[k] = v; _clsCount++;
+    }
+
     function classify(desc, direction) {
+        var _ck = String(direction || '') + '\u0000' + String(desc || '');
+        var _hit = _clsGet(_ck);
+        // A shallow copy: callers mutate what they are handed (refine() does), and a
+        // cached object handed out twice would be edited by the first caller and
+        // read back wrong by the second.
+        if (_hit) {
+            var _c = {};
+            for (var _k in _hit) { if (Object.prototype.hasOwnProperty.call(_hit, _k)) _c[_k] = _hit[_k]; }
+            return _c;
+        }
+        var _res = _classifyUncached(desc, direction);
+        _clsPut(_ck, _res);
+        var _o = {};
+        for (var _k2 in _res) { if (Object.prototype.hasOwnProperty.call(_res, _k2)) _o[_k2] = _res[_k2]; }
+        return _o;
+    }
+
+    function _classifyUncached(desc, direction) {
         var raw = String(desc || '');
         var nd = norm(raw), gd = glue(raw);
         var dir = String(direction || '').toLowerCase();
@@ -450,7 +581,10 @@
     function _matchFlat(nd, gd) { for (var i = 0; i < _remote.length; i++) { var e = _remote[i]; if (hasKey(nd, gd, e.key)) return e; } return null; }
     function _loadRemoteCache() { try { var a = JSON.parse(root.localStorage.getItem(LS_REMOTE) || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; } }
     function _saveRemoteCache(a) { try { root.localStorage.setItem(LS_REMOTE, JSON.stringify(a)); } catch (_) {} }
-    function _setRemote(a) { _remote = (a || []).slice().sort(function (x, y) { return String(y.key).length - String(x.key).length; }); }  // longer/more-specific keys win
+    function _setRemote(a) {
+        _remote = (a || []).slice().sort(function (x, y) { return String(y.key).length - String(x.key).length; });  // longer/more-specific keys win
+        _clsForget();          // the remote list is the other input to a classification
+    }
     // fetch the auto-updated merchant list, VERIFY every entry against the taxonomy, then merge.
     function syncRemote(url, force) {
         try {
@@ -778,6 +912,6 @@
     try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
     try { verify(); } catch (_) {}                          // heal any learned conflicts on load
     try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
-    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, VERSION: VERSION };
+    root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, _clsForget: _clsForget, _clsStats: _clsStats, epoch: epoch, VERSION: VERSION };
     try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
 })(typeof window !== 'undefined' ? window : globalThis);

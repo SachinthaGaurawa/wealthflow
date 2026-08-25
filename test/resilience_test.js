@@ -376,3 +376,307 @@ describe('a malformed expense cannot blank a page', () => {
             .not.toMatch(/\(function _wfNormaliseExpenses\(\)/);
     });
 });
+
+/* ── 5. the Expenses list is bounded, the numbers are not ────────────────── */
+
+/* MEASURED IN A REAL BROWSER AT 390 px, BEFORE THE CAP
+ *
+ *     1,000 expenses →  15,998 DOM nodes,   239 ms
+ *     5,000 expenses →  76,015 DOM nodes,   869 ms
+ *    20,000 expenses → 301,015 DOM nodes, 4,442 ms
+ *
+ * The tab defaults to "All Months" and drew one row per expense with no
+ * ceiling. On an iPhone 301,015 nodes is not a slow page, it is a renderer
+ * kill: iOS discards the tab, no JS handler runs so nothing reaches any log,
+ * and it gets worse with every statement imported — the better the import
+ * works, the sooner the app dies.
+ *
+ * After the cap, the same measurement: 3,160 nodes and ~109 ms at every size,
+ * because the node count no longer depends on the dataset at all.
+ *
+ * THE ONE THING THAT MUST NOT BREAK
+ *
+ * The totals are computed over the FULL filtered set, before the slice. A fast
+ * page showing "Total Expenses" for the 200 rows that happen to be drawn would
+ * be strictly worse than the slow page it replaced — it would be wrong, and it
+ * would look right. That ordering is asserted below and mutation-tested.
+ */
+describe('the expenses list is capped without capping the numbers', () => {
+    const fn = blockAt('function renderExpenses()');
+
+    it('caps how many rows are drawn', () => {
+        /* The CONDITION is asserted, not just the presence of a slice: a mutation
+         * that left the statement in place behind `if (false)` passed a looser
+         * regex, which is a guard reporting on bytes rather than on behaviour.
+         * The behavioural proof is the browser measurement in the block comment
+         * above — 301,015 nodes before, 3,160 after, at every dataset size. */
+        expect(fn, 'the render cap is gone or disabled — the list draws every expense again')
+            .toMatch(/if\s*\(_expHidden\s*>\s*0\)\s*filtered\s*=\s*filtered\.slice\(0,\s*_expShown\)/);
+        expect(fn, '_expHidden is not derived from the real row count')
+            .toMatch(/_expHidden\s*=\s*_expTotalRows\s*-\s*_expShown/);
+        expect(fn).toMatch(/_expTotalRows\s*=\s*filtered\.length/);
+        const page = fn.match(/const _EXP_PAGE\s*=\s*(\d+)/);
+        expect(page, 'no page size is defined').toBeTruthy();
+        expect(Number(page[1])).toBeGreaterThan(0);
+        expect(Number(page[1]), 'a page this large is back in renderer-kill territory')
+            .toBeLessThanOrEqual(500);
+    });
+
+    it('computes every figure BEFORE it slices', () => {
+        const total = fn.indexOf('const totAmt = filtered.reduce');
+        const count = fn.indexOf('${filtered.length}');
+        const slice = fn.indexOf('filtered = filtered.slice(0, _expShown)');
+        expect(total, 'the total is gone — retarget this test').toBeGreaterThan(-1);
+        expect(slice, 'the slice is gone — retarget this test').toBeGreaterThan(-1);
+        expect(total, 'THE TOTAL IS COMPUTED AFTER THE SLICE — the Expenses tab now '
+            + 'reports the sum of the 200 visible rows as the sum of everything')
+            .toBeLessThan(slice);
+        expect(count, 'the Count card is computed after the slice and now shows the '
+            + 'page size instead of how many expenses exist').toBeLessThan(slice);
+    });
+
+    it('says how many rows are not shown, and that the totals still cover them', () => {
+        expect(fn).toMatch(/Showing/);
+        expect(fn, 'the bar does not tell the user the totals are unaffected')
+            .toMatch(/totals above cover all/);
+    });
+
+    it('offers a way to see the rest', () => {
+        expect(fn).toMatch(/_wfExpShowMore\(\)/);
+        expect(HTML, 'the show-more handler is not defined')
+            .toMatch(/function _wfExpShowMore\(\)/);
+    });
+
+    it('reveals more without re-sorting what is already on screen', () => {
+        const more = blockAt('function _wfExpShowMore()');
+        expect(more, 'show-more only adds to the page size; anything else moves rows '
+            + 'under the finger that is tapping').toMatch(/\+\s*200/);
+    });
+
+    it('resets the page size when the filter or sort changes', () => {
+        expect(fn, 'switching months would keep a page size from the previous view')
+            .toMatch(/_wfExpShownKey[\s\S]{0,200}_wfExpShown\s*=\s*_EXP_PAGE/);
+        const key = fn.match(/const _expKey\s*=\s*([^;]+);/);
+        expect(key, 'no reset key').toBeTruthy();
+        expect(key[1], 'the reset key ignores the month filter').toContain('cur');
+    });
+});
+
+/* ── 6. every long list is bounded, and nine pages were not ──────────────── */
+
+/* MEASURED, NOT REVIEWED
+ *
+ * 2,000 records were seeded into every store and each of the app's 21 pages was
+ * rendered in a real browser at 390 px. Nine grew their DOM in step with the
+ * data — the Expenses tab was only the one that had been noticed:
+ *
+ *     loans 146,027 · targets 110,006 · income 104,062 · cconetime 78,101
+ *     sessions 66,033 · ccinstall 62,044 · cheques 60,043 · subscriptions 44,043
+ *     incRecv 36,187            (at fifty records each was between 1k and 4k)
+ *
+ * After a single shared cap, the same measurement: every page between 2,769 and
+ * 10,980 nodes, and nothing above 3.6x growth. Nothing is unbounded any more.
+ *
+ * A tenth thing fell out of the same sweep: renderTargets threw
+ * "Cannot read properties of undefined (reading 'reduce')" on a target with no
+ * savings array — while two OTHER readers of the same field already guarded it
+ * with `t.savings ? … : 0`. The guard existed everywhere except in the renderer.
+ */
+function loadCap() {
+    const src = blockAt('function _wfCap(key, rows)');
+    return new Function('window', '_WF_LIST_PAGE', src + '; return _wfCap;')({}, 150);
+}
+
+describe('the shared list cap', () => {
+    const cap = loadCap();
+    const rows = (n) => Array.from({ length: n }, (_, i) => ({ id: i }));
+
+    it('the extraction found the real helper (guards a vacuous suite)', () => {
+        expect(typeof cap).toBe('function');
+    });
+
+    it('leaves a short list alone and shows no bar', () => {
+        const r = cap('k', rows(10));
+        expect(r.rows).toHaveLength(10);
+        expect(r.hidden).toBe(0);
+        expect(r.bar).toBe('');
+        expect(r.row).toBe('');
+    });
+
+    it('bounds a long list', () => {
+        const r = cap('k', rows(5000));
+        expect(r.rows.length, 'the list is unbounded again — 2,000 records measured '
+            + 'up to 146,027 DOM nodes, which is a renderer kill on a phone')
+            .toBeLessThanOrEqual(150);
+        expect(r.hidden).toBe(4850);
+    });
+
+    it('reports the REAL total, not the number it drew', () => {
+        // The bar is the only place the user learns the list is truncated. If it
+        // reported the visible count as the total it would be a lie that looks
+        // like a fact.
+        const r = cap('k', rows(5000));
+        expect(r.total).toBe(5000);
+        expect(r.bar).toContain('Showing 150 of 5000');
+        expect(r.bar, 'the bar does not say the figures above are unaffected')
+            .toContain('the figures above cover all 5000');
+    });
+
+    it('offers a way to see more, in both a div list and a table', () => {
+        const r = cap('k', rows(5000));
+        expect(r.bar).toContain('_wfCapMore(');
+        expect(r.row, 'a table needs the notice inside a row or it breaks the layout')
+            .toMatch(/^<tr><td colspan="\d+">/);
+    });
+
+    it('survives a missing or non-array list', () => {
+        expect(() => cap('k', null)).not.toThrow();
+        expect(cap('k', null).rows).toEqual([]);
+        expect(cap('k', undefined).total).toBe(0);
+    });
+
+    it('is additive when asked for more', () => {
+        const more = blockAt('function _wfCapMore(key)');
+        expect(more, 'show-more re-sorts or re-filters, which moves rows under the '
+            + 'finger that is tapping').toMatch(/\+\s*_WF_LIST_PAGE/);
+        expect(more, 'it does not repaint the page that is on screen')
+            .toContain('_wfActivePage');
+    });
+
+    it('renderPage records which page is on screen for it to repaint', () => {
+        expect(blockAt('function renderPage(name)')).toMatch(/window\._wfActivePage\s*=\s*name/);
+    });
+});
+
+describe('every list that measured unbounded is capped', () => {
+    for (const key of ['loans', 'targets', 'incomeActive', 'incomeEnded', 'cconetime',
+        'sessions', 'ccinstall', 'cheques', 'subscriptions', 'incRecv', 'ccPayments']) {
+        it(`${key} goes through the cap`, () => {
+            expect(HTML, `${key} renders its rows straight from the array again`)
+                .toContain(`_wfCap('${key}'`);
+        });
+    }
+
+    it('the capped renders all show their bar', () => {
+        // A cap with no notice would silently hide rows, which is worse than a
+        // slow page: the user would believe they were seeing everything.
+        const bars = (HTML.match(/_cap\w*\.(bar|row)/g) || []).length;
+        expect(bars, 'rows are being hidden with no notice that they are hidden')
+            .toBeGreaterThanOrEqual(11);
+    });
+});
+
+describe('a target with no savings does not blank the Targets page', () => {
+    const N = new Function('uid', 'window',
+        blockAt('function _wfNormaliseTargetArray(arr)') + '; return _wfNormaliseTargetArray;')(
+        () => 'gen', {});
+
+    it('gives a target with no savings array an empty one', () => {
+        const a = [{ id: 1, name: 'Car', amount: 100 }];
+        N(a);
+        expect(Array.isArray(a[0].savings), 'the exact crash: t.savings.reduce on undefined')
+            .toBe(true);
+        expect(() => a[0].savings.reduce((s, x) => s + x.amount, 0)).not.toThrow();
+    });
+
+    it('drops savings entries that are not objects', () => {
+        const a = [{ id: 1, amount: 100, savings: [null, { amount: 5 }, 'nonsense'] }];
+        N(a);
+        expect(a[0].savings).toHaveLength(1);
+    });
+
+    it('coerces a savings amount stored as a string', () => {
+        const a = [{ id: 1, amount: 100, savings: [{ amount: '2,500' }] }];
+        N(a);
+        expect(a[0].savings[0].amount).toBe(2500);
+    });
+
+    it('repairs in place so the fix persists', () => {
+        const t = { id: 1, amount: 100 };
+        N([t]);
+        expect(t.savings).toEqual([]);
+    });
+
+    it('renderTargets repairs before it reads', () => {
+        expect(blockAt('function renderTargets()'),
+            'renderTargets reads DB.get("targets") raw again')
+            .toMatch(/_wfNormaliseTargetArray\(DB\.get\('targets'\)/);
+    });
+
+    it('a target of zero shows 0%, not NaN%', () => {
+        expect(blockAt('function renderTargets()'),
+            'saved / t.amount * 100 on a zero target renders "NaN%" — wrong output '
+            + 'rather than an error, which is the harder kind to notice')
+            .toMatch(/t\.amount\s*>\s*0\s*\?\s*Math\.min\(100/);
+    });
+});
+
+/* ── 7. text from an imported file is text, not markup ───────────────────── */
+
+/* A bank statement is a file from outside the app. Its narrations become the
+ * `desc` on an expense and its payee names become `name`, and those were
+ * interpolated straight into innerHTML by the pages that list records — so free
+ * text from an imported file reached the HTML parser as HTML.
+ *
+ * That matters more here than on an ordinary page: this document holds the
+ * signed-in Firestore session, and local storage holds an OAuth token for the
+ * user's Drive backups. It also persists — an imported record syncs, so it is
+ * re-rendered on every device the account is used from.
+ *
+ * Seven other modules in this repo already had an esc(). The pages that render
+ * records did not use one.
+ *
+ * Verified by rendering all 21 pages, in both list views, with hostile text in
+ * every free-text field, and checking that nothing was parsed as markup: before,
+ * five pages parsed it; after, none of the 42 combinations did.
+ *
+ * The scan below is the drift guard. Escaping applied by hand to 82 places comes
+ * back undone the moment someone adds the eighty-third. */
+describe('free text is escaped before it reaches innerHTML', () => {
+    const FIELDS = ['desc', 'notes', 'name', 'bank', 'narration', 'note'];
+
+    /* blockAt() brace-matches, and _wfEsc's body contains /[&<>"']/g — the
+     * apostrophe inside that character class reads as the start of a string and
+     * desyncs the matcher. A limitation of the test helper, not of the code, so
+     * this one is sliced between markers instead. */
+    function loadEsc() {
+        const i = HTML.indexOf('function _wfEsc(s) {');
+        expect(i, '_wfEsc is gone — retarget this test').toBeGreaterThan(-1);
+        const end = HTML.indexOf('window._wfEsc', i);
+        expect(end).toBeGreaterThan(i);
+        return new Function(HTML.slice(i, end) + '; return _wfEsc;')();
+    }
+
+    it('there is one escaper, and it escapes what matters', () => {
+        const esc = loadEsc();
+        expect(esc('<img src=x>')).toBe('&lt;img src=x&gt;');
+        expect(esc('a & b')).toBe('a &amp; b');
+        expect(esc('"quoted"')).toBe('&quot;quoted&quot;');
+        expect(esc("it's")).toBe('it&#39;s');
+        expect(esc(null), 'null must not render as the word null').toBe('');
+        expect(esc(undefined)).toBe('');
+    });
+
+    it('does not alter ordinary text', () => {
+        const esc = loadEsc();
+        expect(esc('KEELLS SUPER COLOMBO')).toBe('KEELLS SUPER COLOMBO');
+        expect(esc('PAYMENT - THANK YOU')).toBe('PAYMENT - THANK YOU');
+    });
+
+    it('no record field is interpolated raw', () => {
+        // ${x.desc} with nothing around it is the shape that was exploitable.
+        const raw = [];
+        const re = new RegExp('\\$\\{([a-zA-Z_][\\w]*)\\.(' + FIELDS.join('|') + ')\\}', 'g');
+        let m;
+        while ((m = re.exec(HTML)) !== null) raw.push(m[0]);
+        expect(raw, 'a record field is interpolated into a template unescaped — text '
+            + 'from an imported statement would be parsed as markup again')
+            .toEqual([]);
+    });
+
+    it('the escaper is reachable from the templates that use it', () => {
+        expect(HTML).toMatch(/window\._wfEsc\s*=\s*_wfEsc/);
+        const uses = (HTML.match(/_wfEsc\(/g) || []).length;
+        expect(uses, 'the escaper is defined but barely used').toBeGreaterThan(60);
+    });
+});
