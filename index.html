@@ -275,6 +275,20 @@
          predictive wealth refresh, FX conversion. Provides window.wfApplyBrainResult
          used by the allocator + SMS-paste + background queue. -->
     <script src="wealthflow-autonomous.js" defer></script>
+    <!-- Intelligence layer. This was BUILT AND NEVER LOADED, and two modules that
+         ARE loaded guard on globals only it defines:
+           wealthflow-ai-v4.js:320    typeof window.wfVaultPdfPasswords === 'function'
+           wealthflow-autonomous.js:215 typeof window.wfTrySemanticAllocate === 'function'
+         Both guards were therefore always false, so password-locked PDF statements
+         could never be auto-unlocked (Sri Lankan banks commonly lock them with the
+         NIC or DOB) and money that matched a savings target or a loan by name fell
+         through to the generic Expenses tab instead. Nothing threw — it degraded in
+         silence. Loaded after autonomous.js because that is the consumer, and after
+         the main app because it reads window.DB and window.notify.
+         The vault itself is opt-in: it holds nothing until the user fills it, keeps
+         AES-256-GCM ciphertext in localStorage under wf_vault_enc, and never touches
+         appData, so it is not synced to Firestore. -->
+    <script src="wealthflow-intelligence.js" defer></script>
     <!-- v7.10.0 — Time-bucketed allocator. MUST load AFTER autonomous.js.
          Adds window.wfAllocate, window.wfFindDuplicate, window.wfTimeBucket
          so every transaction lands in its OWN month/year (not today's).
@@ -9551,9 +9565,59 @@ Keep total under 200 words. No markdown, no asterisks.`;
         }
 
         // --- Populate Expense Form from scan result ---
+        /* The receipt scanner used to carry its own eight-name category list —
+         * Food & Groceries, Medical, Entertainment, Clothing and four others — none
+         * of which are categories this app has. Four of the eight matched nothing in
+         * the dropdown at all, so a scanned receipt silently kept the default, while
+         * the SAME shop imported from a statement was classified properly by
+         * WFMerchants. Thirteen real categories, Cash Advance among them, could not
+         * be produced by a scan at any confidence.
+         *
+         * The prompt is built from the canonical list now, and the answer is refined
+         * through the same merchant table the statement path uses, so both doors
+         * reach the same conclusion about the same merchant. */
+        function _scanCategoryList() {
+            try {
+                var C = window.WFMerchants && window.WFMerchants.CATEGORIES;
+                if (Array.isArray(C) && C.length > 4) return C.join(', ');
+            } catch (_) {}
+            // The module is missing rather than the list being empty. Say so loudly:
+            // silently shipping a shorter vocabulary is the bug this replaces.
+            console.error('[AI Scan] WFMerchants.CATEGORIES unavailable — the scan prompt is '
+                + 'falling back to the dropdown, which may not carry every category');
+            try {
+                var opts = $('e_cat') && $('e_cat').options;
+                if (opts && opts.length) return Array.prototype.map.call(opts, function (o) { return o.value; }).join(', ');
+            } catch (_) {}
+            return 'Other';
+        }
+
+        /* The merchant table's answer beats the model's guess, exactly as it does on
+         * the statement path. The model only decides when the table has never seen
+         * the shop. */
+        function _refineScanCategory(vendor, modelGuess) {
+            try {
+                if (!vendor || !window.WFMerchants || typeof window.WFMerchants.refine !== 'function') return modelGuess;
+                var r = window.WFMerchants.refine(String(vendor), 'debit', { tab: 'expenses', category: modelGuess });
+                var cat = r && (r.category || (r.fields && r.fields.cat));
+                return cat || modelGuess;
+            } catch (e) {
+                console.warn('[AI Scan] merchant refine failed, keeping the model answer:', e && e.message);
+                return modelGuess;
+            }
+        }
+
         function _populateExpenseFromScan(result) {
             if (!result) return false;
             let filled = false;
+            // Refine BEFORE the dropdown match below, so the value being matched is
+            // already the app's own vocabulary rather than whatever the model said.
+            try {
+                if (result.vendor) {
+                    var _refined = _refineScanCategory(result.vendor, result.category);
+                    if (_refined) result.category = _refined;
+                }
+            } catch (_) {}
             if (result.vendor) { $('e_desc').value = result.vendor; filled = true; }
             if (result.amount) {
                 const cleanAmt = String(result.amount).replace(/[^0-9.-]/g, '');
@@ -9909,13 +9973,13 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     prompt = `You are an expert OCR receipt scanner. Extract data from this receipt/invoice image.
 
 Return ONLY a valid JSON object with these exact fields:
-{"vendor":"store name","amount":1500.50,"date":"${today}","category":"Food & Groceries","items":["item1","item2"],"currency":"${scanCurrency}"}
+{"vendor":"store name","amount":1500.50,"date":"${today}","category":"Groceries","items":["item1","item2"],"currency":"${scanCurrency}"}
 
 RULES:
 - "vendor": exact business/store name from the receipt
 - "amount": The final TOTAL, GRAND TOTAL, or AMOUNT DUE. Look carefully at the bottom of the receipt. Do not use sub-totals. Must be a pure number. Example: 1500.50
 - "date": in YYYY-MM-DD format. If not visible, use "${today}"
-- "category": best fit from: Food & Groceries, Transport, Utilities, Medical, Education, Entertainment, Clothing, Other
+- "category": best fit from: ${_scanCategoryList()}
 - "items": up to 5 main items. If none visible, use []
 - "currency": the receipt's currency code; default "${scanCurrency}" if not printed${depthHint}
 

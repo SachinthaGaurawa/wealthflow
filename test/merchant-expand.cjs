@@ -34,7 +34,30 @@ const FILE = (function () {
 // be learned on your own phone, where a mistake only ever affects you.
 const GATE = 0.99;
 
-const VALID_CATS = { Telecom:1, Insurance:1, Streaming:1, Software:1, Internet:1, Utilities:1, Groceries:1, Dining:1, Health:1, Transport:1, Fuel:1, Education:1, Government:1, Shopping:1, Gold:1, 'Gym/Fitness':1, Leasing:1, 'Bank Charges':1, 'Cash Withdrawal':1, Other:1 };
+// ── THE CATEGORY LIST IS NOT WRITTEN HERE ────────────────────────────────────
+// It was, and it drifted. wealthflow-merchants.js gained `Cash Advance` when a
+// user reported an uncategorised credit-card cash advance; this file did not,
+// and it is the file the nightly sync runs. The category was therefore blocked
+// from the merchant table in two separate ways: the prompt below tells the model
+// the allowed values (so it was instructed never to propose one), and
+// validEntry() rejects anything outside the list (so one arriving anyway was
+// silently held). merchants.json is regenerated from here, so its taxonomy block
+// inherited the same gap — one omission, three sources wrong.
+//
+// Derived from the canonical CATEGORIES array now. If that file moves or the
+// array is renamed this THROWS rather than falling back to a stale copy: a
+// silently out-of-date gate is exactly the failure this replaces.
+const CATEGORIES = (() => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'wealthflow-merchants.js'), 'utf8');
+    const m = src.match(/var CATEGORIES = \[([\s\S]*?)\];/);
+    if (!m) throw new Error('merchant-expand: cannot find CATEGORIES in wealthflow-merchants.js — '
+        + 'the category gate has no source of truth, refusing to run with a guessed list');
+    const list = m[1].split(',').map(x => x.trim().replace(/^'|'$/g, '')).filter(Boolean);
+    if (list.length < 10) throw new Error('merchant-expand: CATEGORIES parsed as only ' + list.length
+        + ' entries — refusing to gate merchants on a list that short');
+    return list;
+})();
+const VALID_CATS = Object.fromEntries(CATEGORIES.map(c => [c, 1]));
 const SUB = { Telecom:1, Insurance:1, Streaming:1, Internet:1, Utilities:1, Software:1, 'Gym/Fitness':1, Leasing:1 };
 const SECTORS = ['Telecom','Insurance','Groceries','Dining','Health','Transport','Fuel','Education','Government','Shopping','Utilities','Software','Streaming','Gold','Gym/Fitness','Leasing','Internet'];
 

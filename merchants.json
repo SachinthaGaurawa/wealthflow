@@ -25,10 +25,11 @@
       "Government",
       "Shopping",
       "Gold",
-      "Leasing",
       "Gym/Fitness",
-      "Bank Charges",
+      "Leasing",
+      "Cash Advance",
       "Cash Withdrawal",
+      "Bank Charges",
       "Other"
     ],
     "subscriptionCategories": [

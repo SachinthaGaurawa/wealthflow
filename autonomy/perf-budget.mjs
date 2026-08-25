@@ -108,14 +108,21 @@ export const BUDGETS = {
     // Moves ONCE, to the newly measured value with ~1.4% headroom — TIGHTER than
     // the ~1.7% the original carried, deliberately, because a ceiling raised to
     // cover work already done should not also buy room for work not yet started.
-    totalJsBytes: 1_348_000,     // measured 1,329,833 across 46 modules
+    // LOWERED, not raised. wealthflow-ai-v3.js (60 KB) and wealthflow-autopilot.js
+    // (16 KB) were referenced by nothing in the repository — not index.html, not
+    // another module, not a test — while being measured and budgeted like live code.
+    // Deleting them dropped the payload by 76 KB, and the ceiling follows it down:
+    // a ratchet that only ever moves up stops being a ratchet. A test now fails if
+    // any module ships without something referencing it, so this cannot silently
+    // refill.
+    totalJsBytes: 1_290_000,     // measured 1273099 across 44 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely
     // fired — the Data Health and Crash Forensics modules (#53, #54) take the
     // count to 47 — so it moves, once, to the measured value.
-    moduleCount: 47,             // measured 46 (tightened: one module removed)
+    moduleCount: 46,   // 44 on disk after ai-v3 + autopilot were deleted             // measured 46 (tightened: one module removed)
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
