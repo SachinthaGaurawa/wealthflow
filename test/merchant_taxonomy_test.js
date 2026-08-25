@@ -152,6 +152,26 @@ describe('a cash advance and its fee classify themselves', () => {
         expect(M.classify('CASH ADVANCE COLOMBO', 'debit').category).toBe('Cash Advance');
     });
 
+    /* A SHORT single-word key may only match on a word boundary. The rule is
+     * stated in a comment in hasKey() and had no test, so a refactor that
+     * precomputed the per-key facts could drop it and every suite stayed green.
+     * These two are the failures it prevents, verified by running the classifier
+     * with the rule removed. */
+    it('a short key does not match inside a longer word', () => {
+        expect(M.classify('MODEL TOWN', 'debit').category,
+            "'odel' matched inside MODEL — every merchant whose name contains a "
+            + 'short key as a substring would be mis-filed')
+            .not.toBe('Shopping');
+        expect(M.classify('CRIBBAGE CLUB', 'debit').category,
+            "'crib' matched inside CRIBBAGE").not.toBe('Government');
+    });
+
+    it('but a short key still matches as a whole word', () => {
+        // The rule must not be so strict that it stops the key working at all.
+        expect(M.classify('ODEL COLOMBO', 'debit').category).toBe('Shopping');
+        expect(M.classify('CRIB REPORT FEE', 'debit').category).not.toBe(null);
+    });
+
     it('does not turn ordinary merchants into fees or advances', () => {
         expect(M.classify('KEELLS SUPER COLOMBO', 'debit').category).toBe('Groceries');
         expect(M.classify('NETFLIX.COM', 'debit').category).toBe('Streaming');
