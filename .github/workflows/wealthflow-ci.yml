@@ -138,16 +138,49 @@ jobs:
           #
           # For a pull request the API is the ONLY authority. An API failure now
           # means "not approved", never "keep whatever the snapshot said".
+          #
+          # ── ONE REQUEST, BOTH ANSWERS ────────────────────────────────────
+          #
+          # This step used to call repos/:repo/issues/:pr/labels TWICE — once
+          # with `join(",")` to decide HAS, and again with `@json` to publish
+          # the whole list. Two requests, so two different moments, so two
+          # possible answers about the same pull request. On #134 that is
+          # exactly what happened, 1.4 seconds apart:
+          #
+          #     08:42:53  labels currently on the PR: <none>      -> HAS=false
+          #     08:42:55  LABELS: ["human-approved"]
+          #
+          # The owner had removed and re-applied the label to refresh its
+          # timestamp — the documented way to re-approve a moved head — and the
+          # two reads landed either side of the re-apply. The gate refused a
+          # correctly-labelled PR and asked for the label again.
+          #
+          # It fails CLOSED, so nothing unsafe shipped. But the cost lands on
+          # the human: this gate exists to ask for approval ONCE, and a race
+          # that spuriously re-asks is the same defect as a gate that nags.
+          #
+          # So: one request. `--jq` emits two lines from that single response —
+          # the JSON array, then the comma list — and every consumer below is
+          # derived from those same bytes. There is no second moment to
+          # disagree with the first.
+          LJ='[]'
+          HAS=false
           if [ -n "${PR:-}" ]; then
-            if LIVE=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | join(",")' 2>/dev/null); then
+            # Line 1 is `@json` (always single-line; label names cannot contain
+            # a newline). Line 2 is the comma list, and is absent when there are
+            # no labels because command substitution strips the trailing blank.
+            if RAW=$(gh api "repos/$REPO/issues/$PR/labels" \
+                       --jq '([.[].name] | @json), ([.[].name] | join(","))' 2>/dev/null) \
+               && [ -n "$RAW" ]; then
+              LJ=$(printf '%s\n' "$RAW" | sed -n 1p)
+              LIVE=$(printf '%s\n' "$RAW" | sed -n 2p)
+              [ -n "$LJ" ] || LJ='[]'
               echo "labels currently on the PR: ${LIVE:-<none>}"
-              HAS=false
               case ",$LIVE," in
                 *,human-approved,*) HAS=true ;;
               esac
             else
               echo "::warning::Could not read the PR's labels from the API — treating this as NOT approved."
-              HAS=false
             fi
           else
             # No PR context (workflow_dispatch). There is no label to read, so the
@@ -157,6 +190,14 @@ jobs:
 
           echo "has_human_approval=$HAS" >> "$GITHUB_OUTPUT"
           echo "human-approved: $HAS"
+
+          # The WHOLE live list, for anything else that needs to test a label.
+          # `full-gate` was read straight from the event payload, which is a
+          # snapshot taken when the run was queued — so adding that label to a
+          # PR whose run had already started would not engage it. A kill switch
+          # whose job is to make gating STRICTER, failing to engage, fails open.
+          # Everything now reads from the one live answer above.
+          echo "labels_json=$LJ" >> "$GITHUB_OUTPUT"
 
           # WHEN it went on. The label list carries no time, and the freshness
           # check below needs one: a label is attached to the PULL REQUEST, not
@@ -171,19 +212,6 @@ jobs:
           fi
           echo "labeled_at=$LAT" >> "$GITHUB_OUTPUT"
           echo "approved at: ${LAT:-<unknown>}"
-
-          # The WHOLE live list, for anything else that needs to test a label.
-          # `full-gate` was read straight from the event payload, which is a
-          # snapshot taken when the run was queued — so adding that label to a
-          # PR whose run had already started would not engage it. A kill switch
-          # whose job is to make gating STRICTER, failing to engage, fails open.
-          # Everything now reads from this one live answer.
-          LJ='[]'
-          if [ -n "${PR:-}" ]; then
-            LJ=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | @json' 2>/dev/null) || LJ='[]'
-            [ -n "$LJ" ] || LJ='[]'
-          fi
-          echo "labels_json=$LJ" >> "$GITHUB_OUTPUT"
 
       # Merge-base-correct, and it fails rather than guessing. Replaces the
       # `git fetch --depth=1` + `git diff base...HEAD` pattern that aborted with

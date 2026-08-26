@@ -359,6 +359,9 @@ export function variableDailySpend(appData, asOf, months = 3) {
  * @param opts.horizon     days to project (default 90).
  * @param opts.floor       the balance the user considers "in trouble" (default 0).
  * @param opts.includeVariable  fold the estimated discretionary spend in (default true).
+ * @param opts.extraCommitments dated events the caller derived elsewhere —
+ *                              sweep maturities, in practice. Filtered to the
+ *                              window; never trusted to widen it.
  * @param opts.extraMonthly     an additional recurring outflow to test against —
  *                              a proposed extra debt payment, a new standing
  *                              order. Applied on `extraDay` of each month.
@@ -392,6 +395,49 @@ export function project(appData, opts = {}) {
         if (!byDate.has(it.date)) byDate.set(it.date, []);
         byDate.get(it.date).push(it);
     }
+
+    /* ── commitments the caller derived elsewhere ───────────────────────────
+     *
+     * Events this module cannot produce from `appData` alone, because the rule
+     * that produces them does not live here.
+     *
+     * Recorded sweeps are why this exists. Whether a sweep contributes one leg
+     * or two depends on whether the transfer has already left the account —
+     * money already moved is ALREADY missing from `balance.total`, so counting
+     * it again bills the user twice for one transfer. That rule, and the record
+     * parsing it needs, live in wealthflow-sweep-ledger.js, which imports this
+     * file for its date helpers. Importing it back would make the pair
+     * circular, so the legs are handed in instead.
+     *
+     * The caller does not get to widen the projection: anything outside the
+     * window, without a positive amount, or without a real direction is
+     * dropped rather than coerced.
+     *
+     * Into BOTH lists, for the same reason extraMonthly is below — a day row
+     * carrying an event the commitment list does not is the two-views-one-truth
+     * problem this module keeps closing.
+     */
+    let addedExtra = false;
+    for (const raw of (Array.isArray(opts.extraCommitments) ? opts.extraCommitments : [])) {
+        if (!raw) continue;
+        if (raw.kind !== 'in' && raw.kind !== 'out') continue;
+        const d = parseDay(raw.date);
+        const a = num(raw.amount);
+        if (!d || d < asOf || d > to || !(a > 0)) continue;
+        const key = isoDay(d);
+        const ev = {
+            date: key, kind: raw.kind, amount: a,
+            label: String(raw.label || 'Caller-supplied'),
+            source: String(raw.source || 'external'),
+            certainty: String(raw.certainty || 'expected'),
+            id: raw.id != null ? String(raw.id) : null,
+        };
+        items.push(ev);
+        if (!byDate.has(key)) byDate.set(key, []);
+        byDate.get(key).push(ev);
+        addedExtra = true;
+    }
+    if (addedExtra) items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.amount - a.amount));
 
     // A proposed recurring outflow, tested against the same dated obligations.
     // It is a real event on a real day, not a monthly average subtracted at the

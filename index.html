@@ -379,6 +379,16 @@
          ESM, so type="module" is load-bearing here too — it imports the cash
          flow engine directly. window.WFSweeper -->
     <script type="module" src="wealthflow-wealth-sweeper.js"></script>
+    <!-- Sweep ledger — what was actually moved, when it comes back, and whether
+         the sweeper's promise held. The load-bearing rule lives here: money that
+         has already left the current account is ALREADY missing from
+         balance.total, so a recorded sweep contributes its MATURITY only.
+         Subtracting it again bills the user twice for one transfer. A sweep
+         dated in the future has not gone yet, so that one contributes both legs.
+         ESM, importing the cash flow engine for its date helpers — the engine
+         does not import back, which is why project() takes the legs as an
+         argument rather than reaching for them. window.WFSweepLedger -->
+    <script type="module" src="wealthflow-sweep-ledger.js"></script>
     <!-- #54 Crash Forensics — reconciles wf_error_log (JS errors) with
          wf_crash_log (sessions killed without a clean exit; an iOS renderer kill
          runs no JS handler, so it can only appear in the second), and records
@@ -4917,6 +4927,17 @@
             margin-top: 12px; padding: 10px 12px; border-radius: 9px;
             background: var(--bg2, rgba(127,127,127,.07)); font-size: 12px; color: var(--text2);
         }
+        .wf-sl-acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+        .wf-sl-warn {
+            grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+            font-size: 12px; color: var(--gold, #d4a017); margin-top: 6px;
+        }
+        .wf-sl-headline { font-size: 13px; color: var(--text2); margin-top: 12px; }
+        .wf-sl-rate {
+            width: 88px; padding: 4px 7px; border-radius: 7px; font-size: 12px;
+            border: 1px solid var(--border, rgba(127,127,127,.3));
+            background: var(--bg2, transparent); color: var(--text1);
+        }
         .wf-sw-rates { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; align-items: flex-end; }
         .wf-sw-rates label { font-size: 11px; color: var(--text2); display: block; margin-bottom: 3px; }
         .wf-sw-rates input {
@@ -5670,6 +5691,11 @@
                          so a thin ledger is not shown an empty promise. It sits
                          on this page because it funds these targets. -->
                     <div id="wfSweeper" style="margin-bottom:16px; display:none;"></div>
+                    <!-- Sweep Ledger. renderSweepLedger() from WFSweepLedger:
+                         what was actually moved, when it returns, and whether
+                         the floor the sweeper promised has held so far. Hidden
+                         until there is at least one recorded sweep. -->
+                    <div id="wfSweepLedger" style="margin-bottom:16px; display:none;"></div>
                     <div id="targetsList"></div>
                 </div>
 
@@ -7291,6 +7317,10 @@
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
             cribReports: [], cribAnalyses: {},
+            // Money moved out of the current account into a deposit or savings.
+            // A record here is NOT a second subtraction from the balance — the
+            // balance already shows the transfer. See wealthflow-sweep-ledger.js.
+            sweeps: [],
             _tomb: {},   // v7.52.0 — per-key deletion tombstones {key:{id:deleteTs}} for convergent multi-device merge
             _kut: {},    // v7.53.0 — per-KEY update stamps {key:ts} for the non-record fields (see _wfMergeKeyed)
             _wipedAck: 0,// v7.54.0 — the newest factory-reset marker this device has already honoured
@@ -7342,7 +7372,7 @@
         // by recency (newest wins) with tombstones removing deleted rows. This merge
         // is commutative + idempotent, so every device converges to the union of the
         // newest records — no whole-document clobber, deletes included.
-        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions'];
+        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps'];
         const _WF_TOMB_TTL = 100 * 24 * 3600 * 1000;   // keep tombstones ~100 days, then prune
 
         // A record's effective update time: explicit _ut, else parsed createdAt, else 0.
@@ -11753,7 +11783,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             let shortfallHandled = false;
             try {
                 if (window.WFCashflow) {
-                    const s = window.WFCashflow.summarise(appData, { asOf: new Date(), horizon: 90 });
+                    const s = window.WFCashflow.summarise(appData, _wfCashOpts({ horizon: 90 }));
                     shortfallHandled = true;
                     if (s && s.runwayDate) {
                         const notifKey = `wf_notif_runway_${s.runwayDate}`;
@@ -12153,6 +12183,20 @@ function _wfEsc(s) {
     });
 }
 window._wfEsc = _wfEsc;
+
+/* A value going into a JS string literal that itself sits inside an HTML
+ * attribute — onclick="fn('HERE')" — passes through two parsers, and _wfEsc
+ * only covers the second. The HTML parser decodes entities BEFORE the value
+ * reaches the JS engine, so an apostrophe written as &#39; arrives as a real
+ * quote and closes the literal early.
+ *
+ * Escape for the inner context first (backslash, then quote), then for the
+ * outer one. The order matters: HTML-escaping first would leave the backslash
+ * rule chewing on entities instead of the original characters. */
+function _wfJsAttr(s) {
+    return _wfEsc(String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
+}
+window._wfJsAttr = _wfJsAttr;
 
 // ---- small utilities -----------------------------------------------------
 function _wfApiBase() {
@@ -21051,6 +21095,39 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.wfSweeperSetRate = wfSweeperSetRate;
 
+        /* ── every projection asks the same question ───────────────────────────
+         *
+         * WFCashflow and WFSweeper both need "today" and both need the legs of
+         * any recorded sweep, and there are four places in this file that ask
+         * them something. Four call sites assembling their own options is how
+         * this repository produces its most common defect: one of them gets a
+         * fix and the other three quietly keep answering the old way, so two
+         * screens disagree about the same money and neither looks wrong.
+         *
+         * So the options are built HERE, once, and test/sweep_ledger_wiring_test.js
+         * fails if a call site builds its own instead.
+         *
+         * The legs are passed in rather than fetched by the engine because
+         * wealthflow-sweep-ledger.js imports the engine for its date helpers;
+         * importing back would make the pair circular.
+         */
+        function _wfCashOpts(extra) {
+            const o = Object.assign({ asOf: new Date() }, extra || {});
+            try {
+                if (window.WFSweepLedger) {
+                    o.extraCommitments = window.WFSweepLedger.allLegs(appData, o.asOf).items;
+                }
+            } catch (e) {
+                // A broken sweep record must not take the runway card down with
+                // it. Without the legs the projection is the pre-sweep one,
+                // which is the answer this app gave last week — wrong about a
+                // maturity, never wrong about money on hand.
+                try { console.warn('[WF] sweep legs:', e && e.message); } catch (_) {}
+            }
+            return o;
+        }
+        window._wfCashOpts = _wfCashOpts;
+
         function renderSweeper() {
             const host = $('wfSweeper');
             if (!host) return;
@@ -21060,15 +21137,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             const rates = _wfSweeperRates();
             let p;
             try {
-                p = window.WFSweeper.sweepPlan(appData, {
-                    asOf: new Date(),
+                p = window.WFSweeper.sweepPlan(appData, _wfCashOpts({
                     annualYield: Object.keys(rates).length ? rates : null,
-                });
+                }));
             } catch (e) {
                 try { console.warn('[WF] sweeper:', e && e.message); } catch (_) {}
                 return hide();
             }
-            if (!p || p.status === 'nothing-idle') return hide();
+            if (!p || p.status === 'nothing-idle') { _wfLastPlan = null; return hide(); }
+            // Held for wfSweepRecord, so the claim it stores is the very
+            // plan the user is looking at rather than one recomputed later
+            // against a ledger that has moved on.
+            _wfLastPlan = p;
 
             const segs = p.tranches.filter(t => t.amount > 0)
                 .map(t => ({ cls: 'd-' + t.destination, amt: t.amount }))
@@ -21091,7 +21171,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + (t.lockDays > 0 ? ' · locked ' + t.lockDays + ' days' : ' · withdrawable any time')
                 + ' · limited by ' + _wfEsc(t.bindingDate)
                 + (t.forGoals > 0 ? ' · ' + fmtS(t.forGoals) + ' of this covers your targets' : '')
-                + '</div></div>').join('');
+                + '</div>'
+                + '<div class="wf-sl-acts"><button class="btn btn-secondary btn-sm" '
+                + 'onclick="wfSweepRecord(\'' + _wfJsAttr(t.destination) + '\')">Record this</button></div>'
+                + '</div>').join('');
 
             const goals = p.goals.map(g =>
                 '<div class="wf-sw-row">'
@@ -21142,8 +21225,229 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.renderSweeper = renderSweeper;
 
+        /* ── the sweep ledger ──────────────────────────────────────────────────
+         *
+         * The sweeper PROPOSES. This is what was actually done about it, and
+         * whether the proposal turned out to be true.
+         *
+         * Recording is two steps on purpose. "Record" writes the plan down with
+         * settled:false — decided, not yet moved — and the projection shows the
+         * money leaving on that date. "Confirm moved" flips settled:true, which
+         * stops the projection taking it out again, because from that moment the
+         * user's own balance is showing the transfer.
+         *
+         * Getting that order wrong is the one way this feature can lie about
+         * money: a settled sweep that still projects an outflow subtracts the
+         * same transfer twice. The unsettled state is therefore called out on
+         * the row rather than left to be inferred.
+         */
+        let _wfLastPlan = null;          // set by renderSweeper, read by wfSweepRecord
+
+        const _WF_OBS_KEY = 'wf_balance_observations';
+
+        function _wfObservations() {
+            try {
+                const v = JSON.parse(localStorage.getItem(_WF_OBS_KEY) || '[]');
+                return Array.isArray(v) ? v : [];
+            } catch (_) { return []; }
+        }
+
+        /* Today's balance, folded into the log the audit reads.
+         *
+         * This is the only evidence there is that a sweep's floor held, and it
+         * accumulates only while the app is open — which is exactly why the
+         * audit reports its coverage instead of implying it watched every day.
+         * Device-local by design: it is not user data to be merged, it is this
+         * device's testimony about what it saw. */
+        function _wfRecordObservation() {
+            try {
+                if (!window.WFSweepLedger || !window.WFCashflow) return;
+                const bal = window.WFCashflow.openingBalance(appData);
+                if (!isFinite(bal)) return;
+                const next = window.WFSweepLedger.observe(_wfObservations(), new Date(), bal);
+                _persistRaw(_WF_OBS_KEY, JSON.stringify(next));
+            } catch (_) {}
+        }
+
+        function wfSweepRecord(destKey) {
+            const p = _wfLastPlan;
+            if (!p) return;
+            const t = (p.tranches || []).find(x => x.destination === destKey);
+            if (!t || !(t.amount > 0)) return;
+            const m = (p.byHorizon || {})[t.horizon] || {};
+
+            const list = (DB.get('sweeps') || []).slice();
+            list.push({
+                id: 'sw_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+                date: window.WFCashflow.isoDay(new Date()),
+                settled: false,                    // decided, not yet moved
+                amount: t.amount,
+                destination: t.destination,
+                label: t.label,
+                lockDays: t.lockDays,
+                status: 'active',
+                /* WHAT THE SWEEPER PROMISED, stored with the sweep so the audit
+                 * has something to check against later. Without it a recorded
+                 * sweep is just a number and audit() reports 'no-claim'.
+                 *
+                 * projectedMin is the low point after THIS sweep alone —
+                 * bindingBalance is the projected minimum before it, and taking
+                 * a lump sum out today lowers the whole curve by that constant. */
+                claim: {
+                    floor: p.reserve ? p.reserve.amount : 0,
+                    horizonDays: t.horizon,
+                    projectedMin: (m.bindingBalance != null) ? (m.bindingBalance - t.amount) : null,
+                    bindingDate: t.bindingDate || null,
+                },
+            });
+            DB.set('sweeps', list);
+            try { notify('Recorded — confirm it once the money has actually moved', 'success'); } catch (_) {}
+            try { renderSweeper(); renderSweepLedger(); } catch (_) {}
+            try { renderRunwayCard(); } catch (_) {}
+        }
+        window.wfSweepRecord = wfSweepRecord;
+
+        function _wfSweepPatch(id, patch) {
+            const list = (DB.get('sweeps') || []).map(s =>
+                (s && String(s.id) === String(id)) ? Object.assign({}, s, patch) : s);
+            DB.set('sweeps', list);
+            try { renderSweeper(); renderSweepLedger(); renderRunwayCard(); } catch (_) {}
+        }
+
+        function wfSweepSettle(id) {
+            // The money has actually moved, so from now on the balance shows it
+            // and the projection must stop taking it out a second time.
+            _wfSweepPatch(id, { settled: true, date: window.WFCashflow.isoDay(new Date()) });
+            try { notify('Marked as moved', 'success'); } catch (_) {}
+        }
+        window.wfSweepSettle = wfSweepSettle;
+
+        function wfSweepWithdraw(id) {
+            _wfSweepPatch(id, { status: 'withdrawn' });
+            try { notify('Marked withdrawn — add it back to your balance', 'info'); } catch (_) {}
+        }
+        window.wfSweepWithdraw = wfSweepWithdraw;
+
+        function wfSweepDelete(id) {
+            if (!confirm('Delete this sweep record? The audit history for it goes too.')) return;
+            DB.set('sweeps', (DB.get('sweeps') || []).filter(s => s && String(s.id) !== String(id)));
+            try { renderSweeper(); renderSweepLedger(); renderRunwayCard(); } catch (_) {}
+        }
+        window.wfSweepDelete = wfSweepDelete;
+
+        function wfSweepSetRate(id, value) {
+            const r = parseFloat(value);
+            _wfSweepPatch(id, { rateAnnual: isFinite(r) && r > 0 ? r : 0 });
+        }
+        window.wfSweepSetRate = wfSweepSetRate;
+
+        /* `holding` is deliberately NOT green. It means "nothing has broken yet
+         * and the window is still open", which is not the same claim as `held`
+         * and should not be dressed as one. */
+        const _WF_VERDICT_CLASS = {
+            held: 'c-high', holding: 'c-moderate', breached: 'c-low',
+            unverified: 'c-moderate', 'no-claim': '',
+        };
+
+        function renderSweepLedger() {
+            const host = $('wfSweepLedger');
+            if (!host) return;
+            const hide = () => { host.style.display = 'none'; host.innerHTML = ''; };
+            if (!window.WFSweepLedger) return hide();
+
+            let sum, sweeps;
+            try {
+                const now = new Date();
+                _wfRecordObservation();
+                sum = window.WFSweepLedger.summarise(appData, _wfObservations(), now);
+                sweeps = window.WFSweepLedger.read(appData).sweeps;
+            } catch (e) {
+                try { console.warn('[WF] sweep ledger:', e && e.message); } catch (_) {}
+                return hide();
+            }
+            if (!sweeps.length) return hide();
+
+            const byId = {};
+            for (const r of sum.audit.results) byId[String(r.id)] = r;
+
+            const rows = sweeps.map(s => {
+                const a = byId[String(s.id)] || null;
+                const gone = s.settled != null ? s.settled : true;
+                const matures = s.maturesOn
+                    ? 'matures ' + _wfEsc(fmtDatePretty(s.maturesOn))
+                    : 'withdrawable any time';
+                const verdict = a
+                    ? '<span class="wf-sw-chip ' + (_WF_VERDICT_CLASS[a.verdict] || '') + '">'
+                      + _wfEsc(a.verdict) + '</span>'
+                    : '';
+                const cover = (a && a.verdict !== 'no-claim')
+                    ? '<div class="meta">' + _wfEsc(a.why)
+                      + ' · checked on <b>' + a.checkedDays + '</b> of ' + a.windowDays + ' days'
+                      + (a.lowestObserved != null ? ' · lowest seen ' + fmtS(a.lowestObserved) : '')
+                      + (a.optimisticBy != null && a.optimisticBy > 0
+                          ? ' · <b>' + fmtS(a.optimisticBy) + '</b> below the projection' : '')
+                      + '</div>'
+                    : (a ? '<div class="meta">' + _wfEsc(a.why) + '</div>' : '');
+                const warn = (s.status === 'active' && !gone)
+                    ? '<div class="wf-sl-warn">Not moved yet — your balance should still include this. '
+                      + '<button class="btn btn-primary btn-sm" onclick="wfSweepSettle(\'' + _wfJsAttr(s.id) + '\')">'
+                      + 'Confirm moved</button></div>'
+                    : '';
+                const value = s.gain != null
+                    ? '<div class="meta">returns ' + fmtS(s.maturityValue)
+                      + ' · ' + fmtS(s.gain) + ' gain'
+                      + (s.valueBasis === 'simple-interest' ? ' (our estimate, simple interest)' : ' (your bank’s figure)')
+                      + '</div>'
+                    : '<div class="meta">no rate recorded, so no return is claimed — '
+                      + '<input type="number" step="0.1" min="0" placeholder="rate %" class="wf-sl-rate" value="" '
+                      + 'onchange="wfSweepSetRate(\'' + _wfJsAttr(s.id) + '\', this.value)"></div>';
+                return '<div class="wf-sw-row">'
+                    + '<div class="nm">' + _wfEsc(s.label)
+                    + '<span class="wf-sw-chip">' + _wfEsc(s.status) + '</span>' + verdict + '</div>'
+                    + '<div class="amt">' + fmtS(s.amount) + '</div>'
+                    + '<div class="meta">' + _wfEsc(matures) + '</div>'
+                    + (s.status === 'active' ? value : '')
+                    + cover
+                    + warn
+                    + '<div class="wf-sl-acts">'
+                    + (s.status === 'active'
+                        ? '<button class="btn btn-secondary btn-sm" onclick="wfSweepWithdraw(\'' + _wfJsAttr(s.id) + '\')">Withdrawn</button>'
+                        : '')
+                    + '<button class="btn btn-secondary btn-sm" onclick="wfSweepDelete(\'' + _wfJsAttr(s.id) + '\')">Delete</button>'
+                    + '</div>'
+                    + '</div>';
+            }).join('');
+
+            const next = sum.nextMaturity
+                ? '<div class="wf-sw-sub" style="margin-top:10px;">Next back: <b>'
+                  + _wfEsc(sum.nextMaturity.label) + '</b> in ' + sum.nextMaturity.daysAway
+                  + ' days — ' + fmtS(sum.nextMaturity.maturityValue) + '</div>'
+                : '';
+
+            host.innerHTML =
+                '<div class="card">'
+                + '<div class="card-header"><div class="card-title">\u{1F4D2} Sweep Ledger</div>'
+                + '<div class="card-sub">What you moved, when it comes back, and whether the promise held</div></div>'
+                + '<div class="wf-sw-head"><div class="wf-sw-big">' + fmtS(sum.parked.total) + '</div>'
+                + '<div class="wf-sw-sub">parked outside your current account · '
+                + fmtS(sum.parked.returning) + ' returns on its own · '
+                + fmtS(sum.parked.liquid) + ' withdrawable</div></div>'
+                + (sum.parked.pending > 0
+                    ? '<div class="wf-sl-warn">' + fmtS(sum.parked.pending)
+                      + ' is recorded but has not moved yet — it is still in your balance.</div>'
+                    : '')
+                + next
+                + '<div class="wf-sl-headline">' + _wfEsc(sum.audit.headline) + '</div>'
+                + '<div class="wf-sw-rows">' + rows + '</div>'
+                + '</div>';
+            host.style.display = '';
+        }
+        window.renderSweepLedger = renderSweepLedger;
+
+
         function renderTargets() {
             try { renderSweeper(); } catch (_) {}
+            try { renderSweepLedger(); } catch (_) {}
             // Repair before reading — see _wfNormaliseTargetArray.
             const arr = _wfNormaliseTargetArray(DB.get('targets') || []);
             $('sav_tgt').innerHTML = arr.map(t => `<option value="${t.id}">${_wfEsc(t.name)}</option>`).join('');
@@ -21557,7 +21861,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             let s;
             try {
                 // The engine never reads the clock; the caller owns "today".
-                s = window.WFCashflow.summarise(appData, { asOf: new Date(), horizon: 90 });
+                s = window.WFCashflow.summarise(appData, _wfCashOpts({ horizon: 90 }));
             } catch (e) {
                 try { console.warn('[WF] runway card:', e && e.message); } catch (_) {}
                 return hide();
@@ -25136,9 +25440,7 @@ Be direct and use real numbers. Avoid generic advice.`;
             let suggestBasis = null;
             try {
                 if (window.WFCashflow) {
-                    const s = window.WFCashflow.sustainableMonthly(appData, {
-                        asOf: new Date(), horizon: 180,
-                    });
+                    const s = window.WFCashflow.sustainableMonthly(appData, _wfCashOpts({ horizon: 180 }));
                     if (s && isFinite(s.amount)) {
                         // Rounded DOWN to the slider's own step. The range input
                         // snaps to its step, so an unrounded 308,698 rendered as
@@ -27102,7 +27404,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
                 cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
                 cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
-                cribAnalyses: {}, balance: { total: 0, flows: [] },
+                cribAnalyses: {}, balance: { total: 0, flows: [] }, sweeps: [],
                 _tomb: {}, _kut: {}, _wipedAck: _wipeStamp, _wipedAt: _wipeStamp,
                 settings: currentSettings
             };
@@ -27512,7 +27814,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             var _m = (r.verified ? r.verified + ' verified on the web' : '') +
                                      (r.resolved > (r.verified || 0) ? ((r.verified ? ', ' : '') + (r.resolved - (r.verified || 0)) + ' by AI consensus') : '') +
                                      (r.held ? ((r.resolved ? ' · ' : '') + r.held + ' need you') : '');
-                            try { toast('Merchants: ' + (_m || 'nothing new')); } catch (_) {}
+                            try { notify('Merchants: ' + (_m || 'nothing new'), 'info'); } catch (_) {}
                             // Nothing was guessed. Show what is waiting instead of burying it.
                             if (r.held) { try { setTimeout(function () { window.WFVerifyPanel && window.WFVerifyPanel.open(); }, 900); } catch (_) {} }
                         }
