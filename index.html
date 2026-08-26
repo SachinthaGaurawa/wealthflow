@@ -9493,7 +9493,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 const providerLabels = { gemini: '<span class="ai-provider-badge gemini">✨ Gemini AI</span>', groq: '<span class="ai-provider-badge groq">⚡ Groq AI</span>', deepseek: '<span class="ai-provider-badge deepseek">🧠 DeepSeek AI</span>' };
                 const badge = providerLabels[_lastAIProvider] || '';
 
-                const pillsHTML = questions.length ? `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:14px;">${questions.map(q => `<button class="ai-followup-pill" onclick="showPage('ai',document.querySelector('[onclick*=\\'ai\\']'));setTimeout(()=>sendAIMessage('${q.replace(/'/g, '')}'),300);">${q}</button>`).join('')}</div>` : '';
+                const pillsHTML = questions.length ? `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:14px;">${questions.map(q => `<button class="ai-followup-pill" onclick="showPage('ai',document.querySelector('[onclick*=\\'ai\\']'));setTimeout(()=>sendAIMessage('${_wfJsAttr(q)}'),300);">${q}</button>`).join('')}</div>` : '';
 
                 area.innerHTML = `
                     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">${badge}<span style="font-size:11px;color:var(--text3);">Generated at ${new Date().toLocaleTimeString()}</span></div>
@@ -13723,8 +13723,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const subs = { 1: '', 2: 'ABC', 3: 'DEF', 4: 'GHI', 5: 'JKL', 6: 'MNO', 7: 'PQRS', 8: 'TUV', 9: 'WXYZ', 0: '+' };
             el.innerHTML = keys.map(k => {
                 if (k === '') return '<div class="numpad-empty"></div>';
-                if (k === '⌫') return `<button class="npb del" onclick="pinBackspace('${containerId}')">${k}</button>`;
-                return `<button class="npb" onclick="pinDigit('${containerId}','${k}')"><span>${k}</span>${subs[k] ? `<span class="npb-sub">${subs[k]}</span>` : ''}</button>`;
+                if (k === '⌫') return `<button class="npb del" onclick="pinBackspace('${_wfJsAttr(containerId)}')">${k}</button>`;
+                return `<button class="npb" onclick="pinDigit('${_wfJsAttr(containerId)}','${_wfJsAttr(k)}')"><span>${k}</span>${subs[k] ? `<span class="npb-sub">${subs[k]}</span>` : ''}</button>`;
             }).join('');
         }
 
@@ -16188,10 +16188,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const filtered = filter ? items.filter(v => v.toLowerCase().includes(filter.toLowerCase())) : items;
                 if (!filtered.length) { drop.classList.remove('show'); return; }
                 drop.innerHTML = `<div class="ac-sep">💡 Previous Entries</div>` +
-                    filtered.map(v => `<div class="ac-item" onclick="acSelect('${inputId}','${v.replace(/'/g, "\\'")}')">
+                    filtered.map(v => `<div class="ac-item" onclick="acSelect('${_wfJsAttr(inputId)}','${_wfJsAttr(v)}')">
                         <span style="font-size:14px;">${icon}</span>
                         <span class="ac-item-text">${v}</span>
-                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i data-wfi="x"></i></button>
+                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
                     </div>`).join('');
                 drop.classList.add('show');
                 _openDropdowns.add(inputId);
@@ -16218,9 +16218,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const items = acGet(listName).filter(v => v.toLowerCase().includes((inp?.value || '').toLowerCase()));
             if (!items.length) { drop.classList.remove('show'); return; }
             drop.innerHTML = `<div class="ac-sep">💡 Previous Entries</div>` +
-                items.map(v => `<div class="ac-item" onclick="acSelect('${inputId}','${v.replace(/'/g, "\\'")}')">
+                items.map(v => `<div class="ac-item" onclick="acSelect('${_wfJsAttr(inputId)}','${_wfJsAttr(v)}')">
                     <span class="ac-item-text">${v}</span>
-                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${inputId}','${listName}','${v.replace(/'/g, "\\'")}')"><i data-wfi="x"></i></button>
+                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
                 </div>`).join('');
             triggerHaptic('delete');
             notify('Entry removed from suggestions', 'info');
@@ -16704,9 +16704,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         <td style="font-family:var(--mono);font-weight:700;color:var(--green);white-space:nowrap;">+${fmt(x.amount)}</td>
                         <td>${x.received ? '<span class="badge bg-g" style="font-size:10px;">✓ Received</span>' : '<span class="badge bg-gr" style="font-size:10px;">Pending</span>'}</td>
                         <td><div class="act-btns" style="display:flex;gap:4px;">
-                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${x.id}')" title="Mark received"><i data-wfi="check"></i></button>` : ''}
-                            <button class="ib e" onclick="editIncomeRecv('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
-                            <button class="ib d" onclick="deleteIncomeRecv('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
+                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${_wfJsAttr(x.id)}')" title="Mark received"><i data-wfi="check"></i></button>` : ''}
+                            <button class="ib e" onclick="editIncomeRecv('${_wfJsAttr(x.id)}')" title="Edit"><i data-wfi="edit"></i></button>
+                            <button class="ib d" onclick="deleteIncomeRecv('${_wfJsAttr(x.id)}')" title="Delete"><i data-wfi="trash"></i></button>
                         </div></td>
                     </tr>`).join('') + _capT.row;
                 host.innerHTML = `<div class="tbl-wrap"><table>
@@ -16735,9 +16735,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         </div>
                         <div class="exp-amt" style="font-family:var(--mono);font-weight:700;color:var(--green);flex-shrink:0;white-space:nowrap;font-size:12px;">+${fmt(x.amount)}</div>
                         <div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">
-                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${x.id}')" title="Mark received"><i data-wfi="check"></i></button>` : ''}
-                            <button class="ib e" onclick="editIncomeRecv('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>
-                            <button class="ib d" onclick="deleteIncomeRecv('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>
+                            ${!x.received ? `<button class="ib c" onclick="markIncRecvReceived('${_wfJsAttr(x.id)}')" title="Mark received"><i data-wfi="check"></i></button>` : ''}
+                            <button class="ib e" onclick="editIncomeRecv('${_wfJsAttr(x.id)}')" title="Edit"><i data-wfi="edit"></i></button>
+                            <button class="ib d" onclick="deleteIncomeRecv('${_wfJsAttr(x.id)}')" title="Delete"><i data-wfi="trash"></i></button>
                         </div>
                     </div>`).join('');
                 return `
@@ -16894,10 +16894,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                 return `<div class="inc-card${isArchived ? ' income-archive-card' : ''}">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;">
-                <div><div style="font-size:15px;font-weight:700;">${_wfEsc(source.name)}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${source.company} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
+                <div><div style="font-size:15px;font-weight:700;">${_wfEsc(source.name)}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${_wfEsc(source.company)} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
                     <div style="text-align:right;"><div style="font-size:21px;font-weight:800;font-family:var(--mono);color:var(--green);">${fmt(source.monthly)}</div><div style="font-size:11px;color:var(--text3);">${freqL}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editIncome('${source.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteIncome('${source.id}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editIncome('${_wfJsAttr(source.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteIncome('${_wfJsAttr(source.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -16921,9 +16921,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div style="font-size:12px;color:var(--text3);">This month (${curMonthStr}):</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     ${isConfirmed
-                        ? `<button type="button" class="income-received-btn confirmed wf-holdable" title="Press and hold 3 seconds to undo this month" onpointerdown="_wfHoldStart(this,function(){_undoInvestMonth('${source.id}','${curMonthStr}')},event)" onpointerup="_wfHoldCancel()" onpointerleave="_wfHoldCancel()" onpointercancel="_wfHoldCancel()" oncontextmenu="return false;"><i data-wfi="checkCircle"></i> Received &amp; Confirmed</button><span class="wf-hold-hint"><i data-wfi="undo"></i> hold to undo</span>`
-                        : `<button type="button" class="income-received-btn" onclick="confirmIncomeReceived('${source.id}')">Confirm Received</button>`}
-                    <button class="income-past-btn" onclick="openPastMonthConfirm('${source.id}')" title="Confirm a previous month you missed (e.g. you were offline for a while, or this income started before you joined WealthFlow)">
+                        ? `<button type="button" class="income-received-btn confirmed wf-holdable" title="Press and hold 3 seconds to undo this month" onpointerdown="_wfHoldStart(this,function(){_undoInvestMonth('${_wfJsAttr(source.id)}','${_wfJsAttr(curMonthStr)}')},event)" onpointerup="_wfHoldCancel()" onpointerleave="_wfHoldCancel()" onpointercancel="_wfHoldCancel()" oncontextmenu="return false;"><i data-wfi="checkCircle"></i> Received &amp; Confirmed</button><span class="wf-hold-hint"><i data-wfi="undo"></i> hold to undo</span>`
+                        : `<button type="button" class="income-received-btn" onclick="confirmIncomeReceived('${_wfJsAttr(source.id)}')">Confirm Received</button>`}
+                    <button class="income-past-btn" onclick="openPastMonthConfirm('${_wfJsAttr(source.id)}')" title="Confirm a previous month you missed (e.g. you were offline for a while, or this income started before you joined WealthFlow)">
                         📅 Past months
                     </button>
                 </div>
@@ -17289,7 +17289,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                             <button class="md-x" aria-label="Close" id="_pi_close"><i data-wfi="x"></i></button>
                         </div>
                         <div style="padding:8px 0 14px;font-size:12px;color:var(--text2);line-height:1.6;">
-                            Source: <b>${_wfEsc(s.name)}</b> · <span style="color:var(--accent);font-family:var(--mono);">${s.company}</span><br>
+                            Source: <b>${_wfEsc(s.name)}</b> · <span style="color:var(--accent);font-family:var(--mono);">${_wfEsc(s.company)}</span><br>
                             Expected Amount: <b>${fmt(s.monthly)}</b><br>
                             <span style="font-size:11px;color:var(--text3);">Did you receive more or less than expected? Enter the exact amount.</span>
                         </div>
@@ -18148,7 +18148,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div><div class="loan-name">${_wfEsc(l.name)}</div><div class="loan-bank">🏦 ${_wfEsc(l.bank)}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="loan-monthly">${fmt(displayMonthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div>${monthlyHint}<div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editLoan('${l.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteLoan('${l.id}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editLoan('${_wfJsAttr(l.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteLoan('${_wfJsAttr(l.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
             <div class="pb" style="margin-bottom:6px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${prog.pct}%"></div></div>
@@ -18175,10 +18175,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                 ${diff < -1 ? `<span style="font-weight:700;color:#fb923c;margin-left:4px;">(${fmt(diff)} short)</span>` : ''}
                             </div>
                         </div>
-                        <button class="btn btn-sm" style="background:linear-gradient(135deg, rgba(245,158,11,0.25), rgba(234,88,12,0.2));backdrop-filter:blur(8px);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);font-weight:700;padding:6px 14px;border-radius:10px;" onclick="_viewLoanInstallment('${l.id}','${todayMonthKey}')" title="Manage payment">Manage</button>
+                        <button class="btn btn-sm" style="background:linear-gradient(135deg, rgba(245,158,11,0.25), rgba(234,88,12,0.2));backdrop-filter:blur(8px);color:#f59e0b;border:1px solid rgba(245,158,11,0.3);font-weight:700;padding:6px 14px;border-radius:10px;" onclick="_viewLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(todayMonthKey)}')" title="Manage payment">Manage</button>
                     </div>`;
                         }
-                        return `<button class="loan-pay-cta" onclick="toggleLoanInstallment('${l.id}','${todayMonthKey}')">
+                        return `<button class="loan-pay-cta" onclick="toggleLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(todayMonthKey)}')">
                     <span style="font-size:20px;">💰</span>
                     <div style="flex:1;text-align:left;">
                         <div style="font-size:13px;font-weight:700;">Pay ${MONTHS_S[new Date().getMonth()]} ${new Date().getFullYear()} Installment</div>
@@ -18248,8 +18248,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
                     <div style="font-size:12px;font-weight:700;color:var(--text2);">📅 Monthly Installments</div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                        <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${l.id}')" title="Generate a professional bank-statement-style PDF for this loan">📄 Statement</button>
-                        <button class="btn btn-ghost btn-sm" onclick="_openLoanInstallmentsFresh('${l.id}')">📋 View All ${months.length} Months</button>
+                        <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${_wfJsAttr(l.id)}')" title="Generate a professional bank-statement-style PDF for this loan">📄 Statement</button>
+                        <button class="btn btn-ghost btn-sm" onclick="_openLoanInstallmentsFresh('${_wfJsAttr(l.id)}')">📋 View All ${months.length} Months</button>
                     </div>
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:6px;">
@@ -18273,7 +18273,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         const overdueDot = isOverdue ? '<span style="color:var(--red);font-size:10px;">!</span>' : '';
                         const currentDot = isCurrentMonth ? '<span style="color:var(--accent);font-size:10px;font-weight:900;">●</span>' : '';
                         return `<button class="loan-month-btn ${btnClass}"
-                            onclick="clickLoanMonthBtn('${l.id}','${m.key}')"
+                            onclick="clickLoanMonthBtn('${_wfJsAttr(l.id)}','${_wfJsAttr(m.key)}')"
                             title="${tooltip}">
                             ${isPaid ? (isUnder ? '⚠️' : '✅') : (isOverdue ? '🔴' : '⏰')} ${_wfEsc(m.label)} ${currentDot}${overdueDot}${isOver ? '<span style="color:var(--green);font-size:10px;">+</span>' : ''}${isUnder ? '<span style="color:var(--red);font-size:10px;">−</span>' : ''}
                         </button>`;
@@ -18325,7 +18325,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     <div class="md-hdr" style="padding:16px 20px; border-bottom:1px solid var(--border2); flex-shrink:0;">
                         <div class="md-title">📅 ${_wfEsc(l.name)} — Live Amortization</div>
                         <div style="display:flex;gap:6px;align-items:center;">
-                            <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${l.id}')" title="Generate professional PDF statement">📄 Statement</button>
+                            <button class="btn btn-ghost btn-sm" onclick="openLoanStatement('${_wfJsAttr(l.id)}')" title="Generate professional PDF statement">📄 Statement</button>
                             <button class="md-x" aria-label="Close" onclick="closeModal('mdLoanInstallments')"><i data-wfi="x"></i></button>
                         </div>
                     </div>
@@ -18376,11 +18376,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
                     <!-- Filter chips -->
                     <div style="padding:10px 16px; display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--border); flex-shrink:0;">
-                        <button class="btn btn-sm ${filter === 'all' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','all')">All (${proj.schedule.length})</button>
-                        <button class="btn btn-sm ${filter === 'paid' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','paid')">✅ Paid (${paidCount})</button>
-                        <button class="btn btn-sm ${filter === 'upcoming' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','upcoming')">⏰ Upcoming (${proj.schedule.length - paidCount})</button>
-                        ${overCount > 0 ? `<button class="btn btn-sm ${filter === 'over' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','over')">⬆ Over (${overCount})</button>` : ''}
-                        ${underCount > 0 ? `<button class="btn btn-sm ${filter === 'under' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${l.id}','under')">⬇ Under (${underCount})</button>` : ''}
+                        <button class="btn btn-sm ${filter === 'all' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${_wfJsAttr(l.id)}','all')">All (${proj.schedule.length})</button>
+                        <button class="btn btn-sm ${filter === 'paid' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${_wfJsAttr(l.id)}','paid')">✅ Paid (${paidCount})</button>
+                        <button class="btn btn-sm ${filter === 'upcoming' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${_wfJsAttr(l.id)}','upcoming')">⏰ Upcoming (${proj.schedule.length - paidCount})</button>
+                        ${overCount > 0 ? `<button class="btn btn-sm ${filter === 'over' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${_wfJsAttr(l.id)}','over')">⬆ Over (${overCount})</button>` : ''}
+                        ${underCount > 0 ? `<button class="btn btn-sm ${filter === 'under' ? 'btn-primary' : 'btn-ghost'}" onclick="_setLoanInstallmentFilter('${_wfJsAttr(l.id)}','under')">⬇ Under (${underCount})</button>` : ''}
                     </div>
 
                     <!-- Notes -->
@@ -18424,8 +18424,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (m.isPartial) payCell += '<div style="font-size:10px;color:var(--red);margin-top:1px;">' + fmt(m.diff) + ' short</div>';
 
                     const actionBtn = m.paid
-                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${l.id}','${m.month}')"><i data-wfi="eye"></i></button>`
-                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${l.id}','${m.month}')"><i data-wfi="coins"></i></button>`;
+                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="eye"></i></button>`
+                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="coins"></i></button>`;
 
                     let row = '<tr ' + (isCurrent ? 'data-current-row="1" ' : '') + 'style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer;" ';
                     row += 'onclick="_payLoanInstallmentFromTable(\'' + l.id + '\',\'' + m.month + '\')" ';
@@ -19947,7 +19947,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-blue"><div class="stat-label">Active Plans</div><div class="stat-val">${active.length}</div></div>
         <div class="stat-card sc-purple" style="opacity:.7;"><div class="stat-label">Completed</div><div class="stat-val">${arr.length - active.length}</div></div>
     `;
-            $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${x.id}">${x.product} (${_wfEsc(x.bank)})</option>`).join('');
+            $('skip_plan').innerHTML = '<option value="">Select plan...</option>' + active.map(x => `<option value="${_wfEsc(x.id)}">${_wfEsc(x.product)} (${_wfEsc(x.bank)})</option>`).join('');
             const tbody = $('cciBody');
             if (!arr.length) { tbody.innerHTML = `<tr><td colspan="11">${emptyState('💳', 'No installments', 'Add credit card installment plans to track payments')}</td></tr>`; return; }
             const _cap = _wfCap('ccinstall', arr);
@@ -19957,7 +19957,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const isActive = end > new Date() && !item.completed;
                 const skipCount = item.skipped?.length || 0;
                 return `<tr class="${item.completed ? 'done-row' : ''}">
-            <td><div style="font-weight:600;">${item.product}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
+            <td><div style="font-weight:600;">${_wfEsc(item.product)}</div>${item.notes ? `<div class="td-m">${_wfEsc(item.notes)}</div>` : ''}</td>
             <td>${item.buyer}</td>
             <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
             <td class="td-a">${fmt(item.total)}</td>
@@ -19967,9 +19967,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.date}</td>
             <td style="min-width:110px;"><div class="pb" style="margin-bottom:3px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${Math.min(100, prog.pct)}%"></div></div><div style="font-size:10px;color:var(--text3);">${prog.paid}/${prog.total} (${prog.pct}%)</div></td>
             <td>${item.completed ? '<span class="badge bg-gr">Done</span>' : isActive ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-r">Overdue</span>'}</td>
-            <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${item.id}')" title="Mark Complete"><i data-wfi="check"></i></button>` : ''}
-                <button class="ib e" onclick="editCCI('${item.id}')"><i data-wfi="edit"></i></button>
-                <button class="ib d" onclick="deleteCCI('${item.id}')"><i data-wfi="trash"></i></button></div></td>
+            <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${_wfJsAttr(item.id)}')" title="Mark Complete"><i data-wfi="check"></i></button>` : ''}
+                <button class="ib e" onclick="editCCI('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
+                <button class="ib d" onclick="deleteCCI('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
             }).join('') + _cap.row;
         }
@@ -20304,7 +20304,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <td><span class="badge bg-b">${_wfEsc(p.bank || '—')}</span></td>
                     <td class="td-a" style="color:var(--green,#16a34a);font-weight:700;">+${fmt(p.amount || 0)}</td>
                     <td class="td-m">${p.date || ''}</td>
-                    <td><button class="ib d" onclick="deleteCCPayment('${p.id}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('') + _capP.row;
+                    <td><button class="ib d" onclick="deleteCCPayment('${_wfJsAttr(p.id)}')" title="Delete payment"><i data-wfi="trash"></i></button></td></tr>`).join('') + _capP.row;
             const surplus = totalPaid - totalCharged;
             host.innerHTML = `
                 <div style="background:var(--card);border:1px solid var(--border2);border-radius:var(--r2);padding:14px 16px;margin-bottom:14px;">
@@ -20347,7 +20347,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const bg = active ? (isAll ? 'rgba(212,175,55,.16)' : `hsla(${hue},72%,55%,.16)`) : (isAll ? 'var(--card)' : `hsla(${hue},60%,50%,.07)`);
                         const fg = active ? (isAll ? 'var(--accent)' : `hsl(${hue} 85% 74%)`) : 'var(--text2)';
                         const dot = isAll ? '' : `<span style="width:9px;height:9px;border-radius:50%;background:${accent};display:inline-block;flex:0 0 auto;"></span>`;
-                        return `<button onclick="setCCOTBankFilter('${String(key).replace(/'/g, "\\'")}')"
+                        return `<button onclick="setCCOTBankFilter('${_wfJsAttr(String(key))}')"
                             style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:8px 14px 8px 13px;border-radius:var(--r2);cursor:pointer;
                             border:1px solid ${active ? accent : 'var(--border2)'};border-left:4px solid ${accent};
                             background:${bg};box-shadow:${active ? `0 0 0 1px ${accent}` : 'none'};
@@ -20398,7 +20398,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                        <div class="td-m" style="font-size:10px;">
                             <span style="color:var(--text3);">${fmt(item.amount)}</span> +
                             <span style="color:var(--red);">${fmt(item.serviceFee)} ${feeKindLabel}</span>
-                            <button onclick="_showCCOTBreakdown('${item.id}')" title="Why this fee?" style="margin-left:4px;background:none;border:none;color:var(--blue);cursor:pointer;font-size:11px;">ⓘ</button>
+                            <button onclick="_showCCOTBreakdown('${_wfJsAttr(item.id)}')" title="Why this fee?" style="margin-left:4px;background:none;border:none;color:var(--blue);cursor:pointer;font-size:11px;">ⓘ</button>
                        </div>`
                     : `${fmt(item.amount)}`;
                 const typeBadge = item.type === 'cash_advance'
@@ -20419,9 +20419,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${item.deadline}</td>
             <td><span class="cd ${cdCls}">${cdTxt}</span></td>
             <td>${item.autoPaid ? '<span class="badge bg-g" title="Auto-matched to a card payment (oldest charge first)">✅ Auto-paid</span>' : item.paid ? '<span class="badge bg-g">Paid</span>' : dl < 0 ? '<span class="badge bg-r">Overdue</span>' : '<span class="badge bg-a">Pending</span>'}</td>
-            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${item.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
-                <button class="ib e" onclick="editCCOT('${item.id}')" title="Edit"><i data-wfi="edit"></i></button>
-                <button class="ib d" onclick="deleteCCOT('${item.id}')" title="Delete"><i data-wfi="trash"></i></button></div></td>
+            <td><div class="act-btns">${!item.paid ? `<button class="ib c" onclick="markCCOTPaid('${_wfJsAttr(item.id)}')" title="Mark paid"><i data-wfi="check"></i></button>` : ''}
+                <button class="ib e" onclick="editCCOT('${_wfJsAttr(item.id)}')" title="Edit"><i data-wfi="edit"></i></button>
+                <button class="ib d" onclick="deleteCCOT('${_wfJsAttr(item.id)}')" title="Delete"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
             }).join('') + _cap.row;
         }
@@ -20526,8 +20526,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 else if (daysToRelease <= 3) { cdCls = 'cd-warn'; cdTxt = daysToRelease + ' days'; }
                 const statusMap = { pending: '<span class="badge bg-a">Pending</span>', cleared: '<span class="badge bg-g">Cleared</span>', bounced: '<span class="badge bg-r">Bounced</span>' };
                 return `<tr class="${item.status !== 'pending' ? 'done-row' : ''}">
-            <td class="td-mono">${item.no}</td>
-            <td style="font-weight:600;">${item.party}</td>
+            <td class="td-mono">${_wfEsc(item.no)}</td>
+            <td style="font-weight:600;">${_wfEsc(item.party)}</td>
             <td><span class="badge bg-b">${_wfEsc(item.bank)}</span></td>
             <td class="td-a">${fmt(item.amount)}</td>
             <td class="td-m">${item.issue}</td>
@@ -20536,9 +20536,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td>${statusMap[item.status] || ''}</td>
             <td class="td-m">${_wfEsc(item.notes || '')}</td>
             <td><div class="act-btns">
-                ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${item.id}')" title="Clear"><i data-wfi="check"></i></button><button class="ib d" onclick="markChequeBounced('${item.id}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
-                <button class="ib e" onclick="editCheque('${item.id}')"><i data-wfi="edit"></i></button>
-                <button class="ib d" onclick="deleteCheque('${item.id}')"><i data-wfi="trash"></i></button>
+                ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${_wfJsAttr(item.id)}')" title="Clear"><i data-wfi="check"></i></button><button class="ib d" onclick="markChequeBounced('${_wfJsAttr(item.id)}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
+                <button class="ib e" onclick="editCheque('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
+                <button class="ib d" onclick="deleteCheque('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button>
             </div></td>
         </tr>`;
             }).join('') + _cap.row;
@@ -20681,9 +20681,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             const _isStatementExp = (x) => (x && x.source === 'statement');
             const _expCanCheck = (x) => (!!x && !x.completed && !_isStatementExp(x) && (x.month || '') >= _ymNow);
             const _expActBtns = (x) => `<div class="act-btns" style="flex-shrink:0;display:flex;gap:4px;">`
-                + (_expCanCheck(x) ? `<button class="ib c" onclick="markExpDone('${x.id}')" title="Mark paid"><i data-wfi="check"></i></button>` : '')
-                + `<button class="ib e" onclick="editExpense('${x.id}')" title="Edit"><i data-wfi="edit"></i></button>`
-                + `<button class="ib d" onclick="deleteExpense('${x.id}')" title="Delete"><i data-wfi="trash"></i></button>`
+                + (_expCanCheck(x) ? `<button class="ib c" onclick="markExpDone('${_wfJsAttr(x.id)}')" title="Mark paid"><i data-wfi="check"></i></button>` : '')
+                + `<button class="ib e" onclick="editExpense('${_wfJsAttr(x.id)}')" title="Edit"><i data-wfi="edit"></i></button>`
+                + `<button class="ib d" onclick="deleteExpense('${_wfJsAttr(x.id)}')" title="Delete"><i data-wfi="trash"></i></button>`
                 + `</div>`;
             const sel = $('expMonth'); if (!sel) return; const cur = sel.value;
             // ── v7.43.0 — DEFINE allMonths. It was referenced here but NEVER declared
@@ -20874,7 +20874,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     // the month, while the per-transaction history stays viewable.
                     const _renderSingle = (x) => `
                         <div class="exp-item-row" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;${x.completed ? 'opacity:.6;' : ''}">
-                            <span class="badge exp-badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${x.cat}</span>
+                            <span class="badge exp-badge ${catBadge[x.cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${_wfEsc(x.cat)}</span>
                             <div class="exp-desc" style="flex:1 1 0;min-width:0;overflow:hidden;">
                                 <div style="font-weight:600;font-size:13px;word-wrap:break-word;overflow-wrap:break-word;line-height:1.35;">${_wfEsc(x.desc)}</div>
                                 ${x.notes ? `<div style="font-size:11px;color:var(--text3);word-wrap:break-word;overflow-wrap:break-word;margin-top:2px;">${_wfEsc(x.notes)}</div>` : ''}
@@ -20905,7 +20905,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 </div>`).join('');
                         return `
                             <div class="exp-cat-group" style="margin-bottom:8px;">
-                                <div class="exp-item-row exp-cat-head" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:8px;background:var(--bg2);cursor:pointer;border-left:3px solid var(--accent);" onclick="_toggleExpCat('${gid}')">
+                                <div class="exp-item-row exp-cat-head" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:8px;background:var(--bg2);cursor:pointer;border-left:3px solid var(--accent);" onclick="_toggleExpCat('${_wfJsAttr(gid)}')">
                                     <span class="badge exp-badge ${catBadge[cat] || 'bg-gr'}" style="font-size:10px;flex-shrink:0;">${cat}</span>
                                     <div style="flex:1 1 0;min-width:0;overflow:hidden;">
                                         <div style="font-weight:700;font-size:13px;line-height:1.35;">${cat} <span style="font-weight:600;color:var(--text3);font-size:11.5px;">· ${catItems.length} transactions</span></div>
@@ -20946,7 +20946,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="7">${emptyState('🧾', 'No expenses', 'Add daily and monthly expenses to track spending')}</td></tr>`; return; }
             tbody.innerHTML = filtered.map(x => `<tr class="${x.completed ? 'done-row' : ''}">
         <td><div style="font-weight:600;">${_wfEsc(x.desc)}</div>${x.notes ? `<div class="td-m">${_wfEsc(x.notes)}</div>` : ''}</td>
-        <td><span class="badge ${catBadge[x.cat] || 'bg-gr'}">${x.cat}</span></td>
+        <td><span class="badge ${catBadge[x.cat] || 'bg-gr'}">${_wfEsc(x.cat)}</span></td>
         <td class="td-m">${monthStrFmt((x.month || '') + '-01')}</td>
         <td class="td-r">${fmt(x.amount)}</td>
         <td>${x.recurring ? '<span class="badge bg-b">🔄 Monthly</span>' : '<span class="badge bg-gr">Once</span>'}</td>
@@ -21035,7 +21035,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <span style="color:var(--text2);">${s.date}${s.note ? ' · ' + _wfEsc(s.note) : ''}</span>
         <div style="display:flex;align-items:center;gap:8px;">
             <span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span>
-            <button class="ib d" onclick="deleteSaving('${tid}','${s.id}')"><i data-wfi="x"></i></button>
+            <button class="ib d" onclick="deleteSaving('${_wfJsAttr(tid)}','${_wfJsAttr(s.id)}')"><i data-wfi="x"></i></button>
         </div>
     </div>`).join('') : '<div class="empty" style="padding:20px;"><div class="empty-sub">No saving entries yet</div></div>';
             openModal('mdSavHistory');
@@ -21484,7 +21484,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div><div class="tgt-name">${done ? '🏆 ' : ''} ${_wfEsc(t.name)}</div><div class="tgt-dates">📅 ${fmtDatePretty(t.start)} → ${fmtDatePretty(t.end)}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="tgt-big">${fmtS(t.amount)}</div><div style="font-size:11px;color:var(--text3);">Target · ${fmt(t.amount)}</div><div class="tgt-rem">${fmtS(remain)}</div><div style="font-size:11px;color:var(--text3);">Remaining</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editTarget('${t.id}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteTarget('${t.id}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button class="ib e" onclick="editTarget('${_wfJsAttr(t.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteTarget('${_wfJsAttr(t.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -21523,7 +21523,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             ${recent.length ? `<div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:7px;text-transform:uppercase;letter-spacing:.5px;">Recent Savings</div>
             ${recent.map(s => `<div class="sav-entry"><span style="color:var(--text2);">${s.date}${s.note ? ' · ' + _wfEsc(s.note) : ''}</span><span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span></div>`).join('')}
-            ${t.savings.length > 3 ? `<button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:6px;" onclick="showSavHistory('${t.id}')">📋 See All ${t.savings.length} Entries</button>` : ''}
+            ${t.savings.length > 3 ? `<button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:6px;" onclick="showSavHistory('${_wfJsAttr(t.id)}')">📋 See All ${t.savings.length} Entries</button>` : ''}
             </div>`: ''}
             ${t.notes ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);padding:7px 11px;background:var(--bg2);border-radius:6px;">${_wfEsc(t.notes)}</div>` : ''}
         </div>`;
@@ -21667,9 +21667,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const cls = f.type === 'set' ? 'bg-a' : isTarget ? 'bg-b' : f.type === 'out' ? 'bg-r' : 'bg-g';
                 return `<div class="flow-item">
                     <div class="flow-dot ${f.type === 'set' ? 'in' : f.type}">${dot}</div>
-                    <div class="flow-info"><div class="flow-name">${f.company}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + _wfEsc(f.notes) : ''}</div></div>
+                    <div class="flow-info"><div class="flow-name">${_wfEsc(f.company)}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + _wfEsc(f.notes) : ''}</div></div>
                     <div class="flow-right"><div class="flow-amt ${f.type === 'out' ? 'out' : 'in'}">${f.type === 'out' ? '-' : '+'}${fmt(f.amount)}</div><div><span class="badge ${cls}">${lbl}</span></div></div>
-                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${f.id}')"><i data-wfi="edit"></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${f.id}')"><i data-wfi="trash"></i></button></div>
+                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="edit"></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>`;
             }).join('');
 
@@ -21827,7 +21827,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 ${data.ccItems2.length ? data.ccItems2.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="td-m">(${_wfEsc(x.bank)})</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No CC installments</div></div>`}
             </div>
             <div class="card"><div class="card-header"><div class="card-title">🧾 Other Expenses</div><div class="card-sub">${fmt(data.expTotal)}</div></div>
-                ${data.expItems.length ? data.expItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="badge bg-gr">${x.cat}</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No expenses</div></div>`}
+                ${data.expItems.length ? data.expItems.map(x => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;"><span>${_wfEsc(x.name)} <span class="badge bg-gr">${_wfEsc(x.cat)}</span></span><span class="td-r">${fmt(x.amount)}</span></div>`).join('') : `<div class="empty" style="padding:16px;"><div class="empty-sub">No expenses</div></div>`}
             </div>
         </div>
     `;
@@ -23013,7 +23013,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <div style="font-weight:600;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_wfEsc(b.label || 'Statement')}</div>
                             <div style="font-size:11px;color:var(--text3);margin-top:2px;">${when}${bits.length ? ' · ' + bits.join(' · ') : ''}</div>
                         </div>
-                        <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,0.3);flex-shrink:0;" onclick="undoBatch('${b.id}')"><i data-wfi="refresh"></i> Undo</button>
+                        <button class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,0.3);flex-shrink:0;" onclick="undoBatch('${_wfJsAttr(b.id)}')"><i data-wfi="refresh"></i> Undo</button>
                     </div>`;
                 }).join('');
             try { if (window.WFIconHydrate) WFIconHydrate(host); } catch (_) {}
@@ -23959,7 +23959,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 showActionableBanner({
                     id,
                     title: '💰 Income Day — ' + src.name,
-                    message: `Did you receive your <b>${fmt(src.monthly)}</b> from <b>${src.company}</b> today?`,
+                    message: `Did you receive your <b>${fmt(src.monthly)}</b> from <b>${_wfEsc(src.company)}</b> today?`,
                     primary: 'Yes — Confirm Received',
                     secondary: 'Not Yet',
                     icon: '💰',
@@ -25158,11 +25158,11 @@ Be direct and use real numbers. Avoid generic advice.`;
                 // accent variant so it visually pops without overriding
                 // the chip geometry (no more inline-style specificity wars).
                 const thisMonthCta = needsThisMonth
-                    ? `<button type="button" class="sub-act cta-gold" onclick="setSubscriptionMonthAmount('${s.id}')"
+                    ? `<button type="button" class="sub-act cta-gold" onclick="setSubscriptionMonthAmount('${_wfJsAttr(s.id)}')"
                                 title="Set this month's actual amount (great for telecom, water, electricity)">
                                 📊 Set ${MONTHS[now.getMonth()].slice(0,3)}
                             </button>`
-                    : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${s.id}')" title="Edit monthly amounts"><i data-wfi="chartLine"></i></button>`;
+                    : `<button type="button" class="sub-act" onclick="setSubscriptionMonthAmount('${_wfJsAttr(s.id)}')" title="Edit monthly amounts"><i data-wfi="chartLine"></i></button>`;
 
                 // v7.5.6 — show notes if present (was hidden entirely).
                 // Matches how expense rows and loan rows render notes:
@@ -25176,7 +25176,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="sub-icon">${catIcons[s.category] || '📋'}</div>
                     <div style="flex:1 1 0;min-width:0;">
                         <div style="font-size:14px;font-weight:700;word-wrap:break-word;overflow-wrap:break-word;">${_wfEsc(s.name)}</div>
-                        <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${s.category} · Day ${s.dueDay} · ${s.cycle}</div>
+                        <div style="font-size:11px;color:var(--text3);word-wrap:break-word;">${_wfEsc(s.category)} · Day ${s.dueDay} · ${s.cycle}</div>
                         ${notesHtml}
                         ${variableBadge}
                     </div>
@@ -25186,9 +25186,9 @@ Be direct and use real numbers. Avoid generic advice.`;
                         ${overrideBadge}
                     </div>
                     <div class="act-btns">
-                        <button type="button" class="sub-act cta-edit" onclick="editSubscription('${s.id}')" title="Edit subscription"><i data-wfi="edit"></i></button>
+                        <button type="button" class="sub-act cta-edit" onclick="editSubscription('${_wfJsAttr(s.id)}')" title="Edit subscription"><i data-wfi="edit"></i></button>
                         ${thisMonthCta}
-                        <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${s.id}')" title="Delete"><i data-wfi="trash"></i></button>
+                        <button type="button" class="sub-act cta-del" onclick="deleteSubscription('${_wfJsAttr(s.id)}')" title="Delete"><i data-wfi="trash"></i></button>
                     </div>
                 </div>`;
             }).join('') + _cap.bar;
@@ -26569,8 +26569,8 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 </div>
                                 <div style="margin-left:12px; display:flex; flex-direction:column; justify-content:center;">
                                     ${!isCurrent
-                            ? `<button class="btn btn-danger btn-sm" onclick="revokeSession('${s.id}')" style="padding:8px 14px; border-radius:8px; font-weight:700;">🚫 Revoke</button>`
-                            : `<button class="btn btn-ghost btn-sm" onclick="revokeSession('${s.id}', true)" title="Sign out this device" style="padding:8px 14px; border-radius:8px; font-weight:700; color:var(--text3);">⏻ Sign Out</button>`}
+                            ? `<button class="btn btn-danger btn-sm" onclick="revokeSession('${_wfJsAttr(s.id)}')" style="padding:8px 14px; border-radius:8px; font-weight:700;">🚫 Revoke</button>`
+                            : `<button class="btn btn-ghost btn-sm" onclick="revokeSession('${_wfJsAttr(s.id)}', true)" title="Sign out this device" style="padding:8px 14px; border-radius:8px; font-weight:700; color:var(--text3);">⏻ Sign Out</button>`}
                                 </div>
                             </div>
                             
