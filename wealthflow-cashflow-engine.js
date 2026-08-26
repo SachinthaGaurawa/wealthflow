@@ -156,9 +156,29 @@ export function commitments(appData, from, to) {
         const monthly = num(l.monthly);
         if (!start || !(dur > 0) || !(monthly > 0)) { skip('loans', l.id, 'no start, duration or monthly amount'); continue; }
         const skipped = new Set(arr(l.skipped).map(String));
-        // Instalment n falls on the same day-of-month as `start`, clamped.
+        /* INSTALMENT 1 IS IN THE START MONTH, NOT THE MONTH AFTER.
+         *
+         * The app's own schedule builder is the authority:
+         *     _loanInstallmentMonths(l)   index.html
+         *     for (let i = 0; i < l.duration; i++)
+         *         new Date(start.getFullYear(), start.getMonth() + i, 1)
+         * i = 0 is the start month. A 60-month loan starting 2026-03 runs
+         * 2026-03 .. 2031-02, and the loan page numbers 2026-09 as instalment 7.
+         *
+         * This loop originally ran `start.getMonth() + n` for n = 1..duration,
+         * which was wrong twice over: every instalment carried a number one
+         * lower than the loan page showed for the same date, and the series ran
+         * one month PAST the end of the term — projecting a payment that is not
+         * owed. The dates in the middle happened to agree, which is why it
+         * looked right. Two screens disagreeing about the same loan is exactly
+         * what openingBalance() was written to prevent, one function above.
+         *
+         * The day-of-month is this module's own refinement — the loan page works
+         * in whole months, and a day-by-day projection needs the day. It matches
+         * getNextOccurenceDate(), which the dashboard already uses to place the
+         * next payment on the start date's day-of-month. */
         for (let n = 1; n <= dur; n++) {
-            const d = dayInMonth(start.getUTCFullYear(), start.getUTCMonth() + n, start.getUTCDate());
+            const d = dayInMonth(start.getUTCFullYear(), start.getUTCMonth() + n - 1, start.getUTCDate());
             if (d > to) break;
             if (d < from) continue;
             const key = d.toISOString().slice(0, 7);
@@ -178,8 +198,12 @@ export function commitments(appData, from, to) {
         const monthly = num(c.monthly);
         if (!start || !(dur > 0) || !(monthly > 0)) { skip('ccinstall', c.id, 'no date, duration or monthly amount'); continue; }
         const skipped = new Set(arr(c.skipped).map(String));
+        // Same convention as loans, and for the same reason: the dashboard's
+        // upcoming-payments list bounds a card plan with
+        //     endD = new Date(c.date); endD.setMonth(endD.getMonth() + c.duration)
+        // as an EXCLUSIVE end, so the instalments occupy start + 0 .. duration-1.
         for (let n = 1; n <= dur; n++) {
-            const d = dayInMonth(start.getUTCFullYear(), start.getUTCMonth() + n, start.getUTCDate());
+            const d = dayInMonth(start.getUTCFullYear(), start.getUTCMonth() + n - 1, start.getUTCDate());
             if (d > to) break;
             if (d < from) continue;
             if (skipped.has(d.toISOString().slice(0, 7)) || skipped.has(String(n))) continue;

@@ -120,16 +120,20 @@ describe('commitments', () => {
         expect(loans.map((l) => l.date)).toEqual(['2026-09-05', '2026-10-05', '2026-11-05']);
         expect(loans.every((l) => l.amount === 45000)).toBe(true);
         expect(loans[0].certainty).toBe('committed');
-        // A loan disbursed on 5 March has its FIRST instalment on 5 April, so
-        // September is the sixth. (This assertion said 7 until the engine
-        // disagreed and turned out to be right.)
-        expect(loans[0].label).toContain('6/60');
+        // instalment 1 is in the START month (March), so September is the 7th.
+        // This assertion originally said 7, the engine said 6, and I changed the
+        // TEST to match the engine without checking which was right. It was the
+        // engine that was wrong: _loanInstallmentMonths() in index.html numbers
+        // from i = 0 at the start month, so the loan page calls this payment 7.
+        // Adjusting an assertion to whatever the code already does is how a
+        // suite stops being evidence of anything.
+        expect(loans[0].label).toContain('7/60');
     });
 
     it('honours a skipped month, by month key or by instalment index', () => {
-        // Sep is instalment 6, Oct 7, Nov 8 — so '2026-10' and '7' name the
+        // Sep is instalment 7, Oct 8, Nov 9 — so '2026-10' and '8' name the
         // same payment, and both spellings appear in stored records.
-        for (const skipped of [['2026-10'], ['7']]) {
+        for (const skipped of [['2026-10'], ['8']]) {
             const A = LEDGER(); A.loans[0].skipped = skipped;
             const dates = of(commitments(A, D(AS_OF), addDays(D(AS_OF), 90)), 'loans').map((l) => l.date);
             expect(dates, `skipped=${JSON.stringify(skipped)}`).toEqual(['2026-09-05', '2026-11-05']);
@@ -137,10 +141,56 @@ describe('commitments', () => {
     });
 
     it('stops at the end of the loan term rather than projecting forever', () => {
+        // duration 7 from 2026-03 covers Mar..Sep inclusive, so the last payment
+        // is 2026-09-05 and October is NOT owed. The engine used to emit it,
+        // because the series ran one month past the term.
         const A = LEDGER();
-        A.loans[0].duration = 7;                    // last instalment is 2026-10-05
+        A.loans[0].duration = 7;
         const dates = of(commitments(A, D(AS_OF), addDays(D(AS_OF), 90)), 'loans').map((l) => l.date);
-        expect(dates).toEqual(['2026-09-05', '2026-10-05']);
+        expect(dates).toEqual(['2026-09-05']);
+    });
+
+    it('numbers instalment 1 into the START month, matching the loan page', () => {
+        /* THE AUTHORITY IS index.html's _loanInstallmentMonths():
+         *     for (let i = 0; i < l.duration; i++)
+         *         new Date(start.getFullYear(), start.getMonth() + i, 1)
+         * i = 0 is the start month. Mirrored here rather than imported, because
+         * that function lives inside a 27,000-line HTML file — so this test also
+         * fails if the two ever diverge in either direction. */
+        const appMonths = (startISO, duration) => {
+            const [y, m] = startISO.split('-').map(Number);
+            return Array.from({ length: duration },
+                (_, i) => new Date(Date.UTC(y, m - 1 + i, 1)).toISOString().slice(0, 7));
+        };
+        const A = LEDGER();
+        A.loans[0].start = '2026-03-05';
+        A.loans[0].duration = 12;
+        // A window wide enough to contain the whole term.
+        const got = of(commitments(A, D('2026-01-01'), D('2027-12-31')), 'loans');
+        expect(got.map((g) => g.date.slice(0, 7))).toEqual(appMonths('2026-03-05', 12));
+        expect(got[0].label).toContain('1/12');
+        expect(got[0].date).toBe('2026-03-05');
+        expect(got[got.length - 1].date).toBe('2027-02-05');
+    });
+
+    it('numbers a card plan from its start month too, and stops at the term', () => {
+        /* Card instalments follow the same convention as loans, and the app
+         * bounds them the same way — the dashboard's upcoming list uses
+         *     endD = new Date(c.date); endD.setMonth(endD.getMonth() + c.duration)
+         * as an EXCLUSIVE end, so a 12-month plan from 2026-06 runs to 2027-05.
+         *
+         * Without this the ccinstall loop had no test that distinguished the two
+         * conventions: the ledger's plan starts 2026-06-20, and inside a 90-day
+         * window opening 2026-08-26 both the right answer and the off-by-one
+         * produce Sep/Oct/Nov. Reverting the fix left the suite green. */
+        const A = LEDGER();
+        A.ccinstall[0].date = '2026-06-20';
+        A.ccinstall[0].duration = 12;
+        const got = of(commitments(A, D('2026-01-01'), D('2027-12-31')), 'ccinstall');
+        expect(got[0].date).toBe('2026-06-20');
+        expect(got[0].label).toContain('1/12');
+        expect(got[got.length - 1].date).toBe('2027-05-20');
+        expect(got.length).toBe(12);
     });
 
     it('drops a card plan once it is completed', () => {
