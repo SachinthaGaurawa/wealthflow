@@ -156,7 +156,17 @@ export const BUDGETS = {
     // Moves ONCE, to the newly measured value with ~1.1% headroom — tighter
     // again than the ~1.4% above, because most of what follows this is the UI
     // that consumes the engine, and that lands in index.html rather than here.
-    totalJsBytes: 1_323_000,     // measured 1308608 across 45 modules
+    // RAISED again for wealthflow-wealth-sweeper.js (17 KB).
+    //
+    // MEASURED ON main + #132 + #133 + this branch, all four merged into one
+    // tree, for the same reason htmlBytes was: #132 and #133 each fit alone and
+    // together came to 24 bytes over. Measuring this branch by itself would set
+    // a ceiling that the tree it actually lands in immediately breaks.
+    //
+    // Moves ONCE, to the measured value with ~1.1% headroom, and is NOT
+    // pre-raised for the sweeper's interface — that lands in index.html and is
+    // counted by htmlBytes, which still holds.
+    totalJsBytes: 1_349_000,     // measured 1333666 across 46 modules, fully merged
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -183,7 +193,11 @@ export const BUDGETS = {
     // the content gate, and part of the 27,000-line monolith this codebase is
     // trying to shrink. The +1 is the cheaper of the two, and this comment is
     // here so a later reader can see that the trade was made deliberately.
-    scriptTags: 51,              // measured 51
+    // 51 -> 52 for wealthflow-wealth-sweeper.js. Same trade as the cash flow
+    // engine one line above: inlining it into index.html would cost no request
+    // and no ratchet, and would make it untestable and part of the monolith.
+    // It is deferred (type="module"), so it is not on the render path.
+    scriptTags: 52,              // measured 52
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

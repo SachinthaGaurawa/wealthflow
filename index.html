@@ -372,6 +372,13 @@
          A module script is deferred by definition, so `defer` is redundant
          here and is left off rather than implying it does something. -->
     <script type="module" src="wealthflow-cashflow-engine.js"></script>
+    <!-- Smart Wealth Sweeper — asks what part of the balance is genuinely idle
+         and for how long, then ladders it by how long each destination locks the
+         money up. It PROPOSES: there is no execution path and no `apply()`, and
+         deposit rates come from the user, never from anything this app guesses.
+         ESM, so type="module" is load-bearing here too — it imports the cash
+         flow engine directly. window.WFSweeper -->
+    <script type="module" src="wealthflow-wealth-sweeper.js"></script>
     <!-- #54 Crash Forensics — reconciles wf_error_log (JS errors) with
          wf_crash_log (sessions killed without a clean exit; an iOS renderer kill
          runs no JS handler, so it can only appear in the second), and records
@@ -4872,6 +4879,52 @@
         .wf-runway-cause .amt { color: var(--red); font-variant-numeric: tabular-nums; white-space: nowrap; }
         .wf-runway-note { margin-top: 10px; font-size: 12px; color: var(--text2); }
 
+        /* ── Smart Wealth Sweeper ────────────────────────────────────────────
+           The stacked bar is the whole visualisation: one row whose widths are
+           the tranches, so the split between locked, semi-locked, liquid and
+           kept reads before any number does. */
+        .wf-sw-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+        .wf-sw-big { font-size: 24px; font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; }
+        .wf-sw-sub { font-size: 13px; color: var(--text2); }
+        .wf-sw-bar {
+            display: flex; height: 22px; border-radius: 7px; overflow: hidden;
+            margin: 14px 0 8px; background: var(--bg2, rgba(127,127,127,.10));
+        }
+        .wf-sw-seg { height: 100%; min-width: 2px; }
+        .wf-sw-seg.d-fd-12m { background: var(--accent, #6d5ef5); }
+        .wf-sw-seg.d-fd-6m  { background: var(--blue, #3b82f6); }
+        .wf-sw-seg.d-liquid { background: var(--green, #16a34a); }
+        .wf-sw-seg.d-keep   { background: var(--text3, #9ca3af); }
+        .wf-sw-key { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text2); }
+        .wf-sw-key i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; }
+        .wf-sw-rows { margin-top: 14px; }
+        .wf-sw-row {
+            display: grid; grid-template-columns: 1fr auto; gap: 4px 14px;
+            padding: 10px 0; border-top: 1px solid var(--border, rgba(127,127,127,.18));
+        }
+        .wf-sw-row .nm { font-size: 14px; color: var(--text1); font-weight: 600; }
+        .wf-sw-row .amt { font-size: 15px; font-weight: 700; color: var(--text1); font-variant-numeric: tabular-nums; }
+        .wf-sw-row .meta { grid-column: 1 / -1; font-size: 12px; color: var(--text2); }
+        .wf-sw-chip {
+            display: inline-block; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+            padding: 2px 7px; border-radius: 999px; margin-left: 6px;
+            border: 1px solid var(--border, rgba(127,127,127,.3)); color: var(--text2);
+        }
+        .wf-sw-chip.c-high { border-color: var(--green); color: var(--green); }
+        .wf-sw-chip.c-moderate { border-color: var(--gold, #d4a017); color: var(--gold, #d4a017); }
+        .wf-sw-chip.c-low { border-color: var(--red); color: var(--red); }
+        .wf-sw-excluded {
+            margin-top: 12px; padding: 10px 12px; border-radius: 9px;
+            background: var(--bg2, rgba(127,127,127,.07)); font-size: 12px; color: var(--text2);
+        }
+        .wf-sw-rates { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; align-items: flex-end; }
+        .wf-sw-rates label { font-size: 11px; color: var(--text2); display: block; margin-bottom: 3px; }
+        .wf-sw-rates input {
+            width: 88px; padding: 7px 9px; border-radius: 8px; font-variant-numeric: tabular-nums;
+            border: 1px solid var(--border, rgba(127,127,127,.3));
+            background: var(--bg1, transparent); color: var(--text1);
+        }
+
     </style>
 </head>
 
@@ -5612,6 +5665,11 @@
                                 New Target</button>
                         </div>
                     </div>
+                    <!-- Smart Wealth Sweeper. Rendered by renderSweeper() from
+                         WFSweeper; hidden until there is something idle to say,
+                         so a thin ledger is not shown an empty promise. It sits
+                         on this page because it funds these targets. -->
+                    <div id="wfSweeper" style="margin-bottom:16px; display:none;"></div>
                     <div id="targetsList"></div>
                 </div>
 
@@ -20954,7 +21012,138 @@ table.amort tbody tr { page-break-inside: avoid; }
             $('celeb').classList.remove('show');
             $('celeb').querySelectorAll('.conf-piece').forEach(c => c.remove());
         }
+        /* ── Smart Wealth Sweeper ────────────────────────────────────────────
+         *
+         * WFSweeper does the arithmetic; this renders what it returns. It shows
+         * four things and hides none of them:
+         *
+         *   what is idle, and the day that bounds it
+         *   where each part could go, and how long that ties it up
+         *   which of the user's own goals it would fund
+         *   which destinations were REFUSED, and why
+         *
+         * The refusals matter as much as the offers. The engine excludes a
+         * destination when too much of the projection constraining it is
+         * estimate rather than dated obligation, and a card that quietly dropped
+         * those rows would present a confident ladder built on a guess.
+         *
+         * RATES ARE THE USER'S. The projected return only appears once real
+         * numbers are entered; there are no defaults, because a plausible
+         * invented rate sitting beside real ledger figures borrows their
+         * credibility. Blank means no claim is made.
+         *
+         * Every interpolated label goes through _wfEsc — target names are
+         * user-entered text, and #126 shipped exactly this shape.
+         */
+        const _WF_SW_RATE_KEY = 'wf_sweeper_rates';
+        function _wfSweeperRates() {
+            try {
+                const r = JSON.parse(localStorage.getItem(_WF_SW_RATE_KEY) || '{}');
+                return (r && typeof r === 'object') ? r : {};
+            } catch (_) { return {}; }
+        }
+        function wfSweeperSetRate(key, value) {
+            const r = _wfSweeperRates();
+            const n = parseFloat(value);
+            if (isFinite(n) && n > 0) r[key] = n; else delete r[key];
+            try { _persistRaw(_WF_SW_RATE_KEY, JSON.stringify(r)); } catch (_) {}
+            try { renderSweeper(); } catch (_) {}
+        }
+        window.wfSweeperSetRate = wfSweeperSetRate;
+
+        function renderSweeper() {
+            const host = $('wfSweeper');
+            if (!host) return;
+            const hide = () => { host.style.display = 'none'; host.innerHTML = ''; };
+            if (!window.WFSweeper) return hide();
+
+            const rates = _wfSweeperRates();
+            let p;
+            try {
+                p = window.WFSweeper.sweepPlan(appData, {
+                    asOf: new Date(),
+                    annualYield: Object.keys(rates).length ? rates : null,
+                });
+            } catch (e) {
+                try { console.warn('[WF] sweeper:', e && e.message); } catch (_) {}
+                return hide();
+            }
+            if (!p || p.status === 'nothing-idle') return hide();
+
+            const segs = p.tranches.filter(t => t.amount > 0)
+                .map(t => ({ cls: 'd-' + t.destination, amt: t.amount }))
+                .concat(p.keep > 0 ? [{ cls: 'd-keep', amt: p.keep }] : []);
+            const total = segs.reduce((s, x) => s + x.amt, 0) || 1;
+            const bar = segs.map(s =>
+                '<div class="wf-sw-seg ' + s.cls + '" style="width:'
+                + (s.amt / total * 100).toFixed(2) + '%;"></div>').join('');
+            const key = p.tranches.filter(t => t.amount > 0).map(t =>
+                '<span><i class="wf-sw-seg d-' + t.destination + '"></i>' + _wfEsc(t.label) + '</span>')
+                .concat(p.keep > 0 ? ['<span><i class="wf-sw-seg d-keep"></i>Stays in the account</span>'] : [])
+                .join('');
+
+            const rows = p.tranches.filter(t => t.amount > 0).map(t =>
+                '<div class="wf-sw-row">'
+                + '<div class="nm">' + _wfEsc(t.label)
+                + '<span class="wf-sw-chip c-' + t.confidence + '">' + t.confidence + '</span></div>'
+                + '<div class="amt">' + fmtS(t.amount) + '</div>'
+                + '<div class="meta">' + _wfEsc(t.why)
+                + (t.lockDays > 0 ? ' · locked ' + t.lockDays + ' days' : ' · withdrawable any time')
+                + ' · limited by ' + _wfEsc(t.bindingDate)
+                + (t.forGoals > 0 ? ' · ' + fmtS(t.forGoals) + ' of this covers your targets' : '')
+                + '</div></div>').join('');
+
+            const goals = p.goals.map(g =>
+                '<div class="wf-sw-row">'
+                + '<div class="nm">🎯 ' + _wfEsc(g.name) + '</div>'
+                + '<div class="amt">' + fmtS(g.funded) + '</div>'
+                + '<div class="meta">'
+                + (g.dueIn != null ? 'due in ' + g.dueIn + ' days · ' : 'no deadline · ')
+                + 'short ' + fmtS(g.shortfall)
+                + (g.from.length ? ' · from ' + g.from.map(f => _wfEsc(f.label)).join(', ') : '')
+                + (g.unfunded > 0 ? ' · <b>' + fmtS(g.unfunded) + ' still unfunded</b>' : '')
+                + '</div></div>').join('');
+
+            const excluded = p.excluded.length
+                ? '<div class="wf-sw-excluded"><b>Not offered:</b> '
+                  + p.excluded.map(e => _wfEsc(e.label) + ' — ' + _wfEsc(e.reason)).join('; ')
+                  + '</div>'
+                : '';
+
+            const rateInput = (k, label) =>
+                '<div><label>' + label + '</label>'
+                + '<input type="number" step="0.1" min="0" placeholder="%" value="'
+                + (rates[k] != null ? _wfEsc(rates[k]) : '')
+                + '" onchange="wfSweeperSetRate(' + "'" + k + "'" + ', this.value)"></div>';
+
+            const gain = p.projectedAnnualGain != null
+                ? '<div class="wf-sw-sub" style="margin-top:10px;">At those rates this earns about <b>'
+                  + fmtS(p.projectedAnnualGain) + '</b> a year.</div>'
+                : '<div class="wf-sw-sub" style="margin-top:10px;">Enter your bank’s rates to see what this would earn. '
+                  + 'WealthFlow does not guess them.</div>';
+
+            host.innerHTML =
+                '<div class="card">'
+                + '<div class="card-header"><div class="card-title">\u{1F9F9} Smart Wealth Sweeper</div>'
+                + '<div class="card-sub">Idle cash, and how long it can safely be left alone</div></div>'
+                + '<div class="wf-sw-head"><div class="wf-sw-big">' + fmtS(p.placed) + '</div>'
+                + '<div class="wf-sw-sub">idle of ' + fmtS(p.opening) + ' on hand · '
+                + fmtS(p.reserve.amount) + ' held back as ' + _wfEsc(p.reserve.basis) + '</div></div>'
+                + '<div class="wf-sw-bar">' + bar + '</div>'
+                + '<div class="wf-sw-key">' + key + '</div>'
+                + '<div class="wf-sw-rows">' + rows + goals + '</div>'
+                + excluded
+                + '<div class="wf-sw-rates">'
+                + rateInput('fd-12m', '12-month FD') + rateInput('fd-6m', '6-month FD')
+                + rateInput('liquid', 'Savings') + '</div>'
+                + gain
+                + '</div>';
+            host.style.display = '';
+        }
+        window.renderSweeper = renderSweeper;
+
         function renderTargets() {
+            try { renderSweeper(); } catch (_) {}
             // Repair before reading — see _wfNormaliseTargetArray.
             const arr = _wfNormaliseTargetArray(DB.get('targets') || []);
             $('sav_tgt').innerHTML = arr.map(t => `<option value="${t.id}">${_wfEsc(t.name)}</option>`).join('');
