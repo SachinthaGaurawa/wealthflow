@@ -157,7 +157,16 @@ export const BUDGETS = {
     // TIGHTENED: 51 -> 50. firebase-storage-compat.js was deleted outright in
     // the #65 fix -- `firebase.storage()` appears nowhere in this repository, so
     // it was downloaded and parsed on every load for nothing.
-    scriptTags: 50,              // measured 49
+    // Raised 50 -> 51 for wealthflow-cashflow-engine.js. Flagged before the work
+    // started, not explained away after: the runway card needs the engine, the
+    // engine is deferred, and it is one request.
+    //
+    // The alternative was to inline it into index.html, which costs no request
+    // and no ratchet — and would also have made it untestable, unclassifiable by
+    // the content gate, and part of the 27,000-line monolith this codebase is
+    // trying to shrink. The +1 is the cheaper of the two, and this comment is
+    // here so a later reader can see that the trade was made deliberately.
+    scriptTags: 51,              // measured 51
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
