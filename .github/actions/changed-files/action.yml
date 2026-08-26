@@ -59,6 +59,15 @@ outputs:
   source:
     description: How the list was obtained — "api" or "merge-base".
     value: ${{ steps.resolve.outputs.source }}
+  base_sha:
+    description: >
+      The merge base the file list describes, for callers that need the diff
+      itself rather than the list. Empty when no base ref is in scope — consumers
+      must treat empty as "cannot classify", never as "nothing changed".
+    value: ${{ steps.resolve.outputs.base_sha }}
+  head_sha:
+    description: The commit the file list was resolved against (the merge ref on a PR).
+    value: ${{ steps.resolve.outputs.head_sha }}
 
 runs:
   using: composite
@@ -113,6 +122,29 @@ runs:
           exit 1
         fi
 
+        # ── 4. the merge base itself ───────────────────────────────────────
+        # The file LIST is usually resolved from the API (step 1), which never
+        # computes a merge base. A caller that needs the DIFF rather than the
+        # list — autonomy/classify-index-diff.mjs reads the actual changed lines
+        # — has nothing to diff against, and re-deriving it at each call site is
+        # how two gates end up measuring two different things.
+        #
+        # HEAD here is the pull_request merge ref, so `git diff $BASE_SHA HEAD`
+        # is exactly the set of changes the file list above describes. These are
+        # advisory: empty is a normal answer (a workflow_dispatch with no base),
+        # and every consumer must fail closed on an empty value rather than
+        # substituting a guess. Resolving them never fails the action, because a
+        # gate that already has its file list must not go red over an extra.
+        BASE_SHA=''; HEAD_SHA=''
+        if [ -n "${BASE:-}" ]; then
+          git fetch --unshallow origin "$BASE" 2>/dev/null \
+            || git fetch origin "$BASE" 2>/dev/null \
+            || true
+          HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || true)
+          BASE_SHA=$(git merge-base "origin/$BASE" HEAD 2>/dev/null || true)
+        fi
+        echo "merge base: ${BASE_SHA:-<none>} .. head: ${HEAD_SHA:-<none>}"
+
         COUNT=$(printf '%s\n' "$FILES" | grep -c . || true)
         echo "Resolved $COUNT changed file(s) via $SOURCE:"
         printf '%s\n' "$FILES" | sed 's/^/  /'
@@ -123,4 +155,6 @@ runs:
           echo "__WF_EOF__"
           echo "count=$COUNT"
           echo "source=$SOURCE"
+          echo "base_sha=$BASE_SHA"
+          echo "head_sha=$HEAD_SHA"
         } >> "$GITHUB_OUTPUT"

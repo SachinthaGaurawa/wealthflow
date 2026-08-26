@@ -353,6 +353,25 @@
          are harmless. READ-ONLY: it prunes nothing. The compaction engine was
          deliberately not built until the numbers justify it. window.WFDataHealth -->
     <script src="wealthflow-data-health.js" defer></script>
+    <!-- Committed Cash Flow Engine — walks the loan EMIs, card instalments,
+         subscription renewals and post-dated cheques already in the ledger day
+         by day, and names the date the balance goes under along with the
+         commitment that does it. Pure: no DOM, no storage, no network, and it
+         never reads the clock — the caller passes the date. That is what lets
+         it live outside this file and be tested directly.
+         window.WFCashflow
+
+         type="module" IS LOAD-BEARING, NOT DECORATION. This file uses ESM
+         `export` so the test suite can import its functions directly. Loaded as
+         a classic script the browser throws "Unexpected token 'export'" on the
+         first export statement, window.WFCashflow is never assigned, and the
+         runway card silently never renders — the failure is invisible because
+         renderRunwayCard() hides itself when the engine is absent. Caught by
+         driving the real page in Chromium; test/module_loading_test.js now
+         fails if any ESM module in this file loses the attribute.
+         A module script is deferred by definition, so `defer` is redundant
+         here and is left off rather than implying it does something. -->
+    <script type="module" src="wealthflow-cashflow-engine.js"></script>
     <!-- #54 Crash Forensics — reconciles wf_error_log (JS errors) with
          wf_crash_log (sessions killed without a clean exit; an iOS renderer kill
          runs no JS handler, so it can only appear in the second), and records
@@ -4820,6 +4839,39 @@
             .fi, .fs { min-height: 42px; }
         }
 
+        /* ── Cash flow runway ────────────────────────────────────────────────
+           One card that answers "what day do I run out, and what causes it".
+           The status colour is the whole point of the left rail: it has to be
+           readable before any of the numbers are. */
+        .wf-runway { border-left: 4px solid var(--green); }
+        .wf-runway.is-at-risk { border-left-color: var(--gold, #d4a017); }
+        .wf-runway.is-critical { border-left-color: var(--red); }
+        .wf-runway.is-tight { border-left-color: var(--gold, #d4a017); }
+        .wf-runway-head {
+            display: flex; flex-wrap: wrap; align-items: baseline;
+            gap: 8px 14px; margin-bottom: 10px;
+        }
+        .wf-runway-when { font-size: 22px; font-weight: 700; color: var(--text1); }
+        .wf-runway-when.is-critical { color: var(--red); }
+        .wf-runway-sub { font-size: 13px; color: var(--text2); }
+        .wf-runway-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px; margin-top: 12px;
+        }
+        .wf-runway-fig { background: var(--bg2, rgba(127,127,127,.06)); border-radius: 10px; padding: 10px 12px; }
+        .wf-runway-fig .k { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--text2); }
+        /* Money lines up in columns, so the digits have to be the same width. */
+        .wf-runway-fig .v { font-size: 17px; font-weight: 600; color: var(--text1); font-variant-numeric: tabular-nums; }
+        .wf-runway-causes { margin-top: 12px; }
+        .wf-runway-cause {
+            display: flex; justify-content: space-between; gap: 12px;
+            padding: 7px 0; border-top: 1px solid var(--border, rgba(127,127,127,.18));
+            font-size: 13px;
+        }
+        .wf-runway-cause .lbl { color: var(--text1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .wf-runway-cause .amt { color: var(--red); font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .wf-runway-note { margin-top: 10px; font-size: 12px; color: var(--text2); }
+
     </style>
 </head>
 
@@ -5274,6 +5326,11 @@
 
                 <div class="page active" id="page-dashboard">
                     <div id="wfBrief" style="margin-bottom:16px;"></div>
+                    <!-- Committed cash flow runway. Rendered by renderRunwayCard()
+                         from WFCashflow; hidden until there is something to say, so
+                         a new account with an empty ledger is not shown a scary
+                         empty box. -->
+                    <div id="wfRunway" style="margin-bottom:16px; display:none;"></div>
                     <div class="g5" id="dashStats" style="margin-bottom:16px;"></div>
 
                     <div class="golden-frame">
@@ -11605,8 +11662,63 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 }
             }
 
-            // Low balance warning
-            if (ctx.balanceOnHand > 0 && ctx.balanceOnHand < ctx.monthlyLoanPayments * 1.5) {
+            /* ── Shortfall warning ───────────────────────────────────────────
+             *
+             * WHAT THIS REPLACES, AND THE TWO PROBLEMS IT HAD
+             *
+             *   if (ctx.balanceOnHand < ctx.monthlyLoanPayments * 1.5)
+             *       key = `wf_notif_lowbal_${curMonth}_${day}`
+             *       "Your balance may not cover upcoming payments. Take action!"
+             *
+             * 1. THE TEST WAS A PROXY. Balance against 1.5x the monthly loan
+             *    total says nothing about the 180,000 cheque clearing on the
+             *    15th, and fires for somebody who is perfectly fine because
+             *    their salary lands tomorrow. WFCashflow walks the actual dated
+             *    obligations and returns the day it breaks and what breaks it.
+             *
+             * 2. IT REPEATED DAILY. checkAndSendAIReminders runs every hour and
+             *    the key carried the current DAY, so a condition that persisted
+             *    for three weeks produced twenty-one identical notifications
+             *    saying "take action" with no action named. Keying on the
+             *    RUNWAY DATE instead means one warning per distinct shortfall:
+             *    an absolute date is stable while the situation is, and changes
+             *    when the situation genuinely does.
+             *
+             * The message names the date, the days remaining, and the largest
+             * commitment responsible — the difference between a warning and
+             * something you can act on.
+             *
+             * Not escaped, deliberately, unlike everywhere else this data is
+             * rendered: Notification `body` is plain text, and running it through
+             * _wfEsc would show a payee as &amp; rather than &.
+             */
+            let shortfallHandled = false;
+            try {
+                if (window.WFCashflow) {
+                    const s = window.WFCashflow.summarise(appData, { asOf: new Date(), horizon: 90 });
+                    shortfallHandled = true;
+                    if (s && s.runwayDate) {
+                        const notifKey = `wf_notif_runway_${s.runwayDate}`;
+                        if (!localStorage.getItem(notifKey)) {
+                            const cause = (s.runwayCauses || [])[0];
+                            const because = cause
+                                ? ` The largest is ${cause.label} at LKR ${Math.round(cause.amount).toLocaleString()}.`
+                                : '';
+                            sendSmartNotification(
+                                s.runwayDays <= 7 ? '🚨 Shortfall in ' + s.runwayDays + ' days' : '⚠️ Cash flow warning',
+                                `Your balance is projected to go below zero on ${s.runwayDate}`
+                                + ` — ${s.runwayDays} day${s.runwayDays === 1 ? '' : 's'} away.${because}`,
+                                null);
+                            _persistRaw(notifKey, '1');
+                        }
+                    }
+                }
+            } catch (e) {
+                try { console.warn('[WF] shortfall check:', e && e.message); } catch (_) {}
+            }
+            // The old proxy remains for the case where the engine cannot answer
+            // at all, so removing it never leaves the user with no warning.
+            if (!shortfallHandled && ctx.balanceOnHand > 0 && ctx.balanceOnHand < ctx.monthlyLoanPayments * 1.5) {
                 const notifKey = `wf_notif_lowbal_${curMonth}_${day}`;
                 if (!localStorage.getItem(notifKey)) {
                     sendSmartNotification('⚠️ Balance Alert', `Your balance (LKR ${ctx.balanceOnHand.toLocaleString()}) may not cover upcoming payments. Take action!`, null);
@@ -21230,6 +21342,78 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // ==================== DASHBOARD AUTOMATION ====================
         let dashChartInst = null, dashPieInst = null;
+        /* ── Cash flow runway card ───────────────────────────────────────────
+         *
+         * WFCashflow does the arithmetic; this function does nothing but render
+         * what it returns. Keeping the judgement in the engine means the number
+         * on this card and the number on any other surface cannot disagree.
+         *
+         * EVERY INTERPOLATED VALUE GOES THROUGH _wfEsc.
+         * The labels here are built from user-entered text — a cheque payee, a
+         * loan name, a subscription name — and #126 shipped exactly this shape
+         * with free text rendered as markup. Amounts go through fmtS, which
+         * returns a formatted number, but the labels are the user's own strings
+         * and are escaped without exception.
+         *
+         * If the engine is not loaded, or throws, or has nothing to report, the
+         * card hides itself rather than showing an empty frame. A dashboard
+         * panel that says nothing is worse than one that is not there.
+         */
+        function renderRunwayCard() {
+            const host = $('wfRunway');
+            if (!host) return;
+            const hide = () => { host.style.display = 'none'; host.innerHTML = ''; };
+            if (!window.WFCashflow) return hide();
+
+            let s;
+            try {
+                // The engine never reads the clock; the caller owns "today".
+                s = window.WFCashflow.summarise(appData, { asOf: new Date(), horizon: 90 });
+            } catch (e) {
+                try { console.warn('[WF] runway card:', e && e.message); } catch (_) {}
+                return hide();
+            }
+            // Nothing committed and nothing on hand — there is no story to tell.
+            if (!s || (!s.committedOut && !s.opening)) return hide();
+
+            const cls = 'is-' + String(s.status).replace(/[^a-z-]/g, '');
+            const critical = s.status === 'critical';
+            const when = s.runwayDate
+                ? (s.runwayDays === 0 ? 'Today' : s.runwayDays + (s.runwayDays === 1 ? ' day' : ' days') + ' of runway')
+                : 'No shortfall in the next ' + s.horizon + ' days';
+            const sub = s.runwayDate
+                ? 'Projected to go below ' + fmtS(0) + ' on ' + _wfEsc(s.runwayDate)
+                : 'Tightest point ' + fmtS(s.tightestBalance) + ' on ' + _wfEsc(s.tightestDate || '—');
+
+            const causes = (s.runwayCauses || []).map((c) =>
+                '<div class="wf-runway-cause"><span class="lbl">' + _wfEsc(c.label) + '</span>'
+                + '<span class="amt">' + fmtS(c.amount) + '</span></div>').join('');
+
+            const ignored = (s.ignored || []).length;
+
+            host.innerHTML =
+                '<div class="card wf-runway ' + cls + '">'
+                + '<div class="card-header"><div class="card-title">🧭 Cash flow runway</div></div>'
+                + '<div class="wf-runway-head">'
+                + '<div class="wf-runway-when' + (critical ? ' is-critical' : '') + '">' + _wfEsc(when) + '</div>'
+                + '<div class="wf-runway-sub">' + sub + '</div>'
+                + '</div>'
+                + '<div class="wf-runway-grid">'
+                + '<div class="wf-runway-fig"><div class="k">On hand</div><div class="v">' + fmtS(s.opening) + '</div></div>'
+                + '<div class="wf-runway-fig"><div class="k">Committed out (90d)</div><div class="v">' + fmtS(s.committedOut) + '</div></div>'
+                + '<div class="wf-runway-fig"><div class="k">Safe to spend</div><div class="v">' + fmtS(s.safeToSpend) + '</div></div>'
+                + '<div class="wf-runway-fig"><div class="k">Until</div><div class="v">' + _wfEsc(s.safeUntil || '—') + '</div></div>'
+                + '</div>'
+                + (causes ? '<div class="wf-runway-causes">' + causes + '</div>' : '')
+                + (ignored
+                    ? '<div class="wf-runway-note">' + ignored + ' record'
+                      + (ignored === 1 ? '' : 's') + ' could not be projected — missing a date or an amount.</div>'
+                    : '')
+                + '</div>';
+            host.style.display = '';
+        }
+        window.renderRunwayCard = renderRunwayCard;
+
         function renderDash() {
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
@@ -21321,6 +21505,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 if (window.WFInsights) window.WFInsights.renderInto('wfBrief', window.WFInsights.brief(5), { title: 'Needs your attention', allClear: true });
             } catch (_) {}
+            try { renderRunwayCard(); } catch (_) {}
             $('dashStats').innerHTML = predictiveHtml + `
         <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div></div>
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
@@ -24737,8 +24922,55 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             // Find user's free cashflow that could go to extra payments
             const ctx = buildFinancialContext();
-            const maxExtra = Math.max(10000, Math.round(ctx.netMonthlyCashFlow));
-            const suggestedExtra = customExtra !== null ? parseInt(customExtra) : Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
+            let maxExtra = Math.max(10000, Math.round(ctx.netMonthlyCashFlow));
+
+            /* WHAT CAN ACTUALLY BE PAID EVERY MONTH, NOT HALF OF AN AVERAGE.
+             *
+             * The suggestion used to be netMonthlyCashFlow * 0.5 — a monthly
+             * average, halved, because half of an average is safer than all of
+             * it. That was the right instinct with no dates available, and it is
+             * wrong in both directions: it offers too much to somebody whose
+             * 180,000 cheque clears on the 15th, and too little to somebody
+             * whose commitments are already spread evenly. The 50% haircut was
+             * standing in for timing information the app already holds.
+             *
+             * WFCashflow.sustainableMonthly() searches for the largest recurring
+             * payment that never drives the projection below zero, testing each
+             * candidate against every loan EMI, card instalment, subscription
+             * renewal and post-dated cheque ON ITS OWN DATE.
+             *
+             * The old heuristic stays as the fallback. If the engine is not
+             * loaded, or throws, or the ledger is too thin to say anything, the
+             * page behaves exactly as it did before — this replaces a guess with
+             * a better number where one is available, and never with nothing. */
+            let suggestedExtra = Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
+            let suggestBasis = null;
+            try {
+                if (window.WFCashflow) {
+                    const s = window.WFCashflow.sustainableMonthly(appData, {
+                        asOf: new Date(), horizon: 180,
+                    });
+                    if (s && isFinite(s.amount)) {
+                        // Rounded DOWN to the slider's own step. The range input
+                        // snaps to its step, so an unrounded 308,698 rendered as
+                        // "LKR 3.09L" beside a slider silently sitting at
+                        // 308,000 — the headline and the control disagreeing,
+                        // with the control quietly winning. Down, never up:
+                        // the suggestion must not exceed what is sustainable.
+                        suggestedExtra = Math.max(0, Math.floor(s.amount / 1000) * 1000);
+                        suggestBasis = s.reason;
+                    }
+                }
+            } catch (e) {
+                try { console.warn('[WF] sustainable payment:', e && e.message); } catch (_) {}
+            }
+            if (customExtra !== null) suggestedExtra = parseInt(customExtra);
+            // The slider's ceiling was derived from the monthly average, so a
+            // timing-aware suggestion can exceed it — and an <input type=range>
+            // silently clamps a value above its max. The headline figure and the
+            // slider would then show two different numbers, with the slider
+            // quietly winning. Raise the ceiling to fit.
+            maxExtra = Math.max(maxExtra, suggestedExtra);
 
             const sortedAvalanche = [...debtItems].sort((a, b) => b.rate - a.rate);
             const sortedSnowball = [...debtItems].sort((a, b) => a.amount - b.amount);
@@ -24777,7 +25009,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="g3" style="margin-bottom:16px;">
                         <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${debtItems.length} accounts</div></div>
                         <div class="stat-card sc-gold"><div class="stat-label">Monthly Minimums</div><div class="stat-val">${fmtS(totalMonthly)}</div><div class="stat-meta">Required</div></div>
-                        <div class="stat-card sc-green"><div class="stat-label">Extra Payment Pool</div><div class="stat-val" id="ddExtraVal">${fmtS(suggestedExtra)}</div><div class="stat-meta">Available: ${fmtS(ctx.netMonthlyCashFlow)}</div></div>
+                        <div class="stat-card sc-green"><div class="stat-label">Extra Payment Pool</div><div class="stat-val" id="ddExtraVal">${fmtS(suggestedExtra)}</div><div class="stat-meta">${suggestBasis ? _wfEsc(suggestBasis) : 'Available: ' + fmtS(ctx.netMonthlyCashFlow)}</div></div>
                     </div>
 
                     <div class="card" style="margin-bottom:16px;">

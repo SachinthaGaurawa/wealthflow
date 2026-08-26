@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  issues: read            # the label read below goes through the issues API
 
 jobs:
   conftest:
@@ -35,9 +36,119 @@ jobs:
         id: changed
         uses: ./.github/actions/changed-files
 
+      # ── Content classification for index.html ────────────────────────────
+      #
+      # RULE 2's `unattended_ok` reads `input.index_html_verdict`. It is written
+      # HERE and nowhere else, and it is written by running the classifier — the
+      # rego never sees the diff itself.
+      #
+      # Everything about this step fails closed. The verdict starts as
+      # `sensitive`. It becomes `safe` only if the classifier exits cleanly AND
+      # prints exactly that word. A crash, a timeout, a malformed line, index.html
+      # not being in the diff at all, or the `full-gate` label being present all
+      # leave it `sensitive`, and RULE 2 then applies in full. There is no path
+      # from "something went wrong" to "allowed".
+      # ── READ THE LABELS LIVE, NOT FROM THE EVENT PAYLOAD ─────────────────
+      #
+      # THIS GATE BLOCKED A CORRECTLY-LABELLED PULL REQUEST. On #133, with
+      # `human-approved` sitting on the PR, conftest was handed
+      #
+      #     LABELS: []
+      #     "labels": [],
+      #
+      # and denied all nine guardrail paths for want of the very label that was
+      # there. `github.event.pull_request.labels` is a SNAPSHOT from when the run
+      # was queued, so any run queued before the label went on carries an empty
+      # list forever — and "Re-run failed jobs" cannot help, because a re-run
+      # replays the original payload.
+      #
+      # wealthflow-ci.yml already documents this exact failure and already fixed
+      # it for the Risk gate, in a comment that says the payload "reports the
+      # labels as they were then — not as they are now". The fix was never
+      # carried across to this file. That is this repository's most common defect
+      # by a distance: a hardening applied to one caller and not to its sibling.
+      #
+      # FAILS CLOSED. If the API cannot be read the list stays EMPTY, which
+      # denies rather than allows — the opposite direction from the payload bug,
+      # and the safe one.
+      - name: Read the PR's labels from the API
+        id: labels
+        if: github.event.pull_request.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if LIVE=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | @json' 2>/dev/null) \
+             && [ -n "$LIVE" ]; then
+            echo "labels currently on the PR: $LIVE"
+          else
+            echo "::warning::Could not read the PR's labels — evaluating the policy as if it carries none."
+            LIVE='[]'
+          fi
+          echo "json=$LIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Classify the index.html diff
+        id: idx
+        env:
+          FILES_RAW: ${{ steps.changed.outputs.files }}
+          BASE_SHA: ${{ steps.changed.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.changed.outputs.head_sha }}
+          LABELS: ${{ steps.labels.outputs.json }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "verdict=sensitive" >> "$GITHUB_OUTPUT"
+
+          # A manual override the owner can reach for at any time: put `full-gate`
+          # on the PR and the content classifier is not consulted at all.
+          if echo "$LABELS" | grep -q '"full-gate"'; then
+            echo "'full-gate' is on this PR — the content classifier is disabled for it."
+            exit 0
+          fi
+
+          printf '%s\n' "$FILES_RAW" > changed.txt
+          if ! grep -qx 'index\.html' changed.txt; then
+            echo "index.html is not in this diff — nothing to classify."
+            exit 0
+          fi
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::warning::No base/head sha to diff against — index.html stays fully gated."
+            exit 0
+          fi
+
+          # 120s is generous for a 1.5 MB file; a classifier that hangs is a
+          # classifier that has lost track, and a hang must not become a pass.
+          if ! timeout 120 node autonomy/classify-index-diff.mjs \
+                 --base "$BASE_SHA" --head "$HEAD_SHA" \
+                 --changed-files changed.txt > verdict.json 2>classify.err; then
+            echo "::warning::The classifier did not complete — index.html stays fully gated."
+            cat classify.err || true
+            exit 0
+          fi
+
+          V=$(node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).verdict||""))}catch(e){}')
+          R=$(node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).reason||""))}catch(e){}')
+          if [ "$V" = "safe" ]; then
+            echo "verdict=safe" >> "$GITHUB_OUTPUT"
+            echo "✓ index.html: $R"
+          else
+            echo "index.html stays gated: ${R:-no verdict could be read}"
+          fi
+          {
+            echo "### index.html content classification"
+            echo ""
+            echo "**Verdict:** \`${V:-unreadable}\` — ${R:-no reason given}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build PR input for policy evaluation
         env:
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          # From the API read above, never from the event payload — see the note
+          # on that step. This is the value the rego actually decides on.
+          LABELS: ${{ steps.labels.outputs.json }}
+          INDEX_VERDICT: ${{ steps.idx.outputs.verdict }}
         shell: bash
         run: |
           set -euo pipefail
@@ -45,8 +156,10 @@ jobs:
           node -e '
             const files=(process.env.FILES_RAW||"").split("\n").filter(Boolean);
             const labels=JSON.parse(process.env.LABELS||"[]");
-            require("fs").writeFileSync("pr-input.json", JSON.stringify({files,labels},null,2));
-            console.log(JSON.stringify({files,labels},null,2));
+            // Anything other than the literal string "safe" leaves RULE 2 in force.
+            const index_html_verdict = process.env.INDEX_VERDICT === "safe" ? "safe" : "sensitive";
+            require("fs").writeFileSync("pr-input.json", JSON.stringify({files,labels,index_html_verdict},null,2));
+            console.log(JSON.stringify({files,labels,index_html_verdict},null,2));
           '
 
       - name: Install Conftest

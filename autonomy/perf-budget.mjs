@@ -70,7 +70,24 @@ export const BUDGETS = {
     // to fit a number would be optimising the metric and losing the reason, which
     // this file already says elsewhere is the part a later edit must not be able to
     // undo quietly. Moves ONCE, to the newly measured value with ~1% headroom.
-    htmlBytes: 1_618_000,        // measured 1,601,662
+    // RAISED for the runway card, its stylesheet, the sustainable-payment
+    // wiring and the shortfall alert — and, deliberately, for PR #132's ledger
+    // audit loader on top of them.
+    //
+    // MEASURED ON THE COMBINED TREE, NOT ON THIS BRANCH ALONE. #132 and #133
+    // each fit under the old 1,618,000 by themselves; merged together they came
+    // to 1,618,024 — over by TWENTY-FOUR BYTES. That is the same failure as
+    // #130 and #131, where two branches that both passed produced a red main,
+    // and it is only ever caught by merging them locally first and measuring.
+    // The number below is the real combined figure, so whichever of the two
+    // lands second cannot break the branch it lands on.
+    //
+    // Moves ONCE, to the newly measured value with ~1.1% headroom. It is NOT
+    // pre-raised for the investment work that follows: covering a measurement
+    // already taken is a ratchet, covering one not yet taken is the pre-emptive
+    // slackening this file exists to prevent, and that work will justify its own
+    // move when it lands.
+    htmlBytes: 1_636_000,        // measured 1,618,024 on #132 + #133 merged
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -125,7 +142,21 @@ export const BUDGETS = {
     // a ratchet that only ever moves up stops being a ratchet. A test now fails if
     // any module ships without something referencing it, so this cannot silently
     // refill.
-    totalJsBytes: 1_290_000,     // measured 1273099 across 44 modules
+    // RAISED for wealthflow-cashflow-engine.js (28 KB) and the update system's
+    // claim/settle logic (9 KB).
+    //
+    // The engine is new payload that is not yet fetched by anything — the
+    // <script src> tag comes with the interface. That is deliberate on both
+    // counts: this ceiling measures what the deployment SERVES, not what one
+    // page happens to request, because a module sitting in the repo is a module
+    // Vercel will hand to anyone who asks for it. A budget that only counted
+    // wired modules would let dead weight accumulate unmeasured, which is the
+    // exact condition that let ai-v3 and autopilot sit there for months.
+    //
+    // Moves ONCE, to the newly measured value with ~1.1% headroom — tighter
+    // again than the ~1.4% above, because most of what follows this is the UI
+    // that consumes the engine, and that lands in index.html rather than here.
+    totalJsBytes: 1_323_000,     // measured 1308608 across 45 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -143,7 +174,16 @@ export const BUDGETS = {
     // TIGHTENED: 51 -> 50. firebase-storage-compat.js was deleted outright in
     // the #65 fix -- `firebase.storage()` appears nowhere in this repository, so
     // it was downloaded and parsed on every load for nothing.
-    scriptTags: 50,              // measured 49
+    // Raised 50 -> 51 for wealthflow-cashflow-engine.js. Flagged before the work
+    // started, not explained away after: the runway card needs the engine, the
+    // engine is deferred, and it is one request.
+    //
+    // The alternative was to inline it into index.html, which costs no request
+    // and no ratchet — and would also have made it untestable, unclassifiable by
+    // the content gate, and part of the 27,000-line monolith this codebase is
+    // trying to shrink. The +1 is the cheaper of the two, and this comment is
+    // here so a later reader can see that the trade was made deliberately.
+    scriptTags: 51,              // measured 51
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

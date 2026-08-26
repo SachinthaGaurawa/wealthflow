@@ -148,10 +148,41 @@ guardrail(f) if contains(f, "sms-ingest")
 # stalls, which is precisely the failure it was written to end.
 guardrail(f) if contains(f, "fetch-timeout")
 
+# ── THE ONE EXEMPTION FROM RULE 2, AND THE REASONING BEHIND IT ───────────────
+#
+# index.html is 27,000 lines. It holds the money math, the auth flow, the CRDT
+# sync merge and the vault — and every stylesheet and every section of markup in
+# the product. Gating it whole means a border-radius costs the same approval as
+# `_wfApplyCloudData`. That is not a strict gate; it is an UNINFORMATIVE one,
+# and an uninformative gate is dangerous in its own way: when approval is
+# demanded for everything, approval stops being read.
+#
+# `unattended_ok` is deliberately a SEPARATE rule rather than a condition inside
+# guardrail(). guardrail(f) still says index.html is a guardrail path — which it
+# is — so test/sensitive_paths_test.js's rego mirror keeps seeing it, and the
+# exemption is one greppable clause rather than a qualifier buried in a
+# conjunction. Reverting it means deleting four lines.
+#
+# `input.index_html_verdict` is written by .github/workflows/policy-gate.yml
+# from autonomy/classify-index-diff.mjs. That classifier is an allowlist: it
+# clears a diff only when every changed line is stylesheet, markup, or the body
+# of a symbol on an explicit list, and it answers `sensitive` for anything it
+# cannot place — including its own failure to parse. If the field is missing
+# (an older workflow, a crashed classifier, a hand-built input) this rule cannot
+# match and RULE 2 applies in full. Absent evidence is never an exemption.
+#
+# It names index.html and nothing else. No other guardrail path has a content
+# classifier, and none may borrow this one.
+unattended_ok(f) if {
+    f == "index.html"
+    input.index_html_verdict == "safe"
+}
+
 deny contains msg if {
     some f in input.files
     guardrail(f)
     not human_approved
+    not unattended_ok(f)
     msg := sprintf("BLOCKED: '%s' governs the autonomous pipeline's own safety; requires 'human-approved'.", [f])
 }
 
