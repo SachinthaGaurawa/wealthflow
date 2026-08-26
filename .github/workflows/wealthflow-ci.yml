@@ -172,6 +172,19 @@ jobs:
           echo "labeled_at=$LAT" >> "$GITHUB_OUTPUT"
           echo "approved at: ${LAT:-<unknown>}"
 
+          # The WHOLE live list, for anything else that needs to test a label.
+          # `full-gate` was read straight from the event payload, which is a
+          # snapshot taken when the run was queued — so adding that label to a
+          # PR whose run had already started would not engage it. A kill switch
+          # whose job is to make gating STRICTER, failing to engage, fails open.
+          # Everything now reads from this one live answer.
+          LJ='[]'
+          if [ -n "${PR:-}" ]; then
+            LJ=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | @json' 2>/dev/null) || LJ='[]'
+            [ -n "$LJ" ] || LJ='[]'
+          fi
+          echo "labels_json=$LJ" >> "$GITHUB_OUTPUT"
+
       # Merge-base-correct, and it fails rather than guessing. Replaces the
       # `git fetch --depth=1` + `git diff base...HEAD` pattern that aborted with
       # "fatal: origin/main...HEAD: no merge base" as soon as main advanced —
@@ -212,7 +225,9 @@ jobs:
           FILES_RAW: ${{ steps.changed.outputs.files }}
           BASE_SHA: ${{ steps.changed.outputs.base_sha }}
           HEAD_SHA: ${{ steps.changed.outputs.head_sha }}
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          # Live from the approval step's API read, not the event payload — a
+          # kill switch read from a stale snapshot does not switch anything.
+          LABELS: ${{ steps.approval.outputs.labels_json }}
         shell: bash
         run: |
           set -uo pipefail

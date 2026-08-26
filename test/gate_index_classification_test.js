@@ -86,6 +86,76 @@ describe('every gate consults the classifier', () => {
     }
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LABELS ARE READ LIVE, NOT FROM THE EVENT PAYLOAD
+ *
+ * THIS BLOCKED A CORRECTLY-LABELLED PULL REQUEST IN PRODUCTION.
+ * On #133, with `human-approved` on the PR, conftest received
+ *
+ *     LABELS: []
+ *     "labels": [],
+ *
+ * and denied all nine guardrail paths for want of the very label that was
+ * there. `github.event.pull_request.labels` is a snapshot from when the run was
+ * queued; a run queued before the label went on carries an empty list forever,
+ * and "Re-run failed jobs" replays the same stale payload.
+ *
+ * wealthflow-ci.yml had already hit this, already fixed it, and already written
+ * the explanation down. policy-gate.yml never got the same fix — one caller
+ * hardened, its sibling left alone, which is this repository's most frequent
+ * defect shape.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('every gate reads its labels live', () => {
+    /* The DECIDING read must come from the API. A payload expression is still
+     * fine for things that only affect messaging, so this checks what feeds the
+     * decision rather than banning the string outright. */
+    for (const [name, file] of [['the Risk gate', CI], ['the policy gate', PG],
+        ['the auto-merge classifier', AM]]) {
+        it(`${name} queries the labels API`, () => {
+            expect(read(file), `${file} never calls the labels API`)
+                .toMatch(/gh api "repos\/\$REPO\/issues\/\$PR\/labels"/);
+        });
+
+        it(`${name} never feeds a decision from the payload snapshot`, () => {
+            /* Checks the PROPERTY, not a shape. The first version asserted that
+             * a `LABELS:` env exists and is not from the payload — which failed
+             * on auto-merge.yml for the wrong reason once the read moved inline
+             * into the script. Where the value comes from is what matters, not
+             * whether it happens to travel through an env var.
+             *
+             * A payload expression is still legitimate in exactly one place:
+             * wealthflow-ci.yml's `PAYLOAD_HAS`, the documented fallback for
+             * workflow_dispatch, where there is no pull request to query. So the
+             * rule is that any variable fed from the payload must be NAMED as
+             * such — which makes the exception visible instead of blanket. */
+            const src = read(file);
+            const fromPayload = [...src.matchAll(
+                /^\s*(\w+):\s*\$\{\{[^}]*github\.event\.pull_request\.labels[^}]*\}\}/gm)]
+                .map((m) => m[1]);
+            for (const v of fromPayload) {
+                expect(v, `${file} feeds ${v} from the event payload — a snapshot from `
+                    + 'when the run was queued, which a re-run replays unchanged')
+                    .toMatch(/^PAYLOAD/);
+            }
+        });
+
+        it(`${name} treats an unreadable label list as EMPTY, which denies`, () => {
+            // The opposite direction from the payload bug, and the safe one:
+            // absent evidence must never read as approval.
+            const src = read(file);
+            expect(/LIVE='\[\]'|HAS=false|LABELS='\[\]'|LJ='\[\]'/.test(src),
+                `${file} does not fail closed when the labels API cannot be read`).toBe(true);
+        });
+    }
+
+    it('the policy gate has the permission its label read needs', () => {
+        // `issues: read`. Without it the gh call 404s, the list falls back to
+        // empty, and every labelled PR is denied — the bug wearing a new hat.
+        const head = read(PG).split('jobs:')[0];
+        expect(head).toMatch(/issues:\s*read/);
+    });
+});
+
 describe('the subtraction removes index.html and nothing else', () => {
     /* Property 3, half one: the literal is what we think it is. */
     for (const [name, file] of [['the Risk gate', CI], ['the auto-merge classifier', AM]]) {

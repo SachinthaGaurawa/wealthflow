@@ -99,17 +99,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          # Through `env:`, never interpolated into the script body. A label is
-          # attacker-chosen text on a `pull_request_target` workflow holding a
-          # write token; `LBL='${{ toJSON(...) }}'` would let a label containing a
-          # single quote close the string and continue as shell.
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          # No label expression here at all any more — the list is fetched from
+          # the API inside the script below. That closes an injection route as
+          # well as the staleness one: a label is attacker-chosen text on a
+          # `pull_request_target` workflow holding a write token, and
+          # `LBL='${{ toJSON(...) }}'` would let a label containing a single
+          # quote close the string and continue as shell. A value that never
+          # passes through expression interpolation cannot do that.
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
 
           FILES=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+
+          # Labels LIVE, for the same reason the file list is live. The event
+          # payload is a snapshot from when the run was queued, so `full-gate`
+          # added afterwards would never engage — a switch whose purpose is to
+          # make gating stricter, silently failing open. Unreadable means empty,
+          # which denies rather than allows.
+          LABELS=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | @json' 2>/dev/null) || LABELS='[]'
+          [ -n "$LABELS" ] || LABELS='[]'
           echo "Changed files:"; echo "$FILES"
           COUNT=$(echo "$FILES" | grep -c . || true)
 

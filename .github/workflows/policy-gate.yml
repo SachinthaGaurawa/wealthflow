@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  issues: read            # the label read below goes through the issues API
 
 jobs:
   conftest:
@@ -47,13 +48,55 @@ jobs:
       # not being in the diff at all, or the `full-gate` label being present all
       # leave it `sensitive`, and RULE 2 then applies in full. There is no path
       # from "something went wrong" to "allowed".
+      # ── READ THE LABELS LIVE, NOT FROM THE EVENT PAYLOAD ─────────────────
+      #
+      # THIS GATE BLOCKED A CORRECTLY-LABELLED PULL REQUEST. On #133, with
+      # `human-approved` sitting on the PR, conftest was handed
+      #
+      #     LABELS: []
+      #     "labels": [],
+      #
+      # and denied all nine guardrail paths for want of the very label that was
+      # there. `github.event.pull_request.labels` is a SNAPSHOT from when the run
+      # was queued, so any run queued before the label went on carries an empty
+      # list forever — and "Re-run failed jobs" cannot help, because a re-run
+      # replays the original payload.
+      #
+      # wealthflow-ci.yml already documents this exact failure and already fixed
+      # it for the Risk gate, in a comment that says the payload "reports the
+      # labels as they were then — not as they are now". The fix was never
+      # carried across to this file. That is this repository's most common defect
+      # by a distance: a hardening applied to one caller and not to its sibling.
+      #
+      # FAILS CLOSED. If the API cannot be read the list stays EMPTY, which
+      # denies rather than allows — the opposite direction from the payload bug,
+      # and the safe one.
+      - name: Read the PR's labels from the API
+        id: labels
+        if: github.event.pull_request.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if LIVE=$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name] | @json' 2>/dev/null) \
+             && [ -n "$LIVE" ]; then
+            echo "labels currently on the PR: $LIVE"
+          else
+            echo "::warning::Could not read the PR's labels — evaluating the policy as if it carries none."
+            LIVE='[]'
+          fi
+          echo "json=$LIVE" >> "$GITHUB_OUTPUT"
+
       - name: Classify the index.html diff
         id: idx
         env:
           FILES_RAW: ${{ steps.changed.outputs.files }}
           BASE_SHA: ${{ steps.changed.outputs.base_sha }}
           HEAD_SHA: ${{ steps.changed.outputs.head_sha }}
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          LABELS: ${{ steps.labels.outputs.json }}
         shell: bash
         run: |
           set -uo pipefail
@@ -102,7 +145,9 @@ jobs:
 
       - name: Build PR input for policy evaluation
         env:
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          # From the API read above, never from the event payload — see the note
+          # on that step. This is the value the rego actually decides on.
+          LABELS: ${{ steps.labels.outputs.json }}
           INDEX_VERDICT: ${{ steps.idx.outputs.verdict }}
         shell: bash
         run: |
