@@ -51,12 +51,60 @@ jobs:
       safe: ${{ steps.decide.outputs.safe }}
       reason: ${{ steps.decide.outputs.reason }}
     steps:
+      # ── THE ONLY CHECKOUT IN THIS WORKFLOW, AND IT IS OF THE BASE ────────
+      #
+      # This job runs on `pull_request_target`, so it holds a write token. It has
+      # never checked out PR code and it still does not: the ref below is the
+      # BASE commit, which is trusted code that is already on main.
+      #
+      # What that buys is the content classifier. It is a plain Node script with
+      # no dependencies — no `npm ci`, so no PR-authored lifecycle script runs —
+      # and it reads the pull request's index.html through `git show`, as DATA.
+      # The classifier that judges the diff is therefore always the one on main,
+      # never the one in the pull request. That distinction is the whole reason
+      # this workflow is the authority: wealthflow-ci.yml runs on `pull_request`
+      # and executes the workflow file from the PR's head, so a PR could rewrite
+      # its own risk gate. It cannot rewrite this one.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the pull request's content as data
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          # A fetch of refs/pull/N/head brings the PR's FILES into the object
+          # store. Nothing from it is executed, checked out, or put on $PATH.
+          #
+          # The checkout above used `persist-credentials: false`, so the token is
+          # not written into .git/config where a later step could reach it. It is
+          # supplied here for this ONE command instead — the same Authorization
+          # header actions/checkout builds internally — so the credential's reach
+          # is one fetch of one ref rather than the rest of the job.
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.extraheader=AUTHORIZATION: basic $AUTH" \
+              fetch --no-tags --quiet origin "refs/pull/$PR/head:refs/wf/pr-head" || true
+          # Fails closed: without this ref the classifier is never run and
+          # index.html stays sensitive.
+          git rev-parse refs/wf/pr-head 2>/dev/null || echo "(pr head not fetched)"
+
       - name: Inspect the changed files via the API
         id: decide
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          # Through `env:`, never interpolated into the script body. A label is
+          # attacker-chosen text on a `pull_request_target` workflow holding a
+          # write token; `LBL='${{ toJSON(...) }}'` would let a label containing a
+          # single quote close the string and continue as shell.
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -77,6 +125,52 @@ jobs:
           SENSITIVE='^(index\.html|sw\.js|.*\.rules|firebase\.json|vercel\.json|package(-lock)?\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|api/router\.js|release\.cjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js)$|auth|oauth|crypto|fifo-reconcile|allocator|send-otp|verify-otp|approve-release|release-brain|statement-store|statement-view|wealthflow-update-system|inbox-push|inbox-pull|inbox-ack|inbox-store|sms-ingest|fetch-timeout'
 
           HITS=$(echo "$FILES" | grep -iE "$SENSITIVE" || true)
+
+          # ── index.html, classified by content rather than by filename ────
+          #
+          # index.html is 27,000 lines and holds the money math, the auth flow
+          # and the sync merge alongside every stylesheet in the product, so
+          # gating it whole made a border-radius cost the same approval as
+          # `_wfApplyCloudData`. autonomy/classify-index-diff.mjs — the copy on
+          # the BASE branch, checked out above — answers the narrower question,
+          # as an allowlist: cleared only when every changed line is stylesheet,
+          # markup, or the body of an explicitly listed symbol that is still free
+          # of storage, network, HTML injection and crypto.
+          #
+          # Every failure mode below keeps index.html sensitive: the label
+          # override, a missing base or head, a crash, a timeout, an unparseable
+          # verdict, or the classifier's own path being in the diff (which it
+          # refuses on, and which autonomy/** gates anyway). `safe` is the only
+          # string that removes it, and the removal is exact-line so it cannot
+          # take another path with it.
+          if echo "$FILES" | grep -qx 'index\.html'; then
+            IDXV=sensitive; IDXR='not classified'
+            if echo "${LABELS:-}" | grep -q '"full-gate"'; then
+              IDXR="the 'full-gate' label is on this PR"
+            elif ! git rev-parse --verify --quiet refs/wf/pr-head >/dev/null; then
+              IDXR='the PR head could not be fetched'
+            else
+              printf '%s\n' "$FILES" > changed.txt
+              MB=$(git merge-base "$BASE_SHA" refs/wf/pr-head 2>/dev/null || true)
+              if [ -z "$MB" ]; then
+                IDXR='no merge base could be resolved'
+              elif timeout 120 node autonomy/classify-index-diff.mjs \
+                     --base "$MB" --head refs/wf/pr-head \
+                     --changed-files changed.txt > verdict.json 2>&1; then
+                IDXV=$(node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).verdict||"sensitive"))}catch(e){process.stdout.write("sensitive")}')
+                IDXR=$(node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).reason||""))}catch(e){}')
+              else
+                IDXR='the classifier did not complete'
+                cat verdict.json 2>/dev/null || true
+              fi
+            fi
+            echo "index.html verdict: $IDXV — $IDXR"
+            if [ "$IDXV" = "safe" ]; then
+              HITS=$(echo "$HITS" | grep -vx 'index\.html' || true)
+            fi
+            { echo "### index.html"; echo ""; echo "\`$IDXV\` — $IDXR"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           if [ -n "$HITS" ]; then
             echo "safe=no" >> "$GITHUB_OUTPUT"
             echo "reason=touches a sensitive path: $(echo "$HITS" | tr '\n' ' ' | cut -c1-200)" >> "$GITHUB_OUTPUT"

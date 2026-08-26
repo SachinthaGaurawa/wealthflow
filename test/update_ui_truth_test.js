@@ -253,6 +253,37 @@ describe('an update is claimed, then settled against the code that loaded', () =
         expect(api._settleClaim(), 'a settled claim was settled again').toBe(null);
     });
 
+    /* Raised by the consensus board on #133, which asked for validation on the
+     * new localStorage record. Its stated reason was wrong — the record is not
+     * reachable by anything that could not already write the whole origin — but
+     * the ask found a real defect underneath it.
+     *
+     * `_cmp` compares with Number(), and Number('nonsense') is NaN, which `||0`
+     * flattens to 0. So a claim naming a garbage target compared as 0.0.0, lost
+     * to every real version, and settled as LANDED. Nothing untrue was written
+     * to disk — _markInstalled records the running version, which is a fact —
+     * but a malformed record was reported to the user as a completed update,
+     * and reporting an update that did not happen is the entire defect this
+     * change exists to end. */
+    it('a claim whose target is not a version is not settled at all', () => {
+        for (const junk of ['nonsense', '', 'v7', '7.7', null, 42, { target: '9.9.9' }]) {
+            const { api, store } = loadModule({ stored: null });
+            const before = store.get('wf_installed_version');
+            api._claimUpdate(junk, { fetched: 40, total: 40 });
+            expect(api._settleClaim(), `a claim targeting ${JSON.stringify(junk)} was settled`)
+                .toBe(null);
+            expect(store.get('wf_installed_version'),
+                `${JSON.stringify(junk)} moved the installed version`).toBe(before);
+        }
+    });
+
+    it('refuses to write a claim it could never settle honestly', () => {
+        const { api, store } = loadModule({ stored: null });
+        api._claimUpdate('not-a-version', { fetched: 1, total: 1 });
+        expect(store.get('wf_update_claimed'),
+            'an unsettleable claim was recorded anyway').toBeUndefined();
+    });
+
     it('carries the download evidence into the failure, so the reason is knowable', () => {
         const { api } = loadModule({ stored: null });
         api._claimUpdate('99.0.0', { fetched: 3, total: 41 });

@@ -290,6 +290,8 @@
      * So the flow records a claim, and the next boot settles it against the only
      * fact that cannot be faked: the version of the code that just loaded. */
     function _claimUpdate(target, evidence) {
+        // Refuse to record a claim that cannot later be settled honestly.
+        if (!_isVersion(target)) return;
         try {
             localStorage.setItem(LS_CLAIM, JSON.stringify({
                 target: target, from: CURRENT_VERSION, at: Date.now(),
@@ -300,6 +302,16 @@
     }
 
     /* Called once on boot. Resolves a pending claim into a fact. */
+    // A claim is read back out of localStorage, which is writable by anything
+    // running on the origin and survives across builds. `_cmp` coerces with
+    // Number(), and Number('nonsense') is NaN, which `||0` turns into 0 — so a
+    // claim whose target was garbage compared as 0.0.0, lost to every real
+    // version, and was SETTLED AS LANDED. Nothing is written that was not
+    // already true, so this was never exploitable; it was a malformed record
+    // being reported as a successful update, which is the one thing this whole
+    // change exists to stop. A claim must name a version or it is not a claim.
+    function _isVersion(v) { return typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v); }
+
     function _settleClaim() {
         var raw = null;
         try { raw = localStorage.getItem(LS_CLAIM); } catch (_) { return null; }
@@ -307,7 +319,7 @@
         var c = null;
         try { c = JSON.parse(raw); } catch (_) { c = null; }
         try { localStorage.removeItem(LS_CLAIM); } catch (_) {}
-        if (!c || !c.target) return null;
+        if (!c || !_isVersion(c.target)) return null;
 
         if (_cmp(CURRENT_VERSION, c.target) >= 0) {
             _markInstalled(CURRENT_VERSION);

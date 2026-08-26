@@ -181,6 +181,71 @@ jobs:
         if: steps.scope.outputs.gate == 'yes'
         uses: ./.github/actions/changed-files
 
+      # ── WHAT PART OF index.html CHANGED ──────────────────────────────────
+      #
+      # The list below treats index.html as one unit, and it is 27,000 lines
+      # holding the money math, the auth flow and the sync merge alongside every
+      # stylesheet in the product. So a border-radius has been costing the same
+      # approval as `_wfApplyCloudData`. That is not a strict gate, it is an
+      # uninformative one — and when approval is demanded for everything,
+      # approval stops being read. This is the owner's actual complaint, and it
+      # is a real defect in the gate rather than a reason to relax it.
+      #
+      # autonomy/classify-index-diff.mjs answers the narrower question. It is an
+      # allowlist: a diff is cleared only when EVERY changed line is stylesheet,
+      # markup, or the body of a symbol on an explicit list whose whole body is
+      # still free of storage, network, HTML injection and crypto. Anything it
+      # cannot place — a moved <script> boundary, a line before the first
+      # declaration, a file it cannot parse — is sensitive. So is any failure of
+      # this step: the verdict starts at `sensitive` and only the literal word
+      # `safe` moves it.
+      #
+      # A PR that edits the classifier is never judged by the edited classifier;
+      # the tool refuses when its own path is in the changed-file list, and
+      # autonomy/** is a sensitive path in its own right regardless.
+      #
+      # KILL SWITCH: put `full-gate` on the PR and this step does not run.
+      - name: Classify the index.html diff
+        id: idx
+        if: steps.scope.outputs.gate == 'yes'
+        env:
+          FILES_RAW: ${{ steps.changed.outputs.files }}
+          BASE_SHA: ${{ steps.changed.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.changed.outputs.head_sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "verdict=sensitive" >> "$GITHUB_OUTPUT"
+          echo "reason=not classified" >> "$GITHUB_OUTPUT"
+
+          if echo "$LABELS" | grep -q '"full-gate"'; then
+            echo "'full-gate' is on this PR — index.html stays fully gated."
+            exit 0
+          fi
+          printf '%s\n' "$FILES_RAW" > changed.txt
+          if ! grep -qx 'index\.html' changed.txt; then
+            echo "index.html is not in this diff."
+            exit 0
+          fi
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::warning::No merge base to diff against — index.html stays fully gated."
+            exit 0
+          fi
+          if ! timeout 120 node autonomy/classify-index-diff.mjs \
+                 --base "$BASE_SHA" --head "$HEAD_SHA" \
+                 --changed-files changed.txt > verdict.json 2>classify.err; then
+            echo "::warning::The classifier did not complete — index.html stays fully gated."
+            cat classify.err || true
+            exit 0
+          fi
+          cat verdict.json
+          V=$(node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).verdict||""))}catch(e){}')
+          R=$(node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).reason||""))}catch(e){}')
+          echo "reason=${R:-unreadable}" >> "$GITHUB_OUTPUT"
+          [ "$V" = "safe" ] && echo "verdict=safe" >> "$GITHUB_OUTPUT"
+          echo "index.html verdict: ${V:-unreadable} — ${R:-}"
+
       - name: Classify changed files
         id: classify
         if: steps.scope.outputs.gate == 'yes'
@@ -188,6 +253,8 @@ jobs:
           # PRs carrying this label have a human approver and may touch sensitive paths.
           HAS_HUMAN_APPROVAL: ${{ steps.approval.outputs.has_human_approval }}
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          INDEX_VERDICT: ${{ steps.idx.outputs.verdict }}
+          INDEX_REASON: ${{ steps.idx.outputs.reason }}
         run: |
           set -euo pipefail
           CHANGED="$CHANGED_FILES"
@@ -229,6 +296,26 @@ jobs:
           SENSITIVE_REGEX='^(index\.html|firestore\.rules|firebase\.json|.*\.rules|package\.json|package-lock\.json|sw\.js|vercel\.json|CODEOWNERS|\.github/.*|policy/.*|autonomy/.*|api/router\.js|release\.cjs|release-brain\.js|statement-store\.js|statement-view\.js|wealthflow-update-system\.js|inbox-[a-z]+\.(js|mjs)|sms-ingest\.js|fetch-timeout\.mjs|vitest\.config\..*|consensus-review\..*|autonomous-fix-agent\.js|autonomous-brain\.js|.*auth.*|.*oauth.*|.*fifo-reconcile.*|.*allocator.*|.*crypto.*|.*approve-release.*|send-otp\.js|verify-otp\.js)$'
 
           HITS=$(echo "$CHANGED" | grep -iE "$SENSITIVE_REGEX" || true)
+
+          # index.html leaves the sensitive set ONLY on the literal word `safe`
+          # from the step above. Every other value — a crash, a timeout, an empty
+          # output, the `full-gate` label, an older workflow with no such step —
+          # falls through to the else branch and keeps it gated. The subtraction
+          # is exact-line so no other path can be removed by it.
+          if [ "${INDEX_VERDICT:-sensitive}" = "safe" ]; then
+            HITS=$(echo "$HITS" | grep -vx 'index\.html' || true)
+            echo "✓ index.html cleared by the content classifier: ${INDEX_REASON:-}"
+            {
+              echo "### index.html: classified, not waved through"
+              echo ""
+              echo "${INDEX_REASON:-no reason given}"
+              echo ""
+              echo "Put the \`full-gate\` label on this PR to disable content classification."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif echo "$CHANGED" | grep -qx 'index\.html'; then
+            echo "index.html stays gated: ${INDEX_REASON:-not classified}"
+          fi
+
           if [ -n "$HITS" ]; then
             echo "::group::Sensitive paths touched"
             echo "$HITS"
@@ -241,6 +328,29 @@ jobs:
               echo "$HITS"
               echo "WF_EOF"
             } >> "$GITHUB_OUTPUT"
+            # ── WHAT ONE LABEL WOULD COVER ───────────────────────────────────
+            # A batched approval is only better than a piecemeal one if the
+            # single click is INFORMED. The owner's ask was to stop being
+            # interrupted per-change, not to approve blind — so the scope of the
+            # decision is printed here, on the check itself, whether the label is
+            # already on or is being asked for. Without this, "approve the whole
+            # batch" means reading a diff; with it, it means reading a list.
+            {
+              echo "### Human approval covers exactly these files"
+              echo ""
+              echo '```'
+              echo "$HITS"
+              echo '```'
+              echo ""
+              if echo "$CHANGED" | grep -qx 'index\.html'; then
+                echo "index.html: \`${INDEX_VERDICT:-sensitive}\` — ${INDEX_REASON:-not classified}"
+                echo ""
+              fi
+              echo "Everything else in this pull request is already eligible to merge unattended."
+              echo "The label applies to the head it is added to; a later push that touches any"
+              echo "file above needs it re-applied, and a push that does not, does not."
+            } >> "$GITHUB_STEP_SUMMARY"
+
             if [ "$HAS_HUMAN_APPROVAL" = "true" ]; then
               echo "✓ Sensitive change is carrying the 'human-approved' label — checking that the label is not older than the change."
             else
