@@ -125,7 +125,21 @@ export const BUDGETS = {
     // a ratchet that only ever moves up stops being a ratchet. A test now fails if
     // any module ships without something referencing it, so this cannot silently
     // refill.
-    totalJsBytes: 1_290_000,     // measured 1273099 across 44 modules
+    // RAISED for wealthflow-cashflow-engine.js (28 KB) and the update system's
+    // claim/settle logic (9 KB).
+    //
+    // The engine is new payload that is not yet fetched by anything — the
+    // <script src> tag comes with the interface. That is deliberate on both
+    // counts: this ceiling measures what the deployment SERVES, not what one
+    // page happens to request, because a module sitting in the repo is a module
+    // Vercel will hand to anyone who asks for it. A budget that only counted
+    // wired modules would let dead weight accumulate unmeasured, which is the
+    // exact condition that let ai-v3 and autopilot sit there for months.
+    //
+    // Moves ONCE, to the newly measured value with ~1.1% headroom — tighter
+    // again than the ~1.4% above, because most of what follows this is the UI
+    // that consumes the engine, and that lands in index.html rather than here.
+    totalJsBytes: 1_323_000,     // measured 1308608 across 45 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
