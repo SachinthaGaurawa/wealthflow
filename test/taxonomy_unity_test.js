@@ -59,6 +59,19 @@ function canonical() {
 }
 const sorted = (a) => [...a].sort().join('|');
 
+/* A mention inside a COMMENT is not a reference. wealthflow-self-heal.js was
+ * deleted from the app and survived the orphan check below for a release,
+ * because index.html still carried an HTML comment saying it had been removed —
+ * the filename was present, so the file looked referenced.
+ *
+ * Defined ONCE, here, and used by both the orphan check and its self-check. The
+ * first version had the self-check build its own copy, so mutating the real one
+ * changed nothing and the mutation survived. */
+const stripComments = (src) => src
+    .replace(/<!--[\s\S]*?-->/g, '')       // HTML comments
+    .replace(/\/\*[\s\S]*?\*\//g, '')      // JS block comments
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');  // JS line comments, sparing https://
+
 describe('every category list in the repository is the same list', () => {
     const CANON = canonical();
 
@@ -221,6 +234,28 @@ describe('modules that ship are modules that run', () => {
     const onDisk = fs.readdirSync(ROOT).filter((f) => /^wealthflow-.*\.js$/.test(f)).sort();
     const loaded = [...HTML.matchAll(/<script[^>]*src="(wealthflow-[^"]+\.js)"/g)].map((m) => m[1]);
 
+    it('the reference check ignores comments — checked against known-bad input', () => {
+        // An allowlist-style filter cannot be tested on a clean tree: with no
+        // orphan present, removing the comment-stripping changes nothing and the
+        // suite stays green. A mutation did exactly that. So the stripper is run
+        // against input that IS bad.
+        const onlyInHtmlComment = '<!-- the old wealthflow-ghost.js was REMOVED -->\n<div></div>';
+        const onlyInBlockComment = '/* wealthflow-ghost.js is gone */\nvar x = 1;';
+        const onlyInLineComment = '// wealthflow-ghost.js was deleted\nvar y = 2;';
+        const realReference = '<script src="wealthflow-ghost.js"></script>';
+        expect(stripComments(onlyInHtmlComment).includes('wealthflow-ghost.js'),
+            'a filename mentioned only in an HTML comment still counts as a reference — this is '
+            + 'exactly how wealthflow-self-heal.js survived deletion for a release')
+            .toBe(false);
+        expect(stripComments(onlyInBlockComment).includes('wealthflow-ghost.js')).toBe(false);
+        expect(stripComments(onlyInLineComment).includes('wealthflow-ghost.js')).toBe(false);
+        expect(stripComments(realReference).includes('wealthflow-ghost.js'),
+            'a real script tag was stripped as if it were a comment').toBe(true);
+        // and a URL is not a line comment
+        expect(stripComments('var u = "https://example.com/wealthflow-ghost.js";')
+            .includes('wealthflow-ghost.js'), 'https:// was mistaken for a line comment').toBe(true);
+    });
+
     it('nothing ships that nothing references', () => {
         // wealthflow-ai-v3.js (60 KB) and wealthflow-autopilot.js (16 KB) were
         // referenced by no file in the repository — not index.html, not another
@@ -229,7 +264,7 @@ describe('modules that ship are modules that run', () => {
             if (loaded.includes(f)) return false;
             const referrers = fs.readdirSync(ROOT)
                 .filter((o) => /\.(js|mjs|cjs|html|json)$/.test(o) && o !== f)
-                .filter((o) => { try { return read(o).includes(f); } catch { return false; } });
+                .filter((o) => { try { return stripComments(read(o)).includes(f); } catch { return false; } });
             const inTests = fs.existsSync(path.join(ROOT, 'test'))
                 && fs.readdirSync(path.join(ROOT, 'test'))
                     .some((t) => { try { return read('test/' + t).includes(f); } catch { return false; } });
