@@ -70,7 +70,24 @@ export const BUDGETS = {
     // to fit a number would be optimising the metric and losing the reason, which
     // this file already says elsewhere is the part a later edit must not be able to
     // undo quietly. Moves ONCE, to the newly measured value with ~1% headroom.
-    htmlBytes: 1_618_000,        // measured 1,601,662
+    // RAISED for the runway card, its stylesheet, the sustainable-payment
+    // wiring and the shortfall alert — and, deliberately, for PR #132's ledger
+    // audit loader on top of them.
+    //
+    // MEASURED ON THE COMBINED TREE, NOT ON THIS BRANCH ALONE. #132 and #133
+    // each fit under the old 1,618,000 by themselves; merged together they came
+    // to 1,618,024 — over by TWENTY-FOUR BYTES. That is the same failure as
+    // #130 and #131, where two branches that both passed produced a red main,
+    // and it is only ever caught by merging them locally first and measuring.
+    // The number below is the real combined figure, so whichever of the two
+    // lands second cannot break the branch it lands on.
+    //
+    // Moves ONCE, to the newly measured value with ~1.1% headroom. It is NOT
+    // pre-raised for the investment work that follows: covering a measurement
+    // already taken is a ratchet, covering one not yet taken is the pre-emptive
+    // slackening this file exists to prevent, and that work will justify its own
+    // move when it lands.
+    htmlBytes: 1_636_000,        // measured 1,618,024 on #132 + #133 merged
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
