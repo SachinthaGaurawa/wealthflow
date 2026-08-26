@@ -14,12 +14,15 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
     isoDay, parseDay, addDays, dayInMonth, monthsBetween,
     openingBalance, commitments, variableDailySpend,
     project, safeToSpend, sustainableMonthly, simulate, summarise,
 } from '../wealthflow-cashflow-engine.js';
 
+const ROOT = path.resolve(import.meta.dirname, '..');
 const AS_OF = '2026-08-26';
 const D = (s) => parseDay(s);
 
@@ -100,6 +103,36 @@ describe('openingBalance', () => {
         expect(openingBalance({ balance: { total: 100, flows: [
             { type: 'in', amount: 30 }, { type: 'out', amount: 10 }, { type: 'in', amount: 5 }] } }))
             .toBe(125);
+    });
+
+    it('uses the SAME arithmetic renderBalance uses, extracted from index.html', () => {
+        /* The claim made in this module's header is that the projection and the
+         * Balance page cannot show different numbers. Asserting the formula by
+         * hand (the test above) only proves the engine matches what I BELIEVED
+         * renderBalance does — it would stay green if somebody flipped a sign in
+         * index.html tomorrow.
+         *
+         * So the expression is lifted out of index.html and evaluated against
+         * the same inputs. A sign change on either side fails this.
+         *
+         * Verified live before writing it: on a balance of 1,500,000 with
+         * 260,000 out and 160,000 in, the Balance page, summarise().opening and
+         * the sweeper's plan.opening all report 1,400,000. */
+        const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+        const m = /const net = (data\.total[^;]+);/.exec(html);
+        expect(m, 'renderBalance\'s net expression was not found — retarget this test').not.toBe(null);
+
+        // eslint-disable-next-line no-new-func
+        const pageNet = new Function('data', 'outTotal', 'inTotal', 'return ' + m[1] + ';');
+        for (const [total, out, inn] of [
+            [1500000, 260000, 160000], [0, 0, 0], [100, 250, 25], [999999, 1, 999999],
+        ]) {
+            const ledger = { balance: { total, flows: [
+                { type: 'out', amount: out }, { type: 'in', amount: inn }] } };
+            expect(openingBalance(ledger),
+                `the engine and the Balance page disagree on (${total}, -${out}, +${inn})`)
+                .toBe(pageNet({ total }, out, inn));
+        }
     });
 
     it('is 0, not NaN, when there is no balance record at all', () => {
