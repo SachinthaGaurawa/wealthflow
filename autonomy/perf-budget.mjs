@@ -87,7 +87,15 @@ export const BUDGETS = {
     // already taken is a ratchet, covering one not yet taken is the pre-emptive
     // slackening this file exists to prevent, and that work will justify its own
     // move when it lands.
-    htmlBytes: 1_636_000,        // measured 1,618,024 on #132 + #133 merged
+    // RAISED for the Sweep Ledger's interface: the card, its actions and the
+    // observation recorder all live in index.html, plus _wfCashOpts and the
+    // JS-attribute escaper.
+    //
+    // Measured on THIS branch merged into main, which is the tree it lands in —
+    // main carried no other open work at the time, so the branch tree and the
+    // merged tree are the same thing. Moves once, to the measured figure with
+    // ~1.1% headroom, and is not pre-raised for anything not yet written.
+    htmlBytes: 1_664_000,        // measured 1,645,916 with the sweep ledger UI
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -166,14 +174,18 @@ export const BUDGETS = {
     // Moves ONCE, to the measured value with ~1.1% headroom, and is NOT
     // pre-raised for the sweeper's interface — that lands in index.html and is
     // counted by htmlBytes, which still holds.
-    totalJsBytes: 1_349_000,     // measured 1333666 across 46 modules, fully merged
+    totalJsBytes: 1_374_000,     // measured 1,359,999 across 47 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely
     // fired — the Data Health and Crash Forensics modules (#53, #54) take the
     // count to 47 — so it moves, once, to the measured value.
-    moduleCount: 46,   // 44 on disk after ai-v3 + autopilot were deleted             // measured 46 (tightened: one module removed)
+    // 46 -> 47 for wealthflow-sweep-ledger.js. Same trade recorded below for
+    // the cash flow engine and the sweeper: inlining it into index.html would
+    // cost no module and no request, and would make the one rule that stops a
+    // transfer being subtracted twice untestable in isolation.
+    moduleCount: 47,   // measured 47
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -197,7 +209,7 @@ export const BUDGETS = {
     // engine one line above: inlining it into index.html would cost no request
     // and no ratchet, and would make it untestable and part of the monolith.
     // It is deferred (type="module"), so it is not on the render path.
-    scriptTags: 52,              // measured 52
+    scriptTags: 53,              // measured 53
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
