@@ -11632,8 +11632,63 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 }
             }
 
-            // Low balance warning
-            if (ctx.balanceOnHand > 0 && ctx.balanceOnHand < ctx.monthlyLoanPayments * 1.5) {
+            /* ── Shortfall warning ───────────────────────────────────────────
+             *
+             * WHAT THIS REPLACES, AND THE TWO PROBLEMS IT HAD
+             *
+             *   if (ctx.balanceOnHand < ctx.monthlyLoanPayments * 1.5)
+             *       key = `wf_notif_lowbal_${curMonth}_${day}`
+             *       "Your balance may not cover upcoming payments. Take action!"
+             *
+             * 1. THE TEST WAS A PROXY. Balance against 1.5x the monthly loan
+             *    total says nothing about the 180,000 cheque clearing on the
+             *    15th, and fires for somebody who is perfectly fine because
+             *    their salary lands tomorrow. WFCashflow walks the actual dated
+             *    obligations and returns the day it breaks and what breaks it.
+             *
+             * 2. IT REPEATED DAILY. checkAndSendAIReminders runs every hour and
+             *    the key carried the current DAY, so a condition that persisted
+             *    for three weeks produced twenty-one identical notifications
+             *    saying "take action" with no action named. Keying on the
+             *    RUNWAY DATE instead means one warning per distinct shortfall:
+             *    an absolute date is stable while the situation is, and changes
+             *    when the situation genuinely does.
+             *
+             * The message names the date, the days remaining, and the largest
+             * commitment responsible — the difference between a warning and
+             * something you can act on.
+             *
+             * Not escaped, deliberately, unlike everywhere else this data is
+             * rendered: Notification `body` is plain text, and running it through
+             * _wfEsc would show a payee as &amp; rather than &.
+             */
+            let shortfallHandled = false;
+            try {
+                if (window.WFCashflow) {
+                    const s = window.WFCashflow.summarise(appData, { asOf: new Date(), horizon: 90 });
+                    shortfallHandled = true;
+                    if (s && s.runwayDate) {
+                        const notifKey = `wf_notif_runway_${s.runwayDate}`;
+                        if (!localStorage.getItem(notifKey)) {
+                            const cause = (s.runwayCauses || [])[0];
+                            const because = cause
+                                ? ` The largest is ${cause.label} at LKR ${Math.round(cause.amount).toLocaleString()}.`
+                                : '';
+                            sendSmartNotification(
+                                s.runwayDays <= 7 ? '🚨 Shortfall in ' + s.runwayDays + ' days' : '⚠️ Cash flow warning',
+                                `Your balance is projected to go below zero on ${s.runwayDate}`
+                                + ` — ${s.runwayDays} day${s.runwayDays === 1 ? '' : 's'} away.${because}`,
+                                null);
+                            _persistRaw(notifKey, '1');
+                        }
+                    }
+                }
+            } catch (e) {
+                try { console.warn('[WF] shortfall check:', e && e.message); } catch (_) {}
+            }
+            // The old proxy remains for the case where the engine cannot answer
+            // at all, so removing it never leaves the user with no warning.
+            if (!shortfallHandled && ctx.balanceOnHand > 0 && ctx.balanceOnHand < ctx.monthlyLoanPayments * 1.5) {
                 const notifKey = `wf_notif_lowbal_${curMonth}_${day}`;
                 if (!localStorage.getItem(notifKey)) {
                     sendSmartNotification('⚠️ Balance Alert', `Your balance (LKR ${ctx.balanceOnHand.toLocaleString()}) may not cover upcoming payments. Take action!`, null);
