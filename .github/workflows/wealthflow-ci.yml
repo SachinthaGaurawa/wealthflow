@@ -442,7 +442,14 @@ jobs:
                 echo "::error::Unreadable commit count for $f — treating it as unapproved."
                 exit 1 ;;
             esac
-            if [ "$N" -gt 0 ]; then STALE="$(printf '%s%s\n' "$STALE" "$f")"; fi
+            # Appended directly, NOT through $( ). Command substitution strips
+            # trailing newlines, so `STALE="$(printf '%s%s\n' "$STALE" "$f")"`
+            # threw away the separator on every iteration and the gate reported
+            #     .github/workflows/auto-merge.yml.github/workflows/policy-gate.yml…
+            # as one run-on string. Cosmetic, but this is the message that tells
+            # somebody which files to re-approve, and a garbled list is how a
+            # correct gate loses the reader's trust.
+            if [ "$N" -gt 0 ]; then STALE="${STALE}${f}"$'\n'; fi
           done <<< "$SENSITIVE_FILES"
 
           if [ -n "$STALE" ]; then
