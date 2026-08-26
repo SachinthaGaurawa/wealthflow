@@ -359,6 +359,10 @@ export function variableDailySpend(appData, asOf, months = 3) {
  * @param opts.horizon     days to project (default 90).
  * @param opts.floor       the balance the user considers "in trouble" (default 0).
  * @param opts.includeVariable  fold the estimated discretionary spend in (default true).
+ * @param opts.extraMonthly     an additional recurring outflow to test against —
+ *                              a proposed extra debt payment, a new standing
+ *                              order. Applied on `extraDay` of each month.
+ * @param opts.extraDay         day-of-month for that outflow (default: asOf's).
  */
 export function project(appData, opts = {}) {
     // asOf is REQUIRED, with no fallback to the clock.
@@ -387,6 +391,33 @@ export function project(appData, opts = {}) {
     for (const it of items) {
         if (!byDate.has(it.date)) byDate.set(it.date, []);
         byDate.get(it.date).push(it);
+    }
+
+    // A proposed recurring outflow, tested against the same dated obligations.
+    // It is a real event on a real day, not a monthly average subtracted at the
+    // end — the whole reason this module exists is that WHEN money leaves
+    // decides whether you survive the month.
+    const extraMonthly = Math.max(0, num(opts.extraMonthly));
+    if (extraMonthly > 0) {
+        const day = num(opts.extraDay) || asOf.getUTCDate();
+        for (let k = 0; ; k++) {
+            const d = dayInMonth(asOf.getUTCFullYear(), asOf.getUTCMonth() + k, day);
+            if (d > to) break;
+            if (d < asOf) continue;          // this month's has already gone out
+            const key = isoDay(d);
+            const ev = {
+                date: key, kind: 'out', amount: extraMonthly,
+                label: 'Proposed extra payment', source: 'proposed',
+                certainty: 'proposed', id: null,
+            };
+            // Into BOTH lists. `items` is what callers read as `commitments`, and
+            // a day row carrying an event that the commitment list does not is
+            // the same two-views-one-truth problem this module keeps closing.
+            items.push(ev);
+            if (!byDate.has(key)) byDate.set(key, []);
+            byDate.get(key).push(ev);
+        }
+        items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.amount - a.amount));
     }
 
     let balance = openingBalance(appData);
@@ -468,6 +499,88 @@ export function safeToSpend(appData, opts = {}) {
         reason: nextIn
             ? 'the lowest point before the next money arrives on ' + until
             : 'no inflow is expected in the next ' + p.horizon + ' days',
+    };
+}
+
+/* ── what you can actually commit to, every month ─────────────────────────── */
+
+/**
+ * The largest RECURRING monthly payment that never drives the projection below
+ * the floor — an extra debt payment, a new standing order, a savings transfer.
+ *
+ * WHY THIS IS NOT AN AVERAGE
+ *
+ * The Debt Demolisher has been suggesting `netMonthlyCashFlow * 0.5`: a
+ * monthly-average surplus, halved because half of an average is a safer number
+ * than all of it. That is a reasonable guess in the absence of dates, and it is
+ * wrong in both directions. It offers too much to somebody whose 180,000 cheque
+ * clears on the 15th, and too little to somebody whose commitments are already
+ * spread evenly — the 50% haircut is a stand-in for the timing information the
+ * app already has.
+ *
+ * This searches for the real number instead. Each candidate is a genuine dated
+ * outflow on a chosen day of every month, projected against every loan EMI,
+ * card instalment, subscription renewal and post-dated cheque on ITS date. The
+ * answer is the largest candidate whose worst day still clears the floor.
+ *
+ * Binary search, because the property is monotone: if paying X every month
+ * never breaks the floor, paying anything less than X cannot break it either.
+ * 40 iterations resolve LKR 1 out of 10 million.
+ */
+export function sustainableMonthly(appData, opts = {}) {
+    const floor = num(opts.floor);
+    const probe = (extraMonthly) => project(appData, { ...opts, extraMonthly }).runway === null;
+
+    // If the plan is already under water, no extra payment is affordable and
+    // the honest answer is zero — not "half of a negative number".
+    if (!probe(0)) {
+        const base = project(appData, opts);
+        return {
+            amount: 0, day: num(opts.extraDay) || parseDay(opts.asOf).getUTCDate(),
+            horizon: base.horizon,
+            reason: 'the plan already goes below the floor on ' + base.runway.date
+                + ' without any extra payment',
+            limitedBy: base.runway,
+        };
+    }
+
+    // An upper bound nothing could exceed: everything on hand plus everything
+    // expected in, spread over the months in the horizon.
+    const base = project(appData, opts);
+    const months = Math.max(1, base.horizon / 30.44);
+    let lo = 0;
+    let hi = Math.max(1, (base.opening + base.totals.in) / months);
+    if (probe(hi)) {
+        // Nothing in the horizon constrains it. Report the bound rather than
+        // searching upwards forever, and say so.
+        return {
+            amount: hi, day: num(opts.extraDay) || parseDay(opts.asOf).getUTCDate(),
+            horizon: base.horizon,
+            reason: 'no commitment in the next ' + base.horizon + ' days constrains this',
+            limitedBy: null,
+        };
+    }
+    for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        if (probe(mid)) lo = mid; else hi = mid;
+    }
+
+    // What the answer is bounded BY — the day that would break first if you
+    // paid a rupee more. Naming it is the difference between a limit and a
+    // reason.
+    const atLimit = project(appData, { ...opts, extraMonthly: hi });
+    return {
+        amount: Math.floor(lo),
+        day: num(opts.extraDay) || parseDay(opts.asOf).getUTCDate(),
+        horizon: base.horizon,
+        // Names the binding date without claiming "any more breaks it". Callers
+        // round this figure to something a person would actually pay — a slider
+        // stepping in thousands, say — and at the rounded value a little more IS
+        // still affordable. The date is the true statement either way.
+        reason: atLimit.runway
+            ? 'limited by ' + atLimit.runway.date + ', the first day the balance would go under'
+            : 'bounded by the projection floor',
+        limitedBy: atLimit.runway,
     };
 }
 
@@ -589,7 +702,7 @@ export function summarise(appData, opts = {}) {
 const API = {
     isoDay, parseDay, addDays, dayInMonth, monthsBetween,
     openingBalance, commitments, variableDailySpend,
-    project, safeToSpend, simulate, summarise,
+    project, safeToSpend, sustainableMonthly, simulate, summarise,
 };
 
 // Browser global, matching the other WealthFlow modules. Guarded so importing

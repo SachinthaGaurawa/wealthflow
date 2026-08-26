@@ -17,7 +17,7 @@ import { describe, it, expect } from 'vitest';
 import {
     isoDay, parseDay, addDays, dayInMonth, monthsBetween,
     openingBalance, commitments, variableDailySpend,
-    project, safeToSpend, simulate, summarise,
+    project, safeToSpend, sustainableMonthly, simulate, summarise,
 } from '../wealthflow-cashflow-engine.js';
 
 const AS_OF = '2026-08-26';
@@ -444,6 +444,151 @@ describe('safeToSpend', () => {
         const s = safeToSpend(A, { asOf: AS_OF, horizon: 30 });
         expect(s.until).toBe('2026-09-25');
         expect(s.reason).toContain('no inflow');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * A PROPOSED RECURRING PAYMENT
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('project with extraMonthly', () => {
+    const opts = { asOf: AS_OF, horizon: 90, extraMonthly: 10000, extraDay: 26 };
+
+    it('places the payment on its day, every month', () => {
+        const p = project(LEDGER(), opts);
+        const days = p.days.filter((d) => d.events.some((e) => e.source === 'proposed'));
+        // asOf is the 26th, so today's counts; the horizon ends 2026-11-24, before
+        // November's would fall.
+        expect(days.map((d) => d.date)).toEqual(['2026-08-26', '2026-09-26', '2026-10-26']);
+        expect(days.every((d) => d.events.some((e) => e.amount === 10000))).toBe(true);
+    });
+
+    it('appears in the commitment list AND the day rows, not one or the other', () => {
+        // A day row carrying an event the commitment list does not have is the
+        // same two-views-one-truth problem openingBalance() exists to prevent.
+        const p = project(LEDGER(), opts);
+        const inList = p.commitments.filter((c) => c.source === 'proposed').map((c) => c.date);
+        const inDays = p.days.filter((d) => d.events.some((e) => e.source === 'proposed')).map((d) => d.date);
+        expect(inList).toEqual(inDays);
+        expect(inList.length).toBeGreaterThan(0);
+    });
+
+    it('does not charge a payment whose day already passed this month', () => {
+        const p = project(LEDGER(), { asOf: AS_OF, horizon: 90, extraMonthly: 10000, extraDay: 5 });
+        const first = p.commitments.find((c) => c.source === 'proposed');
+        expect(first.date).toBe('2026-09-05');       // not 2026-08-05
+    });
+
+    it('is not counted as committed money', () => {
+        // It is a proposal. Rolling it into committedOut would make the app
+        // report the user's own hypothetical back to them as an obligation.
+        const withExtra = summarise(LEDGER(), opts);
+        const without = summarise(LEDGER(), { asOf: AS_OF, horizon: 90 });
+        expect(withExtra.committedOut).toBe(without.committedOut);
+    });
+
+    it('makes the projection strictly worse, never better', () => {
+        const a = project(LEDGER(), { asOf: AS_OF, horizon: 90 });
+        const b = project(LEDGER(), opts);
+        expect(b.closing).toBeLessThan(a.closing);
+    });
+});
+
+describe('sustainableMonthly', () => {
+    /* A ledger that can comfortably afford a recurring payment on average, so
+     * the search has room to find a real answer. */
+    const SOLVENT = () => {
+        const A = LEDGER();
+        A.balance.total = 900000;
+        A.income = [{ id: 'I1', name: 'Salary', monthly: 320000, day: 1, start: '2025-01-01' }];
+        A.cheques = [];
+        return A;
+    };
+    const opts = { asOf: AS_OF, horizon: 180 };
+
+    it('finds an amount the plan survives, and rejects meaningfully more', () => {
+        const s = sustainableMonthly(SOLVENT(), opts);
+        expect(s.amount).toBeGreaterThan(0);
+        expect(project(SOLVENT(), { ...opts, extraMonthly: s.amount }).runway,
+            'the answer itself breaks the floor').toBe(null);
+        expect(project(SOLVENT(), { ...opts, extraMonthly: s.amount + 5000 }).runway,
+            'the answer was not the limit — more was still affordable').not.toBe(null);
+    });
+
+    it('is monotone: anything below the answer is also affordable', () => {
+        const s = sustainableMonthly(SOLVENT(), opts);
+        for (const frac of [0, 0.25, 0.5, 0.75, 0.99]) {
+            expect(project(SOLVENT(), { ...opts, extraMonthly: Math.floor(s.amount * frac) }).runway,
+                `${frac} of the answer broke the floor`).toBe(null);
+        }
+    });
+
+    it('names the date that bounds it, so the limit has a reason', () => {
+        const s = sustainableMonthly(SOLVENT(), opts);
+        expect(s.reason).toMatch(/\d{4}-\d{2}-\d{2}|floor/);
+    });
+
+    it('answers zero when the plan is already under water', () => {
+        // Not "half of a negative number", which is what an average-based
+        // suggestion produces here.
+        const s = sustainableMonthly(LEDGER(), { asOf: AS_OF, horizon: 90 });
+        expect(s.amount).toBe(0);
+        expect(s.reason).toMatch(/already goes below the floor on 2026-09-15/);
+    });
+
+    it('respects a floor above zero by answering with less', () => {
+        const a = sustainableMonthly(SOLVENT(), opts);
+        const b = sustainableMonthly(SOLVENT(), { ...opts, floor: 200000 });
+        expect(b.amount).toBeLessThan(a.amount);
+    });
+
+    it('is TIMING-aware, which is the whole point — an average is not', () => {
+        /* THE CLAIM THIS MODULE MAKES OVER `netMonthlyCashFlow * 0.5`.
+         *
+         * Two ledgers with the SAME monthly averages: same income, same total
+         * outgoings over the horizon. The only difference is that one of them
+         * has a single large post-dated cheque landing mid-horizon instead of
+         * the same money spread across subscriptions.
+         *
+         * A monthly average cannot tell them apart — by construction the
+         * averages are equal. A day-by-day walk must, because the lumpy one
+         * has a day where the balance dips and the smooth one does not. */
+        const base = () => {
+            const A = SOLVENT();
+            A.subscriptions = []; A.ccinstall = []; A.expenses = A.expenses.filter((e) => e.recurring);
+            return A;
+        };
+        const smooth = base();
+        // 60,000 a month, evenly, on the 10th.
+        smooth.subscriptions = [{ id: 'X', name: 'Spread', amount: 60000, dueDay: 10,
+            cycle: 'monthly', createdAt: '2026-01-10T00:00:00Z' }];
+
+        const lumpy = base();
+        // The same 360,000 across six months, all on one day.
+        lumpy.cheques = [{ id: 'Q', no: '1', party: 'Contractor', type: 'issued',
+            amount: 360000, release: '2026-09-15', status: 'pending' }];
+
+        const sSmooth = sustainableMonthly(smooth, opts);
+        const sLumpy = sustainableMonthly(lumpy, opts);
+
+        // Same money out over the horizon...
+        const outOf = (A) => project(A, opts).commitments
+            .filter((c) => c.kind === 'out' && c.certainty === 'committed')
+            .reduce((t, c) => t + c.amount, 0);
+        expect(outOf(lumpy)).toBe(outOf(smooth));
+        // ...and a different answer, because one of them has a bad day.
+        expect(sLumpy.amount).toBeLessThan(sSmooth.amount);
+    });
+
+    it('is deterministic', () => {
+        expect(sustainableMonthly(SOLVENT(), opts))
+            .toEqual(sustainableMonthly(SOLVENT(), opts));
+    });
+
+    it('does not mutate the ledger', () => {
+        const A = SOLVENT();
+        const before = JSON.stringify(A);
+        sustainableMonthly(A, opts);
+        expect(JSON.stringify(A)).toBe(before);
     });
 });
 

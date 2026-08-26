@@ -24837,8 +24837,55 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             // Find user's free cashflow that could go to extra payments
             const ctx = buildFinancialContext();
-            const maxExtra = Math.max(10000, Math.round(ctx.netMonthlyCashFlow));
-            const suggestedExtra = customExtra !== null ? parseInt(customExtra) : Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
+            let maxExtra = Math.max(10000, Math.round(ctx.netMonthlyCashFlow));
+
+            /* WHAT CAN ACTUALLY BE PAID EVERY MONTH, NOT HALF OF AN AVERAGE.
+             *
+             * The suggestion used to be netMonthlyCashFlow * 0.5 — a monthly
+             * average, halved, because half of an average is safer than all of
+             * it. That was the right instinct with no dates available, and it is
+             * wrong in both directions: it offers too much to somebody whose
+             * 180,000 cheque clears on the 15th, and too little to somebody
+             * whose commitments are already spread evenly. The 50% haircut was
+             * standing in for timing information the app already holds.
+             *
+             * WFCashflow.sustainableMonthly() searches for the largest recurring
+             * payment that never drives the projection below zero, testing each
+             * candidate against every loan EMI, card instalment, subscription
+             * renewal and post-dated cheque ON ITS OWN DATE.
+             *
+             * The old heuristic stays as the fallback. If the engine is not
+             * loaded, or throws, or the ledger is too thin to say anything, the
+             * page behaves exactly as it did before — this replaces a guess with
+             * a better number where one is available, and never with nothing. */
+            let suggestedExtra = Math.max(0, Math.round(ctx.netMonthlyCashFlow * 0.5));
+            let suggestBasis = null;
+            try {
+                if (window.WFCashflow) {
+                    const s = window.WFCashflow.sustainableMonthly(appData, {
+                        asOf: new Date(), horizon: 180,
+                    });
+                    if (s && isFinite(s.amount)) {
+                        // Rounded DOWN to the slider's own step. The range input
+                        // snaps to its step, so an unrounded 308,698 rendered as
+                        // "LKR 3.09L" beside a slider silently sitting at
+                        // 308,000 — the headline and the control disagreeing,
+                        // with the control quietly winning. Down, never up:
+                        // the suggestion must not exceed what is sustainable.
+                        suggestedExtra = Math.max(0, Math.floor(s.amount / 1000) * 1000);
+                        suggestBasis = s.reason;
+                    }
+                }
+            } catch (e) {
+                try { console.warn('[WF] sustainable payment:', e && e.message); } catch (_) {}
+            }
+            if (customExtra !== null) suggestedExtra = parseInt(customExtra);
+            // The slider's ceiling was derived from the monthly average, so a
+            // timing-aware suggestion can exceed it — and an <input type=range>
+            // silently clamps a value above its max. The headline figure and the
+            // slider would then show two different numbers, with the slider
+            // quietly winning. Raise the ceiling to fit.
+            maxExtra = Math.max(maxExtra, suggestedExtra);
 
             const sortedAvalanche = [...debtItems].sort((a, b) => b.rate - a.rate);
             const sortedSnowball = [...debtItems].sort((a, b) => a.amount - b.amount);
@@ -24877,7 +24924,7 @@ Be direct and use real numbers. Avoid generic advice.`;
                     <div class="g3" style="margin-bottom:16px;">
                         <div class="stat-card sc-red"><div class="stat-label">Total Debt</div><div class="stat-val">${fmtS(totalDebt)}</div><div class="stat-meta">${debtItems.length} accounts</div></div>
                         <div class="stat-card sc-gold"><div class="stat-label">Monthly Minimums</div><div class="stat-val">${fmtS(totalMonthly)}</div><div class="stat-meta">Required</div></div>
-                        <div class="stat-card sc-green"><div class="stat-label">Extra Payment Pool</div><div class="stat-val" id="ddExtraVal">${fmtS(suggestedExtra)}</div><div class="stat-meta">Available: ${fmtS(ctx.netMonthlyCashFlow)}</div></div>
+                        <div class="stat-card sc-green"><div class="stat-label">Extra Payment Pool</div><div class="stat-val" id="ddExtraVal">${fmtS(suggestedExtra)}</div><div class="stat-meta">${suggestBasis ? _wfEsc(suggestBasis) : 'Available: ' + fmtS(ctx.netMonthlyCashFlow)}</div></div>
                     </div>
 
                     <div class="card" style="margin-bottom:16px;">
