@@ -229,7 +229,8 @@ export const BUDGETS = {
     // which is thinner than the 187 bytes this file already carried once and
     // will fire on the next module — raise it then, to the measured value.
     // 53 -> 54 for wealthflow-confirm.js.
-    moduleCount: 54,   // measured 54
+    // 54 -> 55 for wealthflow-outbox.js, the page half of the durable outbox.
+    moduleCount: 55,   // measured 55
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -264,7 +265,8 @@ export const BUDGETS = {
     // warm HTTP/2 connection, not a slower start. Had any of them needed to be a
     // classic script the trade would have been a different one and this comment
     // would have to say so.
-    scriptTags: 59,              // measured 59
+    // 59 -> 60 for the outbox module. renderBlockingScripts is still 2.
+    scriptTags: 60,              // measured 60
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

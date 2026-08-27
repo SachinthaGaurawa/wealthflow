@@ -270,6 +270,16 @@
         return true;
     }
 
+    /* The haptic engine lives in index.html as a top-level function, so it is
+     * reachable as window.triggerHaptic — this is the same defensive shape
+     * wealthflow-crib.js and wealthflow-history.js already use, because a
+     * module loaded before it, or in a test, must not throw for want of a
+     * buzz. Settings-gated inside triggerHaptic itself, so an owner who turned
+     * haptics off is respected without this file knowing about the setting. */
+    function _haptic(kind) {
+        try { if (typeof window.triggerHaptic === 'function') window.triggerHaptic(kind || 'light'); } catch (_) {}
+    }
+
     function _renderItem(it) {
         const mod = it.suggestedModule || 'expenses';
         const cats = CATS_BY_MODULE[mod] || CATS_BY_MODULE.expenses;
@@ -304,6 +314,7 @@
         const it = _items.find(x => x.id === id);
         if (!it) return;
         if (field === 'module') {
+            _haptic('toggle');
             it.suggestedModule = sel.value;
             // refresh that card's category options
             const card = e.target.closest('.wfrv-card');
@@ -325,6 +336,7 @@
         const it = _items.find(x => x.id === id);
         if (!it) return;
         if (act === 'file') {
+            _haptic('success');           // the tap that commits a transaction
             btn.disabled = true; btn.textContent = '⟳ Filing…';
             const res = await resolve(id, { module: it.suggestedModule, cat: it.suggestedCat });
             const card = btn.closest('.wfrv-card');
@@ -332,12 +344,14 @@
             _notify(res && res.ok !== false ? '✓ Filed & learned — won\'t ask again' : 'Could not file', res && res.ok !== false ? 'success' : 'warn');
             if ((await count()) === 0) setTimeout(() => { const ov = document.getElementById('wfReviewOverlay'); if (ov) ov.remove(); }, 400);
         } else if (act === 'skip') {
+            _haptic('light');             // deferred, not decided
             await skip(id);
             const card = btn.closest('.wfrv-card');
             if (card) { card.style.opacity = '0.4'; }
         } else if (act === 'remove') {
+            _haptic('warning');           // about to destroy a row: a different feel on purpose
             const ok = (typeof confirm === 'function') ? confirm('Delete this transaction? It will be removed from the review list and not saved anywhere.') : true;
-            if (!ok) return;
+            if (!ok) { _haptic('light'); return; }
             await remove(id);
             const card = btn.closest('.wfrv-card');
             if (card) { card.style.transition = 'opacity .3s'; card.style.opacity = '0'; setTimeout(() => card.remove(), 300); }

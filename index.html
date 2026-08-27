@@ -423,6 +423,13 @@
          on the lock screen survives until the app can apply it.
          window.WFConfirm -->
     <script type="module" src="wealthflow-confirm.js"></script>
+    <!-- Durable outbox — where a lock-screen answer waits when the app was
+         shut. sw.js is a CLASSIC worker and cannot import any of this, so it
+         writes the RAW event and decides nothing; the interpretation happens
+         here, through WFConfirm, so the rule about what a button means lives in
+         exactly one file. test/outbox_test.js reads sw.js and fails if the two
+         halves drift. window.WFOutbox -->
+    <script type="module" src="wealthflow-outbox.js"></script>
     <!-- #54 Crash Forensics — reconciles wf_error_log (JS errors) with
          wf_crash_log (sessions killed without a clean exit; an iOS renderer kill
          runs no JS handler, so it can only appear in the second), and records
@@ -23867,7 +23874,74 @@ table.amort tbody tr { page-break-inside: avoid; }
             } catch (e) { console.warn('[OS Notif] failed:', e); }
         }
 
+        /* ── Draining the durable outbox ──────────────────────────────────
+         *
+         * An answer tapped on a lock screen is written to IndexedDB by sw.js,
+         * which stores the RAW event and decides nothing — it is a classic
+         * worker and cannot import wealthflow-confirm.js, so the rule about
+         * what a button means stays in one file instead of two.
+         *
+         * This is the other half: interpret each stored answer through
+         * WFConfirm and file it. Runs once at boot for answers given while the
+         * app was shut, and again on WF_OUTBOX_ANSWER when the worker records
+         * one while a page happens to be open.
+         *
+         * Everything is guarded on the modules being present: a browser that
+         * refused IndexedDB, or a build where the scripts did not load, must
+         * degrade to "notifications need the app", never throw during boot.
+         */
+        async function _drainAnswerOutbox(why) {
+            try {
+                if (!window.WFOutbox || !window.WFConfirm) return;
+                const C = window.WFConfirm;
+                const r = await window.WFOutbox.drainOutbox({
+                    needsAppOutcome: C.APPLIED.NEEDS_APP,
+                    toIntent: (rec) => C.intentFrom(rec.action, rec.data, rec.at),
+                    apply: async (intent) => {
+                        if (intent.kind === C.KIND.LOAN) {
+                            const loans = DB.get('loans');
+                            const loan = loans.find((x) => x.id === intent.id);
+                            if (!loan) return C.APPLIED.UNKNOWN_ITEM;
+                            const out = C.applyToLoan(loan, intent);
+                            if (out.outcome === C.APPLIED.RECORDED) {
+                                loan.payments = out.payments;
+                                DB.set('loans', loans);
+                            }
+                            return out.outcome;
+                        }
+                        const received = DB.getObj('incomeReceived', {});
+                        const out = C.applyToIncome(received, intent);
+                        if (out.outcome === C.APPLIED.RECORDED) DB.set('incomeReceived', out.received);
+                        return out.outcome;
+                    },
+                });
+                if (r && r.applied > 0) {
+                    try { triggerHaptic('success'); } catch (_) {}
+                    try { renderLoans(); renderDash(); renderIncRecv(); } catch (_) {}
+                    try {
+                        notify('✓ ' + r.applied + ' answer' + (r.applied === 1 ? '' : 's')
+                            + ' you gave on your lock screen ' + (r.applied === 1 ? 'has' : 'have')
+                            + ' been filed', 'success');
+                    } catch (_) {}
+                }
+                console.log('[Outbox]', why, JSON.stringify(r));
+            } catch (e) {
+                console.warn('[Outbox] drain failed:', e && e.message);
+            }
+        }
+        window._drainAnswerOutbox = _drainAnswerOutbox;
+
         // Listen for SW notification action clicks
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'WF_OUTBOX_ANSWER') {
+                    _drainAnswerOutbox('sw-message');
+                }
+            });
+            // Answers given while this page was not running.
+            setTimeout(() => _drainAnswerOutbox('boot'), 2000);
+        }
+
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', (event) => {
                 if (event.data && event.data.type === 'WF_NOTIFICATION_ACTION') {
