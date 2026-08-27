@@ -214,7 +214,10 @@ export const BUDGETS = {
     // inlining it into index.html would cost no module and no request, and would
     // make the rule it exists for — a web search may name a merchant and may
     // never decide whether money came in or went out — untestable in isolation.
-    moduleCount: 50,   // measured 50
+    // 50 -> 51 for wealthflow-quarantine.js. totalJsBytes is NOT raised: it was
+    // moved to 1,428,000 one commit ago and this module fits inside that
+    // headroom at 1,424,213, so the ceiling is still holding and does not move.
+    moduleCount: 51,   // measured 51
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
