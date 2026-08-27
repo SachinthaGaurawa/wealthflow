@@ -84,6 +84,10 @@ const HANDLERS = {
     'feedback-status': () => import('../feedback-status.js'),
     'fifo-reconcile': () => import('../fifo-reconcile.js'),
     'fx-rate': () => import('../fx-rate.js'),
+    // Gmail Pub/Sub push. Stores encrypted statement PDFs for the device to
+    // open; holds no vault key and never decrypts. Verifies the push's OIDC
+    // token before doing anything, because this URL is public.
+    'gmail-hook': () => import('../gmail-hook.js'),
     'health': () => import('../health.js'),
     'inbox-ack': () => import('../inbox-ack.js'),
     'inbox-pull': () => import('../inbox-pull.js'),
