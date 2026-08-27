@@ -181,16 +181,69 @@ export async function hashRow(row, ctx = {}) {
   return createHash('sha256').update(tuple).digest('hex');
 }
 
+// ── which OCCURRENCE of an identity a row is ────────────────────────────────
+//
+// hashRow answers "which transaction is this". It deliberately does NOT carry a
+// time, because its main job is to recognise the SAME transaction arriving from
+// two sources — a statement row and the entry the owner typed in by hand months
+// ago. A hand-typed entry has a date and no time. Put the time in the identity
+// and the two stop matching, which defeats the one thing cross-source dedup
+// exists for.
+//
+// But "same identity" is not the same claim as "same event". Two coffees at the
+// same shop, same price, same day, no reference printed — that is one identity
+// and two real transactions, and treating the second as a duplicate deletes
+// money the owner actually spent. Against a whole year of backfilled statements
+// that is not an edge case, it is Tuesday.
+//
+// So the time is used HERE instead: as the thing that tells two occurrences of
+// one identity apart, inside a single statement. A reference number does the
+// same job better when the bank prints one.
+export function occurrenceKey(row) {
+  const ref = String((row && row.ref) || '').trim().toUpperCase();
+  if (ref) return 'R:' + ref;
+  const raw = String((row && row.time) || (row && row.date) || '');
+  const m = /(\d{2}):(\d{2})(?::(\d{2}))?/.exec(raw);
+  return m ? 'T:' + m[0] : null;
+}
+
 // ── classify a whole statement + dedup against what's already stored ────────
 //   existingHashes: Set<string> of hashes already in the DB (manual + email)
 //   enrich:        optional async (row, routed) => routed  // e.g. Tavily lookup
+//
+// TWO DIFFERENT QUESTIONS, ANSWERED DIFFERENTLY
+//
+//   Against existingHashes — the ledger, including everything typed in by hand —
+//   an identity that is already stored is a duplicate, full stop. The stored
+//   copy may carry no reference and no time, so the hash is all there is to
+//   match on, and matching on it is exactly the point.
+//
+//   Within ONE statement, an identity seen twice is only a duplicate when both
+//   rows carry the SAME occurrence key. A bank does not print one transaction
+//   twice under one reference; it does print two identical purchases. Without a
+//   key to tell them apart there is no evidence of duplication, and silently
+//   dropping the second is worse than keeping a duplicate — a duplicate is
+//   visible and removable, a deleted transaction is neither.
 export async function classifyStatement({ rows = [], existingHashes = new Set(), enrich = null, ...ctx }) {
   const out = [];
-  const seen = new Set(existingHashes);
+  const stored = existingHashes instanceof Set ? existingHashes : new Set(existingHashes || []);
+  const occurrences = new Map();          // hash -> Set of occurrence keys seen here
   for (const row of rows) {
     const hash = await hashRow(row, ctx);
-    if (seen.has(hash)) { out.push({ hash, duplicate: true, row }); continue; }
-    seen.add(hash);
+    if (stored.has(hash)) { out.push({ hash, duplicate: true, duplicateOf: 'ledger', row }); continue; }
+
+    const key = occurrenceKey(row);
+    const seenKeys = occurrences.get(hash);
+    if (seenKeys) {
+      if (key && seenKeys.has(key)) {
+        out.push({ hash, duplicate: true, duplicateOf: 'statement', row });
+        continue;
+      }
+      seenKeys.add(key || `#${seenKeys.size}`);
+    } else {
+      occurrences.set(hash, new Set([key || '#0']));
+    }
+
     let routed = routeRow(row, ctx);
     if (enrich && routed.needsReview) { try { routed = await enrich(row, routed) || routed; } catch (_) {} }
     out.push({ hash, duplicate: false, row, ...routed });
@@ -198,4 +251,4 @@ export async function classifyStatement({ rows = [], existingHashes = new Set(),
   return out;
 }
 
-export default { routeRow, hashRow, classifyStatement };
+export default { routeRow, hashRow, occurrenceKey, classifyStatement };
