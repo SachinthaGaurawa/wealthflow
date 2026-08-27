@@ -252,4 +252,9 @@ export async function toReview(records, deps = {}) {
 }
 
 const API = { rowHash, preselect, reasonFor, toBrain, toReview };
+/* The page reaches this through window, the same way every other wired
+ * module here does; the ESM export is what the tests and other modules
+ * import. Both spellings, one object. */
+if (typeof window !== 'undefined') window.WFQuarantine = API;
+
 export default API;

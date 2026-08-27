@@ -389,6 +389,40 @@
          does not import back, which is why project() takes the legs as an
          argument rather than reaching for them. window.WFSweepLedger -->
     <script type="module" src="wealthflow-sweep-ledger.js"></script>
+    <!-- ── The statement ingestion pipeline ──────────────────────────────
+         Six modules that were merged, tested and then sat dormant: nothing in
+         this file referenced any of them, so the Gmail pipeline, the backfill
+         and the corrected amortization were all shipped and none of them ran.
+         This block is what brings them to life. All six are ESM — type="module"
+         is load-bearing, and test/module_loading_test.js fails if one loses it.
+
+         Account registry — which of your accounts a statement belongs to,
+         derived from records that already exist rather than a settings screen.
+         window.WFAccounts -->
+    <script type="module" src="wealthflow-accounts.js"></script>
+    <!-- Agent 2 — asks the web what an unrecognised vendor is. A search engine
+         may NAME a merchant and may never decide which way money moved: a
+         refund from a restaurant is a credit, and "Dining" is an expense.
+         window.WFVendorOsint -->
+    <script type="module" src="wealthflow-vendor-osint.js"></script>
+    <!-- Quarantine bridge — turns a held statement row into the object the
+         review queue already understands, so rows the intake correctly held
+         back stop being invisible. Never pre-selects a module whose direction
+         contradicts the bank. window.WFQuarantine -->
+    <script type="module" src="wealthflow-quarantine.js"></script>
+    <!-- Historical backfill — the statements already sitting in the mailbox,
+         and the ledger-wide dedup that nothing had ever passed a hash set to.
+         window.WFBackfill -->
+    <script type="module" src="wealthflow-backfill.js"></script>
+    <!-- Dynamic amortization — how many payments are actually left after an
+         over- or underpayment, which the fixed l.duration could never answer.
+         window.WFAmortize -->
+    <script type="module" src="wealthflow-amortize.js"></script>
+    <!-- Notification confirmations — the button says "Yes — 127,000" and
+         writes 127,000. Also the durable outbox contract, so an answer given
+         on the lock screen survives until the app can apply it.
+         window.WFConfirm -->
+    <script type="module" src="wealthflow-confirm.js"></script>
     <!-- #54 Crash Forensics — reconciles wf_error_log (JS errors) with
          wf_crash_log (sessions killed without a clean exit; an iOS renderer kill
          runs no JS handler, so it can only appear in the second), and records

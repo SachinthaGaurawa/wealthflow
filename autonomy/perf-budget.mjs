@@ -253,7 +253,18 @@ export const BUDGETS = {
     // engine one line above: inlining it into index.html would cost no request
     // and no ratchet, and would make it untestable and part of the monolith.
     // It is deferred (type="module"), so it is not on the render path.
-    scriptTags: 53,              // measured 53
+    // 53 -> 59. Six at once, and this is the only ceiling the grand unification
+    // moved: the six modules of the statement pipeline had all been merged and
+    // then referenced by nothing, so they shipped without running. This is the
+    // commit that connects them.
+    //
+    // renderBlockingScripts is UNCHANGED at 2, which is the number that actually
+    // matters for how the app feels. A module script is deferred by definition,
+    // so none of these six delays first paint; they cost six requests against a
+    // warm HTTP/2 connection, not a slower start. Had any of them needed to be a
+    // classic script the trade would have been a different one and this comment
+    // would have to say so.
+    scriptTags: 59,              // measured 59
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
