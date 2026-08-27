@@ -74,7 +74,13 @@ describe('the lock-screen buttons are built by the module that owns them', () =>
     it('takes the title and body from the built notification too', () => {
         // Otherwise the question could quote one figure and the button another.
         expect(html).toContain('built ? built.title : title');
-        expect(html).toContain('built ? built.body : message');
+        /* The fallback is `plainBody`, not `message`, since the sweep nudge —
+         * the first caller with no figures to offer — actually took this branch
+         * and put a literal "<b>" on the lock screen. A notification body is
+         * plain text. See test/sweep_nudge_wiring_test.js, which pins the strip
+         * itself; what matters here is only that the BUILT body still wins when
+         * there is one. */
+        expect(html).toContain('built ? built.body : plainBody');
     });
 });
 

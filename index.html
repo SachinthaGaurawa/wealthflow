@@ -23882,8 +23882,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ? window.WFConfirm.notificationFor(confirm)
                     : null;
 
+                /* An OS notification body is PLAIN TEXT — the platform renders
+                 * no markup — so `message`, which is banner HTML, cannot go
+                 * through as it stands. Until now every caller passed `confirm`
+                 * and got WFConfirm's already-plain body, so this branch was
+                 * never actually taken and the defect sat here unseen; the first
+                 * caller without figures put a literal "<b>" on the lock screen.
+                 *
+                 * Stripped with the same expression showActionableBanner already
+                 * uses on the line that mirrors this message to the device panel,
+                 * so the two halves cannot disagree about what plain means. */
+                const plainBody = String(message == null ? '' : message).replace(/<[^>]+>/g, '');
+
                 await reg.showNotification(built ? built.title : title, {
-                    body: built ? built.body : message,
+                    body: built ? built.body : plainBody,
                     icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     tag: 'wf-actionable-' + id,
@@ -24001,6 +24013,28 @@ table.amort tbody tr { page-break-inside: avoid; }
              * below, which would write the scheduled figure. */
             if (window.WFConfirm && window.WFConfirm.answerFor(action)) {
                 _drainAnswerOutbox('page-action');
+                return;
+            }
+
+            /* A sweep nudge is neither of the above. It carries no amount and
+             * answers no question, so there is nothing to settle and nothing to
+             * write — both taps end here.
+             *
+             * This has to sit ABOVE the legacy branch for a reason that is not
+             * obvious: `no_<id>` there re-queues the notification for 8pm TONIGHT.
+             * That is right for "did you pay your instalment", which is still
+             * true this evening. For idle cash it is exactly the behaviour the
+             * cooldown in shouldNudge() exists to prevent — the same unchanging
+             * fact, repeated until notifications get switched off and the loan
+             * reminders go off with them. "Not now" on a sweep means days, and
+             * the state written when the banner was shown already says so. */
+            if (String(id || '').split('_')[0] === 'sweep') {
+                if (action.startsWith('yes_')) {
+                    try {
+                        showPage('targets');
+                        renderSweeper();
+                    } catch (e) { try { console.warn('[WF] sweep open:', e && e.message); } catch (_) {} }
+                }
                 return;
             }
 
@@ -24190,7 +24224,138 @@ table.amort tbody tr { page-break-inside: avoid; }
                     }
                 });
             });
+
+            /* LAST, AND WRAPPED. The income and loan reminders above are
+             * time-critical — a missed salary confirmation cannot be recovered
+             * later from anything the app knows. The sweep nudge is an
+             * opportunity, not a deadline, so it runs after them and inside its
+             * own try/catch: nothing it can do may prevent the two blocks above
+             * from having run. test/sweep_nudge_wiring_test.js pins that order. */
+            try { checkSweepNudge(); } catch (e) {
+                try { console.warn('[WF] sweep nudge:', e && e.message); } catch (_) {}
+            }
         }
+
+        /* ── the sweep nudge ───────────────────────────────────────────────────
+         *
+         * WFSweeper has been able to produce a complete, day-aware plan for
+         * several releases and has still never moved a rupee, because the only
+         * way to see one was to open the Targets page and look. Idle cash is the
+         * one thing nobody thinks to go and check: nothing is overdue, nothing
+         * is red, and the cost of ignoring it never appears on screen.
+         *
+         * WHY THE DECISION IS NOT MADE HERE
+         *
+         * Whether to interrupt someone is a judgement about the plan, and
+         * wealthflow-wealth-sweeper.js owns judgements about the plan — its own
+         * header says so, and every other surface reading these numbers goes
+         * through it. shouldNudge() holds the thresholds; this function does the
+         * three things a module deliberately cannot: read the clock, read
+         * storage, and draw.
+         *
+         * WHAT IS DELIBERATELY ABSENT: A `confirm` PAYLOAD
+         *
+         * Every other actionable banner passes `confirm`, which builds a
+         * lock-screen button reading "Yes — 127,000" that RECORDS that amount
+         * when tapped. That is right for a loan instalment, which is a past fact
+         * the owner can confirm. It would be badly wrong here.
+         *
+         * A sweep is not a fact; it is a proposal. The money moves at a BANK, by
+         * a person, and this app can only ever be told about it afterwards. A
+         * button that booked a 1,030,000 transfer from a lock screen would file
+         * a movement that never happened — the projection would then plan around
+         * cash that is still sitting in the current account, and the audit in
+         * wealthflow-sweep-ledger.js would be checking a promise about money that
+         * never left. It is the same defect wealthflow-confirm.js was written to
+         * remove, rebuilt one screen over.
+         *
+         * So this banner carries no `confirm`, its primary action opens the plan,
+         * and the recording stays where it already is: a deliberate act on the
+         * Targets page, with the numbers in front of you.
+         */
+        const _WF_SWEEP_NUDGE_KEY = 'wf_sweep_nudge';
+
+        function _wfSweepNudgeState() {
+            try {
+                const v = JSON.parse(localStorage.getItem(_WF_SWEEP_NUDGE_KEY) || '{}');
+                return (v && typeof v === 'object') ? v : {};
+            } catch (_) { return {}; }
+        }
+
+        function checkSweepNudge() {
+            if (!window.WFSweeper || !window.WFSweepLedger || !window.WFCashflow) return;
+            if (typeof window.WFSweeper.shouldNudge !== 'function') return;
+
+            const now = new Date();
+            let plan, verdict;
+            try {
+                const rates = _wfSweeperRates();
+                /* _wfCashOpts, never a hand-built options object: the runway card,
+                 * the sweeper panel and this all have to be answering about the
+                 * same money, including the legs of sweeps already recorded. */
+                plan = window.WFSweeper.sweepPlan(appData, _wfCashOpts({
+                    annualYield: Object.keys(rates).length ? rates : null,
+                }));
+                verdict = window.WFSweeper.shouldNudge({
+                    plan,
+                    state: _wfSweepNudgeState(),
+                    sweeps: window.WFSweepLedger.read(appData).sweeps,
+                    asOf: now,
+                });
+            } catch (e) {
+                try { console.warn('[WF] sweep plan:', e && e.message); } catch (_) {}
+                return;
+            }
+            if (!verdict || verdict.raise !== true) return;
+
+            const d = verdict.detail || {};
+            const today = window.WFCashflow.isoDay(now);
+            const id = 'sweep_' + today;
+            const dismissed = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
+            if (dismissed.includes(id)) return;
+
+            const where = d.top && d.top.label ? _wfEsc(d.top.label) : 'a higher-yield home';
+            const until = d.bindingDate ? fmtDatePretty(d.bindingDate) : null;
+            /* The day-aware part, and the reason this is worth saying at all: a
+             * limit without its date is a number to argue with, and the date is
+             * already computed — it is the day the projection bottoms out. */
+            const message = until
+                ? `<b>${fmt(d.placed)}</b> is sitting idle. It can move into ${where} without your runway dropping below its floor — the tightest day is <b>${until}</b>.`
+                : `<b>${fmt(d.placed)}</b> is sitting idle and can be put to work.`;
+
+            showActionableBanner({
+                id,
+                /* The figure lives in the message, not here. Both carried it
+                 * at first and the rendered banner read "Idle cash — 2,990,137
+                 * / 2,990,137 is sitting idle", which is how it looked in a real
+                 * browser rather than how it read in the source. */
+                title: '📈 Idle cash',
+                message,
+                primary: 'Review the plan',
+                secondary: 'Not now',
+                icon: '📈',
+                color: 'var(--green)',
+                /* No `confirm`. See the note above this function — a sweep is a
+                 * proposal, and a lock-screen button must not book a transfer
+                 * that only a bank can make. */
+                onPrimary: () => {
+                    showPage('targets');
+                    try { renderSweeper(); } catch (_) {}
+                    try { document.getElementById('wfSweeper').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+                },
+                onSecondary: () => { /* the cooldown below is the whole answer */ }
+            });
+
+            /* Recorded on SHOWING, not on answering. The cooldown exists to stop
+             * the same fact being repeated daily, and it was said whether or not
+             * anybody tapped anything. */
+            try {
+                _persistLocal(_WF_SWEEP_NUDGE_KEY, window.WFSweeper.nudgeShown(_wfSweepNudgeState(), plan, now));
+            } catch (e) {
+                try { console.warn('[WF] sweep nudge state:', e && e.message); } catch (_) {}
+            }
+        }
+        window.checkSweepNudge = checkSweepNudge;
 
         function checkDeadlineAlerts() {
             const s = DB.getObj('settings', {});

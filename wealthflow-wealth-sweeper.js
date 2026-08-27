@@ -362,8 +362,233 @@ export function sweepPlan(appData, opts = {}) {
     };
 }
 
+/* ── whether to raise it unprompted ───────────────────────────────────────────
+ *
+ * Everything above answers "what should move". This answers a different and
+ * narrower question: should the app INTERRUPT someone to say so.
+ *
+ * WHY THIS IS NOT THE SAME QUESTION
+ *
+ * The sweeper has been complete and correct for several releases and has still
+ * never moved a rupee, because the only way to see a plan is to open the panel
+ * and look. Idle cash is precisely the thing nobody remembers to go and check —
+ * it makes no noise, nothing is overdue, and the cost of ignoring it is a number
+ * that never appears. A plan that has to be sought out is not automation.
+ *
+ * THE RISK RUNS THE OTHER WAY TOO, AND IT IS THE BIGGER ONE
+ *
+ * Idle cash PERSISTS. It is idle today, idle tomorrow, and idle next week, so
+ * the naive rule — "tell them whenever there is something to sweep" — fires
+ * every single day forever. The predictable result is that notifications get
+ * switched off, and the loan and income reminders, which are time-critical and
+ * cannot be recovered once missed, go off with them. A nudge that costs the
+ * owner their payment reminders is a net loss no matter how good the advice is.
+ *
+ * So the rules below are mostly rules about staying quiet, and the thresholds
+ * are chosen to make silence the default:
+ *
+ *   - Materiality is measured against the owner's OWN reserve, never a fixed
+ *     number of rupees. Half a month of committed outflows sitting idle is worth
+ *     a sentence; a fixed 100,000 would be trivial to one person and most of the
+ *     year's savings to another.
+ *   - A fortnight of cooldown, which is roughly twice a month — the rhythm money
+ *     actually arrives on — rather than a daily reading of the same fact.
+ *   - The cooldown is overridden only by genuinely NEW information: half again
+ *     as much idle cash as last time, which is what a salary landing looks like.
+ *     Even then a hard three-day floor applies, because the projection moves on
+ *     its own and a jumpy curve must not be able to produce a daily alert.
+ *   - Silence for a week after any sweep. Someone who has just acted does not
+ *     need to be told again; they need to be left alone.
+ *
+ * NO CONFIDENCE RULE HERE, DELIBERATELY
+ *
+ * It would be the obvious fifth rule and it would be a duplicate: ladder() has
+ * already dropped every destination below moderate confidence before allocating,
+ * so `placed > 0` cannot be reached on a projection that is mostly estimate.
+ * Restating it here would be a second copy of a threshold — the exact shape of
+ * defect this repository has been bitten by more than once. It is written down
+ * instead, so the absence reads as a decision rather than an oversight.
+ *
+ * WHAT THIS RETURNS, AND WHAT IT REFUSES TO
+ *
+ * Facts and a verdict. No message, no currency rendering, no action ids. The
+ * surface that shows this renders the figures with the app's own formatter, the
+ * same way every other number on screen is rendered.
+ *
+ * And nothing here is an instruction to record anything. A swept rupee moves at
+ * a BANK, by a person; the app can only ever be told about it afterwards. That
+ * is why this returns a verdict to show a proposal and never an amount to write
+ * — a lock-screen button that booked a transfer nobody made would be the same
+ * defect wealthflow-confirm.js exists to remove, rebuilt somewhere new.
+ */
+
+export const NUDGE = {
+    READY: 'ready',
+    NOTHING_IDLE: 'nothing-idle',
+    NO_BASELINE: 'no-baseline',
+    NOT_MATERIAL: 'not-material',
+    RECENT_SWEEP: 'recent-sweep',
+    COOLING_DOWN: 'cooling-down',
+    TOO_SOON: 'too-soon',
+    NO_DATE: 'no-date',
+};
+
+/** Every threshold in one object, so a surface can show them and a test can read them. */
+export const NUDGE_RULES = {
+    // Idle cash worth at least half a month of committed outflows.
+    MIN_RESERVE_MULTIPLE: 0.5,
+    // Roughly twice a month, matching the rhythm money arrives on.
+    COOLDOWN_DAYS: 14,
+    // The floor that survives the growth override, so a moving projection
+    // cannot produce a daily alert.
+    MIN_GAP_DAYS: 3,
+    // Half again as much idle cash as last time is new information.
+    GROWTH_MULTIPLE: 1.5,
+    // Someone who just swept has acted. Leave them alone.
+    RECENT_SWEEP_DAYS: 7,
+};
+
+const DAY = 86400000;
+
+/** Whole days from `a` to `b`. Both are UTC midnights, so this is exact. */
+function daysBetween(a, b) {
+    return Math.round((b.getTime() - a.getTime()) / DAY);
+}
+
+/** The most recent date any sweep was recorded on, or null. */
+function latestSweepDay(sweeps) {
+    let latest = null;
+    for (const s of arr(sweeps)) {
+        const d = parseDay(s && s.date);
+        if (d && (!latest || d > latest)) latest = d;
+    }
+    return latest;
+}
+
+/**
+ * The nearest day that binds the plan, across the tranches actually holding
+ * money. The earliest one is the real constraint; a later tranche's binding day
+ * is not reached first and quoting it would overstate the room available.
+ */
+function nearestBindingDate(plan) {
+    let soonest = null;
+    for (const t of arr(plan && plan.tranches)) {
+        if (num(t.amount) <= 0) continue;
+        const d = parseDay(t.bindingDate);
+        if (d && (!soonest || d < soonest)) soonest = d;
+    }
+    return soonest ? isoDay(soonest) : null;
+}
+
+/**
+ * Should the app raise this plan on its own?
+ *
+ * `state` is what the last raise recorded — `{ lastRaisedOn, lastPlaced }` — and
+ * `sweeps` is the recorded sweep history. Both are supplied by the caller; this
+ * module has no storage and no clock, so `asOf` is required.
+ *
+ * Returns `{ raise, reason, detail }`. A refusal always names which rule held,
+ * because "no notification appeared" is otherwise indistinguishable from a bug.
+ */
+export function shouldNudge({ plan, state, sweeps, asOf } = {}) {
+    const on = parseDay(asOf);
+    // A refusal, not a throw: this runs on the notification path, and a thrown
+    // error there would take the loan and income reminders down with it.
+    if (!on) return { raise: false, reason: NUDGE.NO_DATE, detail: {} };
+
+    const p = plan || {};
+    const placed = num(p.placed);
+    if (placed <= 0) return { raise: false, reason: NUDGE.NOTHING_IDLE, detail: { placed } };
+
+    const reserve = num(p.reserve && p.reserve.amount);
+    // No reserve means no measured obligations to compare against, which means
+    // no idea what "material" is for this person. Advice would be a guess.
+    if (reserve <= 0) return { raise: false, reason: NUDGE.NO_BASELINE, detail: { placed, reserve } };
+
+    const bar = reserve * NUDGE_RULES.MIN_RESERVE_MULTIPLE;
+    if (placed < bar) {
+        return { raise: false, reason: NUDGE.NOT_MATERIAL, detail: { placed, bar, reserve } };
+    }
+
+    const swept = latestSweepDay(sweeps);
+    if (swept) {
+        const since = daysBetween(swept, on);
+        if (since >= 0 && since < NUDGE_RULES.RECENT_SWEEP_DAYS) {
+            return {
+                raise: false,
+                reason: NUDGE.RECENT_SWEEP,
+                detail: { sweptOn: isoDay(swept), daysSince: since },
+            };
+        }
+    }
+
+    const st = state || {};
+    const raisedOn = parseDay(st.lastRaisedOn);
+    if (raisedOn) {
+        const gap = daysBetween(raisedOn, on);
+        // A state stamped in the future — a clock change, or a restored backup —
+        // is read as "raised today". The conservative reading is silence.
+        const days = gap < 0 ? 0 : gap;
+        if (days < NUDGE_RULES.COOLDOWN_DAYS) {
+            const before = num(st.lastPlaced);
+            // With no previous figure there is nothing to have grown FROM, so the
+            // override cannot be established and the cooldown simply stands.
+            const grown = before > 0 && placed >= before * NUDGE_RULES.GROWTH_MULTIPLE;
+            if (!grown) {
+                return {
+                    raise: false,
+                    reason: NUDGE.COOLING_DOWN,
+                    detail: { daysSince: days, placed, lastPlaced: before },
+                };
+            }
+            if (days < NUDGE_RULES.MIN_GAP_DAYS) {
+                return {
+                    raise: false,
+                    reason: NUDGE.TOO_SOON,
+                    detail: { daysSince: days, placed, lastPlaced: before },
+                };
+            }
+        }
+    }
+
+    const holding = arr(p.tranches).filter((t) => num(t.amount) > 0);
+    return {
+        raise: true,
+        reason: NUDGE.READY,
+        detail: {
+            placed,
+            reserve,
+            // The day the runway bottoms out — the whole point of a day-aware
+            // limit is that it comes with the date that makes it true.
+            bindingDate: nearestBindingDate(p),
+            destinations: holding.length,
+            // Named so the surface can say where, without re-deriving it.
+            top: holding.slice().sort((a, b) => num(b.amount) - num(a.amount))[0] || null,
+            projectedAnnualGain: p.projectedAnnualGain == null ? null : num(p.projectedAnnualGain),
+        },
+    };
+}
+
+/**
+ * The state to store once a nudge has actually been shown.
+ *
+ * Separate from shouldNudge() on purpose: deciding and recording are different
+ * acts, and a decision function that quietly wrote state could not be called
+ * twice — which a render path does routinely.
+ */
+export function nudgeShown(state, plan, asOf) {
+    const on = parseDay(asOf);
+    return {
+        ...(state && typeof state === 'object' ? state : {}),
+        lastRaisedOn: on ? isoDay(on) : null,
+        lastPlaced: num(plan && plan.placed),
+        raises: num((state || {}).raises) + 1,
+    };
+}
+
 const API = {
-    HORIZONS, DESTINATIONS, reserveFloor, maxSweep, ladder, sweepPlan,
+    HORIZONS, DESTINATIONS, NUDGE, NUDGE_RULES,
+    reserveFloor, maxSweep, ladder, sweepPlan, shouldNudge, nudgeShown,
 };
 
 if (typeof window !== 'undefined') window.WFSweeper = API;
