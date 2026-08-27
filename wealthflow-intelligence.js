@@ -149,10 +149,29 @@
         return out;
     }
 
-    // Public: returns a Promise resolving to an array of candidate passwords.
-    async function vaultPdfPasswords() {
+    /* Public: the passwords to try on a locked statement PDF.
+     *
+     * Two sources, and they are deliberately different things:
+     *   - the BANK PASSWORD VAULT (wealthflow-vault.js): passwords the owner
+     *     actually typed, encrypted under a key derived from the master PIN.
+     *     Only available when that vault has been unlocked this session, since
+     *     its key exists only in memory and only after the PIN is entered.
+     *   - THIS vault: NIC / date of birth / card last-4, from which likely
+     *     passwords are derived. Guesses, and ordered last accordingly.
+     *
+     * When the password vault is locked — or was never set up — this degrades
+     * to exactly the behaviour it had before: derived guesses only.
+     */
+    async function vaultPdfPasswords(bank) {
         var v = await vaultGet();
-        return _pdfCandidatesFrom(v);
+        var derived = _pdfCandidatesFrom(v);
+        try {
+            if (window.WFVault && window.WFVault.isUnlocked()) {
+                var r = await window.WFVault.list();
+                if (r && r.ok) return window.WFVault.candidatesFor(bank, r.entries, derived);
+            }
+        } catch (_) { /* the derived list below is still a real answer */ }
+        return derived;
     }
 
     /* =========================================================================
