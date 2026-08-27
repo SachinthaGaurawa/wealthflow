@@ -79,7 +79,7 @@ export const QUARANTINE_TEXT = {
 
 /* The parser grades its own evidence for a row's direction. Only the first is
  * the bank's arithmetic; the rest are inference of decreasing strength. */
-const PROVEN_SOURCES = new Set(['balance', 'marker', 'column', 'sign']);
+export const PROVEN_SOURCES = new Set(['balance', 'marker', 'column', 'sign']);
 
 const num = (v) => {
     const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(/,/g, ''));
@@ -172,7 +172,7 @@ export async function unlock(bytes, candidates, openPdf) {
 /* ── 3. the cross-check ───────────────────────────────────────────────────── */
 
 /** Which way the money moved, according to the module that routed it. */
-const MODULE_DIRECTION = {
+export const MODULE_DIRECTION = {
     income: 'credit',
     cc_payment: 'credit',
     expenses: 'debit',
@@ -325,7 +325,26 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
         } else {
             quarantined.push({
                 scope: 'row', reason: verdict.reason, detail: verdict.detail, bank, id,
-                row: { date: row.date, desc: row.narration || (routed.fields && routed.fields.desc) || '', amount: num(row.amount) },
+                /* The direction and the router's answer travel WITH the
+                 * quarantine record, because both of the things that read it
+                 * need them. The review card cannot say "money in" or "money
+                 * out" without the first, and it cannot pre-select a best guess
+                 * without the second — a one-tap confirmation with nothing
+                 * pre-selected is just a form. Agent 2 needs the same two: it
+                 * refuses to look up a row whose direction the bank did not
+                 * prove, and it has nothing to upgrade without a routing. */
+                row: {
+                    date: row.date,
+                    desc: row.narration || (routed.fields && routed.fields.desc) || '',
+                    amount: num(row.amount),
+                    direction: row.direction,
+                    directionSource: row.directionSource,
+                },
+                routed: {
+                    module: routed.module,
+                    confidence: num(routed.confidence),
+                    needsReview: !!routed.needsReview,
+                },
             });
         }
     }
