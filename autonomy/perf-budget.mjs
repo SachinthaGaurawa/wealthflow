@@ -174,7 +174,7 @@ export const BUDGETS = {
     // Moves ONCE, to the measured value with ~1.1% headroom, and is NOT
     // pre-raised for the sweeper's interface — that lands in index.html and is
     // counted by htmlBytes, which still holds.
-    totalJsBytes: 1_374_000,     // measured 1,359,999 across 47 modules
+    totalJsBytes: 1_395_000,     // measured 1,380,134 across 48 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -185,7 +185,12 @@ export const BUDGETS = {
     // the cash flow engine and the sweeper: inlining it into index.html would
     // cost no module and no request, and would make the one rule that stops a
     // transfer being subtracted twice untestable in isolation.
-    moduleCount: 47,   // measured 47
+    // 47 -> 48 for wealthflow-mail-intake.js. It is NOT yet referenced from
+    // index.html — scriptTags is unchanged at 53 — because the server hook that
+    // feeds it does not exist yet. The module ships first and alone so its
+    // security property (no vault key ever reaches a return value) is reviewed
+    // on its own, rather than inside a diff that also adds a mailbox endpoint.
+    moduleCount: 48,   // measured 48
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
