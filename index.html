@@ -21239,21 +21239,27 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null };
 
+        /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
+         * inherits the chip's own colour through stroke="currentColor", so each
+         * stage reads in the colour of its state without a second declaration —
+         * which an emoji, being a fixed-colour glyph from the system font, can
+         * never do. The names below are keys into that icon set. */
         function _mailStageChip(stage, reason) {
             const map = {
-                waiting:    ['⏳', 'Waiting',    'var(--text3)'],
-                assembling: ['🧩', 'Assembling', 'var(--blue)'],
-                unlocking:  ['🔓', 'Unlocking',  'var(--blue)'],
-                reading:    ['📄', 'Reading',    'var(--blue)'],
-                filed:      ['✅', 'Filed',      'var(--green)'],
-                held:       ['⚠️', 'Needs review', 'var(--amber, #f59e0b)'],
-                failed:     ['✕', 'Failed',      'var(--red)'],
+                waiting:    ['clock',       'Waiting',      'var(--text3)'],
+                assembling: ['refresh',     'Assembling',   'var(--blue)'],
+                unlocking:  ['lock',        'Unlocking',    'var(--blue)'],
+                reading:    ['fileText',    'Reading',      'var(--blue)'],
+                filed:      ['checkCircle', 'Filed',        'var(--green)'],
+                held:       ['alert',       'Needs review', 'var(--amber, #f59e0b)'],
+                failed:     ['x',           'Failed',       'var(--red)'],
             };
             const [icon, label, color] = map[stage] || map.waiting;
+            const glyph = (window.WFIcon && WFIcon.has(icon)) ? WFIcon(icon) : '';
             return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;'
                 + 'color:' + color + ';background:color-mix(in srgb, ' + color + ' 12%, transparent);'
                 + 'border:1px solid color-mix(in srgb, ' + color + ' 30%, transparent);'
-                + 'border-radius:999px;padding:3px 9px;">' + icon + ' ' + _wfEsc(label)
+                + 'border-radius:999px;padding:3px 9px;">' + glyph + _wfEsc(label)
                 + (reason ? ' · ' + _wfEsc(reason) : '') + '</span>';
         }
 
@@ -21293,7 +21299,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             host.innerHTML = `
                 <div class="card" style="padding:16px;">
                     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-                        <div style="font-size:20px;">📬</div>
+                        <div style="font-size:20px;display:flex;align-items:center;color:var(--accent);">${(window.WFIcon && WFIcon.has('cloudDownload')) ? WFIcon('cloudDownload') : ''}</div>
                         <div style="flex:1;min-width:0;">
                             <div style="font-weight:800;font-size:14.5px;color:var(--text);">Statement Sync</div>
                             <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
@@ -21302,7 +21308,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                             </div>
                         </div>
                         <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' ? 'disabled' : ''}>
-                            ${st.stage === 'running' ? '⏳ Checking…' : '↻ Check now'}
+                            ${st.stage === 'running'
+                                ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
+                                : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
                         </button>
                     </div>
                     ${banner}
@@ -23063,7 +23071,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                  bank password. See wealthflow-vault.js. -->
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Bank Statement Passwords</div><div class="setting-desc">Passwords your banks put on statement PDFs. Encrypted with your PIN — never uploaded, never synced.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openBankVault()">🔑 ${(window.WFVault && window.WFVault.isSet()) ? 'Manage ✓' : 'Set Up'}</button>
+                <button class="btn btn-secondary btn-sm" onclick="openBankVault()">${(window.WFIcon ? WFIcon('lock') : '')} ${(window.WFVault && window.WFVault.isSet()) ? 'Manage' : 'Set Up'}</button>
             </div>
             <!-- The ID-details vault has existed since v7.7.0 and had NO caller:
                  openVaultModal was defined, exported on window.wfVault, and
@@ -23071,7 +23079,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                  because the owner had no way to put anything in it. -->
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Statement ID Details</div><div class="setting-desc">NIC, date of birth and card last-4. Sri Lankan banks commonly use one of these as the PDF password.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openIdVault()">🪪 ${(window.wfVault && window.wfVault.exists && window.wfVault.exists()) ? 'Saved ✓' : 'Add Details'}</button>
+                <button class="btn btn-secondary btn-sm" onclick="openIdVault()">${(window.WFIcon ? WFIcon('card') : '')} ${(window.wfVault && window.wfVault.exists && window.wfVault.exists()) ? 'Saved' : 'Add Details'}</button>
             </div>
         </div>
 
@@ -24655,11 +24663,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * at first and the rendered banner read "Idle cash — 2,990,137
                  * / 2,990,137 is sitting idle", which is how it looked in a real
                  * browser rather than how it read in the source. */
-                title: '📈 Idle cash',
+                /* Plain text, no glyph. This string is also the OS
+                 * notification title, and a lock screen renders text only — an
+                 * inline SVG would appear as markup and an emoji is not allowed
+                 * anywhere in this app. The banner's own icon is set below. */
+                title: 'Idle cash',
                 message,
                 primary: 'Review the plan',
                 secondary: 'Not now',
-                icon: '📈',
+                icon: (window.WFIcon ? WFIcon('trendUp') : ''),
                 color: 'var(--green)',
                 /* No `confirm`. See the note above this function — a sweep is a
                  * proposal, and a lock-screen button must not book a transfer
@@ -27368,7 +27380,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             overlay.innerHTML = `
                 <div class="md" style="max-width:560px;">
                     <div class="md-hdr">
-                        <div class="md-title">🔑 Bank Statement Passwords</div>
+                        <div class="md-title">${(window.WFIcon ? WFIcon('lock') : '')} Bank Statement Passwords</div>
                         <button class="md-x" aria-label="Close" id="_bv_close"><i data-wfi="x"></i></button>
                     </div>
                     <div id="_bv_body" style="padding:4px 0 8px;"></div>
@@ -27403,7 +27415,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 <div id="_bv_err" style="color:var(--red);font-size:12px;text-align:center;min-height:18px;"></div>
                 <div class="md-ftr">
                     <button class="btn btn-ghost" id="_bv_cancel">Cancel</button>
-                    <button class="btn btn-primary" id="_bv_go">🔓 Unlock</button>
+                    <button class="btn btn-primary" id="_bv_go">${(window.WFIcon ? WFIcon('lock') : '')} Unlock</button>
                 </div>`;
             body.querySelector('#_bv_cancel').onclick = close;
             setTimeout(() => { const el = body.querySelector('#_bv_pin'); if (el) el.focus(); }, 250);
@@ -27420,14 +27432,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const auth = DB.getObj('auth');
                 if (auth && auth.pin) {
                     const h = await sha256(pin + 'wf_salt_sg2026');
-                    if (h !== auth.pin) { err.textContent = '❌ Incorrect PIN'; return; }
+                    if (h !== auth.pin) { err.textContent = 'Incorrect PIN'; return; }
                 }
                 err.textContent = '';
                 const r = await window.WFVault.unlock(pin);
                 if (!r.ok) {
                     err.textContent = r.reason === window.WFVault.VAULT.NO_CRYPTO
                         ? 'Secure storage unavailable in this browser'
-                        : '❌ Could not unlock with that PIN';
+                        : 'Could not unlock with that PIN';
                     return;
                 }
                 try { triggerHaptic('success'); } catch (_) {}
@@ -27451,7 +27463,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         <button class="btn btn-secondary btn-sm" id="_bv_add" style="width:100%;">+ Add a bank</button>
                         <div class="md-ftr" style="margin-top:16px;">
                             ${window.WFVault.isSet() ? '<button class="btn btn-ghost" id="_bv_wipe" style="color:var(--red);">Delete vault</button>' : '<span></span>'}
-                            <button class="btn btn-primary" id="_bv_save">🔐 Save securely</button>
+                            <button class="btn btn-primary" id="_bv_save">${(window.WFIcon ? WFIcon('lock') : '')} Save securely</button>
                         </div>`;
                     const host = body.querySelector('#_bv_rows');
                     if (!rows.length) {
@@ -27464,11 +27476,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             <div style="display:flex;gap:8px;margin-bottom:8px;">
                                 <input class="fi _bv_bank" list="_bv_banks" placeholder="Bank (e.g. HNB)" style="flex:1;">
                                 <input class="fi _bv_label" placeholder="Label (optional)" style="flex:1;">
-                                <button class="btn btn-ghost btn-sm _bv_del" title="Remove" style="color:var(--red);flex:0 0 auto;">✕</button>
+                                <button class="btn btn-ghost btn-sm _bv_del" title="Remove" style="color:var(--red);flex:0 0 auto;">${(window.WFIcon ? WFIcon('x') : '')}</button>
                             </div>
                             <div style="display:flex;gap:8px;">
                                 <input class="fi _bv_pw" type="password" placeholder="Statement password" autocomplete="off" spellcheck="false" style="flex:1;font-family:var(--mono);">
-                                <button class="btn btn-ghost btn-sm _bv_eye" title="Show" style="flex:0 0 auto;">👁</button>
+                                <button class="btn btn-ghost btn-sm _bv_eye" title="Show" style="flex:0 0 auto;">${(window.WFIcon ? WFIcon('eye') : '')}</button>
                             </div>`;
                         // Values assigned as PROPERTIES, never interpolated into
                         // the markup above — see the note on this function.
@@ -27493,7 +27505,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     };
                     const wipe = body.querySelector('#_bv_wipe');
                     if (wipe) wipe.onclick = () => {
-                        showConfirm('🗑️', 'Delete the password vault?',
+                        showConfirm('trash', 'Delete the password vault?',
                             'Every saved statement password is erased from this device. This cannot be undone.',
                             'btn-danger', 'Delete', () => {
                                 window.WFVault.destroy();
@@ -27508,7 +27520,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const r = await window.WFVault.save(usable);
                         if (!r.ok) { notify('Could not save — secure storage refused the write', 'error'); return; }
                         try { triggerHaptic('success'); } catch (_) {}
-                        notify(`🔐 ${usable.length} password${usable.length === 1 ? '' : 's'} encrypted on this device`, 'success');
+                        notify(`${usable.length} password${usable.length === 1 ? '' : 's'} encrypted on this device`, 'success');
                         close();
                         try { renderSettings(); } catch (_) {}
                     };
