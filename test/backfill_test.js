@@ -195,12 +195,20 @@ describe('no real transaction is deleted in the name of zero duplicates', () => 
  * READING THE LEDGER
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('collecting what is already stored', () => {
-    it('names only real record keys', () => {
+    it('names only real record keys', async () => {
         /* A typo here fails silently as "no duplicates found" — the worst shape
          * of bug this pipeline produces. The canonical list lives in index.html
-         * and is read from it rather than copied. */
-        const fs = require('node:fs');
-        const path = require('node:path');
+         * and is read from it rather than copied.
+         *
+         * Imported rather than require()d: this package is ESM, and
+         * test/esm_require_test.js fails any tracked .js file that reaches for a
+         * bare require. It did not fail when this file was first written,
+         * because that guard scans `git ls-files` and the file was still
+         * untracked — so a violation in a NEW file cannot surface until the run
+         * after it is committed. Worth knowing before trusting a green local
+         * run on a file you have just created. */
+        const fs = await import('node:fs');
+        const path = await import('node:path');
         const html = fs.readFileSync(path.resolve(import.meta.dirname, '../index.html'), 'utf8');
         const line = /_WF_RECORD_KEYS\s*=\s*\[([^\]]+)\]/.exec(html);
         expect(line, 'could not find _WF_RECORD_KEYS in index.html').toBeTruthy();
