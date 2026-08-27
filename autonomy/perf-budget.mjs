@@ -174,7 +174,14 @@ export const BUDGETS = {
     // Moves ONCE, to the measured value with ~1.1% headroom, and is NOT
     // pre-raised for the sweeper's interface — that lands in index.html and is
     // counted by htmlBytes, which still holds.
-    totalJsBytes: 1_395_000,     // measured 1,380,134 across 48 modules
+    // RAISED 1,395,000 -> 1,428,000. The previous commit left this alone with a
+    // 187-byte margin and a note saying the next module would fire it and that
+    // it should then move to the measured value with the reason written down.
+    // wealthflow-vendor-osint.js is that module, the ceiling fired, and this is
+    // the reason: Agent 2 is the only thing in the statement pipeline that can
+    // turn a quarantined row into a filed one without asking the owner, and it
+    // is 18 KB of scrub-and-firewall around a network call that already exists.
+    totalJsBytes: 1_428_000,     // measured 1,412,702 across 50 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -203,7 +210,11 @@ export const BUDGETS = {
     // premise is that a ceiling which has not fired does not move. The next
     // module, or a few added lines in this one, will fire it; raise it then,
     // to the measured value, with the reason written down.
-    moduleCount: 49,   // measured 49
+    // 49 -> 50 for wealthflow-vendor-osint.js. Same trade as every line above:
+    // inlining it into index.html would cost no module and no request, and would
+    // make the rule it exists for — a web search may name a merchant and may
+    // never decide whether money came in or went out — untestable in isolation.
+    moduleCount: 50,   // measured 50
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
