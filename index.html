@@ -23778,7 +23778,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // Show one actionable banner at the top of the screen
         // ISSUE 4 FIX — Enhanced actionable banner with proper queueing + persistence
-        function showActionableBanner({ id, title, message, primary = 'Yes', secondary = 'Not Yet', onPrimary, onSecondary, color = 'var(--accent)', icon = '🔔' }) {
+        function showActionableBanner({ id, title, message, primary = 'Yes', secondary = 'Not Yet', onPrimary, onSecondary, color = 'var(--accent)', icon = '🔔', confirm = null }) {
             // Avoid duplicate banners
             if (document.getElementById('ab_' + id)) return;
 
@@ -23846,30 +23846,55 @@ table.amort tbody tr { page-break-inside: avoid; }
             // (Removed the 60s auto-dismiss to ensure visibility)
 
             // Try OS-level notification with actions (Android Chrome supports actions)
-            _showOSNotification({ id, title, message, primary, secondary });
+            _showOSNotification({ id, title, message, primary, secondary, confirm });
             triggerHaptic('medium');
             // Audio chime if sounds are enabled
             try { playUISound('notification'); } catch (e) { }
         }
 
-        async function _showOSNotification({ id, title, message, primary, secondary }) {
+        async function _showOSNotification({ id, title, message, primary, secondary, confirm = null }) {
             try {
                 if (!('Notification' in window)) return;
                 if (Notification.permission !== 'granted') return;
                 if (!('serviceWorker' in navigator)) return;
                 const reg = await navigator.serviceWorker.getRegistration();
                 if (!reg) return;
-                await reg.showNotification(title, {
-                    body: message,
+
+                /* THE BUTTON MUST SAY WHAT IT WRITES.
+                 *
+                 * The old actions were `yes_<id>` / `no_<id>` labelled "Yes",
+                 * while the handler wrote `l.monthly` — the scheduled figure,
+                 * which the owner was never shown and never agreed to. Pay
+                 * 150,000 against a 100,000 instalment, tap Yes, and the ledger
+                 * silently recorded 100,000.
+                 *
+                 * WFConfirm builds both halves from ONE amount, so the label and
+                 * the record cannot disagree; its own test reads the digits back
+                 * out of the button title and asserts they match what gets
+                 * written. It also adds the third action — "Different amount" —
+                 * which writes nothing and opens the app, because a figure the
+                 * owner has not given must not be guessed at.
+                 *
+                 * `built` is null when a caller has no figures to offer (any
+                 * other kind of prompt), and those keep the old two-button
+                 * shape rather than growing a fake amount. */
+                const built = (confirm && window.WFConfirm)
+                    ? window.WFConfirm.notificationFor(confirm)
+                    : null;
+
+                await reg.showNotification(built ? built.title : title, {
+                    body: built ? built.body : message,
                     icon: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     badge: 'https://res.cloudinary.com/dzrfpc9be/image/upload/v1777660556/WealthFlow_Logo_tytp9p.png',
                     tag: 'wf-actionable-' + id,
                     requireInteraction: true,
-                    actions: [
+                    actions: built ? built.actions : [
                         { action: 'yes_' + id, title: '✅ ' + primary },
                         { action: 'no_' + id, title: '⏰ ' + secondary }
                     ],
-                    data: { actionableId: id, type: 'wf_actionable' }
+                    data: built
+                        ? Object.assign({}, built.data, { actionableId: id })
+                        : { actionableId: id, type: 'wf_actionable' }
                 });
             } catch (e) { console.warn('[OS Notif] failed:', e); }
         }
@@ -23953,6 +23978,36 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         function _handleNotificationAction(action, id) {
             console.log('[Action] Got', action, 'for', id);
+
+            /* "Different amount" is the one answer that MUST open the app: the
+             * figure is exactly what is unknown, and guessing it is the defect
+             * this whole path was rebuilt to remove. sw.js does not settle it in
+             * the background, so it arrives here — and the right response is the
+             * app's own prompt, which asks. */
+            if (window.WFConfirm && action === window.WFConfirm.ACTION_ID[window.WFConfirm.ANSWER.DIFFERENT]) {
+                const bits = String(id || '').split('_');
+                const ym = bits[2] ? bits[2].slice(0, 4) + '-' + bits[2].slice(4, 6) : '';
+                try {
+                    if (bits[0] === 'loan' && ym) toggleLoanInstallment(bits[1], ym);
+                    else if (bits[0] === 'income') confirmIncomeReceived(bits[1]);
+                } catch (e) { console.warn('[Action] could not open the prompt:', e && e.message); }
+                return;
+            }
+
+            /* yes_scheduled and not_yet are recorded by the service worker into
+             * the outbox and applied by _drainAnswerOutbox. If one reaches here
+             * anyway — an older worker still controlling the page, say — the
+             * drain is the right place for it rather than the legacy branch
+             * below, which would write the scheduled figure. */
+            if (window.WFConfirm && window.WFConfirm.answerFor(action)) {
+                _drainAnswerOutbox('page-action');
+                return;
+            }
+
+            /* LEGACY. A notification created before this change may still be
+             * sitting on a lock screen, and its actions are `yes_<id>` /
+             * `no_<id>`. Those still have to work, so this branch stays — it is
+             * not dead code, it is the tail of the previous version. */
             // The id format is "income_<sourceId>_<YYYYMM>" or "loan_<loanId>_<YYYYMM>" etc.
             const parts = id.split('_');
             const type = parts[0];
@@ -24072,6 +24127,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     secondary: 'Not Yet',
                     icon: '💰',
                     color: 'var(--green)',
+                    /* The figures the lock-screen buttons are built from. Same
+                     * src.monthly the message above shows, so the question and
+                     * the button cannot quote different numbers. */
+                    confirm: { kind: 'income', id: src.id, month: curMonthStr, amount: src.monthly, name: src.name },
                     onPrimary: () => {
                         confirmIncomeReceived(src.id);
                     },
@@ -24113,6 +24172,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     secondary: 'Not Yet',
                     icon: '🏦',
                     color: 'var(--blue)',
+                    confirm: { kind: 'loan', id: l.id, month: curMonthStr, amount: l.monthly, name: l.name },
                     onPrimary: () => {
                         toggleLoanInstallment(l.id, curMonthStr);
                     },
