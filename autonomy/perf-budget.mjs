@@ -190,7 +190,20 @@ export const BUDGETS = {
     // feeds it does not exist yet. The module ships first and alone so its
     // security property (no vault key ever reaches a return value) is reviewed
     // on its own, rather than inside a diff that also adds a mailbox endpoint.
-    moduleCount: 48,   // measured 48
+    // 48 -> 49 for wealthflow-accounts.js. Same shape as the line above: it is
+    // NOT referenced from index.html — scriptTags is unchanged at 53 — because
+    // the pipeline that consumes it is still being assembled. It ships alone so
+    // that the one decision it makes (route silently, or send to the Quarantine
+    // Zone) is reviewed on its own, rather than inside a diff that also moves
+    // mail through it.
+    //
+    // NOTE FOR THE NEXT READER: totalJsBytes above is NOT raised here, and the
+    // margin is now 187 bytes (1,394,813 of 1,395,000). That is uncomfortable
+    // and it is deliberate — the ceiling is still holding, and this file's whole
+    // premise is that a ceiling which has not fired does not move. The next
+    // module, or a few added lines in this one, will fire it; raise it then,
+    // to the measured value, with the reason written down.
+    moduleCount: 49,   // measured 49
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
