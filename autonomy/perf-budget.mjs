@@ -221,7 +221,11 @@ export const BUDGETS = {
     // moved to 1,428,000 one commit ago and this module fits inside that
     // headroom at 1,424,213, so the ceiling is still holding and does not move.
     // 51 -> 52 for wealthflow-backfill.js.
-    moduleCount: 52,   // measured 52
+    // 52 -> 53 for wealthflow-amortize.js. totalJsBytes is NOT raised: it is
+    // still holding at 1,453,744 of 1,455,000. That is 1,256 bytes of margin,
+    // which is thinner than the 187 bytes this file already carried once and
+    // will fire on the next module — raise it then, to the measured value.
+    moduleCount: 53,   // measured 53
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
