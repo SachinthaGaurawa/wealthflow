@@ -95,7 +95,26 @@ export const BUDGETS = {
     // main carried no other open work at the time, so the branch tree and the
     // merged tree are the same thing. Moves once, to the measured figure with
     // ~1.1% headroom, and is not pre-raised for anything not yet written.
-    htmlBytes: 1_664_000,        // measured 1,645,916 with the sweep ledger UI
+    // RAISED for the sweep nudge — the investment work the note above said would
+    // "justify its own move when it lands". This is that move, and it is the
+    // measurement, not the anticipation.
+    //
+    // The growth in index.html is checkSweepNudge(), the nudge-state accessor,
+    // the sweep branch in _handleNotificationAction, and the comments recording
+    // two decisions a later edit must not be able to undo quietly: why the
+    // banner passes NO `confirm` payload (a lock-screen button that booked a
+    // transfer would file money that never moved), and why the sweep tap must be
+    // handled ABOVE the legacy branch (which re-queues for 8pm tonight — right
+    // for an instalment, daily nagging for idle cash).
+    //
+    // moduleCount, scriptTags and renderBlockingScripts are all UNCHANGED at 55,
+    // 60 and 2. The decision went into wealthflow-wealth-sweeper.js, which owns
+    // sweep judgement by its own header, rather than into a new file — so this
+    // adds bytes but not a request. Only the two size ceilings move.
+    //
+    // Moves ONCE, to the measured figure with the ~1.1% headroom every previous
+    // move in this file has used.
+    htmlBytes: 1_683_000,        // measured 1,665,134 with the sweep nudge
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -187,7 +206,17 @@ export const BUDGETS = {
     // RAISED 1,455,000 -> 1,481,000. The previous commit said this would fire on
     // the next module, at 1,256 bytes of margin. It did, on the first one added
     // after it — which is the ratchet doing its job rather than a surprise.
-    totalJsBytes: 1_481_000,     // measured 1,466,530 across 54 modules
+    // RAISED for shouldNudge() and nudgeShown() in wealthflow-wealth-sweeper.js,
+    // and the rules block above them. Most of the growth is that comment: it
+    // records why the thresholds are what they are, and — the part worth the
+    // bytes — why there is deliberately NO confidence rule, since ladder() has
+    // already excluded every destination below moderate confidence and a second
+    // copy of that threshold is the exact defect shape this repo keeps hitting.
+    // An absence with no reason beside it gets "fixed" by the next reader.
+    //
+    // No new module: 55 modules before and after. Moves ONCE, to the measured
+    // figure with the ~1% headroom the previous move used.
+    totalJsBytes: 1_502_000,     // measured 1,487,892 across 55 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
