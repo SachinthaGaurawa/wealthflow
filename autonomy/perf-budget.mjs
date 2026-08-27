@@ -181,7 +181,10 @@ export const BUDGETS = {
     // the reason: Agent 2 is the only thing in the statement pipeline that can
     // turn a quarantined row into a filed one without asking the owner, and it
     // is 18 KB of scrub-and-firewall around a network call that already exists.
-    totalJsBytes: 1_428_000,     // measured 1,412,702 across 50 modules
+    // RAISED 1,428,000 -> 1,455,000. Fired on wealthflow-backfill.js, which is
+    // the module that finally passes `existingHashes` to a dedup engine that
+    // has accepted the argument, and never received it, since it was written.
+    totalJsBytes: 1_455_000,     // measured 1,440,709 across 52 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -217,7 +220,8 @@ export const BUDGETS = {
     // 50 -> 51 for wealthflow-quarantine.js. totalJsBytes is NOT raised: it was
     // moved to 1,428,000 one commit ago and this module fits inside that
     // headroom at 1,424,213, so the ceiling is still holding and does not move.
-    moduleCount: 51,   // measured 51
+    // 51 -> 52 for wealthflow-backfill.js.
+    moduleCount: 52,   // measured 52
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
