@@ -289,6 +289,15 @@
          AES-256-GCM ciphertext in localStorage under wf_vault_enc, and never touches
          appData, so it is not synced to Firestore. -->
     <script src="wealthflow-intelligence.js" defer></script>
+    <!-- Bank statement passwords. A SECOND vault, and deliberately so: the one
+         above keys itself from a device secret stored beside its own ciphertext
+         (its header says as much, honestly), which is a fair trade for a NIC and
+         not one for a bank password. This one derives its key from the master
+         PIN at 310k PBKDF2 rounds, so the file on disk is worthless without
+         something only the owner knows. It never touches appData, so it can
+         never reach the Firestore sync — test/vault_test.js asserts that against
+         the module's own source. ESM; window.WFVault. -->
+    <script type="module" src="wealthflow-vault.js"></script>
     <!-- Ledger audit (Step 2) is loaded ON DEMAND, not here: see
          _wfLoadLedgerAudit(). It is an occasional maintenance tool, and the
          payload budget counts script requests for a reason — a 51st request on
@@ -418,6 +427,20 @@
          over- or underpayment, which the fixed l.duration could never answer.
          window.WFAmortize -->
     <script type="module" src="wealthflow-amortize.js"></script>
+    <!-- Statement router — routeRow, the SHA-256 row hash and classifyStatement.
+         Imported only by tests until now: Statement Sync is the first caller in
+         the page, and the first to pass `existingHashes`, which classifyStatement
+         has accepted since it was written and nothing had ever supplied. Without
+         it every import was deduplicated against itself only.
+         window.WFStatementRouter -->
+    <script type="module" src="wealthflow-statement-router.js"></script>
+    <!-- The device half of the mail pipeline. gmail-hook.js has been routed at
+         /api/gmail-hook and this module has been written and tested since before
+         either had a screen; nothing in this file referenced it, so no statement
+         that arrived by mail was ever assembled, unlocked or filed. It does the
+         work the server deliberately cannot: the ciphertext is opened HERE, with
+         passwords that never leave the device. window.WFMailIntake -->
+    <script type="module" src="wealthflow-mail-intake.js"></script>
     <!-- Notification confirmations — the button says "Yes — 127,000" and
          writes 127,000. Also the durable outbox contract, so an answer given
          on the lock screen survives until the app can apply it.
@@ -5446,6 +5469,15 @@
                          a new account with an empty ledger is not shown a scary
                          empty box. -->
                     <div id="wfRunway" style="margin-bottom:16px; display:none;"></div>
+                    <!-- Statement Sync. The mail pipeline had no face at all:
+                         gmail-hook.js has been routed at /api/gmail-hook and
+                         wealthflow-mail-intake.js has been written and tested
+                         since before this card existed, and there was no way to
+                         see whether either had ever done anything. Rendered by
+                         renderMailSync(); ALWAYS visible, including when nothing
+                         is connected, because "nothing appeared" was the whole
+                         complaint this answers. -->
+                    <div id="wfMailSync" style="margin-bottom:16px;"></div>
                     <div class="g5" id="dashStats" style="margin-bottom:16px;"></div>
 
                     <div class="golden-frame">
@@ -21169,6 +21201,269 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window._wfCashOpts = _wfCashOpts;
 
+        /* ── STATEMENT SYNC ────────────────────────────────────────────────────
+         *
+         * The mail pipeline has existed, fully tested, with no face:
+         *   gmail-hook.js            routed at /api/gmail-hook (api/router.js)
+         *   wealthflow-mail-ingest   decides what in a mailbox is a statement
+         *   wealthflow-mail-intake   assembles, unlocks and files it on-device
+         * — and nothing in this file referenced the last one, so the device half
+         * never ran and there was no screen on which its absence would show.
+         *
+         * WHAT THIS CARD REFUSES TO DO
+         *
+         * Look busy. It reports the state it can actually establish, including
+         * "not connected", and says exactly what is missing when it is. A sync
+         * panel that showed a hopeful spinner while nothing was wired is how the
+         * pipeline came to be described as live when no part of it could run.
+         *
+         * THE STAGES ARE REAL, NOT DECORATIVE
+         *
+         * Each one corresponds to a step that can fail on its own and be seen to:
+         *   waiting     the manifest is in Firestore; parts not fetched yet
+         *   assembling  parts being read and joined  (WFMailIntake.assemble)
+         *   unlocking   trying vault passwords on the PDF (WFMailIntake.unlock)
+         *   reading     parsing the decrypted statement
+         *   filed       rows applied to the ledger
+         *   held        quarantined for review, with the reason shown
+         */
+        const MAIL_ROOT = 'wf-mail';
+
+        /* Must match gmail-hook.js exactly: `emailAddress.replace(/[^a-z0-9]/g,'_')`.
+         * Note it does NOT lower-case first, so an address with capitals maps
+         * them to underscores — copied verbatim rather than "fixed" here,
+         * because the two sides have to agree and the server is the writer. */
+        function _mailUserKey(email) {
+            return String(email || '').replace(/[^a-z0-9]/g, '_');
+        }
+
+        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null };
+
+        /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
+         * inherits the chip's own colour through stroke="currentColor", so each
+         * stage reads in the colour of its state without a second declaration —
+         * which an emoji, being a fixed-colour glyph from the system font, can
+         * never do. The names below are keys into that icon set. */
+        function _mailStageChip(stage, reason) {
+            const map = {
+                waiting:    ['clock',       'Waiting',      'var(--text3)'],
+                assembling: ['refresh',     'Assembling',   'var(--blue)'],
+                unlocking:  ['lock',        'Unlocking',    'var(--blue)'],
+                reading:    ['fileText',    'Reading',      'var(--blue)'],
+                filed:      ['checkCircle', 'Filed',        'var(--green)'],
+                held:       ['alert',       'Needs review', 'var(--amber, #f59e0b)'],
+                failed:     ['x',           'Failed',       'var(--red)'],
+            };
+            const [icon, label, color] = map[stage] || map.waiting;
+            const glyph = (window.WFIcon && WFIcon.has(icon)) ? WFIcon(icon) : '';
+            return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;'
+                + 'color:' + color + ';background:color-mix(in srgb, ' + color + ' 12%, transparent);'
+                + 'border:1px solid color-mix(in srgb, ' + color + ' 30%, transparent);'
+                + 'border-radius:999px;padding:3px 9px;">' + glyph + _wfEsc(label)
+                + (reason ? ' · ' + _wfEsc(reason) : '') + '</span>';
+        }
+
+        function renderMailSync() {
+            const host = $('wfMailSync');
+            if (!host) return;
+            const st = _mailSyncState;
+            const connected = st.connected;
+
+            const rows = st.items.map(it => `
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);">
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${_wfEsc(it.bank || 'Statement')}${it.filename ? ' · <span style="color:var(--text3);font-weight:400;">' + _wfEsc(it.filename) + '</span>' : ''}
+                        </div>
+                        ${it.note ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px;">${_wfEsc(it.note)}</div>` : ''}
+                    </div>
+                    ${_mailStageChip(it.stage, it.reason)}
+                </div>`).join('');
+
+            /* The honest empty states. Each names the ONE thing that is missing,
+             * because "not working" without a cause is what sent the owner
+             * looking through the code. */
+            let banner = '';
+            if (connected === false) {
+                banner = `<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                    <b>Mailbox not connected.</b> Statements will not arrive on their own until Gmail
+                    push is set up for this account. Everything else here — parsing, unlocking,
+                    categorising — already works on files you upload by hand.
+                </div>`;
+            } else if (connected === null) {
+                banner = `<div style="font-size:12.5px;color:var(--text3);">Checking connection…</div>`;
+            } else if (!st.items.length) {
+                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. No statements waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.</div>`;
+            }
+
+            host.innerHTML = `
+                <div class="card" style="padding:16px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                        <div style="font-size:20px;display:flex;align-items:center;color:var(--accent);">${(window.WFIcon && WFIcon.has('cloudDownload')) ? WFIcon('cloudDownload') : ''}</div>
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-weight:800;font-size:14.5px;color:var(--text);">Statement Sync</div>
+                            <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
+                                ${connected === true ? 'Mailbox connected' : connected === false ? 'Not connected' : 'Checking…'}
+                                ${window.WFVault && window.WFVault.isUnlocked() ? ' · vault unlocked' : window.WFVault && window.WFVault.isSet() ? ' · vault locked' : ' · no passwords saved'}
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' ? 'disabled' : ''}>
+                            ${st.stage === 'running'
+                                ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
+                                : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
+                        </button>
+                    </div>
+                    ${banner}
+                    ${rows}
+                    ${st.error ? `<div style="margin-top:10px;font-size:12px;color:var(--red);">${_wfEsc(st.error)}</div>` : ''}
+                </div>`;
+            const b = host.querySelector('#_ms_run');
+            if (b) b.onclick = () => { try { triggerHaptic('light'); } catch (_) {} runMailSync(); };
+        }
+        window.renderMailSync = renderMailSync;
+
+        /** Is there a connected mailbox for this user? Read-only, cheap. */
+        async function _mailConnected() {
+            try {
+                if (!currentUser || !currentUser.email || !window.firebase) return false;
+                const snap = await firebase.firestore()
+                    .collection(MAIL_ROOT).doc(_mailUserKey(currentUser.email)).get();
+                /* `refresh_token` is what gmail-hook.js requires before it will
+                 * do anything at all, so its presence is the honest test of
+                 * "connected" — not merely that a document exists. */
+                return !!(snap.exists && snap.data() && snap.data().refresh_token);
+            } catch (_) {
+                return false;
+            }
+        }
+
+        /**
+         * Fetch what is waiting and run it through the device-side intake.
+         *
+         * Every stage transition is rendered as it happens, which is the entire
+         * point of the card: the owner sees a statement move from waiting to
+         * filed rather than being told afterwards that something occurred.
+         */
+        async function runMailSync() {
+            if (_mailSyncState.stage === 'running') return;
+            _mailSyncState = { ..._mailSyncState, stage: 'running', error: null };
+            renderMailSync();
+
+            const finish = (err) => {
+                _mailSyncState.stage = 'idle';
+                _mailSyncState.lastRun = Date.now();
+                if (err) _mailSyncState.error = err;
+                renderMailSync();
+            };
+
+            _mailSyncState.connected = await _mailConnected();
+            if (!_mailSyncState.connected) { _mailSyncState.items = []; return finish(null); }
+
+            if (!window.WFMailIntake) return finish('Statement intake module is not loaded.');
+
+            let docs = [];
+            try {
+                const snap = await firebase.firestore()
+                    .collection(MAIL_ROOT).doc(_mailUserKey(currentUser.email))
+                    .collection('items').limit(window.WFMailIntake.BATCH || 25).get();
+                snap.forEach(d => docs.push({ id: d.id, manifest: d.data(), ref: d.ref }));
+            } catch (e) {
+                return finish('Could not read the mailbox store: ' + (e && e.message || 'unknown error'));
+            }
+
+            _mailSyncState.items = docs.map(d => ({
+                key: d.id,
+                bank: d.manifest && d.manifest.bank,
+                filename: d.manifest && d.manifest.filename,
+                stage: 'waiting',
+                note: null, reason: null,
+            }));
+            renderMailSync();
+
+            const set = (i, patch) => { Object.assign(_mailSyncState.items[i], patch); renderMailSync(); };
+
+            /* Built ONCE per run, not per statement: it is a scan of the whole
+             * ledger, and doing it inside the loop would make a ten-statement
+             * sync ten full passes over every record the app holds. */
+            let ledgerHashes = new Set();
+            try {
+                if (window.WFBackfill) ledgerHashes = await window.WFBackfill.ledgerHashes(appData);
+            } catch (_) { /* an empty set means "nothing known duplicate", never a crash */ }
+
+            for (let i = 0; i < docs.length; i += 1) {
+                const d = docs[i];
+                try {
+                    set(i, { stage: 'assembling' });
+                    const parts = [];
+                    const ps = await d.ref.collection('parts').get();
+                    ps.forEach(p => parts.push(p.data()));
+
+                    /* The stages below are observed, not announced. intakeStatement
+                     * owns the pipeline — assembling, unlocking, parsing — and the
+                     * only honest way to show where it has got to is to watch the
+                     * seams it already injects. openPdf is called by unlock() and
+                     * extractText once a document is open, so setting the stage
+                     * inside them reports what is actually happening rather than a
+                     * timer pretending to. */
+                    const bank = (d.manifest && d.manifest.bank) || '';
+                    const res = await window.WFMailIntake.intakeStatement(
+                        { id: d.id, bank, manifest: d.manifest, parts },
+                        {
+                            decodeBase64: (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
+                            vaultKeys: async () => {
+                                try {
+                                    return typeof window.wfVaultPdfPasswords === 'function'
+                                        ? await window.wfVaultPdfPasswords(bank) : [];
+                                } catch (_) { return []; }
+                            },
+                            openPdf: (bytes, password) => {
+                                set(i, { stage: 'unlocking' });
+                                if (!window.WFPdfUnlock) return Promise.reject(new Error('no pdf reader'));
+                                return window.WFPdfUnlock.openPdf(bytes, () => password);
+                            },
+                            extractText: (doc) => {
+                                set(i, { stage: 'reading' });
+                                return window.WFPdfUnlock.extractText(doc);
+                            },
+                            /* parseStatement, NOT parseStatementText. The latter
+                             * returns `parseStatement(text).rows` — a bare array —
+                             * and intakeStatement reads `parsed.rows`, so the
+                             * shorthand yields undefined, then zero rows, then
+                             * every statement quarantined as UNPARSEABLE. It fails
+                             * as a plausible-looking "needs review", not as an
+                             * error, which is why it survived a reading of the diff
+                             * and was caught only by running a real statement
+                             * through the real parser in a browser. */
+                            parse: (text) => window.WFStatementParser.parseStatement(text),
+                            /* existingHashes is the ledger-wide dedup. classifyStatement
+                             * has accepted it since it was written and NO caller had
+                             * ever passed one, so every import was deduplicated only
+                             * against itself. This is the first caller that does. */
+                            route: (rows, ctx) => window.WFStatementRouter.classifyStatement({
+                                rows, existingHashes: ledgerHashes, ...ctx,
+                            }),
+                        },
+                        {},
+                    );
+                    const summary = window.WFMailIntake.summarise(res);
+                    if (summary.quarantined > 0 && summary.applied === 0) {
+                        set(i, { stage: 'held', reason: (summary.messages[0] || '').slice(0, 60) });
+                    } else {
+                        set(i, {
+                            stage: 'filed',
+                            note: `${summary.applied} transaction${summary.applied === 1 ? '' : 's'} filed`
+                                + (summary.quarantined ? `, ${summary.quarantined} held for review` : ''),
+                        });
+                    }
+                } catch (e) {
+                    set(i, { stage: 'failed', reason: (e && e.message || 'error').slice(0, 60) });
+                }
+            }
+            try { renderDash(); renderQuarantineTile && renderQuarantineTile(); } catch (_) {}
+            finish(null);
+        }
+        window.runMailSync = runMailSync;
+
         function renderSweeper() {
             const host = $('wfSweeper');
             if (!host) return;
@@ -22040,6 +22335,26 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (window.WFInsights) window.WFInsights.renderInto('wfBrief', window.WFInsights.brief(5), { title: 'Needs your attention', allClear: true });
             } catch (_) {}
             try { renderRunwayCard(); } catch (_) {}
+            /* Statement Sync, drawn every time the dashboard draws.
+             *
+             * The first version of this call was placed next to the sweeper
+             * renders and landed inside wfSweepRecord() — a function that runs
+             * only when somebody records a sweep. The card therefore never
+             * appeared on boot, which is the exact defect this whole change
+             * exists to fix, reproduced inside the fix. It was caught by opening
+             * the page in a browser and looking; reading the diff would not have
+             * shown it.
+             *
+             * NEVER hidden: a card that disappears when nothing is connected is
+             * indistinguishable from a feature that was never built. */
+            try {
+                renderMailSync();
+                if (_mailSyncState.connected === null) {
+                    _mailConnected()
+                        .then((c) => { _mailSyncState.connected = c; renderMailSync(); })
+                        .catch(() => { _mailSyncState.connected = false; renderMailSync(); });
+                }
+            } catch (_) {}
             $('dashStats').innerHTML = predictiveHtml + `
         <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div></div>
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
@@ -22746,6 +23061,25 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Panic Mode / Decoy Vault</div><div class="setting-desc">Set a decoy PIN that opens a fake database with dummy numbers to protect you.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="setupDecoyPin()">🎭 ${DB.getObj('auth').decoyPin ? 'Configured ✓' : 'Setup Decoy'}</button>
+            </div>
+            <!-- BANK STATEMENT PASSWORDS.
+                 Encrypted with a key derived from the master PIN, so the stored
+                 ciphertext is worthless without something only the owner knows.
+                 Deliberately NOT the same store as the ID details below: that
+                 one is keyed from a device secret kept beside its own
+                 ciphertext, which is a fair trade for a NIC and not one for a
+                 bank password. See wealthflow-vault.js. -->
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Bank Statement Passwords</div><div class="setting-desc">Passwords your banks put on statement PDFs. Encrypted with your PIN — never uploaded, never synced.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="openBankVault()">${(window.WFIcon ? WFIcon('lock') : '')} ${(window.WFVault && window.WFVault.isSet()) ? 'Manage' : 'Set Up'}</button>
+            </div>
+            <!-- The ID-details vault has existed since v7.7.0 and had NO caller:
+                 openVaultModal was defined, exported on window.wfVault, and
+                 reachable from nothing. Locked PDFs could never be auto-opened
+                 because the owner had no way to put anything in it. -->
+            <div class="setting-row">
+                <div class="setting-info"><div class="setting-label">Statement ID Details</div><div class="setting-desc">NIC, date of birth and card last-4. Sri Lankan banks commonly use one of these as the PDF password.</div></div>
+                <button class="btn btn-secondary btn-sm" onclick="openIdVault()">${(window.WFIcon ? WFIcon('card') : '')} ${(window.wfVault && window.wfVault.exists && window.wfVault.exists()) ? 'Saved' : 'Add Details'}</button>
             </div>
         </div>
 
@@ -24329,11 +24663,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * at first and the rendered banner read "Idle cash — 2,990,137
                  * / 2,990,137 is sitting idle", which is how it looked in a real
                  * browser rather than how it read in the source. */
-                title: '📈 Idle cash',
+                /* Plain text, no glyph. This string is also the OS
+                 * notification title, and a lock screen renders text only — an
+                 * inline SVG would appear as markup and an emoji is not allowed
+                 * anywhere in this app. The banner's own icon is set below. */
+                title: 'Idle cash',
                 message,
                 primary: 'Review the plan',
                 secondary: 'Not now',
-                icon: '📈',
+                icon: (window.WFIcon ? WFIcon('trendUp') : ''),
                 color: 'var(--green)',
                 /* No `confirm`. See the note above this function — a sweep is a
                  * proposal, and a lock-screen button must not book a transfer
@@ -26992,6 +27330,218 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 setTimeout(() => overlay.querySelector('#_vp_pin').focus(), 250);
             });
         }
+
+        /* ── THE BANK PASSWORD VAULT UI ────────────────────────────────────────
+         *
+         * wealthflow-vault.js does the cryptography and owns the storage. This
+         * is only the screen: it collects a PIN, collects rows, and hands both
+         * over. No password is written anywhere from here.
+         *
+         * TWO RULES THIS FUNCTION FOLLOWS THAT ARE EASY TO BREAK LATER
+         *
+         * 1. A password NEVER goes through innerHTML. Every other field is
+         *    escaped and interpolated; passwords are assigned with `.value =`
+         *    on an already-created input. A password can contain quotes and
+         *    angle brackets — that is normal for a good password — and putting
+         *    one in an attribute string is both an escaping bug waiting to
+         *    happen and a way for the secret to end up in a DOM dump.
+         * 2. Nothing is logged. Not the PIN, not the entries, not "saved 3
+         *    passwords". Console lines survive in crash reports.
+         */
+        function _bankSuggestions() {
+            // The banks this person actually has, from records that already
+            // exist — not a hardcoded list that goes stale.
+            const out = [];
+            try {
+                if (window.WFAccounts) {
+                    for (const a of (window.WFAccounts.derive(appData).accounts || [])) {
+                        const n = (a.bank || '').trim();
+                        if (n && !out.includes(n)) out.push(n);
+                    }
+                }
+            } catch (_) { /* suggestions are a convenience, never a blocker */ }
+            for (const l of (DB.get('loans') || [])) {
+                const n = (l && l.bank || '').trim();
+                if (n && !out.includes(n)) out.push(n);
+            }
+            return out;
+        }
+
+        async function openBankVault() {
+            if (!window.WFVault) { notify('Secure vault module not loaded', 'error'); return; }
+            if (!(window.crypto && window.crypto.subtle)) {
+                notify('This browser cannot store passwords securely (no Web Crypto)', 'error');
+                return;
+            }
+
+            const existed = window.WFVault.isSet();
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.innerHTML = `
+                <div class="md" style="max-width:560px;">
+                    <div class="md-hdr">
+                        <div class="md-title">${(window.WFIcon ? WFIcon('lock') : '')} Bank Statement Passwords</div>
+                        <button class="md-x" aria-label="Close" id="_bv_close"><i data-wfi="x"></i></button>
+                    </div>
+                    <div id="_bv_body" style="padding:4px 0 8px;"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_bv_close').onclick = close;
+            const body = overlay.querySelector('#_bv_body');
+
+            /* ---- step 1: the PIN ---- */
+            body.innerHTML = `
+                <div style="font-size:12.5px;color:var(--text2);line-height:1.65;margin-bottom:14px;">
+                    These are encrypted with a key derived from your <b>master PIN</b>. The
+                    encrypted file never leaves this device and is never included in a cloud
+                    backup.
+                </div>
+                <div style="background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.25);border-radius:10px;padding:11px 13px;font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:16px;">
+                    <b style="color:var(--red);">There is no recovery.</b> If you forget your PIN
+                    these passwords are gone for good. A way back in without the PIN would be a
+                    way in for anyone else too, so there isn't one.
+                </div>
+                <div class="fg">
+                    <label class="fl">${existed ? 'Enter your master PIN to unlock' : 'Enter your master PIN to create the vault'}</label>
+                    <input class="fi" id="_bv_pin" type="password" autocomplete="off" inputmode="numeric"
+                        pattern="[0-9]*" maxlength="6" placeholder="6-digit PIN"
+                        style="font-family:var(--mono);font-size:22px;letter-spacing:8px;text-align:center;">
+                </div>
+                <div id="_bv_err" style="color:var(--red);font-size:12px;text-align:center;min-height:18px;"></div>
+                <div class="md-ftr">
+                    <button class="btn btn-ghost" id="_bv_cancel">Cancel</button>
+                    <button class="btn btn-primary" id="_bv_go">${(window.WFIcon ? WFIcon('lock') : '')} Unlock</button>
+                </div>`;
+            body.querySelector('#_bv_cancel').onclick = close;
+            setTimeout(() => { const el = body.querySelector('#_bv_pin'); if (el) el.focus(); }, 250);
+
+            const attempt = async () => {
+                const el = body.querySelector('#_bv_pin');
+                const err = body.querySelector('#_bv_err');
+                const pin = el.value;
+                if (pin.length < 6) { err.textContent = 'PIN must be 6 digits'; return; }
+                /* The PIN is also checked against the app's own auth hash, so a
+                 * typo says "wrong PIN" instead of silently creating a SECOND
+                 * vault under the mistyped PIN that the right one can never
+                 * open. Without this, one slip makes an invisible orphan. */
+                const auth = DB.getObj('auth');
+                if (auth && auth.pin) {
+                    const h = await sha256(pin + 'wf_salt_sg2026');
+                    if (h !== auth.pin) { err.textContent = 'Incorrect PIN'; return; }
+                }
+                err.textContent = '';
+                const r = await window.WFVault.unlock(pin);
+                if (!r.ok) {
+                    err.textContent = r.reason === window.WFVault.VAULT.NO_CRYPTO
+                        ? 'Secure storage unavailable in this browser'
+                        : 'Could not unlock with that PIN';
+                    return;
+                }
+                try { triggerHaptic('success'); } catch (_) {}
+                renderEntries(r.entries || []);
+            };
+            body.querySelector('#_bv_go').onclick = attempt;
+            body.querySelector('#_bv_pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') attempt(); });
+
+            /* ---- step 2: the editor ---- */
+            function renderEntries(entries) {
+                const rows = entries.slice();
+                const suggestions = _bankSuggestions();
+
+                const draw = () => {
+                    body.innerHTML = `
+                        <div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:4px;">
+                            Unlocked. Add the password each bank puts on its statement PDF.
+                        </div>
+                        <datalist id="_bv_banks">${suggestions.map(b => `<option value="${_wfEsc(b)}"></option>`).join('')}</datalist>
+                        <div id="_bv_rows" style="margin:14px 0;display:flex;flex-direction:column;gap:10px;"></div>
+                        <button class="btn btn-secondary btn-sm" id="_bv_add" style="width:100%;">+ Add a bank</button>
+                        <div class="md-ftr" style="margin-top:16px;">
+                            ${window.WFVault.isSet() ? '<button class="btn btn-ghost" id="_bv_wipe" style="color:var(--red);">Delete vault</button>' : '<span></span>'}
+                            <button class="btn btn-primary" id="_bv_save">${(window.WFIcon ? WFIcon('lock') : '')} Save securely</button>
+                        </div>`;
+                    const host = body.querySelector('#_bv_rows');
+                    if (!rows.length) {
+                        host.innerHTML = `<div style="text-align:center;color:var(--text3);font-size:12.5px;padding:14px 0;">No passwords saved yet.</div>`;
+                    }
+                    rows.forEach((row, i) => {
+                        const card = document.createElement('div');
+                        card.style.cssText = 'border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);';
+                        card.innerHTML = `
+                            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                                <input class="fi _bv_bank" list="_bv_banks" placeholder="Bank (e.g. HNB)" style="flex:1;">
+                                <input class="fi _bv_label" placeholder="Label (optional)" style="flex:1;">
+                                <button class="btn btn-ghost btn-sm _bv_del" title="Remove" style="color:var(--red);flex:0 0 auto;">${(window.WFIcon ? WFIcon('x') : '')}</button>
+                            </div>
+                            <div style="display:flex;gap:8px;">
+                                <input class="fi _bv_pw" type="password" placeholder="Statement password" autocomplete="off" spellcheck="false" style="flex:1;font-family:var(--mono);">
+                                <button class="btn btn-ghost btn-sm _bv_eye" title="Show" style="flex:0 0 auto;">${(window.WFIcon ? WFIcon('eye') : '')}</button>
+                            </div>`;
+                        // Values assigned as PROPERTIES, never interpolated into
+                        // the markup above — see the note on this function.
+                        card.querySelector('._bv_bank').value = row.bank || '';
+                        card.querySelector('._bv_label').value = row.label || '';
+                        card.querySelector('._bv_pw').value = row.password || '';
+                        card.querySelector('._bv_bank').oninput = (e) => { rows[i].bank = e.target.value; };
+                        card.querySelector('._bv_label').oninput = (e) => { rows[i].label = e.target.value; };
+                        card.querySelector('._bv_pw').oninput = (e) => { rows[i].password = e.target.value; };
+                        card.querySelector('._bv_del').onclick = () => { rows.splice(i, 1); draw(); };
+                        card.querySelector('._bv_eye').onclick = () => {
+                            const f = card.querySelector('._bv_pw');
+                            f.type = f.type === 'password' ? 'text' : 'password';
+                            try { triggerHaptic('light'); } catch (_) {}
+                        };
+                        host.appendChild(card);
+                    });
+
+                    body.querySelector('#_bv_add').onclick = () => {
+                        rows.push({ bank: '', label: '', password: '' });
+                        draw();
+                    };
+                    const wipe = body.querySelector('#_bv_wipe');
+                    if (wipe) wipe.onclick = () => {
+                        showConfirm('trash', 'Delete the password vault?',
+                            'Every saved statement password is erased from this device. This cannot be undone.',
+                            'btn-danger', 'Delete', () => {
+                                window.WFVault.destroy();
+                                window.WFVault.lock();
+                                notify('Password vault deleted', 'info');
+                                close();
+                                try { renderSettings(); } catch (_) {}
+                            });
+                    };
+                    body.querySelector('#_bv_save').onclick = async () => {
+                        const usable = rows.filter(r => r.bank && r.bank.trim() && r.password);
+                        const r = await window.WFVault.save(usable);
+                        if (!r.ok) { notify('Could not save — secure storage refused the write', 'error'); return; }
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(`${usable.length} password${usable.length === 1 ? '' : 's'} encrypted on this device`, 'success');
+                        close();
+                        try { renderSettings(); } catch (_) {}
+                    };
+                };
+                draw();
+            }
+        }
+        window.openBankVault = openBankVault;
+
+        /* The ID-details vault (NIC / DOB / card last-4). It has existed since
+         * v7.7.0 with no caller at all — defined, exported, unreachable — which
+         * is why locked PDFs were never auto-opened: there was no way to put
+         * anything in it. This is the missing entry point. */
+        function openIdVault() {
+            if (window.wfVault && typeof window.wfVault.openModal === 'function') {
+                window.wfVault.openModal();
+            } else {
+                notify('Intelligence layer not loaded', 'error');
+            }
+        }
+        window.openIdVault = openIdVault;
 
         async function revokeSession(id, isSelf) {
             const ok = await _verifyPinPrompt(isSelf ? 'Sign out this device — confirm with your PIN.' : 'Revoke this remote session — confirm with your PIN.');

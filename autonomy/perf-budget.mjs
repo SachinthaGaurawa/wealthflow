@@ -114,7 +114,15 @@ export const BUDGETS = {
     //
     // Moves ONCE, to the measured figure with the ~1.1% headroom every previous
     // move in this file has used.
-    htmlBytes: 1_683_000,        // measured 1,665,134 with the sweep nudge
+    // RAISED for the vault UI and Statement Sync. The mail pipeline had been
+    // merged, tested and routed at /api/gmail-hook with NO face at all, and the
+    // ID vault's own modal (wealthflow-intelligence.js openVaultModal) had zero
+    // callers since v7.7.0 — defined, exported, reachable from nothing, which is
+    // why locked PDFs were never auto-opened: there was no way to put anything
+    // in it. The growth is those two screens plus the pipeline runner that
+    // drives assemble -> unlock -> parse -> route and shows each stage.
+    // Moves ONCE, to the measured figure with the ~1.1% headroom used throughout.
+    htmlBytes: 1_717_000,        // measured 1,698,310 with the vault + sync UI
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -216,7 +224,10 @@ export const BUDGETS = {
     //
     // No new module: 55 modules before and after. Moves ONCE, to the measured
     // figure with the ~1% headroom the previous move used.
-    totalJsBytes: 1_502_000,     // measured 1,487,892 across 55 modules
+    // RAISED for wealthflow-vault.js, the PIN-derived bank-password store, plus
+    // the window global added to wealthflow-statement-router.js so the page can
+    // reach classifyStatement. Moves ONCE, to the measured figure, ~1% headroom.
+    totalJsBytes: 1_523_000,     // measured 1,507,140 across 56 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -259,7 +270,20 @@ export const BUDGETS = {
     // will fire on the next module — raise it then, to the measured value.
     // 53 -> 54 for wealthflow-confirm.js.
     // 54 -> 55 for wealthflow-outbox.js, the page half of the durable outbox.
-    moduleCount: 55,   // measured 55
+    // RAISED BY ONE, for wealthflow-vault.js — and this is the ceiling I was
+    // most reluctant to move, having just argued in the sweep nudge that a
+    // decision belongs in the module that owns the subject rather than in a new
+    // file. The argument does not carry here. The existing vault derives its key
+    // from a random value kept in localStorage BESIDE its own ciphertext, so
+    // anything that can read storage holds both halves; its header says so
+    // plainly, and for a NIC that is a fair trade. A bank password is not a NIC.
+    // This vault derives its key from the master PIN, so the file on disk is
+    // worthless without something only the owner knows — and putting two
+    // different secrets under two different keys in one file is how the weaker
+    // one quietly becomes the one that matters. It also has to be unit-testable:
+    // wealthflow-intelligence.js is an IIFE with no exports and consequently no
+    // test file, and crypto holding bank passwords cannot ship untested.
+    moduleCount: 56,   // measured 56
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -295,7 +319,14 @@ export const BUDGETS = {
     // classic script the trade would have been a different one and this comment
     // would have to say so.
     // 59 -> 60 for the outbox module. renderBlockingScripts is still 2.
-    scriptTags: 60,              // measured 60
+    // RAISED BY THREE: wealthflow-vault.js (new), and two modules that already
+    // existed on disk, were fully tested, and were loaded by nothing —
+    // wealthflow-statement-router.js and wealthflow-mail-intake.js. Those two add
+    // no NEW code to the repository; they add the two requests that make code
+    // already shipped actually run. The device half of the mail pipeline could
+    // not execute at all without the second, which is the defect this change
+    // exists to fix.
+    scriptTags: 63,              // measured 63
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

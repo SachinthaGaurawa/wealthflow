@@ -251,4 +251,12 @@ export async function classifyStatement({ rows = [], existingHashes = new Set(),
   return out;
 }
 
-export default { routeRow, hashRow, occurrenceKey, classifyStatement };
+const API = { routeRow, hashRow, occurrenceKey, classifyStatement };
+
+/* The page reaches this through window, the same way every other wired module
+ * here does; the ESM export is what the tests import. Both spellings, one
+ * object. Added when Statement Sync became the first caller to need it from
+ * index.html — before that the module was imported only by tests. */
+if (typeof window !== 'undefined') window.WFStatementRouter = API;
+
+export default API;
