@@ -184,7 +184,10 @@ export const BUDGETS = {
     // RAISED 1,428,000 -> 1,455,000. Fired on wealthflow-backfill.js, which is
     // the module that finally passes `existingHashes` to a dedup engine that
     // has accepted the argument, and never received it, since it was written.
-    totalJsBytes: 1_455_000,     // measured 1,440,709 across 52 modules
+    // RAISED 1,455,000 -> 1,481,000. The previous commit said this would fire on
+    // the next module, at 1,256 bytes of margin. It did, on the first one added
+    // after it — which is the ratchet doing its job rather than a surprise.
+    totalJsBytes: 1_481_000,     // measured 1,466,530 across 54 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -225,7 +228,8 @@ export const BUDGETS = {
     // still holding at 1,453,744 of 1,455,000. That is 1,256 bytes of margin,
     // which is thinner than the 187 bytes this file already carried once and
     // will fire on the next module — raise it then, to the measured value.
-    moduleCount: 53,   // measured 53
+    // 53 -> 54 for wealthflow-confirm.js.
+    moduleCount: 54,   // measured 54
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
