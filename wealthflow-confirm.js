@@ -290,4 +290,9 @@ const API = {
     applyToLoan, applyToIncome, queue, drain,
 };
 
+/* The page reaches this through window, the same way every other wired
+ * module here does; the ESM export is what the tests and other modules
+ * import. Both spellings, one object. */
+if (typeof window !== 'undefined') window.WFConfirm = API;
+
 export default API;

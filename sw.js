@@ -197,7 +197,83 @@ self.addEventListener('push', (event) => {
     );
 });
 
-// Notification click handler — open the app and forward action to page
+// ── The durable outbox ──────────────────────────────────────────────────────
+//
+// An answer tapped on a lock screen has to survive the app being shut, the
+// phone being offline and the vault being locked. This worker writes it down
+// and DECIDES NOTHING about it.
+//
+// That restraint is deliberate. This is a CLASSIC worker — index.html calls
+// register('/sw.js') with no { type: 'module' } — so it cannot import
+// wealthflow-confirm.js, which is the module that owns what a tapped button
+// means. Reimplementing that rule here would put a second copy of it in the
+// one other file that already disagreed with the first: the button used to say
+// "Yes" while the app wrote the scheduled instalment, and those two living
+// apart is exactly how a figure nobody agreed to reached the ledger.
+//
+// So the record below is raw. Which action, and the data the notification was
+// built with. The page turns it into an intent on next open, through the single
+// module that owns the decision. A worker that never handles an amount cannot
+// record a wrong one.
+//
+// These three constants MUST match wealthflow-outbox.js. test/outbox_test.js
+// reads both files and fails if they drift — three strings is a surface small
+// enough to pin, which is why the shared surface is three strings.
+const WF_OUTBOX_DB = 'wf-outbox';
+const WF_OUTBOX_VERSION = 1;
+const WF_OUTBOX_STORE = 'answers';
+
+function _wfOpenOutbox() {
+    return new Promise((resolve) => {
+        let req;
+        try { req = indexedDB.open(WF_OUTBOX_DB, WF_OUTBOX_VERSION); } catch (_) { return resolve(null); }
+        req.onupgradeneeded = () => {
+            try {
+                const db = req.result;
+                if (!db.objectStoreNames.contains(WF_OUTBOX_STORE)) {
+                    db.createObjectStore(WF_OUTBOX_STORE, { keyPath: 'key' });
+                }
+            } catch (_) { /* reported by onerror below */ }
+        };
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+    });
+}
+
+// One row per item per month, so a second answer replaces the first rather than
+// queueing a contradiction behind it.
+function _wfOutboxKey(data) {
+    const d = data || {};
+    return (d.id == null ? '' : d.id) + '_' + (d.month == null ? '' : d.month);
+}
+
+function _wfRememberAnswer(action, data) {
+    return _wfOpenOutbox().then((db) => {
+        if (!db) return false;                 // no IndexedDB: fall back to opening the app
+        return new Promise((resolve) => {
+            let tx;
+            try { tx = db.transaction(WF_OUTBOX_STORE, 'readwrite'); } catch (_) { return resolve(false); }
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+            tx.onabort = () => resolve(false);
+            try {
+                tx.objectStore(WF_OUTBOX_STORE).put({
+                    key: _wfOutboxKey(data), action: action, data: data, at: Date.now(),
+                });
+            } catch (_) { resolve(false); }
+        });
+    }).catch(() => false);
+}
+
+// Which answers can be settled without the app. "Different amount" cannot: the
+// amount is precisely what is unknown, so that one still opens the app — which
+// is the correct reason to open it, rather than the old behaviour of opening it
+// for every answer including the ones that needed nothing.
+const WF_SETTLES_IN_BACKGROUND = ['yes_scheduled', 'not_yet'];
+
+// Notification click handler — record the answer, and open the app only when
+// the answer actually needs it.
 self.addEventListener('notificationclick', (event) => {
     console.log('[SW] Notification clicked', event.action);
     event.notification.close();
@@ -205,6 +281,32 @@ self.addEventListener('notificationclick', (event) => {
     const action = event.action || '';
     const data = event.notification.data || {};
     const urlToOpen = data.url || '/';
+
+    // An answer that can be settled in the background is written down and the
+    // app is left closed. If the write fails — no IndexedDB, a private window,
+    // quota — fall through to the old behaviour rather than losing the answer.
+    if (action && WF_SETTLES_IN_BACKGROUND.indexOf(action) !== -1) {
+        event.waitUntil(
+            _wfRememberAnswer(action, data).then((stored) => {
+                if (stored) {
+                    // Tell an open page so it applies immediately; if none is
+                    // open, the outbox is drained on next boot. Nothing is
+                    // focused either way.
+                    return clients.matchAll({ type: 'window', includeUncontrolled: true })
+                        .then((list) => {
+                            for (const client of list) {
+                                if (client.url.indexOf(self.location.origin) === 0) {
+                                    client.postMessage({ type: 'WF_OUTBOX_ANSWER', action: action, data: data });
+                                }
+                            }
+                        })
+                        .catch(() => {});
+                }
+                return clients.openWindow(urlToOpen).catch(() => {});
+            })
+        );
+        return;
+    }
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
