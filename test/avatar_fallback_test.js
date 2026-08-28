@@ -33,19 +33,41 @@ const avatarTags = imgTags(HTML).filter((t) => /\$\{userPhoto\}|\$\{photoURL\}/.
 function loadHelper() {
     const i = HTML.indexOf('function _wfAvatarFail(img)');
     expect(i, 'the avatar fallback helper is missing').toBeGreaterThan(-1);
-    const end = HTML.indexOf('\n        }', i);
-    const src = HTML.slice(i, end + 10);
+    /* Brace-counted to the function's own close. The old version cut at the
+     * first `\n        }`, which is a guess about indentation — adding a
+     * comment or a nested block to the helper would silently truncate the
+     * source under test and every assertion below would then be describing a
+     * fragment. Same failure the wiring suite's extractor had. */
+    let depth = 0;
+    let end = HTML.indexOf('{', i);
+    for (let j = end; j < HTML.length; j += 1) {
+        if (HTML[j] === '{') depth += 1;
+        else if (HTML[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
+    }
+    const src = HTML.slice(i, end);
     const made = [];
+    const appended = [];
     const doc = {
         createElement: () => {
-            const d = { textContent: '', className: '', style: { cssText: '' } };
+            const d = {
+                textContent: '', className: '', style: { cssText: '' },
+                appendChild(n) { appended.push(n); return n; },
+            };
             made.push(d);
             return d;
         },
     };
+    /* The icon set, modelled only as far as the helper uses it. `has` answers
+     * from a fixed list, and WFIconNode returns a marker object rather than
+     * markup — so a test can tell "an icon was appended" from "text was
+     * written" without either becoming a string comparison. */
+    const win = {
+        WFIcon: Object.assign(() => '<svg/>', { has: (n) => ['user', 'lock', 'check', 'cloud'].includes(n) }),
+        WFIconNode: (n) => ({ __icon: n }),
+    };
     // eslint-disable-next-line no-new-func
-    const fn = new Function('document', src + '\nreturn _wfAvatarFail;')(doc);
-    return { fn, made };
+    const fn = new Function('document', 'window', src + '\nreturn _wfAvatarFail;')(doc, win);
+    return { fn, made, appended };
 }
 
 const fakeImg = (attrs = {}) => {
@@ -70,7 +92,12 @@ describe('every avatar survives its photo failing to load', () => {
 
     it('the settings avatar falls back to the same placeholder its empty-photo branch uses', () => {
         const tag = avatarTags.find((t) => /\$\{userPhoto\}/.test(t));
-        expect(tag).toMatch(/data-fallback="👤"/);
+        /* `user` names an ICON now, not a glyph — and the empty-photo branch
+         * beside it renders the same one, which is what this test is really
+         * about: the two branches must not show different things. */
+        expect(tag).toMatch(/data-fallback="user"/);
+        const empty = HTML.slice(HTML.indexOf(tag), HTML.indexOf(tag) + 900);
+        expect(empty, 'the empty-photo branch no longer draws the same placeholder').toContain("_ic('user')");
     });
 
     it('the sidebar avatars fall back to the initial, styled like the real one', () => {
@@ -102,11 +129,24 @@ describe('the fallback helper itself', () => {
         expect(img.replaced.innerHTML).toBeUndefined();
     });
 
-    it('defaults to the person glyph when no fallback is given', () => {
-        const { fn } = loadHelper();
+    it('defaults to the person ICON when no fallback is given', () => {
+        /* Was the emoji. The icon set exists so a face on screen is not a
+         * system font's idea of one. */
+        const { fn, appended } = loadHelper();
         const img = fakeImg();
         fn(img);
-        expect(img.replaced.textContent).toBe('👤');
+        expect(appended.length, 'no icon node was appended').toBe(1);
+        expect(appended[0].__icon).toBe('user');
+        expect(img.replaced.textContent).toBe('');
+    });
+
+    it('an icon is APPENDED, never assigned as markup', () => {
+        /* The invariant below, stated from the other side: the only path that
+         * produces an element goes through the fixed icon table. */
+        const { fn, appended } = loadHelper();
+        fn(fakeImg({ 'data-fallback': 'lock' }));
+        expect(appended[0].__icon).toBe('lock');
+        expect(fakeImg().innerHTML).toBeUndefined();
     });
 
     it('applies the sidebar class when asked, instead of inline sizing', () => {

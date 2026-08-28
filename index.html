@@ -7015,7 +7015,7 @@
     <div class="mo" id="mdScannerSettings">
         <div class="md md-sm">
             <div class="md-hdr">
-                <div class="md-title">📸 AI Scanner Settings</div>
+                <div class="md-title">${(window.WFIcon ? WFIcon('scan') : '')} AI Scanner Settings</div>
                 <button class="md-x" aria-label="Close" onclick="closeModal('mdScannerSettings')"><i data-wfi="x"></i></button>
             </div>
             <p style="font-size:12px;color:var(--text2);margin-bottom:16px;">Tune how receipts, invoices &amp; PDFs are scanned. Higher modes = more accurate but slower.</p>
@@ -7273,7 +7273,28 @@
                 if (!img || img.dataset.wfFellBack) return;   // once only
                 img.dataset.wfFellBack = '1';
                 var d = document.createElement('div');
-                d.textContent = img.getAttribute('data-fallback') || '👤';
+                /* `data-fallback` names an ICON, not a glyph. It used to hold an
+                 * emoji and be written straight into textContent; the icon set
+                 * exists precisely so a face on screen is not a system font's
+                 * idea of one. A value that is not a known icon still falls
+                 * back to text, so any caller passing a plain string — or a
+                 * name that has not been added to the set — degrades to
+                 * something visible rather than to nothing. */
+                var fb = img.getAttribute('data-fallback') || 'user';
+                /* NEVER innerHTML. The sidebar avatars pass an INITIAL derived
+                 * from the Google display name, so this value is user data and
+                 * writing it as markup would be an injection sink —
+                 * test/avatar_fallback_test.js has pinned that since it was
+                 * written, and it stays pinned.
+                 *
+                 * An icon is therefore appended as a NODE, built by
+                 * WFIconNode from the fixed icon table and never from `fb`
+                 * itself; anything not in that table is still written as text.
+                 * A one-character initial can never name an icon, so user data
+                 * takes the text path in every real case. */
+                var node = (window.WFIconNode && window.WFIcon && window.WFIcon.has(fb)) ? window.WFIconNode(fb) : null;
+                if (node) d.appendChild(node);
+                else d.textContent = fb;
                 var cls = img.getAttribute('data-fallback-class');
                 if (cls) d.className = cls;
                 else {
@@ -12292,6 +12313,20 @@ function _csvCell(v) {
     return /[",\n\r]/.test(body) ? '"' + body.replace(/"/g, '""') + '"' : body;
 }
 window._csvCell = _csvCell;
+
+/**
+ * An icon, or nothing when the set has not loaded.
+ *
+ * Exists because the spelled-out form — ${(window.WFIcon ? WFIcon('x') : '')} —
+ * only works inside a TEMPLATE literal. Pasted into an ordinary single-quoted
+ * string it is not interpolated at all, and its nested quotes terminate the
+ * string early: the first pass of the Settings migration did exactly that in
+ * six places and stopped the page parsing. A plain call composes with both.
+ */
+function _ic(name) {
+    try { return (window.WFIcon && WFIcon.has(name)) ? WFIcon(name) : ''; } catch (_) { return ''; }
+}
+window._ic = _ic;
 
 /* A value going into a JS string literal that itself sits inside an HTML
  * attribute — onclick="fn('HERE')" — passes through two parsers, and _wfEsc
@@ -23347,10 +23382,10 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             $('settingsContent').innerHTML = `
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(212,175,55,0.05), var(--card)); border: 1px solid var(--accent); position:relative; overflow:hidden;">
-            <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">👤</div>
+            <div style="position:absolute;top:-20px;right:-20px;font-size:80px;opacity:0.05;">${(window.WFIcon ? WFIcon('user') : '')}</div>
             <div class="settings-title" style="color:var(--accent);">Account & Identity</div>
             <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
-                ${userPhoto ? `<img src="${userPhoto}" alt="" data-fallback="👤" onerror="_wfAvatarFail(this)" style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);object-fit:cover;">` : '<div style="width:48px;height:48px;border-radius:50%;background:var(--card3);display:flex;align-items:center;justify-content:center;font-size:24px;">👤</div>'}
+                ${userPhoto ? `<img src="${userPhoto}" alt="" data-fallback="user" onerror="_wfAvatarFail(this)" style="width:48px;height:48px;border-radius:50%;border:2px solid var(--accent);object-fit:cover;">` : '<div style="width:48px;height:48px;border-radius:50%;background:var(--card3);display:flex;align-items:center;justify-content:center;font-size:24px;">' + _ic('user') + '</div>'}
                 <div>
                     <div style="font-weight:700;font-size:16px;">${userName}</div>
                     <div style="font-size:12px;color:var(--text3);">${userEmail}</div>
@@ -23408,12 +23443,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Currency Display</div><div class="setting-desc">Primary currency for all financial displays.</div></div>
                 <select class="fi" style="width:120px; border-color:var(--border2);" onchange="toggleSetting('currency', this.value)">
-                    <option value="LKR" ${s.currency === 'LKR' ? 'selected' : ''}>🇱🇰 LKR</option>
-                    <option value="USD" ${s.currency === 'USD' ? 'selected' : ''}>🇺🇸 USD</option>
-                    <option value="GBP" ${s.currency === 'GBP' ? 'selected' : ''}>🇬🇧 GBP</option>
-                    <option value="EUR" ${s.currency === 'EUR' ? 'selected' : ''}>🇪🇺 EUR</option>
-                    <option value="AUD" ${s.currency === 'AUD' ? 'selected' : ''}>🇦🇺 AUD</option>
-                    <option value="INR" ${s.currency === 'INR' ? 'selected' : ''}>🇮🇳 INR</option>
+                    <option value="LKR" ${s.currency === 'LKR' ? 'selected' : ''}>LKR — Sri Lanka</option>
+                    <option value="USD" ${s.currency === 'USD' ? 'selected' : ''}>USD — United States</option>
+                    <option value="GBP" ${s.currency === 'GBP' ? 'selected' : ''}>GBP — United Kingdom</option>
+                    <option value="EUR" ${s.currency === 'EUR' ? 'selected' : ''}>EUR — Euro</option>
+                    <option value="AUD" ${s.currency === 'AUD' ? 'selected' : ''}>AUD — Australia</option>
+                    <option value="INR" ${s.currency === 'INR' ? 'selected' : ''}>INR — India</option>
                 </select>
             </div>
         </div>
@@ -23433,7 +23468,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div class="setting-label">Test AI Connection</div>
                     <div class="setting-desc">Verify that your AI advisor is reachable. Useful when troubleshooting.</div>
                 </div>
-                <button class="btn btn-secondary btn-sm" onclick="testAIConnection()">🔬 Run Diagnostic</button>
+                <button class="btn btn-secondary btn-sm" onclick="testAIConnection()">${(window.WFIcon ? WFIcon('scan') : '')} Run Diagnostic</button>
             </div>
         </div>
 
@@ -23441,7 +23476,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(99,102,241,0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:#818cf8;">AI Intelligence &amp; Language</div>
             <!-- v7.10.0 — SMS Paste mount point. The wealthflow-sms-paste.js
-                 module auto-injects the "📲 Paste Bank SMS" banner here. -->
+                 module auto-injects the "Paste Bank SMS" banner here. -->
             <div id="wfSmsPasteMount" style="margin-bottom:14px;"></div>
             <!-- v7.11.1 — Prominent Statement Upload entry. Triggers the existing
                  #ccot_ai_scan input (wired to handleAIScan) so a PDF/photo of a
@@ -23449,14 +23484,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                  routed to the right tabs by the same AI. -->
             <div style="margin:4px 0 16px;padding:15px;border:1px solid var(--border2);border-radius:14px;background:linear-gradient(145deg,rgba(16,185,129,0.06),var(--card));">
                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-                    <span style="font-size:22px;">📄</span>
+                    <span style="font-size:22px;">${(window.WFIcon ? WFIcon('fileText') : '')}</span>
                     <div style="font-weight:800;font-size:15px;color:var(--text);">Statement Upload</div>
                 </div>
                 <div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:12px;">Upload a PDF or photo of a bank / card statement. The AI reads every line, finds the merchant, picks the right category &amp; tab, removes duplicates — then you can walk away while it files them.</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">📁 Upload Statement</button>
+                    <button type="button" class="btn btn-primary btn-sm" style="flex:1;min-width:140px;" onclick="_triggerAIVisionUpload('ccot_ai_scan')">${(window.WFIcon ? WFIcon('upload') : '')} Upload Statement</button>
                     <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_wfDriveImport('ccot_ai_scan')"><i data-wfi="cloud"></i> From Drive</button>
-                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">📷 Photo</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1;min-width:120px;" onclick="_triggerAIVisionCapture('ccot_ai_scan')">${(window.WFIcon ? WFIcon('camera') : '')} Photo</button>
                 </div>
                 <!-- Recent statement imports — each can be undone (removes every
                      payment that import created, across all tabs). Keeps last 6. -->
@@ -23488,14 +23523,14 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
                 <div class="setting-info"><div class="setting-label">AI Personality</div><div class="setting-desc">Choose how your AI advisor communicates. Supportive, Balanced, Strict, or Aggressive.</div></div>
-                <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">🎭 ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
+                <button class="btn btn-secondary btn-sm ai-persona-btn" onclick="openModal('mdAIPersona')">${(window.WFIcon ? WFIcon('bot') : '')} ${(s.aiAdvisorPersona || 'balanced').charAt(0).toUpperCase() + (s.aiAdvisorPersona || 'balanced').slice(1)}</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label">📸 AI Scanner Settings</div><div class="setting-desc">Tune scan mode (Quick / Deep / Ultra / Frontier with Gemini 3.1 Pro), TF.js enhancement, and default currency for receipts &amp; PDFs.</div></div>
-                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="if(typeof openScannerSettings==='function'){openScannerSettings()}else{notify('Scanner module still loading…','info')}">⚙️ Configure</button>
+                <div class="setting-info"><div class="setting-label">${(window.WFIcon ? WFIcon('scan') : '')} AI Scanner Settings</div><div class="setting-desc">Tune scan mode (Quick / Deep / Ultra / Frontier with Gemini 3.1 Pro), TF.js enhancement, and default currency for receipts &amp; PDFs.</div></div>
+                <button class="btn btn-secondary btn-sm" style="color:var(--accent); border-color:var(--accent);" onclick="if(typeof openScannerSettings==='function'){openScannerSettings()}else{notify('Scanner module still loading…','info')}">${_ic('settings')} Configure</button>
             </div>
             <div class="setting-row" style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
-                <div class="setting-info"><div class="setting-label" style="color:var(--red);">🧠 Reset AI Memory</div><div class="setting-desc">Permanently erase the AI's memory of your conversation patterns and chat history.</div></div>
+                <div class="setting-info"><div class="setting-label" style="color:var(--red);">${(window.WFIcon ? WFIcon('bot') : '')} Reset AI Memory</div><div class="setting-desc">Permanently erase the AI's memory of your conversation patterns and chat history.</div></div>
                 <button class="btn btn-secondary btn-sm" style="color:var(--red); border-color:var(--red);" onclick="confirmResetAIMemory()">Reset</button>
             </div>
         </div>
@@ -23525,9 +23560,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="setting-row">
                 <div class="setting-info">
                     <div class="setting-label">Biometric Key (WebAuthn)</div>
-                    <div class="setting-desc">${bioRegistered ? '✅ Registered on ' + (bioData.registeredAt ? new Date(bioData.registeredAt).toLocaleDateString() : 'this device') : '⚪ Not registered — Link FaceID / TouchID / Windows Hello'}</div>
+                    <div class="setting-desc">${bioRegistered ? _ic('checkCircle') + ' Registered on ' + (bioData.registeredAt ? new Date(bioData.registeredAt).toLocaleDateString() : 'this device') : _ic('info') + ' Not registered — Link FaceID / TouchID / Windows Hello'}</div>
                 </div>
-                <button class="btn ${bioRegistered ? 'btn-ghost' : 'btn-secondary'} btn-sm" onclick="registerBiometrics()">${bioRegistered ? '🔄 Re-register' : '🔐 Register'}</button>
+                <button class="btn ${bioRegistered ? 'btn-ghost' : 'btn-secondary'} btn-sm" onclick="registerBiometrics()">${bioRegistered ? _ic('refresh') + ' Re-register' : _ic('lock') + ' Register'}</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Master PIN Management</div><div class="setting-desc">Update your AES-256 encrypted master access key.</div></div>
@@ -23555,12 +23590,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--accent);">Data Management & Reports</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Generate Elite Report</div><div class="setting-desc">Export a luxury PDF statement, Raw JSON, or Analytics CSV.</div></div>
-                <button class="btn btn-primary btn-sm" style="box-shadow: 0 4px 15px var(--ag);" onclick="openModal('mdExport')">✨ Export Data</button>
+                <button class="btn btn-primary btn-sm" style="box-shadow: 0 4px 15px var(--ag);" onclick="openModal('mdExport')">${(window.WFIcon ? WFIcon('sparkles') : '')} Export Data</button>
             </div>
             
             <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:24px 0 8px;">Google Drive Backup</div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Instant Cloud Backup</div><div class="setting-desc">Push an encrypted snapshot straight to your secure Google Drive. You'll see a ✅ toast when the upload is verified.</div></div>
+                <div class="setting-info"><div class="setting-label">Instant Cloud Backup</div><div class="setting-desc">Push an encrypted snapshot straight to your secure Google Drive. You'll see a confirmation toast when the upload is verified.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="requestDrivePermission('backup')">Backup to Drive</button>
             </div>
             <div class="setting-row">
@@ -23604,9 +23639,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             ${s.sounds ? `<div class="setting-row" style="padding-left:24px;border-left:3px solid var(--cyan);">
                 <div class="setting-info"><div class="setting-label">Sound Volume</div><div class="setting-desc">Adjust the volume of UI sounds.</div></div>
                 <select class="fi" style="width:120px;" onchange="toggleSetting('soundVolume', this.value)">
-                    <option value="low" ${(s.soundVolume || 'low') === 'low' ? 'selected' : ''}>🔈 Low</option>
-                    <option value="medium" ${(s.soundVolume || 'low') === 'medium' ? 'selected' : ''}>🔉 Medium</option>
-                    <option value="high" ${(s.soundVolume || 'low') === 'high' ? 'selected' : ''}>🔊 High</option>
+                    <option value="low" ${(s.soundVolume || 'low') === 'low' ? 'selected' : ''}>Low</option>
+                    <option value="medium" ${(s.soundVolume || 'low') === 'medium' ? 'selected' : ''}>Medium</option>
+                    <option value="high" ${(s.soundVolume || 'low') === 'high' ? 'selected' : ''}>High</option>
                 </select>
             </div>` : ''}
         </div>
@@ -23615,7 +23650,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--red);">Advanced Security</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Panic Mode / Decoy Vault</div><div class="setting-desc">Set a decoy PIN that opens a fake database with dummy numbers to protect you.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="setupDecoyPin()">🎭 ${DB.getObj('auth').decoyPin ? 'Configured ✓' : 'Setup Decoy'}</button>
+                <button class="btn btn-secondary btn-sm" onclick="setupDecoyPin()">${(window.WFIcon ? WFIcon('lock') : '')} ${DB.getObj('auth').decoyPin ? 'Configured ' + _ic('check') : 'Setup Decoy'}</button>
             </div>
             <!-- BANK STATEMENT PASSWORDS.
                  Encrypted with a key derived from the master PIN, so the stored
@@ -23641,7 +23676,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="settings-section" style="background: linear-gradient(145deg, rgba(59,130,246,0.05), var(--card)); border: 1px solid var(--border2);">
             <div class="settings-title" style="color:var(--blue);">Advanced Backup & Data</div>
             <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;gap:14px;">
-                <div style="width:42px;height:42px;border-radius:50%;background:rgba(59,130,246,0.12);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">${s.lastBackup ? '☁️' : '⚠️'}</div>
+                <div style="width:42px;height:42px;border-radius:50%;background:rgba(59,130,246,0.12);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">${s.lastBackup ? _ic('cloud') : _ic('alert')}</div>
                 <div style="flex:1;min-width:0;">
                     <div style="font-weight:700;font-size:14px;color:var(--text);">Last Backup</div>
                     <div style="font-size:12px;color:var(--text3);margin-top:2px;">
@@ -23695,28 +23730,28 @@ table.amort tbody tr { page-break-inside: avoid; }
                             // confirmed, not something we compute.
 
                             if (meta) {
-                                const cloudPart = meta.cloud ? '☁️ Cloud✓' : '☁️ Cloud✗';
+                                const cloudPart = meta.cloud ? _ic('cloud') + ' Cloud ' + _ic('check') : _ic('cloud') + ' Cloud ' + _ic('x');
                                 let drivePart = '';
                                 if (meta.drive && drv && drv.verified) {
                                     const kb = drv.size ? ((drv.size / 1024).toFixed(1) + ' KB') : '';
-                                    drivePart = ` · 📁 Drive✓ <span style="color:var(--green);font-weight:700;">VERIFIED</span>${kb ? ' · ' + kb : ''}`;
+                                    drivePart = ` · ${(window.WFIcon ? WFIcon('folder') : '')} Drive ${(window.WFIcon ? WFIcon('check') : '')} <span style="color:var(--green);font-weight:700;">VERIFIED</span>${kb ? ' · ' + kb : ''}`;
                                 } else if (meta.drive) {
-                                    drivePart = ' · 📁 Drive✓';
+                                    drivePart = ' · ' + _ic('folder') + ' Drive ' + _ic('check');
                                 }
-                                const trig = meta.trigger === 'auto' ? '🤖 Auto'
-                                           : meta.trigger === 'drive-direct' ? '☁️ Drive-direct'
-                                           : '👆 Manual';
+                                const trig = meta.trigger === 'auto' ? _ic('bot') + ' Auto'
+                                           : meta.trigger === 'drive-direct' ? _ic('cloud') + ' Drive-direct'
+                                           : _ic('pointer') + ' Manual';
                                 const sched = s.autoBackupFreq && s.autoBackupFreq !== 'off' ? s.autoBackupFreq : 'off';
-                                return `${cloudPart}${drivePart} · ${trig} · ⏰ ${sched}`;
+                                return `${cloudPart}${drivePart} · ${trig} · ${(window.WFIcon ? WFIcon('clock') : '')} ${sched}`;
                             }
                             if (s.lastBackupAttempt && !s.lastBackupAttempt.success) {
-                                return `⚠️ <span style="color:var(--red);font-weight:700;">Last attempt failed</span> — ${s.lastBackupAttempt.reason || 'will retry automatically'}`;
+                                return `${(window.WFIcon ? WFIcon('alert') : '')} <span style="color:var(--red);font-weight:700;">Last attempt failed</span> — ${s.lastBackupAttempt.reason || 'will retry automatically'}`;
                             }
-                            return `🔄 ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? '⏰ Auto: ' + s.autoBackupFreq : '⏰ Auto-backup off'}`;
+                            return `${(window.WFIcon ? WFIcon('refresh') : '')} ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? _ic('clock') + ' Auto: ' + s.autoBackupFreq : _ic('clock') + ' Auto-backup off'}`;
                         })()}
                     </div>
                 </div>
-                <button class="btn btn-secondary btn-sm" style="flex-shrink:0;color:var(--blue);border-color:var(--blue);" onclick="backupNow()">☁️ Backup Now</button>
+                <button class="btn btn-secondary btn-sm" style="flex-shrink:0;color:var(--blue);border-color:var(--blue);" onclick="backupNow()">${(window.WFIcon ? WFIcon('cloud') : '')} Backup Now</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Auto-Backup Schedule</div><div class="setting-desc">Backs up automatically at the scheduled time while the app is open, and catches up the moment you reopen it if one was missed. Daily 23:55 · Weekly Sun 23:55 · Monthly last day 23:55. (Phone browsers can't back up while the app is fully closed — it runs the instant you return.)</div></div>
@@ -23735,7 +23770,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <option value="wifi" ${(s.syncFreq || 'realtime') === 'wifi' ? 'selected' : ''}>Wi-Fi Only</option>
                 </select>
             </div>
-            ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? `<div class="backup-schedule">⏰ Next auto-backup: ${getNextBackupTime(s.autoBackupFreq)}</div>` : ''}
+            ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? `<div class="backup-schedule">${(window.WFIcon ? WFIcon('clock') : '')} Next auto-backup: ${getNextBackupTime(s.autoBackupFreq)}</div>` : ''}
         </div>
 
         <!-- ====== FINANCIAL PREFERENCES (per screenshot) ====== -->
@@ -23851,7 +23886,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Test Notification</div><div class="setting-desc">Send a test notification to verify your setup works.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="testNotificationNow()">🔔 Test Now</button>
+                <button class="btn btn-secondary btn-sm" onclick="testNotificationNow()">${(window.WFIcon ? WFIcon('bell') : '')} Test Now</button>
             </div>
         </div>
 
@@ -23867,7 +23902,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             <div class="settings-title" style="color:var(--purple);">PWA & App Settings</div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Install as App</div><div class="setting-desc">Add WealthFlow to your home screen for a native app experience on any device.</div></div>
-                <button id="installAppBtn" class="btn btn-primary btn-sm" onclick="triggerInstallApp()">📲 Install App</button>
+                <button id="installAppBtn" class="btn btn-primary btn-sm" onclick="triggerInstallApp()">${(window.WFIcon ? WFIcon('devices') : '')} Install App</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Installation Status</div><div class="setting-desc" id="pwaStatusDesc">Detecting current install status…</div></div>
@@ -23875,7 +23910,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Force Update Service Worker</div><div class="setting-desc">Re-register the service worker and clear cached assets — useful after a deploy.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="forceServiceWorkerUpdate()">🔄 Update SW</button>
+                <button class="btn btn-secondary btn-sm" onclick="forceServiceWorkerUpdate()">${(window.WFIcon ? WFIcon('refresh') : '')} Update SW</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Notification Permission</div><div class="setting-desc">Browser-level permission for showing notifications on your device.</div></div>
@@ -23883,7 +23918,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Open Install Guide</div><div class="setting-desc">Step-by-step instructions for iPhone, Android, Windows, and Mac.</div></div>
-                <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">📖 View Guide</button>
+                <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.24</span> Infinity Engine — All systems operational.</div></div>
@@ -23896,7 +23931,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label" style="color:var(--red);">Sign Out</div><div class="setting-desc">Sign out of your Google account and return to login.</div></div>
-                <button class="btn btn-danger btn-sm" onclick="signOutGoogle()">🚪 Sign Out</button>
+                <button class="btn btn-danger btn-sm" onclick="signOutGoogle()">${(window.WFIcon ? WFIcon('logOut') : '')} Sign Out</button>
             </div>
         </div>
 

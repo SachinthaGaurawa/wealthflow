@@ -138,11 +138,17 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * 2. A RATCHET on everything else
  * ═══════════════════════════════════════════════════════════════════════════*/
 
-/* Measured 2026-08-27. LOWER THIS when emoji are removed; it must never rise.
- * The bulk is index.html (1,004), then wealthflow-ai-v4.js (156). Note that
+/* Measured 2026-08-28. LOWER THIS when emoji are removed; it must never rise.
+ * The bulk is index.html (930), then wealthflow-ai-v4.js (156). Note that
  * wealthflow-icons.js's own count is mostly its legacy emoji -> icon-key
- * translation table, which exists precisely to delete emoji from call sites. */
-const EMOJI_CEILING = 1428;
+ * translation table, which exists precisely to delete emoji from call sites.
+ *
+ * 1428 -> 1354: the SETTINGS screen. Seventy-four glyphs off one screen, taken
+ * off the ceiling rather than left as slack, per the rule above this line. The
+ * migration continues screen by screen — renderSettings was the largest single
+ * function at 68, and the next are _showShareableUrlDialog (43), handleAIScan
+ * (27) and renderDebtDemolisher (25). */
+const EMOJI_CEILING = 1354;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {
