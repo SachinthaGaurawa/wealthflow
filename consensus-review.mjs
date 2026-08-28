@@ -270,7 +270,17 @@ export const REVIEWERS = [
              * describes the UI instead of describing it. A rule that reads like
              * a finished sentence will be copied as one. */
             'A pure addition is still a change: judge it, do not wave it through.',
-            'Your reason must contain a concrete NOUN from this diff — the name of the control, screen, message or setting you are talking about. A sentence that would fit any pull request is not a review of this one.',
+            /* Naming something is a constraint on the WORDING of the reason. It
+             * is emphatically not an instruction to find something to object to,
+             * and the first version of it read that way: asked for a concrete
+             * noun, the lane produced "The user will see a new button labelled
+             * '_bv_save' and feel a vibration" — as a FAIL, citing a line that
+             * exists only inside a TEST FIXTURE in that diff. It had gone
+             * looking for a noun, found one in test data, and blocked on it.
+             * Passing with a vague reason was noise; blocking on a fabricated
+             * one is worse, so the boundary is now stated with the rule. */
+            'Your reason should name the control, screen, message or setting you are talking about, so it reads as a review of THIS change rather than one that would fit any. This is about how you word a reason — it is never a reason to FAIL, and never an instruction to go looking for something to object to.',
+            'Test files, fixtures and mock data are not the product. A button that exists only inside a test string is not something the user will ever see, and must not be described as if it were.',
         ],
     },
 ];

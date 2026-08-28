@@ -177,8 +177,16 @@ describe('the reviewer definition itself', () => {
         const joined = ui.rules.join(' ');
         expect(joined, 'the rule is still phrased as a finished verdict sentence')
             .not.toMatch(/New UI that harms nobody is a PASS whose reason describes/);
-        expect(joined, 'nothing forces the reason to name something in this diff')
-            .toMatch(/must contain a concrete NOUN from this diff/);
+        expect(joined, 'nothing asks the reason to name something in this diff')
+            .toMatch(/should name the control, screen, message or setting/);
+        /* AND BOUNDED. Asked simply for a concrete noun, the lane returned "The
+         * user will see a new button labelled '_bv_save' and feel a vibration"
+         * as a FAIL, citing a line that exists only in a TEST FIXTURE. It went
+         * looking for a noun, found one in test data, and blocked on it. */
+        expect(joined, 'the noun rule can still be read as "find something to flag"')
+            .toMatch(/never a reason to FAIL/);
+        expect(joined, 'nothing tells it fixtures are not the product')
+            .toMatch(/Test files, fixtures and mock data are not the product/);
     });
 
     it('keeps the harm questions — the lane still has a job', () => {
