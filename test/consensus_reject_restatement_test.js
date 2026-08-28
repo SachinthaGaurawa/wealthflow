@@ -33,8 +33,9 @@
 import { describe, it, expect } from 'vitest';
 import {
     commentWordsOf, longestSharedRun, restatesComment,
-    addedCodeLines, citesNonExecutableEvidence,
+    addedCodeLines, citesNonExecutableEvidence, nonExecutableEvidenceReason, NON_EXECUTABLE_WHY,
     REJECT_MIN_RUN, REJECT_MIN_SHARE,
+    runReviewer, REVIEWERS,
 } from '../consensus-review.mjs';
 
 /* The actual diff hunk from PR #98 that produced the false finding. */
@@ -297,5 +298,100 @@ describe('a genuine finding still cites real code and survives', () => {
         // Without a length floor, the added `}` would "match" every evidence
         // string and excuse every bad citation.
         expect(citesNonExecutableEvidence('some totally unrelated claim }', PR106_DIFF)).toBe(true);
+    });
+});
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PR #162 — TWO CAUSES WERE PRINTING ONE SENTENCE
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The check above fails in two different ways, and they are not the same
+ * discovery:
+ *
+ *   'comment'  the reviewer quoted the diff's own explanation of itself.
+ *   'absent'   the reviewer quoted something that is not in the diff at all.
+ *
+ * Both printed the 'comment' wording. On #162 the user-impact lane cited a real
+ * added line — the Debt Demolisher's TARGET badge — but RETYPED, with the
+ * concatenation quotes changed from ' to ". It therefore matched nothing, which
+ * is 'absent', and the board told the reader it had quoted a comment.
+ *
+ * The rejection was correct. Its stated reason was false. That matters because
+ * the report ends by inviting the reader to overrule a rejection: they would
+ * have been deciding on the wrong story about what happened. It is the defect
+ * PR #159 fixed in the summary table, surviving one level down in the sentence
+ * the table prints.
+ * ========================================================================= */
+describe('a rejected citation says WHICH way it was wrong', () => {
+    /* The real hunk, trimmed. Assembled from parts so no line of this file is
+     * itself a template literal containing ${...}. */
+    const REAL = "+   ${i === 0 ? '<div class=\"tgt\">' + _ic('target') + ' TARGET</div>' : ''}";
+    const DIFF = [
+        'diff --git a/index.html b/index.html',
+        '@@ -1,3 +1,3 @@',
+        "-   ${i === 0 ? '<div class=\"tgt\">\u{1F3AF} TARGET</div>' : ''}",
+        REAL,
+        '     const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);',
+    ].join('\n');
+
+    /* The same line as the board printed it: single quotes around the
+     * concatenation swapped for double. One character in, one character out. */
+    const RETYPED = REAL.replace('">\' + _ic(\'target\') + \' TARGET', '">" + _ic(\'target\') + " TARGET');
+
+    it('the retyped citation really is different from the real line', () => {
+        /* Guard the fixture itself: if these two ever became equal, every
+         * assertion below would be comparing a line with itself. */
+        expect(RETYPED).not.toBe(REAL);
+        expect(DIFF).toContain(REAL);
+        expect(DIFF).not.toContain(RETYPED);
+    });
+
+    it('the REAL line is not rejected at all', () => {
+        expect(nonExecutableEvidenceReason(REAL, DIFF)).toBeNull();
+        expect(citesNonExecutableEvidence(REAL, DIFF)).toBe(false);
+    });
+
+    it('the RETYPED line is rejected as absent, not as a comment', () => {
+        expect(nonExecutableEvidenceReason(RETYPED, DIFF)).toBe('absent');
+        expect(citesNonExecutableEvidence(RETYPED, DIFF)).toBe(true);
+    });
+
+    it('a genuine comment citation is still reported as a comment', () => {
+        expect(nonExecutableEvidenceReason('+  // this is the explanation', DIFF)).toBe('comment');
+        expect(nonExecutableEvidenceReason('+  * and so is this', DIFF)).toBe('comment');
+    });
+
+    it('the two sentences are different, and neither tells the other story', () => {
+        expect(NON_EXECUTABLE_WHY.comment).not.toBe(NON_EXECUTABLE_WHY.absent);
+        expect(NON_EXECUTABLE_WHY.absent.toLowerCase(),
+            'the absent case must not claim the reviewer quoted a comment')
+            .not.toContain('comment');
+        expect(NON_EXECUTABLE_WHY.comment).toContain('comment');
+    });
+
+    it('the boolean wrapper still answers what its old callers ask', () => {
+        expect(citesNonExecutableEvidence('', DIFF)).toBe(false);
+        expect(citesNonExecutableEvidence(null, DIFF)).toBe(false);
+        expect(citesNonExecutableEvidence('unrelated claim about nothing', DIFF)).toBe(true);
+    });
+
+    it('THE #162 VERDICT, end to end: the board prints the absent sentence', async () => {
+        const chat = async (opts) => ({
+            text: JSON.stringify({
+                verdict: 'fail',
+                reason: 'The user will see new icons and labels in the Debt Demolisher screen, which may be confusing if the icons are not intuitive or the labels are unclear.',
+                evidence: RETYPED,
+                concerns: [],
+            }),
+            provider: opts.only[0],
+        });
+        const lane = { role: REVIEWERS.find((r) => r.name === 'user-impact'), primary: 'cohere', fallbacks: [] };
+        const r = await runReviewer(lane, DIFF, false, chat);
+
+        expect(r.vote, 'the objection rested on a line that is not in the diff').toBe('pass');
+        expect(r.rejectedFinding, 'the objection must be kept on the record').toBeTruthy();
+        expect(r.rejectedFinding.why).toBe(NON_EXECUTABLE_WHY.absent);
+        expect(r.rejectedFinding.why, 'this is what #162 wrongly printed').not.toContain('comment or prose line');
     });
 });
