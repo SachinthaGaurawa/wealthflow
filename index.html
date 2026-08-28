@@ -21558,7 +21558,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             } else if (connected === null) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Checking connection…</div>`;
             } else if (!st.items.length) {
-                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. No new statements waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.${_scan.stage !== 'running' ? ' Use <b>Scan historical statements</b> above to import past emails.' : ''}</div>`;
+                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. No statements waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.</div>`;
             }
 
             host.innerHTML = `
@@ -21999,112 +21999,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                         },
                         {},
                     );
-                    // 1. File applied transactions into ledger collections
-                    let dirtyLedger = false;
-                    if (Array.isArray(res.applied) && res.applied.length > 0) {
-                        for (const item of res.applied) {
-                            if (!item || item.duplicate) continue;
-                            const mod = item.module || 'expenses';
-                            const f = item.fields || {};
-                            const r = item.row || {};
-                            const amt = Math.abs(Number(f.amount != null ? f.amount : r.amount) || 0);
-                            const desc = String(f.desc || r.narration || 'Statement Transaction').trim();
-                            const dt = String(f.date || r.date || new Date().toISOString().slice(0, 10)).slice(0, 10);
-                            const mo = dt.slice(0, 7);
-                            const yr = parseInt(dt.slice(0, 4), 10) || new Date().getFullYear();
-                            const itemHash = item.hash || ('tx_' + Date.now().toString(36));
-
-                            if (mod === 'income') {
-                                const incArr = (typeof DB !== 'undefined' && DB.get('income')) || [];
-                                incArr.push({
-                                    id: 'stmt_' + (itemHash.slice(0, 12)),
-                                    name: desc, source: desc, company: bank || 'Statement',
-                                    amount: amt, date: dt, date_ms: Date.parse(dt) || Date.now(),
-                                    month: mo, year: yr, cat: f.cat || 'Income', type: 'income',
-                                    is_investment: false, freq: 'once', auto: true,
-                                    source_type: 'statement', bank: bank || '', hash: itemHash,
-                                    createdAt: new Date().toISOString()
-                                });
-                                if (typeof DB !== 'undefined') DB.set('income', incArr);
-                                dirtyLedger = true;
-                            } else if (mod === 'cconetime') {
-                                const ccArr = (typeof DB !== 'undefined' && DB.get('cconetime')) || [];
-                                ccArr.push({
-                                    id: 'stmt_' + (itemHash.slice(0, 12)),
-                                    desc: desc, amount: amt, date: dt, date_ms: Date.parse(dt) || Date.now(),
-                                    month: mo, year: yr, bank: bank || '', card_last4: r.card_last4 || f.card_last4 || '',
-                                    type: f.type || 'purchase', completed: true, paid: true, auto: true,
-                                    source: 'statement', hash: itemHash, createdAt: new Date().toISOString()
-                                });
-                                if (typeof DB !== 'undefined') DB.set('cconetime', ccArr);
-                                dirtyLedger = true;
-                            } else if (mod === 'subscriptions') {
-                                if (window.WFSubs && typeof window.WFSubs.apply === 'function') {
-                                    try {
-                                        window.WFSubs.apply({
-                                            description: desc, amount: amt, direction: 'debit', date: dt
-                                        }, { subName: desc, category: f.cat || 'Subscription' });
-                                        dirtyLedger = true;
-                                    } catch (_) {}
-                                }
-                            } else if (mod === 'cc_payment') {
-                                const ccPayArr = (typeof DB !== 'undefined' && DB.get('ccPayments')) || [];
-                                ccPayArr.push({
-                                    id: 'stmt_' + (itemHash.slice(0, 12)),
-                                    bank: bank || '', card_last4: r.card_last4 || f.card_last4 || '',
-                                    amount: amt, date: dt, desc: desc, source: 'statement',
-                                    hash: itemHash, createdAt: new Date().toISOString()
-                                });
-                                if (typeof DB !== 'undefined') DB.set('ccPayments', ccPayArr);
-                                dirtyLedger = true;
-                            } else {
-                                const expArr = (typeof DB !== 'undefined' && DB.get('expenses')) || [];
-                                expArr.push({
-                                    id: 'stmt_' + (itemHash.slice(0, 12)),
-                                    desc: desc, amount: amt, cat: f.cat || 'Other',
-                                    date: dt, date_ms: Date.parse(dt) || Date.now(),
-                                    month: mo, year: yr, completed: true, paid: true, auto: true,
-                                    source: 'statement', bank: bank || '', hash: itemHash,
-                                    createdAt: new Date().toISOString()
-                                });
-                                if (typeof DB !== 'undefined') DB.set('expenses', expArr);
-                                dirtyLedger = true;
-                            }
-                            if (item.hash) ledgerHashes.add(item.hash);
-                        }
-                    }
-
-                    // 2. Push quarantined items to the Interactive Quarantine Zone
-                    if (Array.isArray(res.quarantined) && res.quarantined.length > 0) {
-                        for (const q of res.quarantined) {
-                            if (typeof window.wfQuarantineAdd === 'function') {
-                                const qRow = q.row || {};
-                                const qBrain = {
-                                    id: q.id || ('q_' + Date.now().toString(36)),
-                                    hash: qRow.hash || ('q_' + (q.id || '') + '_' + (qRow.date || '') + '_' + (qRow.amount || '')),
-                                    ok: true,
-                                    classified: true,
-                                    raw: qRow.desc || (bank + ' statement: ' + (q.reason || 'Needs review')),
-                                    routed: {
-                                        module: (q.routed && q.routed.module) || 'expenses',
-                                        confidence: (q.routed && q.routed.confidence) || 0.5,
-                                        suggested_fields: {
-                                            desc: qRow.desc || (bank + ' Statement item'),
-                                            amount: qRow.amount || 0,
-                                            date: qRow.date || new Date().toISOString().slice(0, 10),
-                                            bank: q.bank || bank || 'Bank',
-                                            direction: qRow.direction || 'debit'
-                                        }
-                                    }
-                                };
-                                try { window.wfQuarantineAdd(qBrain, q.reason || 'Needs review'); } catch (_) {}
-                            }
-                        }
-                    }
-                    if (dirtyLedger && typeof window.syncToCloud === 'function') {
-                        try { window.syncToCloud(); } catch (_) {}
-                    }
-
                     const summary = window.WFMailIntake.summarise(res);
                     if (summary.quarantined > 0 && summary.applied === 0) {
                         set(i, { stage: 'held', reason: (summary.messages[0] || '').slice(0, 60) });
@@ -22123,25 +22017,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             finish(null);
         }
         window.runMailSync = runMailSync;
-
-        /* ── AUTO BACKFILL on app load ────────────────────────────────────
-         * Runs once after the first mail-sync check. If the mailbox is
-         * connected but the backfill has never delivered anything, the
-         * owner connected before this auto-trigger existed and should not
-         * have to discover the button themselves. Safe to call repeatedly:
-         * runBackfill() is a no-op when _scan.stage is already 'running',
-         * and the server deduplicates by (messageId, attachmentId). */
-        async function _autoBackfillIfNeeded() {
-            if (!_mailSyncState.connected) return;
-            if (_scan.stage === 'running') return;
-            // If the server has never received a push AND there are no
-            // items waiting, this is a connection with no history scanned.
-            if (_mailStatus && !_mailStatus.lastPushMs
-                && (!_mailSyncState.items || !_mailSyncState.items.length)) {
-                try { runBackfill(6); } catch (_) {}
-            }
-        }
-        window._autoBackfillIfNeeded = _autoBackfillIfNeeded;
 
         /* ── CONNECTING THE MAILBOX ────────────────────────────────────────────
          *
@@ -22245,21 +22120,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * watch is the comfortable lie this change removes. */
                     let w = null;
                     try { w = await _ensureMailWatch({ force: true }); } catch (_) { w = null; }
-                    if (w && w.watching) {
-                        notify('Gmail connected — scanning your past 6 months of statements…', 'success');
-                        try { renderMailSync(); } catch (_) {}
-                        /* ── AUTO BACKFILL on first connect ────────────────────
-                         * The owner just saved the token and the watch is live.
-                         * The dashboard is empty because the push can only see
-                         * what arrives FROM NOW, and the statements that say
-                         * what someone actually spends are already sitting in
-                         * the inbox. A short delay lets the modal close and
-                         * the card redraw before the scan begins. */
-                        setTimeout(() => { try { runBackfill(6); } catch (_) {} }, 600);
-                    } else {
-                        notify('Token saved, but Gmail is not watching yet', 'error');
-                        try { renderMailSync(); } catch (_) {}
-                    }
+                    if (w && w.watching) notify('Gmail connected — watching for statements', 'success');
+                    else notify('Token saved, but Gmail is not watching yet', 'error');
+                    try { renderMailSync(); } catch (_) {}
                 };
 
                 const un = body.querySelector('#_gl_unlink');
@@ -23175,13 +23038,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * the renewal: a watch lasts seven days, so a check
                              * on every load with a six-day margin is what keeps
                              * the pipeline from quietly stopping on day eight. */
-                            if (c) return _ensureMailWatch().then(() => {
-                                renderMailSync();
-                                /* If the backfill has never run, start it now
-                                 * so the dashboard is not empty on first load
-                                 * after connecting the mailbox. */
-                                _autoBackfillIfNeeded();
-                            });
+                            if (c) return _ensureMailWatch().then(() => renderMailSync());
                             return null;
                         })
                         .catch(() => { _mailSyncState.connected = false; renderMailSync(); });
