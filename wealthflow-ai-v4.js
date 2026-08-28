@@ -2896,18 +2896,38 @@
      *     handle attached files via the multi-engine vision pipeline
      * ========================================================================= */
     var _originalSendAIMessage = null;
-    async function sendAIMessageV5() {
+    /* `msgOverride` is not optional decoration — it is how every follow-up
+     * pill and suggested question in this app sends its text.
+     *
+     * The host declares `sendAIMessage(msgOverride)` and seven call sites pass
+     * one. This function replaced it at load taking NO parameters, so the
+     * argument was dropped, the empty chat input was read instead, and the
+     * `!msg && !hasFiles` guard below returned silently. Clicking a follow-up
+     * pill did nothing at all — verified in a browser before this change:
+     * window.sendAIMessage.length was 0 and the call added no message.
+     *
+     * A JavaScript arity mismatch between an overridden function and its
+     * override is invisible; nothing warns. test/no_emoji_test.js derives the
+     * override map for its own purposes and test/ai_chat_send_test.js now
+     * checks the signatures agree.
+     *
+     * Typed rather than truthy: a call site that ever hands this an Event —
+     * `onclick="sendAIMessage(event)"` — must fall back to the input box, not
+     * stringify an object into the chat. */
+    async function sendAIMessageV5(msgOverride) {
         var inputEl = document.getElementById('aiChatInput');
         if (!inputEl) return;
-        var msg = inputEl.value.trim();
+        var override = (typeof msgOverride === 'string') ? msgOverride.trim() : '';
+        var msg = override || inputEl.value.trim();
         var hasFiles = _aiChatAttachments.length > 0;
 
         if (!msg && !hasFiles) return;
 
-        // No files attached → defer to original handler
+        // No files attached → defer to original handler, carrying the override
+        // with it. Passing nothing here is what made the pills dead.
         if (!hasFiles) {
             if (typeof _originalSendAIMessage === 'function') {
-                return _originalSendAIMessage();
+                return _originalSendAIMessage(override || undefined);
             }
             return;
         }

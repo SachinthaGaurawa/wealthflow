@@ -10993,7 +10993,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
             const avatar = document.createElement('div');
             avatar.className = `ai-avatar ${role === 'user' ? 'user' : 'bot'}`;
-            avatar.textContent = role === 'user' ? '👤' : '🤖';
+            /* textContent, so this takes a NODE. A WFIcon() string here would
+             * be shown to the reader as the characters "<svg …>". */
+            avatar.textContent = '';
+            try {
+                const avIcon = window.WFIconNode ? window.WFIconNode(role === 'user' ? 'user' : 'bot') : null;
+                if (avIcon) avatar.appendChild(avIcon);
+            } catch (_) {}
 
             const bubble = document.createElement('div');
             bubble.className = `ai-bubble ${role}`;
@@ -11078,9 +11084,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // Section headers with emojis
             f = f.replace(/(^|\n)([\p{Emoji_Presentation}\p{Emoji}]\s+)(&lt;strong&gt;.+?&lt;\/strong&gt;)/gu, '$1<div class="ai-section-header">$2$3</div>');
             // Callout boxes (warning/success/info lines)
-            f = f.replace(/(^|\n)⚠️\s*(.+)/g, '$1<div class="ai-callout warning"><span class="ai-callout-icon">⚠️</span><span>$2</span></div>');
-            f = f.replace(/(^|\n)✅\s*(.+)/g, '$1<div class="ai-callout success"><span class="ai-callout-icon">✅</span><span>$2</span></div>');
-            f = f.replace(/(^|\n)💡\s*(.+)/g, '$1<div class="ai-callout info"><span class="ai-callout-icon">💡</span><span>$2</span></div>');
+            /* THE GLYPH ON THE LEFT IS A PATTERN, NOT OUTPUT. The model writes
+             * these characters; this turns them into callouts. Strip them from
+             * the match side and the callouts simply stop appearing. Only the
+             * rendered span becomes an icon — and by concatenation, because a
+             * replacement string is not a template literal. */
+            f = f.replace(/(^|\n)⚠️\s*(.+)/g, '$1<div class="ai-callout warning"><span class="ai-callout-icon">' + _ic('alert') + '</span><span>$2</span></div>');
+            f = f.replace(/(^|\n)✅\s*(.+)/g, '$1<div class="ai-callout success"><span class="ai-callout-icon">' + _ic('checkCircle') + '</span><span>$2</span></div>');
+            f = f.replace(/(^|\n)💡\s*(.+)/g, '$1<div class="ai-callout info"><span class="ai-callout-icon">' + _ic('info') + '</span><span>$2</span></div>');
             // Bullets
             f = f.replace(/(^|\n)[\-•]\s+(.+)/g, '$1<div class="ai-bullet">$2</div>');
             // Numbered list with badge
@@ -11088,7 +11099,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             // Currency highlighting (LKR, USD, EUR, GBP, etc.)
             f = f.replace(/((?:LKR|USD|EUR|GBP|INR|AUD|JPY|Rs\.?)\s?[\d,]+(?:\.\d+)?)/g, '<span class="ai-money">$1</span>');
             // Takeaway / Bottom line
-            f = f.replace(/^(Bottom line|Best move|Recommendation|Takeaway|Key point|Summary|Action plan):/gim, '<div class="ai-takeaway">💡 $1:</div>');
+            f = f.replace(/^(Bottom line|Best move|Recommendation|Takeaway|Key point|Summary|Action plan):/gim, '<div class="ai-takeaway">' + _ic('target') + ' $1:</div>');
             // (Table detection moved earlier — runs before bold/bullets.)
             // Paragraph spacing
             f = f.replace(/\n{2,}/g, '<div class="ai-spacer"></div>');
@@ -11159,8 +11170,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
             if (role === 'bot') {
-                const provLabels = { gemini: '✨ Gemini', groq: '⚡ Groq', deepseek: '🧠 DeepSeek' };
-                const provLabel = provLabels[_lastAIProvider] || '🤖 AI';
+                /* One icon for all four, deliberately. The provider's NAME is
+                 * already the text beside it, so a different glyph per vendor
+                 * distinguished nothing the words did not — it was decoration
+                 * chosen at random. What the mark should say is "this came
+                 * from the assistant", and that is the same for every one. */
+                const provName = { gemini: 'Gemini', groq: 'Groq', deepseek: 'DeepSeek' };
+                const provLabel = _ic('bot') + ' ' + (provName[_lastAIProvider] || 'AI');
                 meta.innerHTML = `<span style="color:var(--accent);font-size:9px;">${provLabel}</span> <span>${timeStr}</span>`;
 
                 // Follow-up pills
@@ -11192,7 +11208,19 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                         return (tmp.innerText || tmp.textContent || '').trim();
                     } catch (_) { return String(rawText || '').trim(); }
                 })();
-                actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="(function(b){navigator.clipboard.writeText(b.getAttribute('data-copy')||'');b.textContent='✓ Copied';setTimeout(()=>b.textContent='📋 Copy',1500);})(this)">📋 Copy</button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}">🔊 Read</button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)"><i data-wfi="thumbsUp"></i></button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)"><i data-wfi="thumbsDown"></i></button>`;
+                /* Copy and Read each carry an icon AND a label their handlers
+                 * swap ("Copy" -> "Copied", "Read" -> "Stop"). Those handlers
+                 * used to assign the whole button's textContent, which is why
+                 * the label had to be a glyph — an icon would have been wiped
+                 * on the first click and could not have been written back as
+                 * text anyway. So the label lives in its own span and the
+                 * handlers change only that, leaving the icon alone.
+                 *
+                 * The copy handler moves out of the onclick attribute for the
+                 * same reason its siblings already have: a function is easier
+                 * to read than a quoted IIFE nested inside an HTML attribute,
+                 * and it can be tested. */
+                actions.innerHTML = `<button class="ai-msg-action-btn" data-copy="${esc(_copyPayload).replace(/"/g,'&quot;')}" onclick="_aiCopyAnswer(this)"><i data-wfi="copy"></i><span class="ai-btn-label">Copy</span></button><button class="ai-msg-action-btn" onclick="_readAIAloud(this)" data-text="${esc(rawText).replace(/"/g,'&quot;')}"><i data-wfi="volume"></i><span class="ai-btn-label">Read</span></button><button class="ai-msg-action-btn ai-fb-btn" title="Good answer — the AI learns from this" onclick="_aiFeedback(this,true)"><i data-wfi="thumbsUp"></i></button><button class="ai-msg-action-btn ai-fb-btn" title="Not helpful — the AI learns from this" onclick="_aiFeedback(this,false)"><i data-wfi="thumbsDown"></i></button>`;
                 bubble.appendChild(actions);
             } else {
                 // User message — show time + an Edit button (like Claude/Gemini)
@@ -11201,7 +11229,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     const editBtn = document.createElement('button');
                     editBtn.className = 'ai-msg-action-btn';
                     editBtn.style.cssText = 'margin-left:8px;font-size:11px;';
-                    editBtn.textContent = '✏️ Edit';
+                    editBtn.textContent = '';
+                    try {
+                        const eIcon = window.WFIconNode ? window.WFIconNode('edit') : null;
+                        if (eIcon) editBtn.appendChild(eIcon);
+                    } catch (_) {}
+                    editBtn.appendChild(document.createTextNode(' Edit'));
                     editBtn.dataset.original = text;
                     editBtn.onclick = function () { _editUserMessage(wrap, this.dataset.original); };
                     meta.appendChild(editBtn);
@@ -11553,13 +11586,33 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
         }
 
         // ==================== TEXT-TO-SPEECH (Read Aloud) ====================
+        /**
+         * The label inside an action button, without disturbing its icon.
+         *
+         * These handlers used to assign `btn.textContent`, which replaces every
+         * child — icon included. That is survivable when the label is a glyph
+         * and invisible when it is not, so the swap is now scoped to the span
+         * that holds the words. Falls back to the button itself for any caller
+         * that has not been given a label span.
+         */
+        function _aiBtnLabel(btn, words) {
+            const el = (btn && btn.querySelector) ? btn.querySelector('.ai-btn-label') : null;
+            if (el) el.textContent = words; else if (btn) btn.textContent = words;
+        }
+
+        function _aiCopyAnswer(btn) {
+            try { navigator.clipboard.writeText(btn.getAttribute('data-copy') || ''); } catch (_) {}
+            _aiBtnLabel(btn, 'Copied');
+            setTimeout(() => _aiBtnLabel(btn, 'Copy'), 1500);
+        }
+
         function _readAIAloud(btn) {
-            if (!('speechSynthesis' in window)) { notify('🔊 Text-to-speech not supported.', 'warn'); return; }
+            if (!('speechSynthesis' in window)) { notify('Text-to-speech is not supported on this browser.', 'warn'); return; }
 
             // Toggle off if already speaking
             if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
                 window.speechSynthesis.cancel();
-                btn.classList.remove('active'); btn.textContent = '🔊 Read';
+                btn.classList.remove('active'); _aiBtnLabel(btn, 'Read');
                 return;
             }
 
@@ -11568,7 +11621,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             const rawText = btn.getAttribute('data-text')
                 || (bubble ? bubble.querySelector('.ai-bubble')?.innerText : '')
                 || '';
-            if (!rawText || rawText.length < 2) { notify('🔊 No text to read.', 'info'); return; }
+            if (!rawText || rawText.length < 2) { notify('No text to read.', 'info'); return; }
 
             // Clean markdown artifacts
             const cleanText = rawText.replace(/[*#_~`|]/g, '').replace(/\s+/g, ' ').trim();
@@ -11602,12 +11655,12 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     if (!bestVoice) bestVoice = voices.find(v => v.lang.substring(0,2) === lang.substring(0,2));
                 }
 
-                btn.classList.add('active'); btn.textContent = '⏹ Stop';
+                btn.classList.add('active'); _aiBtnLabel(btn, 'Stop');
                 let chunkIndex = 0;
 
                 function speakNext() {
                     if (chunkIndex >= chunks.length || !btn.classList.contains('active')) {
-                        btn.classList.remove('active'); btn.textContent = '🔊 Read';
+                        btn.classList.remove('active'); _aiBtnLabel(btn, 'Read');
                         return;
                     }
                     const utt = new SpeechSynthesisUtterance(chunks[chunkIndex]);
@@ -11616,7 +11669,7 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                     utt.pitch = 1;
                     if (bestVoice) utt.voice = bestVoice;
                     utt.onend = () => { chunkIndex++; speakNext(); };
-                    utt.onerror = () => { btn.classList.remove('active'); btn.textContent = '🔊 Read'; };
+                    utt.onerror = () => { btn.classList.remove('active'); _aiBtnLabel(btn, 'Read'); };
                     window.speechSynthesis.speak(utt);
                 }
                 speakNext();

@@ -228,11 +228,18 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * test/debt_demolisher_icons_test.js for why the icon CHOICE mattered on that
  * screen more than the count did.
  *
+ * 1198 -> 1175: the AI CHAT MESSAGE. Not to zero, and correctly so — see
+ * test/ai_chat_icons_test.js. Three of the glyphs in appendAIMessage are
+ * PATTERNS matching what the model writes, not output; deleting them would
+ * remove the callout formatting from every AI answer while the count went
+ * down as though it had gone well.
+ *
  * The migration continues screen by screen. renderSettings was the largest
  * single function at 68, _showShareableUrlDialog the next at 43, then
- * handleAIScan at 27 and renderDebtDemolisher at 25; appendAIMessage (21) is
- * what remains of the large ones. */
-const EMOJI_CEILING = 1198;
+ * handleAIScan at 27, renderDebtDemolisher at 25 and appendAIMessage at 21.
+ * What is left is a long tail: no single function now holds more than a
+ * handful. */
+const EMOJI_CEILING = 1175;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {

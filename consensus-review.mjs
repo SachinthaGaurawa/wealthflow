@@ -525,25 +525,66 @@ export function addedCodeLines(diff) {
 }
 
 /**
- * Did this FAIL cite something that is not an added executable line?
- * Returns false for empty evidence — see the note above.
+ * WHY this FAIL's evidence is not an added executable line — or null if it is.
+ *
+ * There are two different ways to fail this check and they are not the same
+ * discovery, which is the whole reason this returns a cause instead of a
+ * boolean:
+ *
+ *   'comment'  the evidence opens with a comment marker or a prose bullet. The
+ *              reviewer quoted the diff's own explanation of itself and called
+ *              it the offending line.
+ *
+ *   'absent'   the evidence matches no added line at all. The reviewer quoted
+ *              something that is not in this diff — usually a real line
+ *              retyped, with quoting or spacing changed in the retyping.
+ *
+ * Both used to print the 'comment' sentence. On PR #162 the user-impact lane
+ * cited the TARGET badge with its concatenation quotes changed from ' to ",
+ * so it matched nothing — cause 'absent' — and the board told the reader it
+ * had quoted a comment. The rejection was right and its stated reason was
+ * false, which matters because the report invites the reader to overrule a
+ * rejection: they would have been judging it on the wrong story. That is the
+ * defect PR #159 fixed in the summary table, surviving one level down in the
+ * sentence the table prints.
+ *
+ * 'absent' is also the STRONGER finding of the two, and saying so is worth
+ * something: a reviewer quoting a line that does not exist has not read the
+ * diff it is reviewing.
+ *
+ * Returns null for empty evidence — see the note above.
  */
-export function citesNonExecutableEvidence(evidence, diff) {
+export function nonExecutableEvidenceReason(evidence, diff) {
     const ev = normLine(evidence);
-    if (!ev) return false;
+    if (!ev) return null;
     // A comment marker or a prose bullet can never be the executable line that
     // causes a defect.
-    if (/^(\/\/|\/\*|\*|#|·|•|–|—)/.test(ev)) return true;
+    if (/^(\/\/|\/\*|\*|#|·|•|–|—)/.test(ev)) return 'comment';
     const added = addedCodeLines(diff);
-    if (!added.length) return false;          // nothing to compare against; do not reject
-    return !added.some((l) => (
+    if (!added.length) return null;           // nothing to compare against; do not reject
+    const matched = added.some((l) => (
         l === ev
         || (ev.length >= 12 && l.includes(ev))
         // Guard the reverse direction against trivia: without a length floor,
         // a one-character added line like `}` would "match" any evidence.
         || (l.length >= 12 && ev.includes(l))
     ));
+    return matched ? null : 'absent';
 }
+
+/**
+ * Did this FAIL cite something that is not an added executable line?
+ * Kept as the boolean form; the cause is what the report needs.
+ */
+export function citesNonExecutableEvidence(evidence, diff) {
+    return nonExecutableEvidenceReason(evidence, diff) !== null;
+}
+
+/** The sentence the report prints for each cause. */
+export const NON_EXECUTABLE_WHY = {
+    comment: 'the cited evidence is a comment or prose line, not an added executable line',
+    absent: "the cited line does not appear among this diff's added lines — it was not read from this diff",
+};
 
 /* ── A FOURTH REJECTION: "NEW" SAID OF SOMETHING THAT WAS ALREADY THERE ──────
  *
@@ -816,10 +857,11 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 // the diff's comments; the second catches it paraphrasing them
                 // while citing one as the offending line. PR #98 tripped the
                 // first, PR #106 tripped only the second.
+                const nonExec = nonExecutableEvidenceReason(evidence, diff);
                 const why = restatesComment(parsed.reason, commentWordsOf(diff))
                     ? "the reason is a verbatim run of the diff's own comment text"
-                    : citesNonExecutableEvidence(evidence, diff)
-                        ? 'the cited evidence is a comment or prose line, not an added executable line'
+                    : nonExec
+                        ? NON_EXECUTABLE_WHY[nonExec]
                         : (claimsNovelty(parsed.reason) && evidenceIsGlyphSwap(evidence, diff))
                             ? 'the reason calls something new, but the cited line REPLACED one reading the same words'
                             : null;
