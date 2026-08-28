@@ -2476,7 +2476,18 @@
         .notif-ico {
             font-size: 15px;
             flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
         }
+
+        /* The icon takes the same colour as the toast's left border. The emoji
+         * these replaced were coloured glyphs; an inline SVG inherits the text
+         * colour instead, so without this a success and an error toast would
+         * differ only by a 3px stripe. */
+        .notif.success .notif-ico { color: var(--green); }
+        .notif.error .notif-ico { color: var(--red); }
+        .notif.info .notif-ico { color: var(--blue); }
+        .notif.warn .notif-ico { color: var(--accent); }
 
         /* ================== AUTOCOMPLETE ================== */
         .ac-wrap {
@@ -16186,8 +16197,56 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             triggerHaptic(type === 'error' ? 'error' : (type === 'success' ? 'success' : 'light'));
             const el = document.createElement('div');
             el.className = `notif ${type}`;
-            const icons = { success: '✅', error: '❌', info: 'ℹ️', warn: '⚠️' };
-            el.innerHTML = `<span class="notif-ico">${icons[type] || 'ℹ️'}</span><span>${msg}</span>`;
+            /* Built as NODES, never as markup.
+             *
+             * A toast message is DATA: a vendor name a model read off a
+             * photographed receipt, an account label the owner typed, a
+             * server's error string passed straight through. It used to be
+             * interpolated into `innerHTML`, so whatever those strings
+             * contained was parsed as part of the page. Two hundred and
+             * seventy-seven call sites, and not one of them escaped its
+             * message — because nothing about `notify(msg)` said it had to.
+             *
+             * Now the message goes in as a text node and cannot be anything
+             * else. The only markup left is the icon, and it is chosen from a
+             * fixed table by `type`, never built from `msg`. */
+            /* A toast says what KIND of thing happened through three channels,
+             * so that losing any one of them still leaves the message legible:
+             * the coloured left border, the icon (tinted to match that border
+             * by .notif.<type> .notif-ico), and the announcement below.
+             *
+             * WHAT THE ICON CHANGE IS AND IS NOT. The emoji table this replaces
+             * never reached the screen as emoji: WFIconStripEmoji's observer in
+             * wealthflow-icons.js already mapped those four glyphs to these four
+             * icons, so the drawn shape is unchanged. What changes is that it is
+             * drawn immediately instead of after that observer's 120ms debounce,
+             * and that it is no longer sourced from a character.
+             *
+             * The tint is therefore NEW, not a regression being repaired. Those
+             * substituted SVGs inherited `currentColor` — body text, identically
+             * grey for all four types — so a success toast and an error toast
+             * were told apart by a 3px stripe alone. Measured on main before
+             * this change: rgb(226,232,240) for every type. */
+            el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+            el.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+
+            const ico = document.createElement('span');
+            ico.className = 'notif-ico';
+            const NOTIF_ICON = { success: 'checkCircle', error: 'x', info: 'info', warn: 'alert' };
+            let hasIcon = false;
+            try {
+                /* No emoji fallback. If the icon set has not loaded — which
+                 * means every icon in the app is gone, not just this one — the
+                 * toast closes up around its message rather than reintroducing
+                 * the character the icon system exists to remove, and rather
+                 * than leaving an empty slot where a glyph should be. */
+                const n = window.WFIconNode ? window.WFIconNode(NOTIF_ICON[type] || 'info') : null;
+                if (n) { ico.appendChild(n); hasIcon = true; }
+            } catch (_) {}
+            const body = document.createElement('span');
+            body.textContent = String(msg == null ? '' : msg);
+            if (hasIcon) el.appendChild(ico);
+            el.appendChild(body);
             $('notifs').appendChild(el);
             requestAnimationFrame(() => el.classList.add('show'));
             setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 3600);
