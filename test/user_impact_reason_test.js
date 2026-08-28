@@ -53,8 +53,17 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-    deniesVisibleChange, addsUserVisibleSurface, DENIAL_REPLACEMENT, REVIEWERS, runReviewer,
-    reasonIsGeneric, reasonNamesSomething, GENERIC_REPLACEMENT,
+    deniesVisibleChange,
+    addsUserVisibleSurface,
+    DENIAL_REPLACEMENT,
+    REVIEWERS,
+    runReviewer,
+    reasonIsGeneric,
+    reasonNamesSomething,
+    GENERIC_REPLACEMENT,
+    claimsNovelty,
+    evidenceIsGlyphSwap,
+    visibleTextOf,
 } from '../consensus-review.mjs';
 
 const uiDiff = [
@@ -333,5 +342,144 @@ describe('a reason has to name something in the diff', () => {
          * whole job is to say what the person will SEE. */
         const b = await runReviewer(sec, hapticDiff, false, stub('No vulnerabilities introduced.'));
         expect(b.reason).toBe('No vulnerabilities introduced.');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * A FOURTH REJECTION: "NEW" SAID OF SOMETHING THAT WAS ALREADY THERE
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * PR #155 replaced emoji with icons. The user-impact lane failed the board:
+ *
+ *   "The user will see a NEW icon in the AI Scanner Settings title, which may
+ *    be confusing as it is not explained in the text."
+ *
+ * citing a real added executable line — so the existing guards had nothing to
+ * say. But the hunk replaced a camera EMOJI that stood in that exact position.
+ * The reviewer read the `+` in isolation and described a substitution as an
+ * addition, and the re-run reshaped it into "will see a new icon, but the icon
+ * is not visible in the diff" with no evidence at all.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+
+const swapDiff = [
+    'diff --git a/index.html b/index.html',
+    '@@ -1,1 +1,1 @@',
+    '-                <div class="md-title">\u{1F4F8} AI Scanner Settings</div>',
+    '+                <div class="md-title">${(window.WFIcon ? WFIcon(\'scan\') : \'\')} AI Scanner Settings</div>',
+].join('\n');
+const swapEvidence = '+                <div class="md-title">${(window.WFIcon ? WFIcon(\'scan\') : \'\')} AI Scanner Settings</div>';
+
+describe('a reason calling a substitution "new"', () => {
+    it('recognises a novelty claim', () => {
+        for (const r of [
+            'The user will see a new icon in the title',
+            'This introduces a new control',
+            'It adds a button nobody asked for',
+            'A newly added row appears',
+        ]) expect(claimsNovelty(r), r).toBe(true);
+    });
+
+    it('does not see novelty in a reason that claims none', () => {
+        for (const r of [
+            'The label is now harder to read at small sizes',
+            'This removes the confirmation step',
+            'The colour no longer meets contrast guidance',
+        ]) expect(claimsNovelty(r), r).toBe(false);
+    });
+
+    it('THE CASE: an icon replacing an emoji reads as the same words', () => {
+        expect(evidenceIsGlyphSwap(swapEvidence, swapDiff)).toBe(true);
+    });
+
+    it('a replacement that genuinely ADDS a control is NOT rejected', () => {
+        /* The rule must be narrow. A replaced line can introduce something, and
+         * a novelty objection to that is correct. */
+        const d = [
+            '@@ -1,1 +1,1 @@',
+            '-  <div>Total</div>',
+            '+  <div>Total <button onclick="deleteAll()">Delete all</button></div>',
+        ].join('\n');
+        expect(evidenceIsGlyphSwap('+  <div>Total <button onclick="deleteAll()">Delete all</button></div>', d)).toBe(false);
+    });
+
+    it('a replacement that CHANGES the words is not rejected either', () => {
+        const d = ['@@', '-  <div>Save</div>', '+  <div>Delete</div>'].join('\n');
+        expect(evidenceIsGlyphSwap('+  <div>Delete</div>', d)).toBe(false);
+    });
+
+    it('a pure addition with nothing removed is not rejected', () => {
+        const d = ['@@', '+  <div>Brand new row</div>'].join('\n');
+        expect(evidenceIsGlyphSwap('+  <div>Brand new row</div>', d)).toBe(false);
+    });
+
+    it('two lines of pure markup are not "the same words"', () => {
+        /* Empty visible text on both sides would otherwise match everything and
+         * reject findings about structural changes. */
+        const d = ['@@', '-  <div class="a">', '+  <section class="b">'].join('\n');
+        expect(evidenceIsGlyphSwap('+  <section class="b">', d)).toBe(false);
+    });
+
+    it('evidence that is not actually in the diff says nothing', () => {
+        expect(evidenceIsGlyphSwap('+  <div>Invented line</div>', swapDiff)).toBe(false);
+        expect(evidenceIsGlyphSwap('', swapDiff)).toBe(false);
+    });
+
+    it('visibleTextOf strips markup, expressions and glyphs but keeps the words', () => {
+        expect(visibleTextOf('<div class="md-title">\u{1F4F8} AI Scanner Settings</div>')).toBe('ai scanner settings');
+        expect(visibleTextOf('<div>${WFIcon(\'scan\')} AI Scanner Settings</div>')).toBe('ai scanner settings');
+        expect(visibleTextOf('<div class="x"></div>')).toBe('');
+    });
+
+    it('both halves are required before anything is rejected', () => {
+        /* A novelty claim about a real addition still blocks, and a
+         * non-novelty finding about a swapped line still blocks. */
+        expect(claimsNovelty('The contrast is now too low') && evidenceIsGlyphSwap(swapEvidence, swapDiff)).toBe(false);
+    });
+});
+
+describe('the rejection reaches runReviewer, not just the helpers', () => {
+    const fail = (reason, evidence) => async (opts) => ({
+        text: JSON.stringify({ verdict: 'fail', reason, evidence, concerns: [] }),
+        provider: opts.only[0],
+    });
+    const lane = () => ({ role: REVIEWERS.find((r) => r.name === 'user-impact'), primary: 'cohere', fallbacks: [] });
+
+    it('THE PR #155 VERDICT: the FAIL is rejected and the vote becomes pass', async () => {
+        const r = await runReviewer(lane(), swapDiff, false,
+            fail('The user will see a new icon in the AI Scanner Settings title, which may be confusing as it is not explained in the text.', swapEvidence));
+        expect(r.vote).toBe('pass');
+        expect(r.rejectedFinding, 'the objection must be recorded, not deleted').toBeTruthy();
+        expect(r.rejectedFinding.why).toContain('REPLACED');
+    });
+
+    it('the objection is preserved on the record so a human can overrule it', async () => {
+        const r = await runReviewer(lane(), swapDiff, false,
+            fail('The user will see a new icon in the title', swapEvidence));
+        expect(r.rejectedFinding.reason).toContain('new icon');
+        expect(r.rejectedFinding.evidence).toContain('AI Scanner Settings');
+    });
+
+    it('a novelty FAIL on a REAL addition still blocks', async () => {
+        /* The guard must not become a way past the board. */
+        const d = ['@@', '-  <div>Total</div>', '+  <div>Total <button onclick="deleteAll()">Delete all</button></div>'].join('\n');
+        const ev = '+  <div>Total <button onclick="deleteAll()">Delete all</button></div>';
+        const r = await runReviewer(lane(), d, false, fail('This adds a new Delete all button with no confirmation', ev));
+        expect(r.vote).toBe('fail');
+        expect(r.rejectedFinding).toBeFalsy();
+    });
+
+    it('a non-novelty FAIL about a swapped line still blocks', async () => {
+        const r = await runReviewer(lane(), swapDiff, false,
+            fail('The icon has insufficient contrast against the title background', swapEvidence));
+        expect(r.vote).toBe('fail');
+    });
+
+    it('an evidence-free FAIL still blocks — that path fails closed by design', async () => {
+        /* The second run on #155 reshaped into exactly this, and it must keep
+         * blocking: the file's own note says an unsubstantiated FAIL blocks
+         * because the board fails closed on security. */
+        const r = await runReviewer(lane(), swapDiff, false,
+            fail('The user will see a new icon, but the icon is not visible in the diff.', ''));
+        expect(r.vote).toBe('fail');
     });
 });
