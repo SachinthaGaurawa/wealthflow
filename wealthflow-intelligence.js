@@ -116,96 +116,36 @@
     }
 
     /* Candidate passwords for locked bank PDFs, derived from vault contents.
-     * Sri Lankan & global banks variously use the NIC, the DOB in several formats,
-     * the last 4 of the card/account, or cross-combinations as the statement password.
-     * We generate every sensible permutation, de-duplicated and ordered most-likely-first. */
+     * Sri Lankan banks variously use the NIC, the DOB in several formats, or
+     * the last 4 of the card as the statement password. We generate every
+     * sensible candidate, de-duplicated and ordered most-likely-first. */
     function _pdfCandidatesFrom(v) {
         if (!v) return [];
         var out = [];
-        function push(x) {
-            var s = x == null ? '' : String(x).trim();
-            if (s && out.indexOf(s) === -1) out.push(s);
-        }
+        function push(x) { if (x && out.indexOf(x) === -1) out.push(x); }
 
-        var nicClean = '', nicDigits = '', nicLast4 = '', nicFirst4 = '';
         if (v.nic) {
             var nic = String(v.nic).trim().toUpperCase();
-            nicClean = nic;
-            nicDigits = nic.replace(/[VX]$/i, '');
-            nicLast4 = nic.slice(-4);
-            nicFirst4 = nic.slice(0, 4);
-
             push(nic);
             push(nic.toLowerCase());
-            push(nicDigits);                   // old NIC without trailing V/X
-            push(nicLast4);                    // last 4 of NIC
-            push(nic.slice(-6));               // last 6 of NIC
+            push(nic.replace(/[VX]$/i, ''));   // old NIC without trailing V/X
+            push(nic.slice(-4));               // last 4 of NIC
             push(nic.slice(0, 6));             // birth-encoded prefix of old NIC
-            push(nicFirst4);                   // first 4 of NIC
-            if (nicDigits.length === 9) {
-                push('19' + nicDigits);        // 12-digit format from 9-digit
-            }
         }
-
-        var dStr = '', mStr = '', yStr = '', yyStr = '';
         if (v.dob) {
             var m = String(v.dob).match(/(\d{4})\D?(\d{2})\D?(\d{2})/);
             if (m) {
-                yStr = m[1]; mStr = m[2]; dStr = m[3]; yyStr = yStr.slice(2);
-                push(dStr + mStr + yStr);      // DDMMYYYY (most common SL bank format)
-                push(yStr + mStr + dStr);      // YYYYMMDD
-                push(dStr + mStr + yyStr);     // DDMMYY
-                push(yyStr + mStr + dStr);     // YYMMDD
-                push(mStr + dStr + yStr);      // MMDDYYYY
-                push(mStr + dStr + yyStr);     // MMDDYY
-                push(dStr + mStr);             // DDMM
-                push(mStr + dStr);             // MMDD
-                push(yStr);                    // YYYY
-                push(yStr + dStr + mStr);      // YYYYDDMM
-                push(dStr + '-' + mStr + '-' + yStr); // DD-MM-YYYY
-                push(dStr + '/' + mStr + '/' + yStr); // DD/MM/YYYY
-                push(yStr + '-' + mStr + '-' + dStr); // YYYY-MM-DD
-                push(yStr + '/' + mStr + '/' + dStr); // YYYY/MM/DD
-                push(dStr + '.' + mStr + '.' + yStr); // DD.MM.YYYY
+                var Y = m[1], M = m[2], D = m[3], yy = Y.slice(2);
+                push(D + M + Y);     // DDMMYYYY
+                push(Y + M + D);     // YYYYMMDD
+                push(D + M + yy);    // DDMMYY
+                push(yy + M + D);    // YYMMDD
+                push(M + D + Y);     // MMDDYYYY
+                push(D + M);         // DDMM
+                push(Y + D + M);     // YYYYDDMM
             }
         }
-
-        var cardLast4s = [];
-        (v.last4 || []).forEach(function (c) {
-            var s = String(c).trim();
-            if (s) { push(s); if (cardLast4s.indexOf(s) === -1) cardLast4s.push(s); }
-        });
-
-        // Also gather card last-4s from memory/appData if present
-        try {
-            if (typeof window !== 'undefined' && window.appData) {
-                var allCards = (window.appData.cards || []).concat(window.appData.accounts || []);
-                allCards.forEach(function (a) {
-                    var l4 = String(a.last4 || a.card_last4 || '').trim();
-                    if (l4) { push(l4); if (cardLast4s.indexOf(l4) === -1) cardLast4s.push(l4); }
-                });
-            }
-        } catch (_) {}
-
-        // Bank-specific cross-combinations (NIC + DOB / Card + DOB)
-        if (dStr && mStr) {
-            if (nicLast4) {
-                push(nicLast4 + dStr + mStr);         // Last4NIC + DDMM
-                push(nicLast4 + dStr + mStr + yyStr); // Last4NIC + DDMMYY
-                push(nicLast4 + yStr);                // Last4NIC + YYYY
-            }
-            if (nicFirst4) {
-                push(nicFirst4 + dStr + mStr);        // First4NIC + DDMM
-            }
-            cardLast4s.forEach(function (c4) {
-                push(c4 + dStr + mStr);               // CardLast4 + DDMM
-                push(c4 + dStr + mStr + yyStr);       // CardLast4 + DDMMYY
-                push(c4 + yStr);                      // CardLast4 + YYYY
-                push(dStr + mStr + c4);               // DDMM + CardLast4
-                push(dStr + mStr + yyStr + c4);       // DDMMYY + CardLast4
-            });
-        }
-
+        (v.last4 || []).forEach(function (c) { push(String(c).trim()); });
         return out;
     }
 

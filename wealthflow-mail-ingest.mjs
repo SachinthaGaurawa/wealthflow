@@ -62,63 +62,12 @@
  * because the match is anchored to a label boundary at the end.
  */
 export const BANKS = [
-    // Sri Lanka Licensed Commercial & Specialized Banks
     { domain: 'hnb.lk', name: 'HNB' },
     { domain: 'dfcc.lk', name: 'DFCC' },
     { domain: 'nationstrust.com', name: 'Nations Trust' },
-    { domain: 'ntb.lk', name: 'Nations Trust' },
-    { domain: 'combank.net', name: 'Commercial Bank' },
-    { domain: 'combank.lk', name: 'Commercial Bank' },
-    { domain: 'commercialbank.lk', name: 'Commercial Bank' },
-    { domain: 'sampath.lk', name: 'Sampath Bank' },
-    { domain: 'boc.lk', name: 'Bank of Ceylon' },
-    { domain: 'seylan.lk', name: 'Seylan Bank' },
-    { domain: 'sc.com', name: 'Standard Chartered' },
-    { domain: 'standardchartered.com', name: 'Standard Chartered' },
-    { domain: 'hsbc.lk', name: 'HSBC' },
-    { domain: 'hsbc.com', name: 'HSBC' },
-    { domain: 'ndbbank.com', name: 'NDB Bank' },
-    { domain: 'pabcbank.com', name: 'Pan Asia Bank' },
-    { domain: 'unionb.com', name: 'Union Bank' },
-    { domain: 'cargillsbank.com', name: 'Cargills Bank' },
-    { domain: 'amanabank.lk', name: 'Amana Bank' },
-    { domain: 'sdb.lk', name: 'SDB Bank' },
-    { domain: 'nsb.lk', name: 'NSB' },
-    { domain: 'rdb.lk', name: 'RDB' },
-    { domain: 'peoplesbank.lk', name: "People's Bank" },
-    // Sri Lanka Major Financial Institutions & Cards
-    { domain: 'lolc.com', name: 'LOLC Finance' },
-    { domain: 'singerfinance.com', name: 'Singer Finance' },
-    { domain: 'cdb.lk', name: 'CDB' },
-    { domain: 'lbfinance.com', name: 'LB Finance' },
-    { domain: 'vallibelfinance.com', name: 'Vallibel Finance' },
-    { domain: 'centralfinance.com', name: 'Central Finance' },
-    // Global Banks, Cards & Fintechs
     { domain: 'americanexpress.com', name: 'American Express' },
     { domain: 'amex.com', name: 'American Express' },
-    { domain: 'wise.com', name: 'Wise' },
-    { domain: 'transferwise.com', name: 'Wise' },
-    { domain: 'revolut.com', name: 'Revolut' },
-    { domain: 'payoneer.com', name: 'Payoneer' },
-    { domain: 'paypal.com', name: 'PayPal' },
-    { domain: 'chase.com', name: 'Chase' },
-    { domain: 'citi.com', name: 'Citi' },
-    { domain: 'citibank.com', name: 'Citibank' },
-    { domain: 'barclays.co.uk', name: 'Barclays' },
-    { domain: 'barclays.com', name: 'Barclays' },
-    { domain: 'capitalone.com', name: 'Capital One' },
-    { domain: 'wellsfargo.com', name: 'Wells Fargo' },
-    { domain: 'bankofamerica.com', name: 'Bank of America' },
-    { domain: 'bofa.com', name: 'Bank of America' },
-    { domain: 'emiratesnbd.com', name: 'Emirates NBD' },
-    { domain: 'mashreq.com', name: 'Mashreq' },
-    { domain: 'dbs.com', name: 'DBS' },
-    { domain: 'ocbc.com', name: 'OCBC' },
-    { domain: 'uobgroup.com', name: 'UOB' },
 ];
-
-export const FINANCIAL_KEYWORD_RE = /\b(e[-_ ]?statement|statement|e[-_ ]?advice|advice|bill|invoice|account|credit[-_ ]?card|creditcard|transaction|card[-_ ]?statement|epassbook|finacle|e[-_ ]?slip|banking)\b/i;
-export const BANK_DOMAIN_RE = /(^|\.)(bank|finance|financial|credit|wealth|fund|fintech|epassbook)($|\.)/i;
 
 export const REJECT = {
     NOT_A_BANK: 'sender-not-on-allowlist',
@@ -190,19 +139,6 @@ export function dkimPassedFor(authResults) {
     return out;
 }
 
-/** Derive clean bank name from From display name or domain */
-export function deriveBankName(fromHeader, domain) {
-    const raw = String(fromHeader || '').trim();
-    const match = /^["']?([^<"@]+?)["']?\s*<.+@.+>$/.exec(raw);
-    if (match && match[1] && match[1].trim().length > 1) {
-        const clean = match[1].replace(/e[-_ ]?statement|statement|notifications?|alerts?|no[-_ ]?reply/gi, '').trim();
-        if (clean.length > 1) return clean;
-    }
-    const parts = (domain || '').split('.').filter(p => !['com', 'lk', 'net', 'org', 'co', 'gov', 'edu', 'io', 'app'].includes(p));
-    const main = parts[parts.length - 1] || parts[0] || domain || 'Bank';
-    return main.charAt(0).toUpperCase() + main.slice(1) + (main.toLowerCase().includes('bank') ? '' : ' Bank');
-}
-
 /**
  * Which bank sent this, if any — and only if Google says the signature holds.
  *
@@ -214,18 +150,7 @@ export function identifyBank(headers) {
     for (const [k, v] of Object.entries(headers || {})) h[lower(k)] = v;
 
     const from = domainOf(h.from);
-    if (!from) return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from: '(none)' } };
-
-    let hit = BANKS.find((b) => isUnder(from, b.domain));
-    if (!hit) {
-        const subject = lower(h.subject || '');
-        const fromRaw = lower(h.from || '');
-        const isFinancialMail = FINANCIAL_KEYWORD_RE.test(subject) || FINANCIAL_KEYWORD_RE.test(fromRaw) || BANK_DOMAIN_RE.test(from);
-        if (isFinancialMail) {
-            const derivedName = deriveBankName(h.from, from);
-            hit = { domain: from, name: derivedName, dynamic: true };
-        }
-    }
+    const hit = BANKS.find((b) => isUnder(from, b.domain));
     if (!hit) return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from: from || '(none)' } };
 
     const passed = dkimPassedFor(h['authentication-results']);
@@ -234,7 +159,7 @@ export function identifyBank(headers) {
     }
     /* The signing domain must cover the domain the message claims to be from.
      * A valid signature by some other domain is the attack, not a pass. */
-    const signedByClaimed = [...passed].some((d) => isUnder(from, d) || isUnder(d, hit.domain) || isUnder(d, from));
+    const signedByClaimed = [...passed].some((d) => isUnder(from, d) || isUnder(d, hit.domain));
     if (!signedByClaimed) {
         return {
             ok: false,
@@ -404,7 +329,7 @@ export const REJECT_TEXT = {
 };
 
 const API = {
-    BANKS, REJECT, REJECT_TEXT, FINANCIAL_KEYWORD_RE, BANK_DOMAIN_RE, deriveBankName,
+    BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
     domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
     itemKey, planWrite, planMessage, isWorthTelling,
