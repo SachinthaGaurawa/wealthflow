@@ -31,7 +31,7 @@ import { describe, it, expect } from 'vitest';
 import G, {
     BANKS, REJECT, REJECT_TEXT, SINGLE_MAX, CHUNK_SIZE, MAX_BASE64, MAX_ATTACHMENTS,
     domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, planWrite, planMessage, isWorthTelling,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement,
 } from '../wealthflow-mail-ingest.mjs';
 
 const hdrs = (o) => Object.entries(o).map(([name, value]) => ({ name, value }));
@@ -154,8 +154,181 @@ describe('a message that merely claims to be from a bank is refused', () => {
             expect(b.domain).toMatch(/^[a-z0-9.-]+$/);
             expect(b.name.length).toBeGreaterThan(1);
         }
-        expect(identifyBank({ from: '<a@anything-not-listed.com>', 'authentication-results': 'dkim=pass header.i=@anything-not-listed.com' }).ok)
-            .toBe(false);
+        /* An unlisted sender is no longer REJECTED — it is accepted as unknown
+         * and held for review. See the block below for why that is not a
+         * loosening of the check that matters. */
+        const unlisted = identifyBank({
+            from: '<a@anything-not-listed.com>',
+            'authentication-results': 'dkim=pass header.i=@anything-not-listed.com',
+        });
+        expect(unlisted.ok).toBe(true);
+        expect(unlisted.known).toBe(false);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * A BANK NOBODY LISTED IS STILL A BANK
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * BANKS names four institutions. The owner banks with more than ten, and
+ * index.html's own dropdown lists fifteen, so eleven banks' statements were
+ * dropped here with `sender-not-on-allowlist`.
+ *
+ * The allowlist was doing two jobs and only one was security. Naming the bank
+ * is useful; GATING on it never was. The control is DKIM — the message must
+ * carry a passing signature from the domain it claims to be from — and that
+ * works for any domain. An unlisted sender that clears it is exactly as
+ * verified as HNB, merely unrecognised, so it is held for review rather than
+ * dropped or auto-filed.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('an unlisted but verified sender is held, not dropped', () => {
+    const auth = (d) => `spf=pass; dkim=pass header.i=@${d}; dmarc=pass`;
+
+    it.each([
+        ['sampathbank.lk', 'Sampathbank'],
+        ['combank.lk', 'Combank'],
+        ['boc.lk', 'Boc'],
+        ['seylan.lk', 'Seylan'],
+        ['ndbbank.com', 'Ndbbank'],
+    ])('%s is accepted as unknown, named %s', (domain, name) => {
+        const r = identifyBank({ from: `<estatement@${domain}>`, 'authentication-results': auth(domain) });
+        expect(r.ok, `${domain} was rejected — this is the bug`).toBe(true);
+        expect(r.known).toBe(false);
+        expect(r.bank).toBe(name);
+        expect(r.domain).toBe(domain);
+    });
+
+    it('a listed bank is still marked known, so it is filed rather than held', () => {
+        const r = identifyBank({ from: '<statements@hnb.lk>', 'authentication-results': auth('hnb.lk') });
+        expect(r.ok).toBe(true);
+        expect(r.known).toBe(true);
+        expect(r.bank).toBe('HNB');
+    });
+
+    it('an unlisted sender with NO valid signature is still refused', () => {
+        /* The widening is in what gets FETCHED and QUEUED, never in what gets
+         * trusted. */
+        for (const auths of ['dkim=fail header.i=@sampathbank.lk', '', 'spf=pass']) {
+            const r = identifyBank({ from: '<x@sampathbank.lk>', 'authentication-results': auths });
+            expect(r.ok, `accepted with auth "${auths}"`).toBe(false);
+            expect(r.reason).toBe(REJECT.DKIM_FAILED);
+        }
+    });
+
+    it('an unlisted sender signed by SOMEONE ELSE is still refused', () => {
+        const r = identifyBank({
+            from: '<x@sampathbank.lk>',
+            'authentication-results': 'dkim=pass header.i=@mailchimp-bulk.net',
+        });
+        expect(r.ok).toBe(false);
+        expect(r.reason).toBe(REJECT.DKIM_DOMAIN_MISMATCH);
+    });
+
+    it('a LOOKALIKE of a listed bank is refused, signature or not', () => {
+        /* hnb.lk.attacker.net holds a valid signature for itself. It is not an
+         * unrecognised bank; it is an attempt to be mistaken for a listed one,
+         * and it must not reach a queue where it sits beside the real HNB. */
+        for (const d of ['hnb.lk.attacker.net', 'dfcc.lk.evil.com', 'my-amex.com.phish.io']) {
+            const r = identifyBank({ from: `<a@${d}>`, 'authentication-results': auth(d) });
+            expect(r.ok, `${d} was accepted`).toBe(false);
+            expect(r.reason).toBe(REJECT.NOT_A_BANK);
+        }
+    });
+
+    it('a personal mailbox is refused even though its signature is genuine', () => {
+        /* Anyone with a Gmail account gets a passing gmail.com signature, so
+         * here a signature is the default rather than evidence. */
+        for (const d of ['gmail.com', 'outlook.com', 'yahoo.com', 'icloud.com', 'proton.me']) {
+            const r = identifyBank({ from: `<friend@${d}>`, 'authentication-results': auth(d) });
+            expect(r.ok, `${d} was accepted`).toBe(false);
+            expect(r.reason).toBe(REJECT.NOT_A_BANK);
+        }
+    });
+
+    it('an unrecognised sender that says nothing about a statement is refused', () => {
+        /* The other half of the trade. Widening the allowlist without this
+         * would swap eleven dropped banks for a review queue full of shop
+         * receipts, and a queue nobody can face is the same as no queue. */
+        const flyer = {
+            id: 'j1',
+            internalDate: '1700000000000',
+            payload: {
+                headers: [
+                    { name: 'From', value: 'Deals <offers@shopping.example>' },
+                    { name: 'Subject', value: 'SALE' },
+                    { name: 'Authentication-Results', value: auth('shopping.example') },
+                ],
+                parts: [{ filename: 'flyer.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a9', size: 100 } }],
+            },
+        };
+        const r = planMessage(flyer);
+        expect(r.ok).toBe(false);
+        expect(r.reason).toBe(REJECT.NOT_A_STATEMENT);
+    });
+
+    it('the FILENAME alone is enough to call it a statement', () => {
+        /* Plenty of banks send Statement_Aug2026.pdf under a subject that says
+         * nothing, which is why the gate runs after the attachments are
+         * selected rather than on the headers alone. */
+        const msg = {
+            id: 'f1',
+            internalDate: '1700000000000',
+            payload: {
+                headers: [
+                    { name: 'From', value: '<no-reply@sampathbank.lk>' },
+                    { name: 'Subject', value: 'Your monthly document' },
+                    { name: 'Authentication-Results', value: auth('sampathbank.lk') },
+                ],
+                parts: [{ filename: 'Statement_Aug2026.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a1', size: 100 } }],
+            },
+        };
+        const r = planMessage(msg);
+        expect(r.ok, r.reason).toBe(true);
+        expect(r.items[0].known).toBe(false);
+    });
+
+    it('a KNOWN bank skips the statement-shape gate entirely', () => {
+        /* HNB may title its statement whatever it likes. */
+        const msg = {
+            id: 'k1',
+            internalDate: '1700000000000',
+            payload: {
+                headers: [
+                    { name: 'From', value: '<x@hnb.lk>' },
+                    { name: 'Subject', value: 'hello' },
+                    { name: 'Authentication-Results', value: auth('hnb.lk') },
+                ],
+                parts: [{ filename: 'doc.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a1', size: 100 } }],
+            },
+        };
+        expect(planMessage(msg).ok).toBe(true);
+    });
+
+    it('looksLikeStatement reads the subject and the filenames, case-blind', () => {
+        expect(looksLikeStatement({ subject: 'Your E-Statement is ready' })).toBe(true);
+        expect(looksLikeStatement({ subject: 'x', filenames: ['AUG-STATEMENT.PDF'] })).toBe(true);
+        expect(looksLikeStatement({ subject: 'Credit Advice' })).toBe(true);
+        expect(looksLikeStatement({ subject: 'SALE', filenames: ['flyer.pdf'] })).toBe(false);
+        expect(looksLikeStatement({})).toBe(false);
+    });
+
+    it('planMessage carries the known flag onto every item it plans', () => {
+        /* The flag is what the write path routes on. If it stopped being
+         * carried, every unknown bank would file itself silently. */
+        const msg = (fromDomain) => ({
+            id: 'm1',
+            internalDate: '1700000000000',
+            payload: {
+                headers: [
+                    { name: 'From', value: `<s@${fromDomain}>` },
+                    { name: 'Authentication-Results', value: auth(fromDomain) },
+                    { name: 'Subject', value: 'Your e-statement' },
+                ],
+                parts: [{ filename: 's.pdf', mimeType: 'application/pdf', body: { attachmentId: 'A1', size: 1000 } }],
+            },
+        });
+        expect(planMessage(msg('hnb.lk')).items[0].known).toBe(true);
+        expect(planMessage(msg('sampathbank.lk')).items[0].known).toBe(false);
     });
 });
 
@@ -325,9 +498,70 @@ describe('planMessage', () => {
         expect(r.ok).toBe(true);
         expect(r.items).toHaveLength(1);
         expect(r.items[0]).toMatchObject({
-            key: itemKey('MSG1', 'ATT1'), bank: 'HNB', filename: 'stmt.pdf',
+            /* The key is built from the MIME part, not from Gmail's
+             * attachmentId — see stableItemKey. The legacy name is carried
+             * alongside so the write path can recognise what it already has. */
+            key: stableItemKey('MSG1', { filename: 'stmt.pdf', size: 250000 }),
+            legacyKey: itemKey('MSG1', 'ATT1'),
+            bank: 'HNB', filename: 'stmt.pdf',
             messageId: 'MSG1', receivedMs: 1787820000000, subject: 'Your e-Statement',
         });
+    });
+
+    it('THE DUPLICATE BUG: the same attachment refetched keys the same', () => {
+        /* Gmail's attachmentId is an opaque token minted for
+         * messages.attachments.get, not a content identifier, and it is not
+         * contracted to survive between messages.get calls. When it changed,
+         * the item key changed, the "already have it" lookup in gmail-hook.js
+         * and gmail-scan.js found nothing, and the statement was downloaded
+         * and written a SECOND time. The owner's report is exactly that:
+         * press check a few times, or reload, and the same statements appear
+         * again beside themselves.
+         *
+         * messageId is stable; within one message the filename and size are
+         * properties of the MIME part rather than per-request tokens. */
+        const first = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-FIRST')]));
+        const again = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-REMINTED')]));
+
+        expect(first.items[0].key).toBe(again.items[0].key);
+        expect(first.items[0].key, 'the key still contains the volatile token')
+            .not.toContain('ATT-FIRST');
+        /* And the OLD key would have differed — which is the bug, stated. */
+        expect(first.items[0].legacyKey).not.toBe(again.items[0].legacyKey);
+    });
+
+    it('two different attachments on one message still key apart', () => {
+        /* The fix must not over-merge: a message carrying two statements is
+         * two documents, not one. */
+        const r = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [
+            pdf('january.pdf', 1000, 'A1'),
+            pdf('february.pdf', 2000, 'A2'),
+        ]));
+        expect(r.items).toHaveLength(2);
+        expect(r.items[0].key).not.toBe(r.items[1].key);
+    });
+
+    it('same filename, different size, keys apart', () => {
+        /* Banks reuse `statement.pdf` every month. Size is what separates
+         * them when the message is the same. */
+        const a = stableItemKey('M', { filename: 'statement.pdf', size: 1000 });
+        const b = stableItemKey('M', { filename: 'statement.pdf', size: 2000 });
+        expect(a).not.toBe(b);
+    });
+
+    it('falls back to the attachment id when a part has no filename', () => {
+        /* Some banks attach an unnamed part. Keeping SOME key is better than
+         * dropping the statement, and it is no worse than what this replaces. */
+        const k = stableItemKey('M', { filename: '', size: 10, attachmentId: 'A9' });
+        expect(k).toBe('M.A9');
+        expect(stableItemKey('M', { filename: '', size: 10 })).toBeNull();
+        expect(stableItemKey('', { filename: 'x.pdf', size: 1 })).toBeNull();
+    });
+
+    it('produces a name Firestore accepts', () => {
+        const k = stableItemKey('m/1', { filename: 'Aug 2026 · statement.pdf', size: 42 });
+        expect(k).not.toContain('/');
+        expect(k).toMatch(/^[A-Za-z0-9_.-]+$/);
     });
 
     it('names the bank even on a refusal, so the message can say which', () => {

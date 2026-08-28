@@ -138,9 +138,41 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         expect(seen.status).toBe(200);
         expect(seen.body).toMatchObject({ ok: true, statements: 1 });
 
-        const { itemKey } = await import('../wealthflow-mail-ingest.mjs');
-        const key = itemKey('m1', 'att-m1');
+        const { stableItemKey } = await import('../wealthflow-mail-ingest.mjs');
+        /* The key no longer contains Gmail's attachmentId — see stableItemKey.
+         * Built from the same message the fake served, so this asserts the two
+         * agree rather than restating the format. */
+        const att = bankMessage('m1').payload.parts.find((x) => x.filename);
+        const key = stableItemKey('m1', { filename: att.filename, size: att.body.size, attachmentId: att.body.attachmentId });
         expect(fake.docs.has(`wf-mail/${KEY}/items/${key}`), 'the manifest is not where the device looks').toBe(true);
+    });
+
+    it('does not re-store a statement held under the OLD key', async () => {
+        /* The migration case, and the one that decides whether this change
+         * FIXES the duplicate report or delivers it one last time.
+         *
+         * Everything already in the mailbox was filed under
+         * (messageId, attachmentId). The key is now (messageId, filename,
+         * size). Without the legacy lookup in the write path, the first scan
+         * after this change finds nothing under the new name and writes a
+         * second copy of every statement the owner already has.
+         *
+         * Proven by seeding the old document and asserting the new one is
+         * never created. Removing the legacy lookup fails this. */
+        connect();
+        const { itemKey } = await import('../wealthflow-mail-ingest.mjs');
+        const legacy = itemKey('m1', 'att-m1');
+        fake.docs.set(`wf-mail/${KEY}/items/${legacy}`, { bank: 'HNB', d: 'already-here', parts: 0 });
+
+        const before = [...fake.docs.keys()].filter((k) => k.includes('/items/')).length;
+        const seen = await call({ body: WINDOW, gmail: { messages: ['m1'], byId: { m1: bankMessage('m1') } } });
+        const after = [...fake.docs.keys()].filter((k) => k.includes('/items/'));
+
+        expect(seen.status).toBe(200);
+        expect(after.length, `a second copy was written: ${after.join(' , ')}`).toBe(before);
+        expect(fake.docs.get(`wf-mail/${KEY}/items/${legacy}`).d,
+            'the statement already held was overwritten').toBe('already-here');
+        expect(seen.body.statements, 'it counted a statement it did not store').toBe(0);
     });
 
     it('a small statement is stored inline, with no parts', async () => {

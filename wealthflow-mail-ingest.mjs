@@ -61,6 +61,8 @@
  * satisfies `amex.com`, but only downward — `amex.com.attacker.net` does not,
  * because the match is anchored to a label boundary at the end.
  */
+import { STATEMENT_TERMS } from './wealthflow-backfill.js';
+
 export const BANKS = [
     { domain: 'hnb.lk', name: 'HNB' },
     { domain: 'dfcc.lk', name: 'DFCC' },
@@ -69,8 +71,24 @@ export const BANKS = [
     { domain: 'amex.com', name: 'American Express' },
 ];
 
+/* Mailboxes people own, rather than institutions that send statements.
+ *
+ * Anyone with a Gmail account gets a valid DKIM signature for gmail.com, so
+ * "signed by the domain it claims" is not evidence of anything here — it is
+ * the default. A statement does not arrive from a personal mailbox, and
+ * letting these through would put every friend's PDF invoice in the review
+ * queue and hand a stranger a way to put one there too. */
+export const CONSUMER_MAIL = new Set([
+    'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com',
+    'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+    'icloud.com', 'me.com', 'mac.com',
+    'proton.me', 'protonmail.com', 'pm.me',
+    'aol.com', 'zoho.com', 'gmx.com', 'mail.com', 'yandex.com',
+]);
+
 export const REJECT = {
     NOT_A_BANK: 'sender-not-on-allowlist',
+    NOT_A_STATEMENT: 'unrecognised-sender-and-nothing-says-statement',
     DKIM_FAILED: 'dkim-did-not-pass',
     DKIM_DOMAIN_MISMATCH: 'signed-by-a-different-domain',
     NO_ATTACHMENT: 'no-pdf-attachment',
@@ -145,21 +163,78 @@ export function dkimPassedFor(authResults) {
  * @param headers  { from, 'authentication-results' } (case-insensitive keys)
  * @returns {{ok:true, bank:string, domain:string} | {ok:false, reason:string, detail:object}}
  */
+/**
+ * A display name for a bank nobody listed. `sampathbank.lk` -> `Sampathbank`.
+ * Deliberately dumb: this label is shown beside the message in the review
+ * queue, where the owner can see the real domain and correct it. Guessing
+ * harder than this would only produce confident nonsense.
+ */
+export function nameFromDomain(domain) {
+    const first = String(domain || '').split('.')[0] || '';
+    return first ? first.charAt(0).toUpperCase() + first.slice(1) : '';
+}
+
+/**
+ * Which bank sent this, if any — and only if Google says the signature holds.
+ *
+ * WHY THIS NO LONGER REQUIRES THE ALLOWLIST.
+ *
+ * It used to reject anything not in BANKS, which names four institutions. The
+ * owner banks with more than ten, and index.html's own dropdown lists fifteen,
+ * so eleven banks' statements were dropped here with `sender-not-on-allowlist`
+ * even on the rare occasion the old query fetched one at all.
+ *
+ * The allowlist was doing two different jobs and only one of them was security.
+ * Naming the bank is useful. GATING on it was never the control — the control
+ * is the DKIM check below, and that works for any domain in the world: the
+ * message must carry a passing signature from the domain it claims to be from.
+ * An unlisted sender that clears it is not less verified than HNB; it is
+ * exactly as verified, and merely unrecognised.
+ *
+ * So an unlisted sender is now returned with `known: false`, which routes it to
+ * the review queue rather than into the ledger. Nothing is auto-filed on the
+ * strength of a domain nobody has confirmed, and nothing is silently dropped.
+ *
+ * Three things are still refused outright, because for these a signature
+ * proves nothing:
+ *   - no From domain at all;
+ *   - a personal mailbox (see CONSUMER_MAIL) — anyone can sign as gmail.com;
+ *   - a LOOKALIKE of a listed bank, such as hnb.lk.attacker.net, which is a
+ *     deliberate attempt to be mistaken for one and must not reach a queue
+ *     where it is displayed next to the real thing.
+ *
+ * @param headers  { from, 'authentication-results' } (case-insensitive keys)
+ * @returns {{ok:true, bank:string, domain:string, known:boolean}
+ *          | {ok:false, reason:string, detail:object}}
+ */
 export function identifyBank(headers) {
     const h = {};
     for (const [k, v] of Object.entries(headers || {})) h[lower(k)] = v;
 
     const from = domainOf(h.from);
+    if (!from) return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from: '(none)' } };
+
     const hit = BANKS.find((b) => isUnder(from, b.domain));
-    if (!hit) return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from: from || '(none)' } };
+
+    if (!hit) {
+        /* `hnb.lk.attacker.net` contains a listed domain without being under
+         * it. That is not an unrecognised bank, it is an impersonation. */
+        const lookalike = BANKS.find((b) => from.includes(b.domain));
+        if (lookalike) {
+            return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from, lookalikeOf: lookalike.domain } };
+        }
+        if (CONSUMER_MAIL.has(from)) {
+            return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from, personalMailbox: true } };
+        }
+    }
 
     const passed = dkimPassedFor(h['authentication-results']);
     if (!passed.size) {
-        return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: hit.name } };
+        return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: hit ? hit.name : from } };
     }
     /* The signing domain must cover the domain the message claims to be from.
      * A valid signature by some other domain is the attack, not a pass. */
-    const signedByClaimed = [...passed].some((d) => isUnder(from, d) || isUnder(d, hit.domain));
+    const signedByClaimed = [...passed].some((d) => isUnder(from, d) || (hit && isUnder(d, hit.domain)));
     if (!signedByClaimed) {
         return {
             ok: false,
@@ -167,7 +242,9 @@ export function identifyBank(headers) {
             detail: { from, signedBy: [...passed].slice(0, 4) },
         };
     }
-    return { ok: true, bank: hit.name, domain: hit.domain };
+
+    if (hit) return { ok: true, bank: hit.name, domain: hit.domain, known: true };
+    return { ok: true, bank: nameFromDomain(from), domain: from, known: false };
 }
 
 /* ── 2. what to take ──────────────────────────────────────────────────────── */
@@ -228,6 +305,48 @@ export function selectAttachments(payload) {
  * another, so the length is preserved and the two ids are joined with a
  * separator the alphabet excludes.
  */
+/**
+ * The document name for one attachment — stable across refetches.
+ *
+ * THE BUG THIS REPLACES. itemKey() below keys on Gmail's `attachmentId`, and
+ * gmail-scan.js's own header states the assumption out loud: "A rescan is
+ * free. The item key is (messageId, attachmentId), so a message re-read in a
+ * later window writes the same document."
+ *
+ * That holds only while the attachment id holds. It is an opaque token Gmail
+ * mints for `messages.attachments.get`, not a content identifier, and it is
+ * not contracted to survive between `messages.get` calls. When it changes, the
+ * key changes; the `existing.exists` check in gmail-hook.js and gmail-scan.js
+ * finds nothing; the attachment is downloaded again and written to a SECOND
+ * document. The owner reports exactly that: press check a few times, or
+ * reload, and the same statements appear again beside themselves.
+ *
+ * `messageId` is stable, and within one message an attachment's FILENAME and
+ * SIZE are properties of the MIME part rather than tokens minted per request.
+ * Two different attachments on one message differ in at least one of them; the
+ * same attachment fetched twice differs in neither.
+ *
+ * Not a hash of the bytes, which would be the strongest key and is what the
+ * dedup ought to use one day — but the key has to be computable BEFORE the
+ * download, because deciding "do we already have this?" without spending the
+ * bytes is the whole point of checking it first.
+ */
+export function stableItemKey(messageId, part) {
+    const safe = (v, n) => String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, n);
+    const m = safe(messageId, 128);
+    if (!m) return null;
+    const name = safe((part && part.filename) || '', 80);
+    const size = Number((part && part.size) || 0) || 0;
+    /* No filename is a real case — some banks attach an unnamed part. Falling
+     * back to the attachment id keeps SOME key rather than dropping the
+     * statement, and it is no worse than what this replaces. */
+    if (!name) {
+        const a = safe((part && part.attachmentId) || '', 64);
+        return a ? `${m}.${a}` : null;
+    }
+    return `${m}.${name}.${size}`;
+}
+
 export function itemKey(messageId, attachmentId) {
     const safe = (s) => String(s == null ? '' : s).replace(/[^A-Za-z0-9_-]/g, '_');
     const m = safe(messageId);
@@ -270,6 +389,19 @@ export function planWrite(base64, meta = {}) {
  * attachment is considered, so a message from an unrecognised sender never
  * reaches the code that would download from it.
  */
+/**
+ * Does anything about this message call it a statement?
+ *
+ * Subject and attachment filenames, against the same vocabulary the Gmail
+ * query searches with — one list, so what is fetched and what is accepted
+ * cannot drift apart.
+ */
+export function looksLikeStatement({ subject = '', filenames = [] } = {}, terms = STATEMENT_TERMS) {
+    const hay = lower([subject, ...(Array.isArray(filenames) ? filenames : [])].join(' \n '));
+    if (!hay.trim()) return false;
+    return (Array.isArray(terms) ? terms : []).some((t) => hay.includes(lower(t)));
+}
+
 export function planMessage(message) {
     const headers = {};
     for (const h of (message && message.payload && message.payload.headers) || []) {
@@ -282,16 +414,46 @@ export function planMessage(message) {
     const what = selectAttachments(message && message.payload);
     if (!what.ok) return { ok: false, ...what, bank: who.bank };
 
+    /* An unrecognised sender has to LOOK like a statement as well as be
+     * verified. A valid signature says the sender is who it claims; it says
+     * nothing about whether a shop's PDF flyer belongs in a financial review
+     * queue. Without this, widening the allowlist would trade eleven dropped
+     * banks for a queue full of receipts, and a queue nobody can face is the
+     * same as no queue.
+     *
+     * Checked AFTER the attachments are selected so the filenames can vote:
+     * plenty of banks send `Statement_Aug2026.pdf` under a subject that says
+     * nothing. A KNOWN bank skips this entirely — HNB may title its statement
+     * whatever it likes. */
+    if (who.known === false) {
+        const named = looksLikeStatement({
+            subject: headers.subject || '',
+            filenames: what.take.map((a) => a && a.filename).filter(Boolean),
+        });
+        if (!named) {
+            return { ok: false, reason: REJECT.NOT_A_STATEMENT, bank: who.bank, detail: { from: who.domain } };
+        }
+    }
+
     const items = [];
     for (const a of what.take) {
-        const key = itemKey(message.id, a.attachmentId);
+        const key = stableItemKey(message.id, a);
         if (!key) continue;
         items.push({
             key,
+            /* What this attachment WOULD have been called before the key
+             * changed. The write path checks it too, so the first run after
+             * this change recognises everything already stored instead of
+             * writing a second copy of all of it — which would have made the
+             * duplicate bug worse exactly once, on the way to fixing it. */
+            legacyKey: itemKey(message.id, a.attachmentId),
             attachmentId: a.attachmentId,
             filename: a.filename,
             size: a.size,
             bank: who.bank,
+            /* False for a sender no one has confirmed. The write path holds
+             * these for review instead of filing them; see gmail-hook.js. */
+            known: who.known !== false,
             messageId: message.id,
             receivedMs: Number(message.internalDate) || null,
             subject: headers.subject || '',
@@ -321,6 +483,7 @@ export function isWorthTelling(plan) {
 
 export const REJECT_TEXT = {
     [REJECT.NOT_A_BANK]: 'the sender is not one of your banks',
+    [REJECT.NOT_A_STATEMENT]: 'the sender is not a bank you have confirmed, and nothing about the mail says statement',
     [REJECT.DKIM_FAILED]: 'it claims to be from your bank but carries no valid signature',
     [REJECT.DKIM_DOMAIN_MISMATCH]: 'it is signed by a domain other than the one it claims to be from',
     [REJECT.NO_ATTACHMENT]: 'there is no PDF attached',
@@ -332,7 +495,7 @@ const API = {
     BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
     domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, planWrite, planMessage, isWorthTelling,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement, nameFromDomain,
 };
 
 export default API;
