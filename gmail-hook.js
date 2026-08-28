@@ -239,9 +239,20 @@ export default async function handler(req, res) {
         for (const item of plan.items) {
             const ref = db.collection(MAIL_ROOT).doc(userKey).collection('items').doc(item.key);
             try {
-                // Redelivery is normal; a document already here is already done.
+                /* Redelivery is normal; a document already here is already
+                 * done. BOTH names are checked: item.key is the stable one and
+                 * item.legacyKey is what the same attachment was filed under
+                 * before the key stopped depending on Gmail's attachmentId.
+                 * Without the second lookup, the first run after that change
+                 * would re-store every statement already held — one last round
+                 * of exactly the duplication it fixes. */
                 const existing = await ref.get();
                 if (existing.exists) { stored.push({ key: item.key, duplicate: true }); continue; }
+                if (item.legacyKey && item.legacyKey !== item.key) {
+                    const old = await db.collection(MAIL_ROOT).doc(userKey)
+                        .collection('items').doc(item.legacyKey).get();
+                    if (old.exists) { stored.push({ key: item.legacyKey, duplicate: true }); continue; }
+                }
 
                 const ar = await f(
                     `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`

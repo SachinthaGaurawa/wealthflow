@@ -31,7 +31,7 @@ import { describe, it, expect } from 'vitest';
 import G, {
     BANKS, REJECT, REJECT_TEXT, SINGLE_MAX, CHUNK_SIZE, MAX_BASE64, MAX_ATTACHMENTS,
     domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement,
 } from '../wealthflow-mail-ingest.mjs';
 
 const hdrs = (o) => Object.entries(o).map(([name, value]) => ({ name, value }));
@@ -498,9 +498,70 @@ describe('planMessage', () => {
         expect(r.ok).toBe(true);
         expect(r.items).toHaveLength(1);
         expect(r.items[0]).toMatchObject({
-            key: itemKey('MSG1', 'ATT1'), bank: 'HNB', filename: 'stmt.pdf',
+            /* The key is built from the MIME part, not from Gmail's
+             * attachmentId — see stableItemKey. The legacy name is carried
+             * alongside so the write path can recognise what it already has. */
+            key: stableItemKey('MSG1', { filename: 'stmt.pdf', size: 250000 }),
+            legacyKey: itemKey('MSG1', 'ATT1'),
+            bank: 'HNB', filename: 'stmt.pdf',
             messageId: 'MSG1', receivedMs: 1787820000000, subject: 'Your e-Statement',
         });
+    });
+
+    it('THE DUPLICATE BUG: the same attachment refetched keys the same', () => {
+        /* Gmail's attachmentId is an opaque token minted for
+         * messages.attachments.get, not a content identifier, and it is not
+         * contracted to survive between messages.get calls. When it changed,
+         * the item key changed, the "already have it" lookup in gmail-hook.js
+         * and gmail-scan.js found nothing, and the statement was downloaded
+         * and written a SECOND time. The owner's report is exactly that:
+         * press check a few times, or reload, and the same statements appear
+         * again beside themselves.
+         *
+         * messageId is stable; within one message the filename and size are
+         * properties of the MIME part rather than per-request tokens. */
+        const first = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-FIRST')]));
+        const again = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-REMINTED')]));
+
+        expect(first.items[0].key).toBe(again.items[0].key);
+        expect(first.items[0].key, 'the key still contains the volatile token')
+            .not.toContain('ATT-FIRST');
+        /* And the OLD key would have differed — which is the bug, stated. */
+        expect(first.items[0].legacyKey).not.toBe(again.items[0].legacyKey);
+    });
+
+    it('two different attachments on one message still key apart', () => {
+        /* The fix must not over-merge: a message carrying two statements is
+         * two documents, not one. */
+        const r = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [
+            pdf('january.pdf', 1000, 'A1'),
+            pdf('february.pdf', 2000, 'A2'),
+        ]));
+        expect(r.items).toHaveLength(2);
+        expect(r.items[0].key).not.toBe(r.items[1].key);
+    });
+
+    it('same filename, different size, keys apart', () => {
+        /* Banks reuse `statement.pdf` every month. Size is what separates
+         * them when the message is the same. */
+        const a = stableItemKey('M', { filename: 'statement.pdf', size: 1000 });
+        const b = stableItemKey('M', { filename: 'statement.pdf', size: 2000 });
+        expect(a).not.toBe(b);
+    });
+
+    it('falls back to the attachment id when a part has no filename', () => {
+        /* Some banks attach an unnamed part. Keeping SOME key is better than
+         * dropping the statement, and it is no worse than what this replaces. */
+        const k = stableItemKey('M', { filename: '', size: 10, attachmentId: 'A9' });
+        expect(k).toBe('M.A9');
+        expect(stableItemKey('M', { filename: '', size: 10 })).toBeNull();
+        expect(stableItemKey('', { filename: 'x.pdf', size: 1 })).toBeNull();
+    });
+
+    it('produces a name Firestore accepts', () => {
+        const k = stableItemKey('m/1', { filename: 'Aug 2026 · statement.pdf', size: 42 });
+        expect(k).not.toContain('/');
+        expect(k).toMatch(/^[A-Za-z0-9_.-]+$/);
     });
 
     it('names the bank even on a refusal, so the message can say which', () => {

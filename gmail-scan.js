@@ -16,9 +16,16 @@
  * are indistinguishable by the time anything reads them, which is the point —
  * a second ingestion path would be a second set of bugs.
  *
- * A rescan is free. The item key is (messageId, attachmentId), so a message
- * seen twice addresses the same document and is skipped when it is already
- * there. That makes "run it again" a safe answer to any interruption.
+ * A rescan is free. The item key is (messageId, filename, size) — properties
+ * of the MIME part, not a token minted per request — so a message seen twice
+ * addresses the same document and is skipped when it is already there. That
+ * makes "run it again" a safe answer to any interruption.
+ *
+ * It used to key on Gmail's attachmentId, which carries no such promise. When
+ * that token was reminted the key moved, the skip found nothing, and the same
+ * statement was stored again under a new name. The legacy name is still
+ * checked here so the first run after the change recognises what is already
+ * held rather than duplicating all of it once more on the way to fixing it.
  *
  * ── BOUNDED, BECAUSE A MAILBOX IS NOT ─────────────────────────────────────
  *
@@ -151,6 +158,14 @@ export default async function handler(req, res, deps) {
                  * document either way and there is nothing to do. */
                 const existing = await itemRef.get();
                 if (existing.exists) continue;
+                /* The name this attachment was filed under before the key
+                 * stopped depending on Gmail's attachmentId. Checked so the
+                 * first scan after that change recognises what is already
+                 * stored rather than writing a second copy of all of it. */
+                if (item.legacyKey && item.legacyKey !== item.key) {
+                    const prior = await ref.collection('items').doc(item.legacyKey).get();
+                    if (prior && prior.exists) continue;
+                }
 
                 const ar = await f(
                     `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`

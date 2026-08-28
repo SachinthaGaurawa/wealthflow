@@ -305,6 +305,48 @@ export function selectAttachments(payload) {
  * another, so the length is preserved and the two ids are joined with a
  * separator the alphabet excludes.
  */
+/**
+ * The document name for one attachment — stable across refetches.
+ *
+ * THE BUG THIS REPLACES. itemKey() below keys on Gmail's `attachmentId`, and
+ * gmail-scan.js's own header states the assumption out loud: "A rescan is
+ * free. The item key is (messageId, attachmentId), so a message re-read in a
+ * later window writes the same document."
+ *
+ * That holds only while the attachment id holds. It is an opaque token Gmail
+ * mints for `messages.attachments.get`, not a content identifier, and it is
+ * not contracted to survive between `messages.get` calls. When it changes, the
+ * key changes; the `existing.exists` check in gmail-hook.js and gmail-scan.js
+ * finds nothing; the attachment is downloaded again and written to a SECOND
+ * document. The owner reports exactly that: press check a few times, or
+ * reload, and the same statements appear again beside themselves.
+ *
+ * `messageId` is stable, and within one message an attachment's FILENAME and
+ * SIZE are properties of the MIME part rather than tokens minted per request.
+ * Two different attachments on one message differ in at least one of them; the
+ * same attachment fetched twice differs in neither.
+ *
+ * Not a hash of the bytes, which would be the strongest key and is what the
+ * dedup ought to use one day — but the key has to be computable BEFORE the
+ * download, because deciding "do we already have this?" without spending the
+ * bytes is the whole point of checking it first.
+ */
+export function stableItemKey(messageId, part) {
+    const safe = (v, n) => String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, n);
+    const m = safe(messageId, 128);
+    if (!m) return null;
+    const name = safe((part && part.filename) || '', 80);
+    const size = Number((part && part.size) || 0) || 0;
+    /* No filename is a real case — some banks attach an unnamed part. Falling
+     * back to the attachment id keeps SOME key rather than dropping the
+     * statement, and it is no worse than what this replaces. */
+    if (!name) {
+        const a = safe((part && part.attachmentId) || '', 64);
+        return a ? `${m}.${a}` : null;
+    }
+    return `${m}.${name}.${size}`;
+}
+
 export function itemKey(messageId, attachmentId) {
     const safe = (s) => String(s == null ? '' : s).replace(/[^A-Za-z0-9_-]/g, '_');
     const m = safe(messageId);
@@ -395,10 +437,16 @@ export function planMessage(message) {
 
     const items = [];
     for (const a of what.take) {
-        const key = itemKey(message.id, a.attachmentId);
+        const key = stableItemKey(message.id, a);
         if (!key) continue;
         items.push({
             key,
+            /* What this attachment WOULD have been called before the key
+             * changed. The write path checks it too, so the first run after
+             * this change recognises everything already stored instead of
+             * writing a second copy of all of it — which would have made the
+             * duplicate bug worse exactly once, on the way to fixing it. */
+            legacyKey: itemKey(message.id, a.attachmentId),
             attachmentId: a.attachmentId,
             filename: a.filename,
             size: a.size,
@@ -447,7 +495,7 @@ const API = {
     BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
     domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement, nameFromDomain,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement, nameFromDomain,
 };
 
 export default API;
