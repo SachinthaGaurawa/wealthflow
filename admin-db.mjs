@@ -54,6 +54,7 @@ export async function withDeadline(promise, ms = DEFAULT_DEADLINE_MS, what = 'Fi
 }
 
 let _db = null;
+let _admin = null;
 let _adminModule = null;
 
 /**
@@ -66,29 +67,43 @@ let _adminModule = null;
  * No shipped file may call this; test/share_admin_sdk_test.js asserts that, so
  * the seam cannot become a production code path.
  */
-export function _setAdminModule(m) { _adminModule = m || null; _db = null; }
+export function _setAdminModule(m) { _adminModule = m || null; _db = null; _admin = null; }
 
 /**
  * The Firestore handle, or a reason it is unavailable — never a throw, and never
  * a null with no explanation.
+ *
+ * RETURNS A WRAPPER, NOT A HANDLE: { db, reason, admin }. Destructure it. Reading
+ * the wrapper as if it were the handle is not a mistake the truthiness check
+ * catches — the object is always truthy — so `if (!db)` on the wrapper passes and
+ * the very next line dies on `db.collection is not a function`. That is exactly
+ * how /api/gmail-link reached production unable to serve a single request.
+ *
+ * `admin` is the INITIALISED module, handed back so that callers needing
+ * admin.auth() or admin.firestore.FieldValue do not import firebase-admin a
+ * second time. A separate import is a second bootstrap around the module whose
+ * whole purpose is to be the only one — and it cannot be redirected by
+ * _setAdminModule, so any handler using it is untestable without the network.
+ * It is non-null only when initialisation actually succeeded, because
+ * admin.auth() on an uninitialised app throws.
  *
  * Needs FIREBASE_SERVICE_ACCOUNT (the same secret release-brain.js uses), NOT the
  * public FIREBASE_API_KEY. If it is absent the caller reports 503 rather than
  * degrading into something that reads as success.
  */
 export async function getAdminDb() {
-    if (_db) return { db: _db, reason: null };
+    if (_db) return { db: _db, reason: null, admin: _admin };
 
     let admin = _adminModule;
     if (!admin) {
         try {
             admin = (await import('firebase-admin')).default;
         } catch (e) {
-            return { db: null, reason: 'firebase-admin could not be loaded: ' + ((e && e.message) || e) };
+            return { db: null, admin: null, reason: 'firebase-admin could not be loaded: ' + ((e && e.message) || e) };
         }
     }
     if (!admin || !admin.apps) {
-        return { db: null, reason: 'firebase-admin loaded but exposes no app registry — wrong module shape.' };
+        return { db: null, admin: null, reason: 'firebase-admin loaded but exposes no app registry — wrong module shape.' };
     }
 
     if (!admin.apps.length) {
@@ -96,6 +111,7 @@ export async function getAdminDb() {
         if (!raw || !String(raw).trim()) {
             return {
                 db: null,
+                admin: null,
                 reason: 'FIREBASE_SERVICE_ACCOUNT is not configured on this deployment. '
                     + 'The inbox and share endpoints use the Firebase Admin SDK so that their '
                     + 'collections can be closed to unauthenticated access; set it in '
@@ -111,6 +127,7 @@ export async function getAdminDb() {
             const at = String((e && e.message) || '').match(/at position (\d+)/);
             return {
                 db: null,
+                admin: null,
                 reason: 'FIREBASE_SERVICE_ACCOUNT is set but is not valid JSON ('
                     + (at ? 'malformed at position ' + at[1] : 'malformed') + ').',
             };
@@ -118,17 +135,18 @@ export async function getAdminDb() {
         try {
             admin.initializeApp({ credential: admin.credential.cert(cred) });
         } catch (e) {
-            return { db: null, reason: 'firebase-admin rejected that credential: ' + ((e && e.message) || e) };
+            return { db: null, admin: null, reason: 'firebase-admin rejected that credential: ' + ((e && e.message) || e) };
         }
     }
 
     try {
         _db = admin.firestore();
     } catch (e) {
-        return { db: null, reason: 'firebase-admin initialised but Firestore is unavailable: ' + ((e && e.message) || e) };
+        return { db: null, admin: null, reason: 'firebase-admin initialised but Firestore is unavailable: ' + ((e && e.message) || e) };
     }
-    return { db: _db, reason: null };
+    _admin = admin;
+    return { db: _db, reason: null, admin: _admin };
 }
 
 /** Reset the cached handle. Tests only — production wants the warm instance. */
-export function _resetAdminDb() { _db = null; }
+export function _resetAdminDb() { _db = null; _admin = null; }

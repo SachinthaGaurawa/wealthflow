@@ -203,3 +203,88 @@ describe('the vault has a way in', () => {
         expect(fn).not.toMatch(/console\.(log|warn|error)/);
     });
 });
+
+/* ── A FAILED CHECK IS NOT AN ANSWER OF "NO" ─────────────────────────────────
+ *
+ * /api/gmail-link answered 500 to every request it ever received: it read
+ * getAdminDb()'s { db, reason, admin } wrapper as though it were the Firestore
+ * handle, and died on `db.collection is not a function`. The card showed "Not
+ * connected" throughout — because _mailConnected() returned false for a failed
+ * check and false for an unconnected mailbox, and the card could not tell them
+ * apart. That is the same defect the endpoint itself was built to fix, one layer
+ * up: an error rendered as a calm, wrong fact.
+ *
+ * These RUN the page's function against a stubbed transport rather than reading
+ * it. Reading the source is what missed the crash in the first place. */
+describe('the card can tell a broken check from an empty one', () => {
+    /** The shipped _mailConnected(), executed with _gmailLink replaced. */
+    function mailConnectedWith(reply) {
+        const src = functionBody('_mailConnected');
+        expect(src, 'index.html no longer defines _mailConnected').toBeTruthy();
+        const make = new Function('_gmailLink', `
+            let _mailStatus = null, _mailCheckError = null;
+            ${src}
+            return {
+                run: _mailConnected,
+                get status() { return _mailStatus; },
+                get error() { return _mailCheckError; },
+            };
+        `);
+        return make(async () => (typeof reply === 'function' ? reply() : reply));
+    }
+
+    it('a connected mailbox reads as connected, with no error', async () => {
+        const m = mailConnectedWith({ status: 200, body: { ok: true, connected: true, email: 'a@b.c' } });
+        expect(await m.run()).toBe(true);
+        expect(m.error).toBe(null);
+    });
+
+    it('an honestly empty answer is "not connected" and NOT an error', async () => {
+        const m = mailConnectedWith({ status: 200, body: { ok: true, connected: false, missing: [] } });
+        expect(await m.run()).toBe(false);
+        expect(m.error, 'an empty answer must not be reported as a fault').toBe(null);
+    });
+
+    it('THE REGRESSION: a 500 is recorded as a failed check, not as "not connected"', async () => {
+        const m = mailConnectedWith({ status: 500, body: { ok: false, error: 'Endpoint runtime crash' } });
+        expect(await m.run()).toBe(false);
+        expect(m.error, 'a 500 was reported as an ordinary "not connected"').toBeTruthy();
+        expect(m.error).toContain('Endpoint runtime crash');
+    });
+
+    it('a 503 with no body still names something', async () => {
+        const m = mailConnectedWith({ status: 503, body: null });
+        await m.run();
+        expect(String(m.error)).toContain('503');
+    });
+
+    it('a 200 whose body is not ok is a failed check too', async () => {
+        const m = mailConnectedWith({ status: 200, body: { ok: false, error: 'state unreadable' } });
+        expect(await m.run()).toBe(false);
+        expect(m.error).toContain('state unreadable');
+    });
+
+    it('a thrown transport error is a failed check, not a "no"', async () => {
+        const m = mailConnectedWith(() => { throw new Error('NetworkError: failed to fetch'); });
+        expect(await m.run()).toBe(false);
+        expect(m.error).toContain('failed to fetch');
+    });
+
+    it('nobody signed in is neither connected nor an error to show', async () => {
+        /* _gmailLink returns null before it sends anything when there is no
+         * user. There is no account whose mailbox this could be, so there is
+         * nothing to warn about. */
+        const m = mailConnectedWith(null);
+        expect(await m.run()).toBe(false);
+        expect(m.error).toBe(null);
+    });
+
+    it('the card renders the failure distinctly from the empty state', () => {
+        const body = functionBody('renderMailSync');
+        expect(body).toContain('_mailCheckError');
+        expect(body).toContain('Could not check the mailbox');
+        /* And the header line must stop claiming "Not connected" when the check
+         * is what failed. */
+        expect(body).toContain('Check failed');
+    });
+});

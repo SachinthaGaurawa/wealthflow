@@ -122,7 +122,10 @@ export const BUDGETS = {
     // in it. The growth is those two screens plus the pipeline runner that
     // drives assemble -> unlock -> parse -> route and shows each stage.
     // Moves ONCE, to the measured figure with the ~1.1% headroom used throughout.
-    htmlBytes: 1_717_000,        // measured 1,698,310 with the vault + sync UI
+    // Raised for the Statement Sync card's failed-check state: the card could
+    // not tell a 500 from an empty answer, and said "Not connected" while the
+    // endpoint was crashing on every request. Distinguishing them costs bytes.
+    htmlBytes: 1_738_000,        // measured 1,718,657 with that state added
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
