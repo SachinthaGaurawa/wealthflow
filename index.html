@@ -19466,8 +19466,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             const urlLen = url.length;
             const isShort = urlLen < 80;
             const urlBadge = isShort
-                ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ SHORT URL (' + urlLen + ' chars)</span>'
-                : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🔗 ' + urlLen + ' chars</span>';
+                ? '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(46,204,113,0.15);color:#2ecc71;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + _ic('check') + ' SHORT URL (' + urlLen + ' chars)</span>'
+                : '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(212,175,55,0.15);color:#d4af37;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + _ic('link') + ' ' + urlLen + ' chars</span>';
 
             const expiryDate = new Date(Date.now() + (result.days || (isElite ? 3650 : 30)) * 86400000);
             const expiryStr = (result.days || 0) > 1000 ? 'Permanent' : expiryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -19501,7 +19501,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </style>
                 <div class="md md-sm" style="max-width:580px;">
                     <div class="md-hdr">
-                        <div class="md-title">✅ Shareable Link Ready</div>
+                        <div class="md-title">${_ic('checkCircle')} Shareable Link Ready</div>
                         <button class="md-x" aria-label="Close" id="_surl_close"><i data-wfi="x"></i></button>
                     </div>
                     <div style="padding:8px 0;font-size:13px;color:var(--text2);line-height:1.55;">
@@ -19512,29 +19512,29 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                     <!-- Tab Navigation -->
                     <div style="display:flex;gap:6px;margin:10px 0 14px;" id="_surl_tabs">
-                        <button class="_share-tab active" data-tab="link">🔗 Link</button>
-                        <button class="_share-tab" data-tab="qr">📱 QR Code</button>
-                        <button class="_share-tab" data-tab="social">💬 Share</button>
-                        <button class="_share-tab" data-tab="history">📋 History</button>
+                        <button class="_share-tab active" data-tab="link">${_ic('link')} Link</button>
+                        <button class="_share-tab" data-tab="qr">${_ic('scan')} QR Code</button>
+                        <button class="_share-tab" data-tab="social">${_ic('message')} Share</button>
+                        <button class="_share-tab" data-tab="history">${_ic('history')} History</button>
                     </div>
 
                     <!-- TAB: Link -->
                     <div id="_surl_tab_link">
                         <div class="fg" style="margin:0;">
-                            <label class="fl">🔗 Shareable URL</label>
+                            <label class="fl">${_ic('link')} Shareable URL</label>
                             <input class="fi" id="_surl_input" readonly value="${(url || '').replace(/https?:\/\/[^\/\s]*github\.io[^"]*?\//gi, _WF_APP_URL + '/').replace(/"/g, '&quot;')}"
                                 style="font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--bg2);cursor:text;">
                         </div>
                         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
-                            <button class="btn btn-primary btn-sm btn-3d" id="_surl_copy" style="flex:2;padding:11px 14px;font-weight:700;font-size:13px;min-width:140px;">📋 Copy Link</button>
-                            <button class="btn btn-ghost btn-sm btn-3d" id="_surl_open" style="flex:1;padding:11px;background:var(--bg2);">🔗 Open</button>
-                            <button class="btn btn-ghost btn-sm btn-3d" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};padding:11px;background:var(--bg2);">📤 Share</button>
+                            <button class="btn btn-primary btn-sm btn-3d" id="_surl_copy" style="flex:2;padding:11px 14px;font-weight:700;font-size:13px;min-width:140px;">${_ic('copy')} Copy Link</button>
+                            <button class="btn btn-ghost btn-sm btn-3d" id="_surl_open" style="flex:1;padding:11px;background:var(--bg2);">${_ic('globe')} Open</button>
+                            <button class="btn btn-ghost btn-sm btn-3d" id="_surl_native" style="flex:1;display:${navigator.share ? 'inline-flex' : 'none'};padding:11px;background:var(--bg2);">${_ic('send')} Share</button>
                         </div>
 
                         <!-- Download PDF -->
                         <div style="margin-top:14px;">
                             <button class="btn btn-ghost btn-sm btn-3d" id="_surl_pdf" style="width:100%;padding:11px;background:var(--bg2);font-size:12px;">
-                                ${isElite ? '📥 Download to Local Device' : '📄 Download Statement as PDF'}
+                                ${isElite ? _ic('download') + ' Download to Local Device' : _ic('fileText') + ' Download Statement as PDF'}
                             </button>
                         </div>
                     </div>
@@ -19550,10 +19550,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <!-- TAB: Social Share -->
                     <div id="_surl_tab_social" style="display:none;">
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                            <a class="_share-social-btn wa" href="https://wa.me/?text=${shareText}" target="_blank" rel="noopener">💬 WhatsApp</a>
-                            <a class="_share-social-btn tg" href="https://t.me/share/url?url=${encodeURIComponent(url)}&text=${shareTitle}" target="_blank" rel="noopener">✈️ Telegram</a>
-                            <a class="_share-social-btn em" href="mailto:?subject=${shareTitle}&body=${shareText}" rel="noopener">📧 Email</a>
-                            <a class="_share-social-btn sms" href="sms:?body=${shareText}" rel="noopener">💬 SMS</a>
+                            <a class="_share-social-btn wa" href="https://wa.me/?text=${shareText}" target="_blank" rel="noopener">${_ic('message')} WhatsApp</a>
+                            <a class="_share-social-btn tg" href="https://t.me/share/url?url=${encodeURIComponent(url)}&text=${shareTitle}" target="_blank" rel="noopener">${_ic('send')} Telegram</a>
+                            <a class="_share-social-btn em" href="mailto:?subject=${shareTitle}&body=${shareText}" rel="noopener">${_ic('mail')} Email</a>
+                            <a class="_share-social-btn sms" href="sms:?body=${shareText}" rel="noopener">${_ic('message')} SMS</a>
                         </div>
                     </div>
 
@@ -19564,12 +19564,12 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                     <!-- Privacy & Info Footer -->
                     <div style="margin-top:16px;padding:12px;background:rgba(46,204,113,0.08);border-radius:10px;font-size:11.5px;color:var(--green);line-height:1.6;border-left:3px solid var(--green);">
-                        <b>🔒 Privacy Guaranteed:</b> This link contains <b>zero</b> personal information.<br>
+                        <b>${_ic('lock')} Privacy Guaranteed:</b> This link contains <b>zero</b> personal information.<br>
                         No names, emails, phone numbers, or user IDs are embedded in the URL or shared data.
                         <div style="margin-top:6px;font-size:10px;color:var(--text3);display:flex;gap:12px;flex-wrap:wrap;">
-                            <span>📏 URL: ${urlLen} chars</span>
-                            <span>⏳ Expires: ${expiryStr}</span>
-                            <span>🛡️ Stored: ${isElite ? (result.service || 'Cloud') : 'Firestore'}</span>
+                            <span>${_ic('ruler')} URL: ${urlLen} chars</span>
+                            <span>${_ic('clock')} Expires: ${expiryStr}</span>
+                            <span>${_ic('shield')} Stored: ${isElite ? (result.service || 'Cloud') : 'Firestore'}</span>
                         </div>
                     </div>
                 </div>`;
@@ -19653,7 +19653,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 .then(data => {
                                     const vSpan = overlay.querySelector('#' + viewsSpanId);
                                     if (vSpan && data && typeof data.views !== 'undefined') {
-                                        vSpan.innerHTML = ' · 👁 ' + data.views;
+                                        vSpan.innerHTML = ' · ' + _ic('eye') + ' ' + data.views;
                                         vSpan.style.color = 'var(--accent)';
                                         vSpan.style.fontWeight = '600';
                                     }
@@ -19663,7 +19663,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const openBtn = document.createElement('button');
                         openBtn.className = 'btn btn-ghost btn-sm';
                         openBtn.style.cssText = 'padding:4px 8px;font-size:10px;color:var(--accent);';
-                        openBtn.textContent = '🌍';
+                        openBtn.innerHTML = _ic('globe');
                         openBtn.title = 'Open Link';
                         // v7.5.6 — sanitise any leftover github.io → vercel before opening
                         openBtn.onclick = () => window.open(_sanitiseShareUrl(h.url), '_blank', 'noopener,noreferrer');
@@ -19671,18 +19671,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const copyBtn = document.createElement('button');
                         copyBtn.className = 'btn btn-ghost btn-sm';
                         copyBtn.style.cssText = 'padding:4px 8px;font-size:10px;';
-                        copyBtn.textContent = '📋';
+                        copyBtn.innerHTML = _ic('copy');
                         copyBtn.title = 'Copy Link';
                         copyBtn.onclick = () => {
                             navigator.clipboard.writeText(_sanitiseShareUrl(h.url));
-                            copyBtn.textContent = '✓';
-                            setTimeout(() => copyBtn.textContent = '📋', 1500);
+                            copyBtn.innerHTML = _ic('check');
+                            setTimeout(() => { copyBtn.innerHTML = _ic('copy'); }, 1500);
                         };
 
                         const delBtn = document.createElement('button');
                         delBtn.className = 'btn btn-ghost btn-sm';
                         delBtn.style.cssText = 'padding:4px 8px;font-size:10px;color:#e74c3c;';
-                        delBtn.innerHTML = '🗑️';
+                        delBtn.innerHTML = _ic('trash');
                         delBtn.title = 'Delete Link';
                         delBtn.onclick = async () => {
                             // Professional Inline Modal
@@ -19691,7 +19691,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             
                             cOver.innerHTML = `
                                 <div style="background:var(--bg1);border:1px solid var(--border);border-radius:20px;padding:28px 24px;max-width:340px;width:90%;text-align:center;box-shadow:0 16px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);transform:scale(0.95) translateY(10px);transition:all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
-                                    <div style="width:60px;height:60px;background:rgba(231,76,60,0.1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 16px;color:#e74c3c;">🗑️</div>
+                                    <div style="width:60px;height:60px;background:rgba(231,76,60,0.1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 16px;color:#e74c3c;">${_ic('trash')}</div>
                                     <h3 style="margin:0 0 10px;color:var(--text1);font-size:18px;font-weight:700;letter-spacing:-0.3px;">Delete Share Link?</h3>
                                     <p style="margin:0 0 24px;color:var(--text2);font-size:13px;line-height:1.6;">This URL will be disabled permanently. Anyone who has it will no longer be able to view the statement.</p>
                                     <div style="display:flex;gap:12px;">
@@ -19725,7 +19725,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             btnCan.onclick = closeC;
                             
                             btnDel.onclick = async () => {
-                                btnDel.innerHTML = '<span style="display:inline-block;animation:_stmtSpin 1s linear infinite;">⏳</span> Deleting...';
+                                btnDel.innerHTML = '<span style="display:inline-block;animation:_stmtSpin 1s linear infinite;">' + _ic('clock') + '</span> Deleting...';
                                 btnDel.disabled = true;
                                 btnCan.disabled = true;
                                 btnCan.style.opacity = '0.5';
@@ -19762,7 +19762,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                     btnDel.disabled = false;
                                     btnCan.disabled = false;
                                     btnCan.style.opacity = '1';
-                                    btnDel.innerHTML = '🗑 Delete';
+                                    btnDel.innerHTML = _ic('trash') + ' Delete';
                                     if (typeof window.notify === 'function') {
                                         notify('Could not delete the shared copy — the link may still work. Kept in your history so you can retry. (' + why + ')', 'error');
                                     }
@@ -19794,7 +19794,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const _doCopiedFeedback = () => {
                     _saveToHistory();
                     btn.classList.add('btn-copied');
-                    btn.innerHTML = '✅ Copied!';
+                    btn.innerHTML = _ic('checkCircle') + ' Copied!';
                     btn.style.animation = '_copyPulse 0.35s cubic-bezier(0.4,0,0.2,1)';
                     const inp = overlay.querySelector('#_surl_input');
                     if (inp) {
@@ -19806,7 +19806,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     setTimeout(() => {
                         btn.style.transition = 'all 0.4s ease';
                         btn.classList.remove('btn-copied');
-                        btn.innerHTML = '📋 Copy Link';
+                        btn.innerHTML = _ic('copy') + ' Copy Link';
                         btn.style.animation = '';
                     }, 3000);
                 };
@@ -19844,7 +19844,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const pdfBtn = overlay.querySelector('#_surl_pdf');
             if (pdfBtn) {
                 pdfBtn.onclick = async () => {
-                    pdfBtn.innerHTML = '⏳ Generating PDF…';
+                    pdfBtn.innerHTML = _ic('clock') + ' Generating PDF…';
                     pdfBtn.disabled = true;
                     try {
                         let blob = pdfBlob;
@@ -19863,13 +19863,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         document.body.removeChild(a);
                         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
                         
-                        pdfBtn.innerHTML = '✅ Downloaded!';
+                        pdfBtn.innerHTML = _ic('checkCircle') + ' Downloaded!';
                         pdfBtn.style.color = 'var(--green)';
-                        setTimeout(() => { pdfBtn.innerHTML = isElite ? '📥 Download to Local Device' : '📄 Download Statement as PDF'; pdfBtn.disabled = false; pdfBtn.style.color = ''; }, 2000);
+                        setTimeout(() => { pdfBtn.innerHTML = isElite ? _ic('download') + ' Download to Local Device' : _ic('fileText') + ' Download Statement as PDF'; pdfBtn.disabled = false; pdfBtn.style.color = ''; }, 2000);
                     } catch (err) {
                         console.error('[PDF Download]', err);
-                        pdfBtn.innerHTML = '❌ Failed — try Print instead';
-                        setTimeout(() => { pdfBtn.innerHTML = isElite ? '📥 Download to Local Device' : '📄 Download Statement as PDF'; pdfBtn.disabled = false; }, 2000);
+                        pdfBtn.innerHTML = _ic('x') + ' Failed — try Print instead';
+                        setTimeout(() => { pdfBtn.innerHTML = isElite ? _ic('download') + ' Download to Local Device' : _ic('fileText') + ' Download Statement as PDF'; pdfBtn.disabled = false; }, 2000);
                     }
                 };
             }

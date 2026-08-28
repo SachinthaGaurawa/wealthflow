@@ -144,11 +144,13 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * translation table, which exists precisely to delete emoji from call sites.
  *
  * 1428 -> 1354: the SETTINGS screen. Seventy-four glyphs off one screen, taken
- * off the ceiling rather than left as slack, per the rule above this line. The
- * migration continues screen by screen — renderSettings was the largest single
- * function at 68, and the next are _showShareableUrlDialog (43), handleAIScan
- * (27) and renderDebtDemolisher (25). */
-const EMOJI_CEILING = 1354;
+ * off the ceiling rather than left as slack, per the rule above this line.
+ * 1354 -> 1311: the SHARE dialog. Forty-three more, same way.
+ *
+ * The migration continues screen by screen. renderSettings was the largest
+ * single function at 68 and _showShareableUrlDialog the next at 43; after those
+ * come handleAIScan (27) and renderDebtDemolisher (25). */
+const EMOJI_CEILING = 1311;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {
