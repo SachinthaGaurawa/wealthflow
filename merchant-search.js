@@ -24,12 +24,23 @@ import { fetchWithTimeout } from './fetch-timeout.mjs';
 
 export const config = { runtime: 'edge' };
 
+/* The EXPENSE-ENTRY taxonomy, identical to EXPENSE_CATEGORIES in index.html.
+ *
+ * This file cannot import from the page, so the two are pinned together by
+ * test/expense_taxonomy_test.js — the same arrangement test/merchant_taxonomy_test.js
+ * uses for api/verify.js in the other taxonomy.
+ *
+ * 'Gift' and 'Gold' were missing. This list names the categories the model is
+ * allowed to answer with, so a jeweller or a gift shop could not be classified
+ * as one at any confidence: both fell to 'Other'. Gold in particular is not a
+ * curiosity here — it is a mainstream store of value in Sri Lanka and the
+ * dropdown has offered it all along. */
 const CATEGORIES = [
     'Food & Groceries', 'Dining', 'Transport', 'Fuel', 'Utilities', 'Telecom',
     'Healthcare', 'Education', 'Entertainment', 'Subscriptions', 'Shopping',
     'Shopping (Fashion)', 'Electronics & Tech', 'Shopping (Home)', 'Insurance',
-    'Rent', 'Personal Care', 'Kids & Family', 'Pets', 'Travel', 'Charity',
-    'Government', 'Banking', 'Other'
+    'Gift', 'Gold', 'Rent', 'Personal Care', 'Kids & Family', 'Pets', 'Travel',
+    'Charity', 'Government', 'Banking', 'Other'
 ];
 
 function json(body, status) {

@@ -28455,18 +28455,66 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
         window._scanSetting = _scanSetting;
 
         // ==================== AUTO-CATEGORIZE EXPENSES ====================
+        //
+        // THIS RETURNED CATEGORIES THE APP DOES NOT HAVE. The list here read
+        // 'Medical' and 'Clothing'; the Category dropdown offers 'Healthcare'
+        // and 'Shopping (Fashion)'. autoDetectCategory() only moves the select
+        // when the name matches an option, so those two rules did nothing at
+        // all — a quarter of the vocabulary, silently dead. Type "pharmacy" or
+        // "shoes" into a new expense and the category simply would not move.
+        //
+        // It is the same drift test/merchant_taxonomy_test.js was written for,
+        // in the OTHER taxonomy: four files each holding their own copy, one of
+        // them producing a category the interface could not display. That one
+        // was unified. This one — the EXPENSE-ENTRY taxonomy, the names in the
+        // e_cat dropdown — was never given the same treatment, and had four
+        // copies of its own: the dropdown, this list, merchant-search.js, and
+        // the receipt scanner (already fixed, one call site deep).
+        //
+        // EXPENSE_CATEGORIES is now the one definition, and
+        // test/expense_taxonomy_test.js pins the dropdown and merchant-search.js
+        // to it — the two places that cannot import it.
+        const EXPENSE_CATEGORIES = [
+            'Food & Groceries', 'Dining', 'Transport', 'Fuel', 'Utilities', 'Telecom',
+            'Healthcare', 'Education', 'Entertainment', 'Subscriptions', 'Shopping',
+            'Shopping (Fashion)', 'Electronics & Tech', 'Shopping (Home)', 'Insurance',
+            'Gift', 'Gold', 'Rent', 'Personal Care', 'Kids & Family', 'Pets', 'Travel',
+            'Charity', 'Government', 'Banking', 'Other',
+        ];
+        window.EXPENSE_CATEGORIES = EXPENSE_CATEGORIES;
+
         async function autoCategorizeExpense(desc) {
             const s = DB.getObj('settings', {});
             if (!s.autoCategory && s.autoCategory !== undefined) return null;
-            const categories = ['Food & Groceries', 'Transport', 'Utilities', 'Medical', 'Education', 'Entertainment', 'Clothing', 'Other'];
+            /* ORDER IS THE RULE. The loop below returns the FIRST pattern that
+             * matches, so the specific category must be listed before the
+             * general one it would otherwise be swallowed by. Fuel before
+             * Transport and Telecom before Utilities are not cosmetic: the
+             * dropdown offers both of each, and with the general rule first the
+             * specific one can never be reached — the same unreachable-category
+             * shape as 'Medical' above, arrived at by ordering instead of by
+             * spelling. */
             const catMap = {
-                'rice|bread|milk|egg|chicken|fish|veg|fruit|grocer|keells|cargills|arpico|food|eat|lunch|dinner|snack|bakery': 'Food & Groceries',
-                'petrol|diesel|fuel|uber|pickme|bus|train|toll|parking|transport|travel': 'Transport',
-                'electricity|water|gas|internet|wifi|dialog|mobitel|hutch|airtel|slt|bill|ceb|leco': 'Utilities',
-                'doctor|hospital|medicine|pharmacy|medical|dental|health|lab|scan': 'Medical',
+                'petrol|diesel|fuel|filling station|ioc|sinopec|lanka ioc': 'Fuel',
+                'dialog|mobitel|hutch|airtel|slt|reload|top ?up|prepaid|postpaid': 'Telecom',
+                'netflix|spotify|youtube premium|prime video|disney|subscription|monthly plan': 'Subscriptions',
+                'restaurant|cafe|coffee|dine|dinner out|takeaway|kfc|pizza|burger|hotel meal': 'Dining',
+                'rice|bread|milk|egg|chicken|fish|veg|fruit|grocer|keells|cargills|arpico|spar|sathosa|food|lunch|snack|bakery': 'Food & Groceries',
+                'uber|pickme|bus|train|toll|parking|transport|taxi|three ?wheel|tuk': 'Transport',
+                /* NO bare 'bill'. It matched "pharmacy bill", "hospital bill"
+                 * and "phone bill" and sent all of them to Utilities, because
+                 * this rule is tried before Healthcare and Telecom. A token
+                 * that appears in every category's phrasing belongs in none of
+                 * them; "electricity bill" still matches on 'electricity'.
+                 * Found by typing the descriptions into the real field. */
+                'electricity|water supply|gas|internet|wifi|broadband|ceb|leco|nwsdb|water bill': 'Utilities',
+                'doctor|hospital|medicine|pharmacy|medical|dental|health|lab|channel|osu ?sala': 'Healthcare',
                 'school|tuition|book|stationery|course|education|university|college|exam': 'Education',
-                'movie|game|netflix|spotify|youtube|hulu|entertainment|fun|play': 'Entertainment',
-                'shirt|pant|dress|shoe|cloth|fashion|wear': 'Clothing'
+                'movie|game|cinema|concert|entertainment|fun|play': 'Entertainment',
+                'insurance|premium|policy|aia|ceylinco|sri ?lanka insurance': 'Insurance',
+                'rent|lease rental|landlord': 'Rent',
+                'salon|barber|spa|grooming|cosmetic': 'Personal Care',
+                'shirt|pant|dress|shoe|cloth|fashion|wear|apparel': 'Shopping (Fashion)',
             };
             const lower = desc.toLowerCase();
             for (const [keywords, cat] of Object.entries(catMap)) {
