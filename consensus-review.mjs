@@ -880,8 +880,14 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 // The reviewer's own words when they were checkable, kept so the
                 // board table can show what was said before it was corrected.
                 correctedReason,
+                /* NAMES THE KIND THAT ACTUALLY FIRED. This was a fixed string
+                 * saying "it restated the diff's own comments", which is only
+                 * ONE of the three rejection kinds — so when the glyph-swap
+                 * rejection was added the table started reporting the wrong
+                 * reason for it. `why` is already the accurate sentence; it was
+                 * being computed and then discarded here. */
                 reason: rejectedFinding
-                    ? 'objection rejected — it restated the diff\'s own comments'
+                    ? `objection rejected — ${rejectedFinding.why || 'it restated the diff'}`.slice(0, 300)
                     : correctedReason
                         ? correctionWhy
                         : String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
@@ -1102,18 +1108,37 @@ async function main() {
         '| Reviewer | Model | Vote | Reason | Evidence |\n|---|---|---|---|---|\n' + rows + '\n\n' +
         `**Decision:** ${result.reason}\n\n` +
         (rejected.length
-            ? '\n> 🚫 **Objection(s) rejected — a restatement of the diff, not a finding.**\n'
+            /* THE PROSE HERE USED TO DESCRIBE ONE KIND OF REJECTION AND BE
+             * PRINTED AFTER ALL OF THEM. The per-objection line below has
+             * always been right — it uses the rejection's own `why` — but the
+             * heading and the closing paragraph both asserted "a verbatim run
+             * of this diff's own comment text", which is true of the FIRST
+             * rejection kind only.
+             *
+             * So on the pull request that migrated the share dialog, the board
+             * said, three lines apart: "rejected because the reason calls
+             * something new, but the cited line REPLACED one reading the same
+             * words" and then "that reason is a long verbatim run of this
+             * diff's own comment text". Two different explanations of one
+             * event, one of them wrong — and the paragraph closes by inviting
+             * the reader to overrule, which is a judgement they would then be
+             * making on the wrong account of what happened.
+             *
+             * The heading and closing are kind-neutral now. What differed
+             * between rejections was always in `why`, and that is where it
+             * stays. */
+            ? '\n> 🚫 **Objection(s) rejected — not a finding about this diff.**\n'
               + rejected.map((v) =>
                   `> \`${v.name}\` objected: _"${String(v.rejectedFinding.reason).replace(/\n/g, ' ')}"_\n`
                   + `> rejected because ${v.rejectedFinding.why || 'it restated the diff'}.\n`
                   + (v.rejectedFinding.evidence ? `> cited: \`${String(v.rejectedFinding.evidence).replace(/\n/g, ' ')}\`\n` : '')
               ).join('> \n')
               + '> \n'
-              + '> That reason is a long verbatim run of this diff\'s own comment text — the\n'
-              + '> reviewer read prose describing a bug being FIXED and reported it as a bug\n'
-              + '> being introduced. The prompt asks reviewers not to do this; the rule is now\n'
-              + '> enforced in code instead. The objection is kept here rather than deleted, so\n'
-              + '> you can overrule the rejection if you think the reviewer was onto something.\n'
+              + '> Each rejection above names its own reason. These checks are enforced in\n'
+              + '> code rather than asked for in the prompt, because the same lane produced\n'
+              + '> the same class of mistake across five reviews and four prompt rewrites.\n'
+              + '> The objection is kept here rather than deleted, so you can overrule the\n'
+              + '> rejection if you think the reviewer was onto something.\n'
             : '') +
         (result.outages
             ? `\n> ⚠️ **${result.outages} reviewer(s) unreachable — this board is INCOMPLETE.**\n`

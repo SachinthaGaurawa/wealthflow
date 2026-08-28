@@ -52,6 +52,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
     deniesVisibleChange,
     addsUserVisibleSurface,
@@ -481,5 +483,68 @@ describe('the rejection reaches runReviewer, not just the helpers', () => {
         const r = await runReviewer(lane(), swapDiff, false,
             fail('The user will see a new icon, but the icon is not visible in the diff.', ''));
         expect(r.vote).toBe('fail');
+    });
+});
+
+/* ── THE REPORT MUST EXPLAIN THE REJECTION THAT HAPPENED ─────────────────────
+ *
+ * The board's rejection block had a heading and a closing paragraph written for
+ * ONE of the three rejection kinds, printed after all of them. On the share
+ * dialog migration it said, three lines apart:
+ *
+ *   rejected because the reason calls something new, but the cited line
+ *   REPLACED one reading the same words
+ *   ...
+ *   That reason is a long verbatim run of this diff's own comment text
+ *
+ * Two accounts of one event, one wrong — and the paragraph closes by inviting
+ * the reader to overrule, a judgement they would then make on the wrong story.
+ * A defect of mine: I added a third rejection kind and left the prose that
+ * explains rejections describing the first. */
+describe('the board report does not contradict its own rejection', () => {
+    const SRC = fs.readFileSync(path.resolve(import.meta.dirname, '../consensus-review.mjs'), 'utf8');
+
+    it('the table reason names the kind that fired, not a fixed one', () => {
+        expect(SRC).toContain("`objection rejected — ${rejectedFinding.why");
+        expect(SRC).not.toContain("? 'objection rejected — it restated the diff\\'s own comments'");
+    });
+
+    it('the heading is kind-neutral', () => {
+        expect(SRC).toContain('Objection(s) rejected — not a finding about this diff.');
+        expect(SRC).not.toContain('a restatement of the diff, not a finding.');
+    });
+
+    it('the closing paragraph no longer asserts one particular failure', () => {
+        /* It described a verbatim run of comment text — true of the FIRST
+         * rejection kind and of neither other. */
+        const block = SRC.slice(SRC.indexOf('Objection(s) rejected'), SRC.indexOf('result.outages'));
+        expect(block).not.toMatch(/long verbatim run of this diff/);
+        expect(block).toContain('Each rejection above names its own reason');
+    });
+
+    it('and it still says the objection is kept so it can be overruled', () => {
+        const block = SRC.slice(SRC.indexOf('Objection(s) rejected'), SRC.indexOf('result.outages'));
+        expect(block).toContain('overrule');
+        expect(block).toContain('kept here rather than deleted');
+    });
+
+    it('every rejection kind produces a distinct, accurate table reason', async () => {
+        /* Run the three paths and read the reason the table would show. */
+        const lane = () => ({ role: REVIEWERS.find((r) => r.name === 'user-impact'), primary: 'cohere', fallbacks: [] });
+        const fail = (reason, evidence) => async (opts) => ({
+            text: JSON.stringify({ verdict: 'fail', reason, evidence, concerns: [] }),
+            provider: opts.only[0],
+        });
+
+        const swap = await runReviewer(lane(), swapDiff, false,
+            fail('The user will see a new icon in the title', swapEvidence));
+        expect(swap.reason).toContain('REPLACED one reading the same words');
+        expect(swap.reason).not.toContain('comment text');
+
+        const proseDiff = ['@@', '+  // this fixes the double notification bug', '+  const x = 1;'].join('\n');
+        const prose = await runReviewer(lane(), proseDiff, false,
+            fail('It causes a double notification bug', '+  // this fixes the double notification bug'));
+        expect(prose.reason).toContain('objection rejected');
+        expect(prose.reason).not.toContain('REPLACED');
     });
 });
