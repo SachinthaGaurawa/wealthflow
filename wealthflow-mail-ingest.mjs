@@ -402,6 +402,58 @@ export function looksLikeStatement({ subject = '', filenames = [] } = {}, terms 
     return (Array.isArray(terms) ? terms : []).some((t) => hay.includes(lower(t)));
 }
 
+/**
+ * One entry per statement, from a list that may hold the same one several times.
+ *
+ * WHY THIS IS NEEDED ON TOP OF THE KEY FIX. stableItemKey stops NEW duplicates
+ * being written. It removes none of the ones already stored — and those are
+ * what the owner actually sees, because the mailbox card lists what is in the
+ * store rather than fetching anything. A fix that only changes future writes
+ * leaves the screen exactly as it was, which is what happened.
+ *
+ * Two documents are the same statement when they came from the same message
+ * and carry the same attachment: same messageId, same filename, same size. The
+ * old key put Gmail's remintable attachmentId in the document NAME, so the same
+ * statement could be stored under many names — but never with a different
+ * messageId or filename.
+ *
+ * COLLAPSED, NOT DELETED. This decides what to show; it removes nothing. A
+ * reader that hides a row is reversible by reloading, a delete is not, and the
+ * owner's statements are not something to gamble on a grouping rule. The
+ * survivor is the most complete copy — most parts, then earliest stored, so
+ * the answer does not move around between calls.
+ */
+export function dedupeStored(items) {
+    const seen = new Map();
+    for (const it of Array.isArray(items) ? items : []) {
+        if (!it) continue;
+        const m = it.manifest || {};
+        const id = [
+            m.messageId == null ? '' : String(m.messageId),
+            m.filename == null ? '' : String(m.filename),
+            m.size == null ? '' : String(m.size),
+        ].join('\u0000');
+        /* A record with no messageId AND no filename cannot be grouped without
+         * guessing, so it is kept as itself rather than merged into a bucket it
+         * may not belong to. */
+        const key = (m.messageId || m.filename) ? id : `@unique:${it.id}`;
+        const prev = seen.get(key);
+        if (!prev) { seen.set(key, it); continue; }
+        seen.set(key, betterCopy(prev, it));
+    }
+    return [...seen.values()];
+}
+
+/** Of two copies of one statement, the one worth showing. */
+export function betterCopy(a, b) {
+    const parts = (x) => (Array.isArray(x && x.parts) ? x.parts.length : 0);
+    if (parts(b) !== parts(a)) return parts(b) > parts(a) ? b : a;
+    const at = (x) => Number((x && x.manifest && x.manifest.storedMs) || 0) || 0;
+    if (at(a) && at(b) && at(a) !== at(b)) return at(a) < at(b) ? a : b;
+    /* Nothing separates them; keep the first so repeated calls agree. */
+    return a;
+}
+
 export function planMessage(message) {
     const headers = {};
     for (const h of (message && message.payload && message.payload.headers) || []) {
@@ -496,6 +548,7 @@ const API = {
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
     domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
     itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement, nameFromDomain,
+    dedupeStored, betterCopy,
 };
 
 export default API;
