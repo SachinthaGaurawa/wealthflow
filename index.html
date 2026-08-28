@@ -15882,7 +15882,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const label = _ensureIOSTapticEl();
             if (!label) return false;
             try {
-                const mult = _getHapticMultiplier();   // 0.5 / 1 / 1.5
+                const mult = _getHapticMultiplier();   // 0 / 0.5 / 1 / 1.6
                 let baseCount = intensity === 'heavy' ? 3 : intensity === 'medium' ? 2 : 1;
                 let count = Math.max(1, Math.round(baseCount * mult));
                 if (count > 5) count = 5;
@@ -15984,10 +15984,52 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
+        /* ── HAPTIC INTENSITY ──────────────────────────────────────────────────
+         *
+         * Four levels, and they scale the PULSE lengths rather than swapping in
+         * different patterns. The pattern is what a given event FEELS like — a
+         * success is a rising triple-tap, an error is two heavy thuds — and that
+         * identity should not change with the volume knob, any more than a
+         * ringtone changes when you turn the phone down. Only the amplitude
+         * does, and on a vibration motor amplitude is duration.
+         *
+         * SCALED IN EXACTLY ONE PLACE: _vibrate(), which has applied
+         * _getHapticMultiplier() since long before this change. The first
+         * version of this block added a SECOND scaling pass inside
+         * triggerHaptic, which multiplied on top of that one — heavy would have
+         * come out at 1.7 x 1.5 = 2.55x rather than 1.7x, and every level would
+         * have been wrong in a way nobody could have felt precisely enough to
+         * report. One choke point, and this is not it.
+         *
+         * What DOES belong here is `off`, because off has to silence the two
+         * channels _vibrate never sees: the iOS Taptic trick and the visual
+         * ripple. A multiplier of zero would leave both of those firing.
+         *
+         * THE VOCABULARY IS BACKWARD COMPATIBLE. The setting already existed
+         * with the values gentle / standard / intense, and installs already hold
+         * those. They map onto the new names rather than being reset, so nobody
+         * silently gets their haptics changed by an update.
+         */
+        const HAPTIC_LEVELS = ['off', 'subtle', 'standard', 'heavy'];
+        const HAPTIC_ALIASES = { gentle: 'subtle', intense: 'heavy', medium: 'standard', none: 'off' };
+        const HAPTIC_GAIN = { off: 0, subtle: 0.5, standard: 1, heavy: 1.6 };
+
+        function hapticIntensity() {
+            const st = DB.getObj('settings', {});
+            if (st.haptics === false) return 'off';         // the legacy switch wins
+            const raw = String(st.hapticIntensity || 'standard').toLowerCase();
+            const v = HAPTIC_ALIASES[raw] || raw;
+            return HAPTIC_LEVELS.includes(v) ? v : 'standard';
+        }
+        window.hapticIntensity = hapticIntensity;
+
+        /* The ONE place intensity is applied. hapticIntensity() resolves the
+         * stored value — including the legacy gentle/intense names — so this
+         * function and the settings screen can never disagree about what a
+         * level means. */
         function _getHapticMultiplier() {
-            const s = DB.getObj('settings', { hapticIntensity: 'standard' });
-            const map = { gentle: 0.5, standard: 1, intense: 1.5 };
-            return map[s.hapticIntensity] || 1;
+            const g = HAPTIC_GAIN[hapticIntensity()];
+            return typeof g === 'number' ? g : 1;
         }
 
         function _vibrate(pattern) {
@@ -16024,26 +16066,31 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         window._testHaptic = _testHaptic;
 
+
         function triggerHaptic(type = 'light') {
-            const settings = DB.getObj('settings', { haptics: true });
-            if (settings.haptics === false) return;     // explicit OFF only
+            /* `off` is handled HERE, not by a zero multiplier, because it must
+             * also silence the iOS Taptic trick and the visual ripple below —
+             * neither of which goes through _vibrate. */
+            if (hapticIntensity() === 'off') return;
 
             // 1) Real navigator.vibrate (Android/Chrome with motor support).
+            //    Intensity is applied inside _vibrate, once.
+            const buzz = (p) => _vibrate(p);
             let vibrated = false;
             switch (type) {
-                case 'light': vibrated = _vibrate([8, 30, 8]); break;
-                case 'medium': vibrated = _vibrate([12, 20, 12, 20, 12]); break;
-                case 'heavy': vibrated = _vibrate([20, 30, 30, 30, 20]); break;
-                case 'success': vibrated = _vibrate([8, 40, 8, 40, 15, 60, 25]); break;
-                case 'error': vibrated = _vibrate([50, 20, 50, 20, 80]); break;
+                case 'light': vibrated = buzz([8, 30, 8]); break;
+                case 'medium': vibrated = buzz([12, 20, 12, 20, 12]); break;
+                case 'heavy': vibrated = buzz([20, 30, 30, 30, 20]); break;
+                case 'success': vibrated = buzz([8, 40, 8, 40, 15, 60, 25]); break;
+                case 'error': vibrated = buzz([50, 20, 50, 20, 80]); break;
                 case 'warning':
-                case 'warn': vibrated = _vibrate([25, 40, 25, 40, 25]); break;
-                case 'keypress': vibrated = _vibrate(4); break;
-                case 'toggle': vibrated = _vibrate([8, 25, 12]); break;
-                case 'delete': vibrated = _vibrate([15, 15, 25, 15, 35]); break;
-                case 'celebration': vibrated = _vibrate([8, 30, 12, 30, 18, 30, 25, 30, 35]); break;
-                case 'notification': vibrated = _vibrate([12, 50, 12, 50, 30]); break;
-                default: vibrated = _vibrate([8, 25, 8]); break;
+                case 'warn': vibrated = buzz([25, 40, 25, 40, 25]); break;
+                case 'keypress': vibrated = buzz(4); break;
+                case 'toggle': vibrated = buzz([8, 25, 12]); break;
+                case 'delete': vibrated = buzz([15, 15, 25, 15, 35]); break;
+                case 'celebration': vibrated = buzz([8, 30, 12, 30, 18, 30, 25, 30, 35]); break;
+                case 'notification': vibrated = buzz([12, 50, 12, 50, 30]); break;
+                default: vibrated = buzz([8, 25, 8]); break;
             }
 
             // 2) v7.5.6 — On iOS ALWAYS try the Taptic switch trick
@@ -22836,14 +22883,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div class="toggle ${s.haptics ? 'on' : ''}" onclick="toggleSetting('haptics', ${!s.haptics}); triggerHaptic('light');"></div>
             </div>
             ${s.haptics ? `<div class="setting-row" style="padding-left:24px; border-left:3px solid var(--accent);">
-                <div class="setting-info"><div class="setting-label">Haptic Intensity</div><div class="setting-desc">Control the strength of vibration feedback: Gentle (subtle), Standard (balanced), Intense (powerful).</div></div>
+                <div class="setting-info"><div class="setting-label">Haptic Intensity</div><div class="setting-desc">How strong each vibration feels. The pattern stays the same at every level — only its strength changes.</div></div>
                 <div style="display:flex;gap:8px;align-items:center;">
-                    <select class="fi" style="width:130px; border-color:var(--border2);" onchange="toggleSetting('hapticIntensity', this.value); triggerHaptic('medium');">
-                        <option value="gentle" ${(s.hapticIntensity || 'standard') === 'gentle' ? 'selected' : ''}>🤫 Gentle</option>
-                        <option value="standard" ${(s.hapticIntensity || 'standard') === 'standard' ? 'selected' : ''}>✨ Standard</option>
-                        <option value="intense" ${(s.hapticIntensity || 'standard') === 'intense' ? 'selected' : ''}>💪 Intense</option>
+                    <!-- The stored value may still be the older gentle/intense
+                         naming; hapticIntensity() resolves both, so the option
+                         that shows as selected is the one actually in force. -->
+                    <select class="fi" style="width:140px; border-color:var(--border2);" onchange="toggleSetting('hapticIntensity', this.value); triggerHaptic('medium');">
+                        <option value="off" ${hapticIntensity() === 'off' ? 'selected' : ''}>Off</option>
+                        <option value="subtle" ${hapticIntensity() === 'subtle' ? 'selected' : ''}>Subtle</option>
+                        <option value="standard" ${hapticIntensity() === 'standard' ? 'selected' : ''}>Standard</option>
+                        <option value="heavy" ${hapticIntensity() === 'heavy' ? 'selected' : ''}>Heavy</option>
                     </select>
-                    <button class="btn btn-ghost btn-sm" onclick="_testHaptic()" style="white-space:nowrap;">🔔 Test</button>
+                    <button class="btn btn-ghost btn-sm" onclick="_testHaptic()" style="white-space:nowrap;">${(window.WFIcon ? WFIcon('bell') : '')} Test</button>
                 </div>
             </div>` : ''}
             <div class="setting-row">
@@ -24116,22 +24167,42 @@ table.amort tbody tr { page-break-inside: avoid; }
             // Avoid duplicate banners
             if (document.getElementById('ab_' + id)) return;
 
-            // Mirror to the real DEVICE notification panel (iOS/Android/desktop)
-            // — at most once per id per day so it isn't spammy.
-            try {
-                const today = new Date().toISOString().slice(0, 10);
-                const nk = 'wf_devnotif_' + today;
-                const sent = JSON.parse(localStorage.getItem(nk) || '[]');
-                if (!sent.includes(id) && typeof sendSmartNotification === 'function') {
-                    const plain = String(message).replace(/<[^>]+>/g, '');
-                    sendSmartNotification(title, plain);
-                    sent.push(id);
-                    _persistLocal(nk, sent);
-                    Object.keys(localStorage).forEach(k => {
-                        if (k.startsWith('wf_devnotif_') && k !== nk) localStorage.removeItem(k);
-                    });
-                }
-            } catch (_) {}
+            /* THE DEVICE NOTIFICATION — ONE OF THEM, NOT TWO.
+             *
+             * This used to fire sendSmartNotification() here AND
+             * _showOSNotification() below, unconditionally. Both call
+             * registration.showNotification, and their tags never collapse —
+             * 'wealthflow-ai-<timestamp>' against 'wf-actionable-<id>' — so a
+             * single income reminder put TWO entries on the lock screen, one of
+             * them with no buttons. Every actionable banner in the app has done
+             * this since the actionable path was added.
+             *
+             * The actionable one is strictly better: same title and body, plus
+             * the buttons that let the answer be given without opening the app.
+             * So the plain mirror is now what it should always have been — a
+             * FALLBACK, sent only when the actionable notification could not be
+             * shown at all (no permission, no service worker, an older browser).
+             *
+             * That is why _showOSNotification now reports whether it succeeded.
+             * Asking beforehand would mean duplicating its four preconditions
+             * here, and a second copy of those is how the two paths would drift
+             * back apart. */
+            const _plainMirror = () => {
+                try {
+                    const today = new Date().toISOString().slice(0, 10);
+                    const nk = 'wf_devnotif_' + today;
+                    const sent = JSON.parse(localStorage.getItem(nk) || '[]');
+                    if (!sent.includes(id) && typeof sendSmartNotification === 'function') {
+                        const plain = String(message).replace(/<[^>]+>/g, '');
+                        sendSmartNotification(title, plain);
+                        sent.push(id);
+                        _persistLocal(nk, sent);
+                        Object.keys(localStorage).forEach(k => {
+                            if (k.startsWith('wf_devnotif_') && k !== nk) localStorage.removeItem(k);
+                        });
+                    }
+                } catch (_) {}
+            };
 
             // Stack banners — push existing ones up
             const existing = document.querySelectorAll('.actionable-banner.show');
@@ -24180,7 +24251,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             // (Removed the 60s auto-dismiss to ensure visibility)
 
             // Try OS-level notification with actions (Android Chrome supports actions)
-            _showOSNotification({ id, title, message, primary, secondary, confirm });
+            /* One notification reaches the device: the actionable one when it
+             * can be shown, the plain mirror only when it cannot. */
+            Promise.resolve(_showOSNotification({ id, title, message, primary, secondary, confirm }))
+                .then((shown) => { if (!shown) _plainMirror(); })
+                .catch(() => _plainMirror());
             triggerHaptic('medium');
             // Audio chime if sounds are enabled
             try { playUISound('notification'); } catch (e) { }
@@ -24188,11 +24263,11 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         async function _showOSNotification({ id, title, message, primary, secondary, confirm = null }) {
             try {
-                if (!('Notification' in window)) return;
-                if (Notification.permission !== 'granted') return;
-                if (!('serviceWorker' in navigator)) return;
+                if (!('Notification' in window)) return false;
+                if (Notification.permission !== 'granted') return false;
+                if (!('serviceWorker' in navigator)) return false;
                 const reg = await navigator.serviceWorker.getRegistration();
-                if (!reg) return;
+                if (!reg) return false;
 
                 /* THE BUTTON MUST SAY WHAT IT WRITES.
                  *
@@ -24242,7 +24317,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                         ? Object.assign({}, built.data, { actionableId: id })
                         : { actionableId: id, type: 'wf_actionable' }
                 });
-            } catch (e) { console.warn('[OS Notif] failed:', e); }
+                /* TRUE means the device got the actionable notification, so
+                 * showActionableBanner must NOT also send the plain mirror.
+                 * Every bail above returns false for the same reason: the four
+                 * preconditions live here and nowhere else, and a second copy
+                 * of them in the caller is how the two paths would drift into
+                 * sending two notifications again. */
+                return true;
+            } catch (e) {
+                console.warn('[OS Notif] failed:', e);
+                return false;
+            }
         }
 
         /* ── Draining the durable outbox ──────────────────────────────────
