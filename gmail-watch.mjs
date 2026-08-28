@@ -96,17 +96,23 @@ export function watchBody(topicName) {
 /**
  * What to store after a successful users.watch.
  *
- * `historyId` IS RECORDED HERE, and that is a deliberate reversal of the rule
- * in gmail-link.mjs, which leaves it unset so a first push starts from the
- * beginning. The difference is what each one knows. At link time nothing has
- * been ingested and the whole mailbox is unread history worth having. By the
- * time a watch is RENEWED the pipeline has been running, and Gmail's own
- * response carries the current point — writing it keeps the next push's history
- * query bounded instead of asking for a week of changes that were all handled.
+ * `historyId` IS RECORDED HERE, but only on a RENEWAL — when a bookmark already
+ * existed to advance. By then the pipeline has been running and Gmail's own
+ * response carries the current point, so writing it keeps the next push's
+ * history query bounded instead of asking for a week of changes already handled.
  *
- * So it is written only when there was already a bookmark to advance. A first
- * registration leaves the field alone, and the first push still starts from
- * the beginning exactly as gmail-link.mjs intends.
+ * CORRECTION. The first version of this comment justified skipping it on a
+ * first registration by saying the first push "starts from the beginning".
+ * It does not. With no bookmark the hook uses the push's own historyId, which
+ * is the mailbox's current point, so the first push starts from NOW either way.
+ * The real reason to leave the field alone on a first registration is smaller
+ * and still true: gmail-link.mjs owns what a fresh link looks like, and writing
+ * a bookmark from here would skip whatever arrived between connecting and the
+ * watch being registered.
+ *
+ * Reaching the PAST was never this field's job. It needs a search — see
+ * gmail-scan.mjs — and believing otherwise is why the backfill engine sat
+ * unwired while the pipeline looked complete.
  */
 export function watchRecord(response, topicName, { hadHistoryId = false, now = Date.now() } = {}) {
     const expiration = Number((response && response.expiration) || 0);

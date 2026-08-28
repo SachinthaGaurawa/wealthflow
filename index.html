@@ -21401,7 +21401,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <button class="btn btn-secondary btn-sm" id="_ms_link" style="margin-right:8px;">
                             ${(window.WFIcon ? WFIcon('lock') : '')} ${connected === true ? 'Mailbox' : 'Connect Gmail'}
                         </button>
-                        <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' ? 'disabled' : ''}>
+                        ${connected === true ? `
+                        <button class="btn btn-primary btn-sm" id="_ms_scan" style="margin-right:8px;" ${_scan.stage === 'running' || st.stage === 'running' ? 'disabled' : ''}>
+                            ${_scan.stage === 'running'
+                                ? ((window.WFIcon ? WFIcon('clock') : '') + ' Scanning' + (_scan.label ? ' ' + _wfEsc(_scan.label) : '') + '…')
+                                : ((window.WFIcon ? WFIcon('cloudDownload') : '') + ' Scan historical statements')}
+                        </button>` : ''}
+                        <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' || _scan.stage === 'running' ? 'disabled' : ''}>
                             ${st.stage === 'running'
                                 ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
                                 : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
@@ -21409,12 +21415,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                     </div>
                     ${banner}
                     ${rows}
+                    ${_scan.stage === 'running' ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">
+                        Scanning ${_wfEsc(String(_scan.months))} months${_scan.label ? ' · ' + _wfEsc(_scan.label) : ''}${_scan.found ? ' · ' + _wfEsc(String(_scan.found)) + ' found' : ''}…
+                    </div>` : ''}
+                    ${_scan.error ? `<div style="margin-top:10px;font-size:12px;color:var(--red);">${_wfEsc(_scan.error)}</div>` : ''}
                     ${st.error ? `<div style="margin-top:10px;font-size:12px;color:var(--red);">${_wfEsc(st.error)}</div>` : ''}
                 </div>`;
             const b = host.querySelector('#_ms_run');
             if (b) b.onclick = () => { try { triggerHaptic('light'); } catch (_) {} runMailSync(); };
             const l = host.querySelector('#_ms_link');
             if (l) l.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openGmailLink(); };
+            const sc = host.querySelector('#_ms_scan');
+            if (sc) sc.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openBackfill(); };
         }
         window.renderMailSync = renderMailSync;
 
@@ -21501,6 +21513,164 @@ table.amort tbody tr { page-break-inside: avoid; }
             else if (done && done.body && done.body.error) _mailWatch = { ..._mailWatch, error: String(done.body.error).slice(0, 200) };
             return _mailWatch;
         }
+
+        /* ── THE DEEP SCAN: THE STATEMENTS ALREADY IN THE MAILBOX ───────────
+         *
+         * A Pub/Sub watch is a subscription to the FUTURE. Gmail notifies on
+         * what arrives after the watch is registered, and the hook then reads
+         * history forward from a bookmark. Neither can reach a statement that
+         * was already sitting in the inbox — which is most of them, and the
+         * half that can actually say what someone spends.
+         *
+         * wealthflow-backfill.js has planned exactly this scan since it was
+         * merged: planWindows(), a resumable cursor, MAX_WINDOWS_PER_RUN, and a
+         * notifiable() built so a year of history does not buzz fifty times.
+         * The page used ONE function out of it — ledgerHashes — and left the
+         * scan half with no caller at all. This is that caller.
+         */
+        let _scan = { stage: 'idle', cursor: null, found: 0, months: 0, label: '', error: null };
+
+        async function _gmailScan(payload) {
+            if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
+            let token;
+            try { token = await currentUser.getIdToken(); } catch (_) { return null; }
+            const r = await fetch('/api/gmail-scan', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            let out = null;
+            try { out = await r.json(); } catch (_) { out = null; }
+            return { status: r.status, body: out };
+        }
+
+        /**
+         * Walk the plan until it is done, then file everything it found.
+         *
+         * The cursor is the engine's, not a second one invented here. The
+         * server is told WHICH window by index and rebuilds the query from the
+         * same planWindows() over the same sender allowlist — the client never
+         * sends a Gmail query, because this endpoint holds a credential that
+         * can read the whole mailbox and a free-text query would make it a
+         * general search proxy.
+         *
+         * shouldPause() is respected between batches so a ten-year mailbox is
+         * many short runs rather than one that dies against a quota, and each
+         * pause leaves a cursor that resumes.
+         */
+        async function runBackfill(months) {
+            if (_scan.stage === 'running') return;
+            if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
+
+            const now = Date.now();
+            _scan = {
+                stage: 'running',
+                cursor: window.WFBackfill.startCursor({ months, now }),
+                found: 0, months, label: '', error: null,
+            };
+            renderMailSync();
+
+            const stop = (err) => {
+                _scan.stage = 'idle';
+                if (err) _scan.error = String(err).slice(0, 200);
+                renderMailSync();
+            };
+
+            /* Bounded by the engine's own limit AND by a hard ceiling on calls.
+             * A cursor bug that never advances would otherwise be an endless
+             * loop against someone's Gmail quota. */
+            let calls = 0;
+            const startIndex = _scan.cursor.index;
+            while (calls < 400) {
+                const step = window.WFBackfill.nextStep(_scan.cursor);
+                if (!step) break;
+                calls += 1;
+                _scan.label = step.window.label;
+                renderMailSync();
+
+                const r = await _gmailScan({
+                    months, now,
+                    index: _scan.cursor.index,
+                    pageToken: step.pageToken || undefined,
+                });
+                if (!r || r.status !== 200 || !r.body || r.body.ok !== true) {
+                    return stop((r && r.body && r.body.error) || 'the scan could not be completed');
+                }
+                _scan.cursor = window.WFBackfill.advance(_scan.cursor, r.body);
+                _scan.found += Number(r.body.statements) || 0;
+                renderMailSync();
+
+                if (window.WFBackfill.shouldPause(startIndex, _scan.cursor)) break;
+            }
+
+            const done = !!(_scan.cursor && _scan.cursor.done);
+            _scan.stage = 'idle';
+            _scan.label = '';
+            renderMailSync();
+
+            if (!_scan.found) {
+                notify(done
+                    ? 'Scan finished — no statements found in that period'
+                    : 'Scanned part of the period — no statements yet. Run it again to continue.', 'info');
+                return;
+            }
+
+            /* Found is not filed. The statements are now sitting in wf-mail
+             * exactly where a pushed one would be, so the EXISTING sync drains
+             * them through assemble → unlock → parse → route → file, with the
+             * ledger hashes as the dedup set. One pipeline, not two. */
+            try { triggerHaptic('success'); } catch (_) {}
+            notify(`Found ${_scan.found} statement${_scan.found === 1 ? '' : 's'} — filing them now`, 'success');
+            await runMailSync();
+
+            if (!done) notify('There is more history to scan. Run it again to continue.', 'info');
+        }
+        window.runBackfill = runBackfill;
+
+        /** Ask how far back, then scan. */
+        function openBackfill() {
+            if (!currentUser) { notify('Sign in first', 'error'); return; }
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.innerHTML = `
+                <div class="md" style="max-width:460px;">
+                    <div class="md-hdr">
+                        <div class="md-title">${(window.WFIcon ? WFIcon('clock') : '')} Scan historical statements</div>
+                        <button class="md-x" aria-label="Close" id="_bf_x"><i data-wfi="x"></i></button>
+                    </div>
+                    <div style="padding:4px 0 8px;">
+                        <div style="font-size:12.5px;color:var(--text3);line-height:1.65;margin-bottom:14px;">
+                            Searches your mailbox for statements from the banks WealthFlow recognises and
+                            files them through the same parser and router the live sync uses. Rows already
+                            in your ledger — including ones you typed in yourself — are matched by their
+                            SHA-256 identity and skipped, so nothing is duplicated.
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            ${[3, 6, 12, 24].map((m) => `<button class="btn btn-secondary btn-sm" data-bf="${m}">${m} months</button>`).join('')}
+                        </div>
+                        <div style="font-size:11.5px;color:var(--text3);margin-top:12px;">
+                            Long periods run in batches. If it stops early, run it again — it picks up where it left off.
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_bf_x').onclick = close;
+            overlay.querySelectorAll('[data-bf]').forEach((b) => {
+                b.onclick = () => {
+                    const m = Number(b.getAttribute('data-bf')) || 6;
+                    try { triggerHaptic('light'); } catch (_) {}
+                    close();
+                    runBackfill(m);
+                };
+            });
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(overlay); } catch (_) {}
+        }
+        window.openBackfill = openBackfill;
 
         /* Why the last check could not be made, or null when it was made.
          *

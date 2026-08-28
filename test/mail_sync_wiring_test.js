@@ -425,3 +425,88 @@ describe('the watch helper only renews when it should', () => {
         expect(h.state).toBe(null);
     });
 });
+
+/* ── THE ENGINE THAT PLANNED A SCAN NOBODY RAN ───────────────────────────────
+ *
+ * wealthflow-backfill.js exports ledgerHashes, planWindows, startCursor,
+ * nextStep, advance, shouldPause, notifiable and runSummary. The page used ONE
+ * of them — ledgerHashes — and the entire scan-planning half had no caller at
+ * all, so the app could only ever wait for a bank to send something new.
+ *
+ * That is this repository's most-repeated defect, and it had claimed the
+ * backfill engine as well as openVaultModal, wealthflow-mail-intake.js and
+ * wealthflow-statement-router.js before it. */
+describe('the backfill engine is actually driven', () => {
+    const code = codeOnly(html);
+
+    it.each([
+        ['startCursor', 'the scan has no resumable state without it'],
+        ['nextStep', 'nothing decides which window to read'],
+        ['advance', 'the cursor never moves and the scan repeats one month'],
+        ['shouldPause', 'a ten-year mailbox becomes one runaway loop'],
+    ])('calls WFBackfill.%s — otherwise %s', (fn) => {
+        expect(code).toContain(`WFBackfill.${fn}(`);
+    });
+
+    it('still uses ledgerHashes, which is what keeps the backfill from duplicating', () => {
+        expect(code).toContain('WFBackfill.ledgerHashes(');
+    });
+
+    it('there is a button, on the card, that starts it', () => {
+        /* An engine reachable only from the console is the same as an unwired
+         * one. The complaint that produced this was "WHERE IS IT?". */
+        const body = functionBody('renderMailSync');
+        expect(body).toContain('_ms_scan');
+        expect(body).toContain('Scan historical statements');
+        expect(body).toContain('openBackfill()');
+    });
+
+    it('the scan button appears only once a mailbox is connected', () => {
+        /* Offering a deep scan with no credential to scan with is a button that
+         * can only produce an error. */
+        const body = functionBody('renderMailSync');
+        const at = body.indexOf('_ms_scan');
+        expect(at).toBeGreaterThan(-1);
+        expect(body.slice(Math.max(0, at - 200), at)).toContain('connected === true');
+    });
+
+    it('POSTs to /api/gmail-scan and never sends a Gmail query', () => {
+        /* The endpoint holds a credential that can read the whole mailbox. The
+         * client says WHICH WINDOW by index; the server rebuilds the query. */
+        const body = functionBody('runBackfill');
+        expect(body).toContain('_gmailScan(');
+        const transport = functionBody('_gmailScan');
+        expect(transport).toContain("'/api/gmail-scan'");
+        expect(transport).toContain("method: 'POST'");
+        expect(body).not.toMatch(/query\s*:/);
+        expect(body).not.toContain('has:attachment');
+    });
+
+    it('sends the cursor’s own clock, so both sides plan the same windows', () => {
+        /* planWindows is a pure function of (months, now). If the server used
+         * its own clock, a scan running across midnight on the 1st would shift
+         * every window — re-reading one month and skipping another. */
+        const body = functionBody('runBackfill');
+        expect(body).toContain('startCursor({ months, now })');
+        expect(body).toMatch(/months,\s*now,/);
+    });
+
+    it('files what it found through the EXISTING sync, not a second pipeline', () => {
+        /* The scan writes into the same wf-mail items collection the push writes
+         * into. A second ingestion path would be a second set of bugs. */
+        const body = functionBody('runBackfill');
+        expect(body).toContain('runMailSync()');
+    });
+
+    it('cannot loop forever if the cursor stops advancing', () => {
+        const body = functionBody('runBackfill');
+        expect(body).toMatch(/calls\s*<\s*\d+/);
+    });
+
+    it('says so when there is more history left', () => {
+        /* A scan that stops at the batch limit and reports nothing looks like a
+         * scan that found nothing. */
+        const body = functionBody('runBackfill');
+        expect(body).toContain('more history to scan');
+    });
+});
