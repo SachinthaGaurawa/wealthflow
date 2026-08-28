@@ -21558,7 +21558,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             } else if (connected === null) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Checking connection…</div>`;
             } else if (!st.items.length) {
-                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. No statements waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.</div>`;
+                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. No new statements waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.${_scan.stage !== 'running' ? ' Use <b>Scan historical statements</b> above to import past emails.' : ''}</div>`;
             }
 
             host.innerHTML = `
@@ -22018,6 +22018,25 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.runMailSync = runMailSync;
 
+        /* ── AUTO BACKFILL on app load ────────────────────────────────────
+         * Runs once after the first mail-sync check. If the mailbox is
+         * connected but the backfill has never delivered anything, the
+         * owner connected before this auto-trigger existed and should not
+         * have to discover the button themselves. Safe to call repeatedly:
+         * runBackfill() is a no-op when _scan.stage is already 'running',
+         * and the server deduplicates by (messageId, attachmentId). */
+        async function _autoBackfillIfNeeded() {
+            if (!_mailSyncState.connected) return;
+            if (_scan.stage === 'running') return;
+            // If the server has never received a push AND there are no
+            // items waiting, this is a connection with no history scanned.
+            if (_mailStatus && !_mailStatus.lastPushMs
+                && (!_mailSyncState.items || !_mailSyncState.items.length)) {
+                try { runBackfill(6); } catch (_) {}
+            }
+        }
+        window._autoBackfillIfNeeded = _autoBackfillIfNeeded;
+
         /* ── CONNECTING THE MAILBOX ────────────────────────────────────────────
          *
          * The refresh token is pasted here and sent to /api/gmail-link, which
@@ -22120,9 +22139,21 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * watch is the comfortable lie this change removes. */
                     let w = null;
                     try { w = await _ensureMailWatch({ force: true }); } catch (_) { w = null; }
-                    if (w && w.watching) notify('Gmail connected — watching for statements', 'success');
-                    else notify('Token saved, but Gmail is not watching yet', 'error');
-                    try { renderMailSync(); } catch (_) {}
+                    if (w && w.watching) {
+                        notify('Gmail connected — scanning your past 6 months of statements…', 'success');
+                        try { renderMailSync(); } catch (_) {}
+                        /* ── AUTO BACKFILL on first connect ────────────────────
+                         * The owner just saved the token and the watch is live.
+                         * The dashboard is empty because the push can only see
+                         * what arrives FROM NOW, and the statements that say
+                         * what someone actually spends are already sitting in
+                         * the inbox. A short delay lets the modal close and
+                         * the card redraw before the scan begins. */
+                        setTimeout(() => { try { runBackfill(6); } catch (_) {} }, 600);
+                    } else {
+                        notify('Token saved, but Gmail is not watching yet', 'error');
+                        try { renderMailSync(); } catch (_) {}
+                    }
                 };
 
                 const un = body.querySelector('#_gl_unlink');
@@ -23038,7 +23069,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * the renewal: a watch lasts seven days, so a check
                              * on every load with a six-day margin is what keeps
                              * the pipeline from quietly stopping on day eight. */
-                            if (c) return _ensureMailWatch().then(() => renderMailSync());
+                            if (c) return _ensureMailWatch().then(() => {
+                                renderMailSync();
+                                /* If the backfill has never run, start it now
+                                 * so the dashboard is not empty on first load
+                                 * after connecting the mailbox. */
+                                _autoBackfillIfNeeded();
+                            });
                             return null;
                         })
                         .catch(() => { _mailSyncState.connected = false; renderMailSync(); });
