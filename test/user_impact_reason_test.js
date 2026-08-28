@@ -159,6 +159,27 @@ describe('the reviewer definition itself', () => {
         expect(ui.rules.join(' ')).toMatch(/A pure addition is still a change/);
     });
 
+    it('states its rules as constraints, not as sentences that can be copied back', () => {
+        /* SECOND ECHO, SAME PULL REQUEST. After the fixtures were made
+         * synthetic, the reviewer returned:
+         *
+         *   "This change adds new UI that harms nobody, and the reason
+         *    describes the new UI."
+         *
+         * which is this lane's own rule read back. The original wording — "New
+         * UI that harms nobody is a PASS whose reason describes the new UI" —
+         * was a complete, well-formed sentence, so it got used as one. The
+         * result is circular: it announces that the reason describes the UI
+         * instead of describing it.
+         *
+         * A rule must therefore not BE a usable answer. */
+        const joined = ui.rules.join(' ');
+        expect(joined, 'the rule is still phrased as a finished verdict sentence')
+            .not.toMatch(/New UI that harms nobody is a PASS whose reason describes/);
+        expect(joined, 'nothing forces the reason to name something in this diff')
+            .toMatch(/must contain a concrete NOUN from this diff/);
+    });
+
     it('keeps the harm questions — the lane still has a job', () => {
         const all = ui.focus.join(' ');
         expect(all).toMatch(/confuse or mislead/);

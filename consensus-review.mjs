@@ -262,7 +262,15 @@ export const REVIEWERS = [
         rules: [
             'Your REASON must first name what the user will actually see or feel — a button, a screen, a message, a vibration, a colour, a delay.',
             'NEVER write "no user-facing changes" or any variant of it when the diff adds or alters markup, a notification, a setting, a label, a toast, an icon or a screen. "This causes no HARM" and "this changes NOTHING the user sees" are different statements. Say the first if you mean it; the second is a claim about the diff and is checked.',
-            'A pure addition is still a change. New UI that harms nobody is a PASS whose reason describes the new UI.',
+            /* Phrased as a constraint on the ANSWER, not as a model answer.
+             * The first wording — "New UI that harms nobody is a PASS whose
+             * reason describes the new UI" — was returned almost verbatim as a
+             * review: "This change adds new UI that harms nobody, and the reason
+             * describes the new UI." That is circular; it says the reason
+             * describes the UI instead of describing it. A rule that reads like
+             * a finished sentence will be copied as one. */
+            'A pure addition is still a change: judge it, do not wave it through.',
+            'Your reason must contain a concrete NOUN from this diff — the name of the control, screen, message or setting you are talking about. A sentence that would fit any pull request is not a review of this one.',
         ],
     },
 ];
