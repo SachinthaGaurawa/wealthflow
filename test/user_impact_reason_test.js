@@ -28,6 +28,29 @@
  * less. Only the sentence is replaced.
  * ===========================================================================*/
 
+/* A NOTE ON THE FIXTURE WORDING BELOW.
+ *
+ * The first version of this file used realistic sentences — "Adds a settings row
+ * and a modal; the wording is plain and nothing is hidden." On the very pull
+ * request that introduced it, the user-impact reviewer returned:
+ *
+ *   "This change adds a new settings row and a modal, with clear and plain
+ *    wording. It also introduces a new idle-cash notification, which could
+ *    become noisy, but the cooldown period seems adequate."
+ *
+ * That is a paraphrase of two fixtures on this page. The reviewer had read the
+ * diff's PROSE and handed it back as its own finding — the same failure
+ * consensus-review.mjs already guards against twice — and because the sentences
+ * were plausible, the result looked exactly like a reviewer that had finally
+ * started doing its job. It was the opposite, and only comparing it against
+ * these literals revealed that.
+ *
+ * So the fixtures are now unmistakably synthetic. They still exercise every
+ * branch — the checks care about the DENIAL pattern, not about realism — and if
+ * a future review quotes one, it is instantly visible as a quote rather than
+ * passing for insight.
+ */
+
 import { describe, it, expect } from 'vitest';
 import {
     deniesVisibleChange, addsUserVisibleSurface, DENIAL_REPLACEMENT, REVIEWERS, runReviewer,
@@ -73,9 +96,9 @@ describe('the denial the diff contradicts', () => {
 
     it('leaves an honest reason alone, however it is worded', () => {
         for (const r of [
-            'The new banner states the amount before it is written, which is clearer than "Yes".',
-            'Adds a settings row and a modal; the wording is plain and nothing is hidden.',
-            'The idle-cash notification could become noisy, but the cooldown looks adequate.',
+            'FIXTURE-A: the control states its value before writing it.',
+            'FIXTURE-B: adds one row and one dialog; nothing is concealed.',
+            'FIXTURE-C: the alert may repeat, though the interval appears sufficient.',
             '',
         ]) {
             expect(deniesVisibleChange(r, uiDiff), r).toBe(false);
@@ -162,7 +185,7 @@ describe('runReviewer applies it, not just exports it', () => {
     });
     const honest = JSON.stringify({
         verdict: 'pass',
-        reason: 'Adds a settings row and a modal; the wording is plain.',
+        reason: 'FIXTURE-D: adds one row and one dialog; wording is plain.',
         evidence: '', concerns: [],
     });
 
@@ -177,7 +200,7 @@ describe('runReviewer applies it, not just exports it', () => {
     it('leaves an honest reason exactly as written', async () => {
         const v = await runReviewer(lane, uiDiff, false, stub(honest));
         expect(v.vote).toBe('pass');
-        expect(v.reason).toBe('Adds a settings row and a modal; the wording is plain.');
+        expect(v.reason).toBe('FIXTURE-D: adds one row and one dialog; wording is plain.');
         expect(v.correctedReason).toBe(null);
     });
 
