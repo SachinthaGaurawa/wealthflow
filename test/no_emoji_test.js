@@ -74,6 +74,10 @@ describe('the screens built under this rule carry no emoji at all', () => {
         ['_mailStageChip', 'the pipeline stage chips'],
         ['runMailSync', 'the pipeline runner'],
         ['checkSweepNudge', 'the idle-cash notification'],
+        ['handleAIScan', 'the receipt scanner'],
+        ['_showScanOverlay', 'the scan progress overlay'],
+        ['_populateExpenseFromScan', 'the scanned-expense form filler'],
+        ['notify', 'the toast every screen speaks through'],
     ])('%s (%s)', (name) => {
         const body = fn(name);
         expect(body, `${name} not found — this guard would pass vacuously`).toBeTruthy();
@@ -149,11 +153,18 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * 1311 -> 1305: notify()'s icon table. Only six characters, but they were the
  * four glyphs printed on EVERY toast in the app — see test/notify_sink_test.js
  * for the larger reason that function was rewritten.
+ * 1305 -> 1250: the RECEIPT SCANNER. handleAIScan went 27 -> 0, the two helpers
+ * it drives went with it, and then the progress overlay took another 21 out of
+ * wealthflow-ai-v4.js. See test/scan_overlay_test.js: three sinks on one screen
+ * needing three different answers, one of which changes stored data — and a
+ * fourth section on the discovery that the overlay index.html declares is not
+ * the one the user sees.
  *
  * The migration continues screen by screen. renderSettings was the largest
- * single function at 68 and _showShareableUrlDialog the next at 43; after those
- * come handleAIScan (27) and renderDebtDemolisher (25). */
-const EMOJI_CEILING = 1305;
+ * single function at 68, _showShareableUrlDialog the next at 43, then
+ * handleAIScan at 27; renderDebtDemolisher (25) and appendAIMessage (21) are
+ * what remain of the large ones. */
+const EMOJI_CEILING = 1250;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {

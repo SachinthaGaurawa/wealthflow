@@ -1096,7 +1096,7 @@
         var _isHtml = file && (/text\/html/i.test(file.type || '') || /\.html?$/i.test(file.name || ''));
         if (isCCOT && _isHtml && window.WFHtmlStatement && typeof window._showCCReviewModal === 'function') {
             try {
-                if (showsOverlay && typeof window._showScanOverlay === 'function') window._showScanOverlay('🔓 Opening e-statement…', 'Unlocking and reading your statement', 20);
+                if (showsOverlay && typeof window._showScanOverlay === 'function') window._showScanOverlay('Opening e-statement…', 'Unlocking and reading your statement', 20, 'lock');
                 var _hres = await window.WFHtmlStatement.getStatementText(file);
                 if (_hres && _hres.cancelled) { if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay(); inputEl.value = ''; return; }
                 var _htx = (_hres && _hres.transactions) || [];
@@ -1165,7 +1165,7 @@
         if (isCCOT && isPdf && window.WFPdfUnlock && window.WFStatementParser && typeof window._showCCReviewModal === 'function') {
             try {
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('📄 Reading statement text…', 'Extracting every line directly from the PDF', 20);
+                    window._showScanOverlay('Reading statement text…', 'Extracting every line directly from the PDF', 20, 'fileText');
                 var _res = await window.WFPdfUnlock.getStatementText(file);
                 if (_res && _res.cancelled) {
                     if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
@@ -1230,8 +1230,8 @@
         try {
             // ---- STEP A: file extraction ----
             if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay(isPdf ? '📄 Reading PDF…' : '📸 Reading Image…',
-                    'Optimising ' + sizeMB + 'MB ' + (isPdf ? 'PDF' : 'photo'), 8);
+                window._showScanOverlay(isPdf ? 'Reading PDF…' : 'Reading Image…',
+                    'Optimising ' + sizeMB + 'MB ' + (isPdf ? 'PDF' : 'photo'), 8, isPdf ? 'fileText' : 'camera');
             else if (typeof window.notify === 'function')
                 window.notify(isPdf ? '📄 Processing PDF…' : '📸 Reading image…', 'info');
 
@@ -1281,7 +1281,7 @@
 
             // ---- STEP B: endpoint check ----
             if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay('🔌 Connecting…', 'Checking AI services', 18);
+                window._showScanOverlay('Connecting…', 'Checking AI services', 18, 'globe');
             var hasVisionScan = await isEndpointAvailable('/vision-scan');
             console.log('[' + V + '] vision-scan available:', hasVisionScan);
 
@@ -1306,8 +1306,8 @@
             // upfront "this is a CC statement, expect many rows".
             if (isCCOT) {
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('🧠 AI parsing CC statement…',
-                        'Extracting every transaction row', 35);
+                    window._showScanOverlay('AI parsing CC statement…',
+                        'Extracting every transaction row', 35, 'bot');
 
                 var ccotPrompt = buildCCStatementPrompt(ccotBank);
                 var ccotTxns = null;
@@ -1329,8 +1329,8 @@
                 // Vision models occasionally choke on long rule lists.
                 if (!ccotTxns) {
                     if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('🔄 Simplified prompt retry…',
-                            'Smaller payload, same image', 55);
+                        window._showScanOverlay('Simplified prompt retry…',
+                            'Smaller payload, same image', 55, 'refresh');
                     try {
                         var simplePrompt = 'Read this ' + (ccotBank || '') +
                             ' credit card statement image. Return ONLY this JSON (no markdown, no explanation):\n' +
@@ -1357,8 +1357,8 @@
                 var _autoEsc = (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.autoEscalate !== false);
                 if (!ccotTxns && _autoEsc) {
                     if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('🚀 Auto-escalating to Ultra…',
-                            'Multi-engine vision-scan with Gemini Pro', 65);
+                        window._showScanOverlay('Auto-escalating to Ultra…',
+                            'Multi-engine vision-scan with Gemini Pro', 65, 'trendUp');
                     try {
                         var hasVS = await isEndpointAvailable('/vision-scan');
                         if (hasVS) {
@@ -1401,8 +1401,8 @@
                 // works as long as JS can run.
                 if (!ccotTxns && !isPdf && typeof window._ocrWithTesseract === 'function') {
                     if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('🔤 Offline OCR fallback…',
-                            'Tesseract.js reading raw text', 80);
+                        window._showScanOverlay('Offline OCR fallback…',
+                            'Tesseract.js reading raw text', 80, 'fileText');
                     try {
                         var ocrTxt = await window._ocrWithTesseract(file);
                         if (ocrTxt && ocrTxt.length > 20 && typeof window._ccOcrTextToTransactions === 'function') {
@@ -1425,8 +1425,8 @@
                     var mergedRows = ccotTxns ? ccotTxns.slice() : [];
                     for (var pgi = 1; pgi < imgBundle.images.length; pgi++) {
                         if (showsOverlay && typeof window._showScanOverlay === 'function')
-                            window._showScanOverlay('📄 Page ' + (pgi + 1) + ' of ' + imgBundle.images.length + '…',
-                                'Scanning remaining pages', 70 + (pgi * 5));
+                            window._showScanOverlay('Page ' + (pgi + 1) + ' of ' + imgBundle.images.length + '…',
+                                'Scanning remaining pages', 70 + (pgi * 5), 'fileText');
                         try {
                             var pageResp = await legacyAICall(ccotPrompt, imgBundle.images[pgi], 40000);
                             var pageParsed = extractJSON(pageResp.reply);
@@ -1456,7 +1456,7 @@
                 // OCR TEXT via a small, reliable text-only /api/ai call.
                 if (!ccotTxns || ccotTxns.length === 0) {
                     if (showsOverlay && typeof window._showScanOverlay === 'function')
-                        window._showScanOverlay('🔍 Cloud Vision OCR…', 'Reading faint / zoomed-out text', 78);
+                        window._showScanOverlay('Cloud Vision OCR…', 'Reading faint / zoomed-out text', 78, 'cloud');
                     try {
                         var _cvMerged = [];
                         for (var _ci = 0; _ci < imgBundle.images.length; _ci++) {
@@ -1497,8 +1497,8 @@
                 }
 
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('✅ Found ' + ccotTxns.length + ' transaction' +
-                        (ccotTxns.length > 1 ? 's' : '') + '…', 'Opening review modal', 90);
+                    window._showScanOverlay('Found ' + ccotTxns.length + ' transaction' +
+                        (ccotTxns.length > 1 ? 's' : '') + '…', 'Opening review modal', 90, 'checkCircle');
 
                 // Normalise + classify every row before handing off to UI.
                 var normalised = ccotTxns.map(function (t, idx) {
@@ -1560,9 +1560,9 @@
 
             // ---- STEP C: multi-engine vision (or fallback to /api/ai) ----
             if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay('🧠 AI Vision…', hasVisionScan ?
+                window._showScanOverlay('AI Vision…', hasVisionScan ?
                     (isSubscription ? '12+ engines · bill mode' : '12+ engines voting') :
-                    'Reading with Gemini 3.1 Pro', 35);
+                    'Reading with Gemini 3.1 Pro', 35, 'bot');
 
             var settings = window.WF_SCAN_SETTINGS || {};
             var hints = {
@@ -1586,7 +1586,7 @@
                     console.warn('[' + V + '] vision-scan ' + mode + ' failed:', err1.message);
                     if (mode !== 'ultra') {
                         if (showsOverlay && typeof window._showScanOverlay === 'function')
-                            window._showScanOverlay('💎 Ultra Mode…', 'Escalating', 50);
+                            window._showScanOverlay('Ultra Mode…', 'Escalating', 50, 'gem');
                         try {
                             scanData = await visionScanCall(firstImage, 'ultra', hints, 58000);
                         } catch (err2) {
@@ -1600,7 +1600,7 @@
             // Confidence-low escalation
             if (scanData && scanData.confidence && scanData.confidence.overall < 0.55 && mode !== 'ultra' && hasVisionScan) {
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('🔬 Low confidence — re-scanning…', 'Adding more engines', 65);
+                    window._showScanOverlay('Low confidence — re-scanning…', 'Adding more engines', 65, 'scan');
                 try {
                     var ultra = await visionScanCall(firstImage, 'ultra', hints, 58000);
                     if (ultra && ultra.confidence && ultra.confidence.overall > scanData.confidence.overall) {
@@ -1612,7 +1612,7 @@
             // ---- STEP D: PDF page-2 retry if page-1 yielded nothing ----
             if ((!scanData || !scanData.result || !scanData.result.amount) && imgBundle.images.length > 1) {
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('📄 Page 2…', 'First page had no totals', 60);
+                    window._showScanOverlay('Page 2…', 'First page had no totals', 60, 'fileText');
                 for (var p = 1; p < imgBundle.images.length; p++) {
                     try {
                         var tryNext = await (hasVisionScan
@@ -1629,7 +1629,7 @@
             // ---- STEP E: legacy /api/ai fallback (works without vision-scan deployed) ----
             if (!scanData || !scanData.result || !scanData.result.amount) {
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('🤖 Fallback AI…', 'Trying Gemini direct', 70);
+                    window._showScanOverlay('Fallback AI…', 'Trying Gemini direct', 70, 'bot');
                 try {
                     var legacyData = await legacyAICall(buildReceiptPrompt(hints), firstImage, 35000);
                     var parsed = extractJSON(legacyData.reply);
@@ -1665,7 +1665,7 @@
                     if (typeof window._ocrWithTesseract === 'function' &&
                         typeof window._extractFromOCRText === 'function') {
                         if (showsOverlay && typeof window._showScanOverlay === 'function')
-                            window._showScanOverlay('🔤 Offline OCR…', 'Tesseract reading text', 85);
+                            window._showScanOverlay('Offline OCR…', 'Tesseract reading text', 85, 'fileText');
                         var ocrText = await window._ocrWithTesseract(file);
                         var ocrResult = window._extractFromOCRText(ocrText);
                         if (ocrResult && ocrResult.amount) {
@@ -1689,7 +1689,7 @@
             // /api/ai call.
             if (!scanData || !scanData.result || !scanData.result.amount) {
                 if (showsOverlay && typeof window._showScanOverlay === 'function')
-                    window._showScanOverlay('🔍 Cloud Vision OCR…', 'Reading faint / low-quality text', 80);
+                    window._showScanOverlay('Cloud Vision OCR…', 'Reading faint / low-quality text', 80, 'cloud');
                 try {
                     var _renh = await _enhanceImageForOCR(firstImage);
                     var _rocr = await cloudVisionOCR(_renh, ['en', 'si', 'ta'], 45000);
@@ -1746,7 +1746,7 @@
             }
 
             if (showsOverlay && typeof window._showScanOverlay === 'function')
-                window._showScanOverlay('✅ Filling form…', isSubscription ? 'Smart-populating subscription' : 'Smart-populating fields', 95);
+                window._showScanOverlay('Filling form…', isSubscription ? 'Smart-populating subscription' : 'Smart-populating fields', 95, 'checkCircle');
 
             // Route to correct form populator
             var ok;
@@ -2506,7 +2506,7 @@
                 '<div style="position:absolute;inset:14px;border-radius:50%;border:2px solid rgba(99,102,241,0.18);border-bottom-color:#818cf8;animation:wf5Spin 1.4s linear infinite reverse;"></div>' +
                 '<div style="position:absolute;inset:30px;border-radius:50%;background:radial-gradient(circle,rgba(251,191,36,0.6),transparent 70%);animation:wf5Pulse 1.6s ease-in-out infinite;"></div>' +
             '</div>' +
-            '<div id="wf5ScanStage" style="font-size:17px;font-weight:700;color:#fbbf24;text-align:center;letter-spacing:0.4px;font-family:Outfit,system-ui,sans-serif;">📸 Optimizing Image…</div>' +
+            '<div id="wf5ScanStage" style="font-size:17px;font-weight:700;color:#fbbf24;text-align:center;letter-spacing:0.4px;font-family:Outfit,system-ui,sans-serif;"><i data-wfi="camera"></i> Optimizing Image…</div>' +
             '<div id="wf5ScanDetail" style="font-size:13px;color:#cbd5e1;text-align:center;max-width:320px;line-height:1.6;font-family:Outfit,system-ui,sans-serif;">Compressing and enhancing for AI vision</div>' +
             '<div style="width:80%;max-width:280px;height:5px;background:rgba(148,163,184,0.15);border-radius:5px;overflow:hidden;">' +
                 '<div id="wf5ScanBar" style="height:100%;width:0%;background:linear-gradient(90deg,#fbbf24,#f59e0b,#fbbf24);background-size:200% 100%;border-radius:5px;transition:width 0.4s ease;animation:wf5BarShimmer 1.6s linear infinite;"></div>' +
@@ -2526,13 +2526,35 @@
         return ov;
     }
 
-    function _showScanOverlayV5(stage, detail, pct) {
+    /* THIS is the overlay the user sees. _installV5Patches assigns it over
+     * window._showScanOverlay, and because index.html declares its own
+     * _showScanOverlay at global scope, that assignment replaces the binding
+     * the host's own call sites resolve — so index.html's version, and the
+     * #aiScanOverlay markup it draws into, are unreachable once this file
+     * loads. _hideScanOverlayV5 below hides that element defensively, which is
+     * the clue that it was already known to be superseded.
+     *
+     * The FOURTH parameter is the icon name. It has to be honoured here rather
+     * than only in the host's copy: an argument passed to a three-parameter
+     * function is discarded in silence, and every stage would still say the
+     * right words with no mark beside them. A test pins the two signatures
+     * together so they cannot drift apart again.
+     *
+     * Built as a NODE. This element is written with textContent, so an SVG
+     * string would appear to the reader as literal markup. */
+    function _showScanOverlayV5(stage, detail, pct, icon) {
         var ov = _ensureFloatingScanOverlay();
         ov.style.display = 'flex';
         var sEl = document.getElementById('wf5ScanStage');
         var dEl = document.getElementById('wf5ScanDetail');
         var bEl = document.getElementById('wf5ScanBar');
-        if (sEl) sEl.textContent = stage;
+        if (sEl) {
+            sEl.textContent = '';
+            var node = null;
+            try { node = (icon && window.WFIconNode) ? window.WFIconNode(icon) : null; } catch (_) {}
+            if (node) { sEl.appendChild(node); sEl.appendChild(document.createTextNode(' ')); }
+            sEl.appendChild(document.createTextNode(stage == null ? '' : String(stage)));
+        }
         if (dEl) dEl.textContent = detail;
         if (bEl) bEl.style.width = (pct || 0) + '%';
     }
