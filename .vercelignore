@@ -17,10 +17,12 @@ vitest_config.js
 router_test.js
 dedup_test.js
 *.test.js
+test/
 Test/
 tests/
 
 # CI Workflows, Policies, and Docs
 .github/
 policy/
+autonomy/
 *.md
