@@ -125,7 +125,11 @@ export const BUDGETS = {
     // Raised for the Statement Sync card's failed-check state: the card could
     // not tell a 500 from an empty answer, and said "Not connected" while the
     // endpoint was crashing on every request. Distinguishing them costs bytes.
-    htmlBytes: 1_738_000,        // measured 1,718,657 with that state added
+    // Raised for the historical-scan UI. A Pub/Sub watch subscribes to the
+    // FUTURE, so the mailbox's existing statements were unreachable and the
+    // backfill engine merged in #142 had no caller for its scan half at all.
+    // This is the button, the depth picker, the progress state and the driver.
+    htmlBytes: 1_754_000,        // measured 1,734,117 with the deep-scan UI
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

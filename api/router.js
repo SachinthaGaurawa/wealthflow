@@ -100,6 +100,13 @@ const HANDLERS = {
     // nothing. A watch also expires after seven days, so this is called again on
     // a six-day margin rather than once.
     'gmail-watch': () => import('../gmail-watch.js'),
+    // The deep scan: the statements ALREADY in the mailbox. A watch subscribes
+    // to the future and history.list reads forward from a bookmark, so neither
+    // can reach a statement that arrived before the pipeline was switched on —
+    // which is most of them. This searches, and writes what it finds into the
+    // same wf-mail items collection the push writes to, so the device pipeline
+    // is reused rather than duplicated.
+    'gmail-scan': () => import('../gmail-scan.js'),
     'health': () => import('../health.js'),
     'inbox-ack': () => import('../inbox-ack.js'),
     'inbox-pull': () => import('../inbox-pull.js'),

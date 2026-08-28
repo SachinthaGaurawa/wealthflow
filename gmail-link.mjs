@@ -130,9 +130,17 @@ export function looksLikeRefreshToken(v) {
  *
  * `historyId` is deliberately absent. gmail-hook.js treats its presence as "I
  * have already seen everything up to here" and asks Gmail only for what came
- * after. Writing one now would silently skip every statement already sitting in
- * the mailbox; leaving it unset makes the first push start from the beginning,
- * which is what someone connecting for the first time means.
+ * after, so writing one now would skip whatever arrives between connecting and
+ * the first push.
+ *
+ * CORRECTION. This comment used to add "leaving it unset makes the first push
+ * start from the beginning". That was wrong. With no bookmark the hook falls
+ * back to the PUSH's own historyId — the mailbox's current point — and
+ * history.list returns changes after it. Unset means the first push starts from
+ * NOW, not from the beginning, and no value of this field could have produced a
+ * backfill: reading the past needs a search, not a bookmark. That is
+ * /api/gmail-scan, and the claim is corrected here because it was believed
+ * twice and shaped a decision in gmail-watch.mjs as well.
  */
 export function linkRecord(email, refreshToken, now = Date.now()) {
     return {
