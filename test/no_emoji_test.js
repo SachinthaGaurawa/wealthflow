@@ -124,6 +124,7 @@ describe('the screens built under this rule carry no emoji at all', () => {
         ['_showScanOverlay', 'the scan progress overlay'],
         ['_populateExpenseFromScan', 'the scanned-expense form filler'],
         ['notify', 'the toast every screen speaks through'],
+        ['renderDebtDemolisher', 'the Debt Demolisher screen'],
     ])('%s (%s)', (name) => {
         /* Both copies. The host declaration must stay clean because it is the
          * fallback if the sibling file fails to load, and the override must be
@@ -222,11 +223,16 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * fourth section on the discovery that the overlay index.html declares is not
  * the one the user sees.
  *
+ * 1223 -> 1198: the DEBT DEMOLISHER. Every glyph there sat in a template
+ * literal written to innerHTML, so _ic() composed directly — but see
+ * test/debt_demolisher_icons_test.js for why the icon CHOICE mattered on that
+ * screen more than the count did.
+ *
  * The migration continues screen by screen. renderSettings was the largest
  * single function at 68, _showShareableUrlDialog the next at 43, then
- * handleAIScan at 27; renderDebtDemolisher (25) and appendAIMessage (21) are
- * what remain of the large ones. */
-const EMOJI_CEILING = 1223;
+ * handleAIScan at 27 and renderDebtDemolisher at 25; appendAIMessage (21) is
+ * what remains of the large ones. */
+const EMOJI_CEILING = 1198;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {
