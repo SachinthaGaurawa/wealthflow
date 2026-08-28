@@ -49,18 +49,20 @@ function j(res, code, body) {
     res.end(JSON.stringify(body));
 }
 
-/** The Admin SDK's token verifier, or null when it is not configured. */
-async function verifier() {
-    try {
-        const mod = await import('firebase-admin');
-        const admin = mod.default || mod;
-        // getAdminDb() initialises the app; without it auth() has no credential.
-        const db = await getAdminDb();
-        if (!db) return null;
-        return (t) => admin.auth().verifyIdToken(t);
-    } catch (_) {
-        return null;
-    }
+/**
+ * The Admin SDK's token verifier, or null when it is not configured.
+ *
+ * Built from the module admin-db.mjs already initialised, NOT from a second
+ * `import('firebase-admin')` of its own. Two reasons, and both had teeth here:
+ * a separate import is a second bootstrap around the one module that exists to
+ * be the only one, and — because it cannot be redirected by _setAdminModule —
+ * it made this handler impossible to execute in a test without reaching the
+ * live project. So it was never executed, and a crash on the line after
+ * identity shipped.
+ */
+function verifierFrom(admin) {
+    if (!admin || typeof admin.auth !== 'function') return null;
+    return (t) => admin.auth().verifyIdToken(t);
 }
 
 async function readBody(req) {
@@ -79,7 +81,22 @@ export default async function handler(req, res) {
         return j(res, 405, { ok: false, error: 'method not allowed' });
     }
 
-    const who = await identify(req, { verifyIdToken: await verifier() });
+    /* ONE bootstrap, destructured. getAdminDb() returns { db, reason, admin } and
+     * NEVER a bare handle — admin-db.mjs says so at the top of the file and
+     * statement-store.js has always read it that way. This file did not, and
+     * `if (!db)` was therefore never true: the wrapper object is always truthy.
+     * Every request reached `db.collection(...)` on the wrapper and died there
+     * with `TypeError: db.collection is not a function` — GET as much as POST,
+     * so the Statement Sync card's "Not connected" was a 500 wearing a calm
+     * face, and the token could never have been saved by anyone. */
+    const { db, reason, admin } = await getAdminDb();
+
+    /* Identity first, always. A caller who has not proved who they are learns
+     * nothing about this deployment's configuration — including whether it has
+     * a credential at all. When there is no verifier, identify() answers 503
+     * "identity cannot be established", which is the honest shape: the server
+     * cannot check, rather than the caller's token being bad. */
+    const who = await identify(req, { verifyIdToken: verifierFrom(admin) });
     if (!who.ok) {
         /* The reason is named but nothing about the stored state is revealed —
          * a 403 that also said "and there is a mailbox linked here" would answer
@@ -87,8 +104,15 @@ export default async function handler(req, res) {
         return j(res, who.status || 401, { ok: false, error: who.reason });
     }
 
-    const db = await getAdminDb();
-    if (!db) return j(res, 503, { ok: false, error: 'database unavailable' });
+    if (!db) {
+        /* The reason, passed through. admin-db.mjs authors these strings to be
+         * READ — it strips the credential head out of a JSON.parse failure
+         * itself — and "database unavailable" with nothing after it is the
+         * sentence that makes somebody go and read the source to find out which
+         * variable is unset. Capped, because a reason is not a stack trace. */
+        return j(res, 503, { ok: false, error: String(reason || 'database unavailable').slice(0, 300) });
+    }
+
     const ref = db.collection(MAIL_ROOT).doc(who.userKey);
 
     if (method === 'GET' && /[?&]items=1/.test(String(req.url || ''))) {
@@ -139,7 +163,6 @@ export default async function handler(req, res) {
              * all — is the hook's record of what it has already ingested, and
              * deleting that would make the next connection re-import the whole
              * mailbox. Disconnecting is not the same as forgetting. */
-            const admin = (await import('firebase-admin')).default;
             await withDeadline(ref.set({
                 refresh_token: admin.firestore.FieldValue.delete(),
                 unlinkedAt: Date.now(),
