@@ -545,6 +545,93 @@ export function citesNonExecutableEvidence(evidence, diff) {
     ));
 }
 
+/* ── A FOURTH REJECTION: "NEW" SAID OF SOMETHING THAT WAS ALREADY THERE ──────
+ *
+ * On PR #155 — a refactor replacing emoji with icons — the user-impact lane
+ * failed the board with:
+ *
+ *   "The user will see a NEW icon in the AI Scanner Settings title, which may
+ *    be confusing as it is not explained in the text."
+ *   evidence: +  <div class="md-title">${WFIcon('scan')} AI Scanner Settings</div>
+ *
+ * The evidence was a real added executable line, so citesNonExecutableEvidence
+ * had nothing to say. But the hunk was:
+ *
+ *   -  <div class="md-title">📸 AI Scanner Settings</div>
+ *   +  <div class="md-title">${WFIcon('scan')} AI Scanner Settings</div>
+ *
+ * Nothing new appears. A camera EMOJI stood in that exact position and a
+ * scanner icon replaced it. The reviewer read the `+` in isolation and
+ * described a substitution as an addition — the same shape as reading a `-`
+ * line as evidence, one step along.
+ *
+ * The re-run reshaped it into "will see a new icon, but the icon is not
+ * visible in the diff" with no evidence at all, which is incoherent and which
+ * the empty-evidence path already flags. Two runs, two versions of one wrong
+ * idea, so the prompt is not the place — the same argument this file has now
+ * made three times.
+ *
+ * WHY THIS IS NARROW, AND MUST BE. A replacement CAN introduce something:
+ *
+ *   -  <div>Total</div>
+ *   +  <div>Total <button onclick="deleteAll()">X</button></div>
+ *
+ * is a replaced line that genuinely adds a control, and a novelty objection to
+ * it is correct. So this rejects only when the VISIBLE TEXT either side of the
+ * swap is the same — markup, expressions and glyphs stripped. When the words a
+ * person reads do not change, "the user will see a new X" is false whatever X
+ * is, and a FAIL resting on it is resting on nothing.
+ * ===========================================================================*/
+
+/** Does this reason assert that something is NEW? */
+const NOVELTY = /\b(new|newly|introduc\w*|adds?\b|adding|added)\b/i;
+
+export function claimsNovelty(reason) {
+    return NOVELTY.test(String(reason || ''));
+}
+
+/**
+ * The words a person actually reads on a line: tags, template expressions,
+ * attribute values, emoji and punctuation removed.
+ */
+export function visibleTextOf(line) {
+    return String(line || '')
+        .replace(/\$\{[^}]*\}/g, ' ')                       // ${...} template expressions
+        .replace(/<[^>]*>/g, ' ')                            // markup
+        .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu, ' ')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')                    // punctuation and symbols
+        .trim()
+        .toLowerCase();
+}
+
+/**
+ * Is the cited evidence a line that REPLACED one saying the same thing?
+ *
+ * Pairs each added code line with the removed code lines around it and asks
+ * whether any of them reads identically once markup and glyphs are gone. Empty
+ * visible text on both sides is NOT a match — two lines of pure markup say
+ * nothing, and calling that "the same words" would reject findings about
+ * structural changes.
+ */
+export function evidenceIsGlyphSwap(evidence, diff) {
+    const ev = normLine(evidence);
+    if (!ev) return false;
+    const evText = visibleTextOf(ev);
+    if (!evText) return false;
+
+    const { code } = classifyDiffLines(diff);
+    const added = code.filter((e) => e.marker === '+').map((e) => normLine(e.line));
+    const removed = code.filter((e) => e.marker === '-').map((e) => normLine(e.line));
+    if (!removed.length) return false;
+
+    // The evidence must actually be one of the added lines, on the same terms
+    // citesNonExecutableEvidence uses, or this says nothing about this diff.
+    const cited = added.some((l) => l === ev || (ev.length >= 12 && l.includes(ev)) || (l.length >= 12 && ev.includes(l)));
+    if (!cited) return false;
+
+    return removed.some((r) => visibleTextOf(r) === evText);
+}
+
 /* ── THE THIRD SIGNAL: A DENIAL THAT THE DIFF CONTRADICTS ────────────────────
  *
  * The two functions above catch a reviewer reading the diff's PROSE as its
@@ -733,7 +820,9 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                     ? "the reason is a verbatim run of the diff's own comment text"
                     : citesNonExecutableEvidence(evidence, diff)
                         ? 'the cited evidence is a comment or prose line, not an added executable line'
-                        : null;
+                        : (claimsNovelty(parsed.reason) && evidenceIsGlyphSwap(evidence, diff))
+                            ? 'the reason calls something new, but the cited line REPLACED one reading the same words'
+                            : null;
                 if (why) {
                     rejectedFinding = { reason: String(parsed.reason || '').slice(0, 300), evidence, why };
                     finalVote = 'pass';
