@@ -183,6 +183,26 @@ describe('the toast icon', () => {
         }
     });
 
+    it("treats 'warning' as 'warn', which is what eleven call sites pass", () => {
+        /* `warning` was never a type this function knew. The class became
+         * `notif warning`, which no stylesheet rule matches, so the toast lost
+         * its coloured border and took the neutral info icon — every one of
+         * those eleven was written meaning to warn and looked like a note.
+         * Among them the receipt scanner's low-confidence result, which is
+         * exactly the case a user most needs flagged. */
+        const { notify, host, iconNodes } = harness();
+        notify('Confidence low', 'warning');
+        expect(iconNodes, 'a warning toast still takes the neutral icon').toEqual(['alert']);
+        expect(host.children[0].className, 'notif warning matches no rule in the stylesheet')
+            .toBe('notif warn');
+    });
+
+    it('the alias is not doing the work of the real type', () => {
+        const { notify, host } = harness();
+        notify('a', 'warn');
+        expect(host.children[0].className).toBe('notif warn');
+    });
+
     it('falls back to info for a type nobody defined', () => {
         const { notify, iconNodes } = harness();
         notify('done', 'whatever');

@@ -6687,7 +6687,7 @@
             <!-- Scanning Progress Overlay (shown during AI scan) -->
             <div id="aiScanOverlay" style="display:none; position:absolute; inset:0; z-index:50; background:rgba(10,10,15,0.92); backdrop-filter:blur(12px); border-radius:inherit; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px;">
                 <div id="aiScanSpinner" style="width:64px; height:64px; border-radius:50%; border:3px solid rgba(212,175,55,0.15); border-top-color:var(--accent); animation:spin 0.8s linear infinite;"></div>
-                <div id="aiScanStage" style="font-size:15px; font-weight:700; color:var(--accent); text-align:center; letter-spacing:0.3px;">📸 Optimizing Image…</div>
+                <div id="aiScanStage" style="font-size:15px; font-weight:700; color:var(--accent); text-align:center; letter-spacing:0.3px;"><i data-wfi="camera"></i> Optimizing Image…</div>
                 <div id="aiScanDetail" style="font-size:12px; color:var(--text3); text-align:center; max-width:260px; line-height:1.5;">Compressing and enhancing for AI vision</div>
                 <div style="width:80%; max-width:240px; height:4px; background:var(--bg2); border-radius:4px; overflow:hidden; margin-top:4px;">
                     <div id="aiScanBar" style="height:100%; width:0%; background:linear-gradient(90deg,var(--accent),#f5c542); border-radius:4px; transition:width 0.5s ease;"></div>
@@ -9618,11 +9618,24 @@ Keep total under 200 words. No markdown, no asterisks.`;
         // Pipeline: Image → Enhance (contrast/sharpen) → Compress → AI Vision → Parse → Populate
 
         // --- Scan Overlay UI Helpers ---
-        function _showScanOverlay(stage, detail, pct) {
+        function _showScanOverlay(stage, detail, pct, icon) {
             const ov = $('aiScanOverlay');
             if (!ov) return;
             ov.style.display = 'flex';
-            if ($('aiScanStage')) $('aiScanStage').textContent = stage;
+            /* The stage line is built from an icon NODE plus text, rather than
+             * from a glyph pasted into the string. This element is written with
+             * textContent, so a spelled-out WFIcon() call would have rendered as
+             * literal markup here — the same trap the lock-screen title fell
+             * into. `icon` is optional: an older caller that passes three
+             * arguments still gets its text, just without a mark. */
+            const st = $('aiScanStage');
+            if (st) {
+                st.textContent = '';
+                let node = null;
+                try { node = (icon && window.WFIconNode) ? window.WFIconNode(icon) : null; } catch (_) {}
+                if (node) { st.appendChild(node); st.appendChild(document.createTextNode(' ')); }
+                st.appendChild(document.createTextNode(String(stage == null ? '' : stage)));
+            }
             if ($('aiScanDetail')) $('aiScanDetail').textContent = detail;
             if ($('aiScanBar')) $('aiScanBar').style.width = pct + '%';
         }
@@ -9949,12 +9962,34 @@ Keep total under 200 words. No markdown, no asterisks.`;
             }
             // Auto-populate notes with scanned items
             if (result.items && result.items.length && $('e_notes')) {
-                let cur = $('e_notes').value;
-                cur = cur.split('|').map(p => p.trim()).filter(p => p && !p.startsWith('📦') && !p.startsWith('🔤')).join(' | ');
-                const itemStr = '📦 ' + result.items.slice(0, 6).join(', ');
-                $('e_notes').value = cur ? cur + ' | ' + itemStr : itemStr;
+                const itemStr = 'Items: ' + result.items.slice(0, 6).join(', ');
+                $('e_notes').value = _replaceScanNote($('e_notes').value, itemStr);
             }
             return filled;
+        }
+
+        /* The two annotations the scanner writes into an expense's Notes, and
+         * the filter that clears the previous one before writing the next.
+         *
+         * These live in an <input>'s value, which WFIconStripEmoji skips by
+         * design, so the glyphs they used to carry were the one place in this
+         * screen where a real emoji reached the user unconverted. They are now
+         * words.
+         *
+         * THE FILTER STILL RECOGNISES THE GLYPH FORMS. It has to: notes already
+         * saved on a device carry them, and a filter that only knew the new
+         * prefixes would append a second annotation on every re-scan instead of
+         * replacing the first, growing the note without bound. Written as code
+         * points so this file carries no emoji of its own — U+1F4E6 was the
+         * items prefix, U+1F524 the OCR one.
+         *
+         * Both call sites shared this logic by copy; a change to one and not
+         * the other is exactly how the two would drift apart. */
+        const _SCAN_NOTE_RX = /^(?:Items:|OCR:|\u{1F4E6}|\u{1F524})/u;
+        function _replaceScanNote(notes, note) {
+            const cur = String(notes || '').split('|').map((p) => p.trim())
+                .filter((p) => p && !_SCAN_NOTE_RX.test(p)).join(' | ');
+            return cur ? cur + ' | ' + note : note;
         }
 
         // ── Lazy loaders for heavy libraries (v7.9.0) ───────────────────────────
@@ -10001,7 +10036,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 logger: m => {
                     if (m.status === 'recognizing text') {
                         const pct = Math.round((m.progress || 0) * 100);
-                        _showScanOverlay('🔤 Reading Text (Tesseract)…', `OCR progress: ${pct}%`, 30 + pct * 0.5);
+                        _showScanOverlay('Reading Text (Tesseract)…', `OCR progress: ${pct}%`, 30 + pct * 0.5, 'fileText');
                     }
                 }
             });
@@ -10249,8 +10284,8 @@ Keep total under 200 words. No markdown, no asterisks.`;
             triggerHaptic('medium');
 
             const isExpense = type === 'expense';
-            if (isExpense) _showScanOverlay('📸 Optimizing Image…', `Processing ${sizeMB}MB photo`, 10);
-            else notify(`📸 Optimizing image (${sizeMB}MB)…`, 'info');
+            if (isExpense) _showScanOverlay('Optimizing Image…', `Processing ${sizeMB}MB photo`, 10, 'camera');
+            else notify(`Optimizing image (${sizeMB}MB)…`, 'info');
 
             try {
                 // Read user's scanner settings (synced via appData.settings)
@@ -10269,8 +10304,8 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 // also runs on mobile via the memory-safe light path).
                 const { base64: base64Img, kb } = await _compressImageToBase64(file, dim, q, tfEnhance);
                 console.log(`[AI Scan v4] Mode=${scanMode} Compressed: ${sizeMB}MB → ${kb}KB @ ${dim}px`);
-                if (isExpense) _showScanOverlay('🧠 AI Vision Analyzing…', `${scanMode.toUpperCase()} scan in progress`, 35);
-                else notify(`🔍 ${scanMode.toUpperCase()} scan with AI Vision…`, 'info');
+                if (isExpense) _showScanOverlay('AI Vision Analyzing…', `${scanMode.toUpperCase()} scan in progress`, 35, 'bot');
+                else notify(`${scanMode.toUpperCase()} scan with AI Vision…`, 'info');
 
                 // Step 2 — Build prompt
                 let prompt = '';
@@ -10304,21 +10339,21 @@ Be conversational and precise.`;
                 }
 
                 // Step 3 — Send to AI Vision
-                if (isExpense) _showScanOverlay('🔬 Deep Scanning Receipt…', 'Extracting vendor, amount, items', 60);
+                if (isExpense) _showScanOverlay('Deep Scanning Receipt…', 'Extracting vendor, amount, items', 60, 'scan');
                 const reply = await callAI(prompt, base64Img);
                 console.log('[AI Scan v4] Raw reply:', reply.substring(0, 300));
 
                 // Step 4 — Parse
-                if (isExpense) _showScanOverlay('📊 Processing Results…', 'Validating extracted data', 85);
+                if (isExpense) _showScanOverlay('Processing Results…', 'Validating extracted data', 85, 'chartLine');
                 const result = _parseAIJson(reply);
 
                 // Validation: Ensure amount was extracted (allow strings with commas)
                 if (result && result.amount && _populateExpenseFromScan(result)) {
                     triggerHaptic('success');
                     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                    const itemList = result.items && result.items.length ? ` · 📦 ${result.items.slice(0, 4).join(', ')}` : '';
+                    const itemList = result.items && result.items.length ? ` · ${result.items.slice(0, 4).join(', ')}` : '';
                     _hideScanOverlay();
-                    notify(`✅ Scanned in ${elapsed}s · ${result.vendor || 'Receipt'} — LKR ${fmtN(result.amount || 0)}${itemList}`, 'success');
+                    notify(`Scanned in ${elapsed}s · ${result.vendor || 'Receipt'} — LKR ${fmtN(result.amount || 0)}${itemList}`, 'success');
                 } else {
                     throw new Error('AI could not extract valid amount');
                 }
@@ -10328,7 +10363,7 @@ Be conversational and precise.`;
 
                 // ===== TIER 2: Simplified AI retry =====
                 try {
-                    if (isExpense) _showScanOverlay('⚡ Quick AI Retry…', 'Simplified extraction', 40);
+                    if (isExpense) _showScanOverlay('Quick AI Retry…', 'Simplified extraction', 40, 'sparkles');
                     const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65, false);
 
                     if (isExpense) {
@@ -10338,14 +10373,14 @@ Be conversational and precise.`;
                         if (r2 && r2.amount && _populateExpenseFromScan(r2)) {
                             _hideScanOverlay();
                             triggerHaptic('success');
-                            notify('✅ Receipt scanned (quick mode)!', 'success');
+                            notify('Receipt scanned (quick mode)', 'success');
                             e.target.value = '';
                             return;
                         }
                     } else if (type === 'ai_chat') {
                         const retry = await callAI('Describe financial details in this document briefly.', smaller);
                         appendAIMessage('bot', retry);
-                        notify('✅ Scanned (quick mode)', 'success');
+                        notify('Scanned (quick mode)', 'success');
                         e.target.value = '';
                         return;
                     }
@@ -10356,16 +10391,16 @@ Be conversational and precise.`;
                     // ===== TIER 2b: OCR.space (Dedicated 3rd Party API) =====
                     try {
                         if (isExpense) {
-                            _showScanOverlay('☁️ Cloud OCR API…', 'Querying 3rd party OCR.space', 50);
+                            _showScanOverlay('Cloud OCR API…', 'Querying 3rd party OCR.space', 50, 'cloud');
                             const { base64: ocrImg } = await _compressImageToBase64(file, 1600, 0.85, true);
                             const ocrText = await _tryOCRSpace(ocrImg);
                             if (ocrText) {
-                                _showScanOverlay('📊 Parsing Cloud OCR…', 'Extracting exact numbers', 75);
+                                _showScanOverlay('Parsing Cloud OCR…', 'Extracting exact numbers', 75, 'chartLine');
                                 const parsed = _extractFromOCRText(ocrText);
                                 if (parsed && parsed.amount && _populateExpenseFromScan(parsed)) {
                                     _hideScanOverlay();
                                     triggerHaptic('success');
-                                    notify('✅ Scanned via Cloud OCR!', 'success');
+                                    notify('Scanned via Cloud OCR', 'success');
                                     e.target.value = '';
                                     return;
                                 }
@@ -10376,12 +10411,12 @@ Be conversational and precise.`;
                     // ===== TIER 3: Tesseract.js — runs 100% in browser, no API =====
                     if (isExpense) {
                         try {
-                            _showScanOverlay('🔤 Tesseract OCR Engine…', 'Reading text directly from image (offline)', 25);
+                            _showScanOverlay('Tesseract OCR Engine…', 'Reading text directly from image (offline)', 25, 'fileText');
                             console.log('[AI Scan v4] Falling back to Tesseract.js OCR');
                             const ocrText = await _ocrWithTesseract(file);
                             console.log('[AI Scan v4] Tesseract text:', ocrText.substring(0, 200));
 
-                            _showScanOverlay('📊 Parsing OCR Results…', 'Extracting amounts and vendor', 85);
+                            _showScanOverlay('Parsing OCR Results…', 'Extracting amounts and vendor', 85, 'chartLine');
                             const ocrResult = _extractFromOCRText(ocrText);
 
                             if (ocrResult && _populateExpenseFromScan(ocrResult)) {
@@ -10391,28 +10426,26 @@ Be conversational and precise.`;
                                 // Also put the raw OCR text in notes for reference
                                 const notes = $('e_notes');
                                 if (notes) {
-                                    let cur = notes.value;
-                                    cur = cur.split('|').map(p => p.trim()).filter(p => p && !p.startsWith('📦') && !p.startsWith('🔤')).join(' | ');
-                                    const ocrStr = '🔤 OCR: ' + ocrText.substring(0, 100).replace(/\n/g, ' ');
-                                    notes.value = cur ? cur + ' | ' + ocrStr : ocrStr;
+                                    const ocrStr = 'OCR: ' + ocrText.substring(0, 100).replace(/\n/g, ' ');
+                                    notes.value = _replaceScanNote(notes.value, ocrStr);
                                 }
-                                notify(`✅ Scanned in ${elapsed}s via Tesseract OCR · ${ocrResult.vendor || 'Receipt'}`, 'success');
+                                notify(`Scanned in ${elapsed}s via Tesseract OCR · ${ocrResult.vendor || 'Receipt'}`, 'success');
                                 e.target.value = '';
                                 return;
                             } else {
                                 _hideScanOverlay();
-                                notify('⚠️ Could not read receipt. Try a clearer, well-lit photo.', 'error');
+                                notify('Could not read receipt. Try a clearer, well-lit photo.', 'error');
                                 triggerHaptic('error');
                             }
                         } catch (e3) {
                             console.error('[AI Scan v4] Tesseract also failed:', e3.message);
                             _hideScanOverlay();
-                            notify('⚠️ All scan methods failed. Please enter manually.', 'error');
+                            notify('All scan methods failed. Please enter manually.', 'error');
                             triggerHaptic('error');
                         }
                     } else {
                         _hideScanOverlay();
-                        notify('⚠️ Scan failed. Please try again.', 'error');
+                        notify('Scan failed. Please try again.', 'error');
                         triggerHaptic('error');
                     }
                 }
@@ -16194,6 +16227,17 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             // Defensive de-dupe — never stack the identical toast in a tight window.
             // A single misbehaving loop must never flood the screen (belt-and-braces).
             try { const _n = Date.now(); if (msg === _wfLastNotifMsg && (_n - _wfLastNotifTs) < 2500) return; _wfLastNotifMsg = msg; _wfLastNotifTs = _n; } catch (_) {}
+            /* `warning` is what eleven call sites across this app actually
+             * pass, and it was never a type this function knew: the class
+             * became `notif warning`, which no rule in the stylesheet matches,
+             * so the toast lost its coloured border and fell through to the
+             * neutral info icon. Every one of those was written meaning to
+             * warn, and every one of them looked like a note.
+             *
+             * Normalised here rather than at eleven call sites, for the same
+             * reason the message is escaped here: the twelfth caller will
+             * write `warning` too. */
+            type = (type === 'warning') ? 'warn' : type;
             triggerHaptic(type === 'error' ? 'error' : (type === 'success' ? 'success' : 'light'));
             const el = document.createElement('div');
             el.className = `notif ${type}`;
@@ -29661,7 +29705,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 });
                 let _notesMap = {};
                 if (_noteItems.length) {
-                    try { if (typeof window._showScanOverlay === 'function') window._showScanOverlay('✍️ Writing notes…', 'Letting AI label each transaction', 90); } catch (_) {}
+                    try { if (typeof window._showScanOverlay === 'function') window._showScanOverlay('Writing notes…', 'Letting AI label each transaction', 90, 'edit'); } catch (_) {}
                     try { _notesMap = await _aiStatementNotes(_noteItems); } catch (_) { _notesMap = {}; }
                     try { if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay(); } catch (_) {}
                 }
