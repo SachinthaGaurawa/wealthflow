@@ -26810,7 +26810,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
             const wrap = $('debtDemoContent');
             if (!wrap) return;
-            if (!debtItems.length) { wrap.innerHTML = emptyState('🎉', 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
+            if (!debtItems.length) { wrap.innerHTML = emptyState(_ic('trophy'), 'Debt Free!', 'No active loans or installments. You are debt-free!'); return; }
 
             const totalDebt = debtItems.reduce((s, d) => s + d.amount, 0);
             const totalMonthly = debtItems.reduce((s, d) => s + d.monthly, 0);
@@ -26881,21 +26881,21 @@ Be direct and use real numbers. Avoid generic advice.`;
                             <div style="font-size:14px;font-weight:800;font-family:var(--mono);">${fmt(loan.monthly)}/mo</div>
                             <div style="font-size:10px;color:var(--text3);">Balance: ${fmt(loan.amount)}</div>
                         </div>
-                        ${i === 0 ? '<div style="color:var(--accent);font-size:11px;font-weight:800;margin-left:8px;display:flex;align-items:center;gap:4px;">🎯 TARGET</div>' : ''}
+                        ${i === 0 ? '<div style="color:var(--accent);font-size:11px;font-weight:800;margin-left:8px;display:flex;align-items:center;gap:4px;">' + _ic('target') + ' TARGET</div>' : ''}
                     </div>
                 `;
             }).join('');
 
             wrap.innerHTML = `
                     <div style="background:linear-gradient(135deg,rgba(212,175,55,0.08),rgba(16,185,129,0.04));border:1px solid rgba(212,175,55,0.2);border-radius:12px;padding:16px;margin-bottom:16px;">
-                        <div style="font-size:14px;font-weight:800;color:var(--accent);margin-bottom:6px;">💡 How to Use Debt Demolisher</div>
+                        <div style="font-size:14px;font-weight:800;color:var(--accent);margin-bottom:6px;">${_ic('info')} How to Use Debt Demolisher</div>
                         <div style="font-size:12px;color:var(--text2);line-height:1.6;">
                             This tool helps you pay off debt faster. Enter how much extra cash you can afford to pay each month using the slider. 
                             We calculate two different strategies:
                             <br><br>
-                            <b>🏔️ Avalanche Method:</b> We apply your extra cash to the loan with the highest interest rate. This is mathematically the best and saves you the most money.
+                            <b>${_ic('chartLine')} Avalanche Method:</b> We apply your extra cash to the loan with the highest interest rate. This is mathematically the best and saves you the most money.
                             <br>
-                            <b>⛄ Snowball Method:</b> We apply your extra cash to the smallest loan first. This gives you quick wins and builds motivation.
+                            <b>${_ic('coins')} Snowball Method:</b> We apply your extra cash to the smallest loan first. This gives you quick wins and builds motivation.
                         </div>
                     </div>
 
@@ -26907,7 +26907,7 @@ Be direct and use real numbers. Avoid generic advice.`;
 
                     <div class="card" style="margin-bottom:16px;">
                         <div class="card-header">
-                            <div class="card-title">🎛️ Interactive Payoff Simulator</div>
+                            <div class="card-title">${_ic('settings')} Interactive Payoff Simulator</div>
                             <div class="card-sub">Slide to see how extra monthly payments demolish your debt faster!</div>
                         </div>
                         <div style="padding:10px 0 20px;">
@@ -26942,9 +26942,9 @@ Be direct and use real numbers. Avoid generic advice.`;
                     if (debtItems.length === 1) {
                         resWrap.innerHTML = `
                             <div class="card" style="margin-bottom:16px;">
-                                <div class="card-header"><div class="card-title">🎯 Your Accelerated Payoff Plan</div><div class="card-sub">Based on adding ${fmt(ex)}/month extra</div></div>
+                                <div class="card-header"><div class="card-title">${_ic('target')} Your Accelerated Payoff Plan</div><div class="card-sub">Based on adding ${fmt(ex)}/month extra</div></div>
                                 <div style="padding:16px;background:linear-gradient(135deg,rgba(16,185,129,0.06),rgba(59,130,246,0.04));border-radius:12px; border:1px solid rgba(16,185,129,0.2); text-align:center;">
-                                    <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🚀 Accelerated Payoff</div>
+                                    <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">${_ic('trendUp')} Accelerated Payoff</div>
                                     <div style="font-size:12px;color:var(--text3);">You will be debt-free by</div>
                                     <div style="font-size:24px;font-weight:800;font-family:var(--mono);margin:4px 0;">${avalanche.payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div>
                                     <div style="margin-top:12px;font-size:12px;color:var(--text3);">Compared to paying only the minimums, you save:</div>
@@ -26952,33 +26952,33 @@ Be direct and use real numbers. Avoid generic advice.`;
                                 </div>
                             </div>
                             <div class="card">
-                                <div class="card-header"><div class="card-title">🏦 Active Debt Account</div></div>
+                                <div class="card-header"><div class="card-title">${_ic('bank')} Active Debt Account</div></div>
                                 ${renderDebtList(sortedAvalanche, avalanche)}
                             </div>
                             <!-- Deep AI debt analysis -->
                             <div class="card" style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
                                 <div class="card-header">
-                                    <div class="card-title">🧠 AI Debt Strategist</div>
+                                    <div class="card-title">${_ic('bot')} AI Debt Strategist</div>
                                     <div class="card-sub">Get a deeply personalized debt-elimination plan from our AI engine</div>
                                 </div>
-                                <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">⚡ Generate Deep AI Strategy</button>
+                                <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">${_ic('sparkles')} Generate Deep AI Strategy</button>
                                 <div id="debtAIInsight" style="margin-top:14px;"></div>
                             </div>
                         `;
                     } else {
                         resWrap.innerHTML = `
                             <div class="card" style="margin-bottom:16px;">
-                                <div class="card-header"><div class="card-title">🎯 Your Personalized Payoff Plan</div><div class="card-sub">Based on adding ${fmt(ex)}/month to your highest-priority loan</div></div>
+                                <div class="card-header"><div class="card-title">${_ic('target')} Your Personalized Payoff Plan</div><div class="card-sub">Based on adding ${fmt(ex)}/month to your highest-priority loan</div></div>
                                 <div class="g2">
                                     <div style="padding:14px;background:rgba(16,185,129,0.06);border-radius:12px; border:1px solid rgba(16,185,129,0.2);">
-                                        <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">🏔️ Avalanche</div>
+                                        <div style="font-size:13px;font-weight:700;color:var(--green);margin-bottom:10px;">${_ic('chartLine')} Avalanche</div>
                                         <div style="font-size:11px;color:var(--text3);">Payoff date</div>
                                         <div style="font-size:18px;font-weight:800;font-family:var(--mono);">${avalanche.payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div>
                                         <div style="margin-top:10px;font-size:11px;color:var(--text3);">vs minimum payments</div>
                                         <div style="font-size:14px;color:var(--green);font-weight:700;font-family:var(--mono);">${fmt(interestSavedAvalanche)} saved · ${monthsSavedAvalanche} mo earlier</div>
                                     </div>
                                     <div style="padding:14px;background:rgba(59,130,246,0.06);border-radius:12px; border:1px solid rgba(59,130,246,0.2);">
-                                        <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:10px;">⛄ Snowball</div>
+                                        <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:10px;">${_ic('coins')} Snowball</div>
                                         <div style="font-size:11px;color:var(--text3);">Payoff date</div>
                                         <div style="font-size:18px;font-weight:800;font-family:var(--mono);">${snowball.payoffDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</div>
                                         <div style="margin-top:10px;font-size:11px;color:var(--text3);">vs minimum payments</div>
@@ -26986,30 +26986,30 @@ Be direct and use real numbers. Avoid generic advice.`;
                                     </div>
                                 </div>
                                 <div style="margin-top:14px;padding:12px;background:rgba(212,175,55,0.06);border-radius:10px;font-size:12px;color:var(--accent);text-align:center;font-weight:600;">
-                                    🏆 Recommendation: ${interestSavedAvalanche > interestSavedSnowball ? 'Avalanche method saves ' + fmt(interestSavedAvalanche - interestSavedSnowball) + ' more in interest' : 'Both strategies produce similar results — pick what motivates you'}
+                                    ${_ic('thumbsUp')} Recommendation: ${interestSavedAvalanche > interestSavedSnowball ? 'Avalanche method saves ' + fmt(interestSavedAvalanche - interestSavedSnowball) + ' more in interest' : 'Both strategies produce similar results — pick what motivates you'}
                                 </div>
                             </div>
 
                             <div class="g2">
                                 <div class="card">
-                                    <div class="card-header"><div class="card-title">🏔️ Avalanche Method</div><div class="card-sub">Pay highest interest rate first — saves the most money</div></div>
+                                    <div class="card-header"><div class="card-title">${_ic('chartLine')} Avalanche Method</div><div class="card-sub">Pay highest interest rate first — saves the most money</div></div>
                                     ${renderDebtList(sortedAvalanche, avalanche)}
-                                    <div style="margin-top:12px;padding:10px;background:rgba(16,185,129,0.08);border-radius:8px;font-size:12px;color:var(--green);text-align:center;font-weight:600;">✨ Mathematically optimal — saves maximum interest</div>
+                                    <div style="margin-top:12px;padding:10px;background:rgba(16,185,129,0.08);border-radius:8px;font-size:12px;color:var(--green);text-align:center;font-weight:600;">${_ic('chartLine')} Mathematically optimal — saves maximum interest</div>
                                 </div>
                                 <div class="card">
-                                    <div class="card-header"><div class="card-title">⛄ Snowball Method</div><div class="card-sub">Pay smallest balance first — builds momentum</div></div>
+                                    <div class="card-header"><div class="card-title">${_ic('coins')} Snowball Method</div><div class="card-sub">Pay smallest balance first — builds momentum</div></div>
                                     ${renderDebtList(sortedSnowball, snowball)}
-                                    <div style="margin-top:12px;padding:10px;background:rgba(59,130,246,0.08);border-radius:8px;font-size:12px;color:var(--blue);text-align:center;font-weight:600;">💪 Psychologically motivating — quick wins</div>
+                                    <div style="margin-top:12px;padding:10px;background:rgba(59,130,246,0.08);border-radius:8px;font-size:12px;color:var(--blue);text-align:center;font-weight:600;">${_ic('coins')} Psychologically motivating — quick wins</div>
                                 </div>
                             </div>
 
                             <!-- Deep AI debt analysis -->
                             <div class="card" style="margin-top:14px;background:linear-gradient(145deg,rgba(212,175,55,0.04),var(--card));">
                                 <div class="card-header">
-                                    <div class="card-title">🧠 AI Debt Strategist</div>
+                                    <div class="card-title">${_ic('bot')} AI Debt Strategist</div>
                                     <div class="card-sub">Get a deeply personalized debt-elimination plan from our AI engine</div>
                                 </div>
-                                <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">⚡ Generate Deep AI Strategy</button>
+                                <button class="btn btn-primary" onclick="generateDebtAIInsight()" style="width:100%;">${_ic('sparkles')} Generate Deep AI Strategy</button>
                                 <div id="debtAIInsight" style="margin-top:14px;"></div>
                             </div>
                         `;
