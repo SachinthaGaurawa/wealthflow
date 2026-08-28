@@ -37,7 +37,20 @@
       ]
     },
     {
-      "source": "/sw.js",
+      "source": "/pwa-updater.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/javascript; charset=utf-8"
+        }
+      ]
+    },
+    {
+      "source": "/(sw\\.js|service-worker\\.js)",
       "headers": [
         {
           "key": "Service-Worker-Allowed",
@@ -145,8 +158,12 @@
       "destination": "/api/router?path=$1"
     },
     {
-      "source": "/sw.js",
+      "source": "/(sw\\.js|service-worker\\.js)",
       "destination": "/sw.js"
+    },
+    {
+      "source": "/pwa-updater.js",
+      "destination": "/pwa-updater.js"
     },
     {
       "source": "/(wealthflow-[a-zA-Z0-9-]+\\.js)",
