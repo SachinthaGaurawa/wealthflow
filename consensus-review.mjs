@@ -235,10 +235,52 @@ export const REVIEWERS = [
         prefer: ['general', 'fast'],
         system: 'You review pull requests on behalf of the one person who uses this app every day. Your only concern is their experience: clarity, trust, and not being surprised. You are not a code reviewer.',
         focus: [
-            'Could this confuse or mislead the user, or make the app feel less trustworthy?',
-            'Does it remove or hide something the user relies on?',
+            'What will the user SEE or FEEL differently after this change? Name it.',
+            'Could this confuse or mislead them, or make the app feel less trustworthy?',
+            'Does it remove or hide something they rely on?',
             'Does it make anything slower, noisier, or harder to reach?',
-            'Would the user notice this change as an improvement, or not notice it at all?',
+        ],
+        /* Extra instructions for this lane only.
+         *
+         * WHY THIS LANE NEEDED THEM. Five consecutive pull requests that changed
+         * what appears on screen were passed with a variant of "no user-facing
+         * changes": a lock-screen button rewritten to state the amount it
+         * writes, a new idle-cash notification, a whole settings screen plus a
+         * dashboard card, and a change that replaced every visible glyph on
+         * three screens with icons.
+         *
+         * The verdicts were right — none of those harmed anybody. The REASONS
+         * were false, and a false reason is worse than no reason: it reads on
+         * the pull request as a considered finding that the change is invisible,
+         * which is precisely the claim that let a pipeline with no interface at
+         * all be described as live.
+         *
+         * The cause is visible in the old focus list above: every question asked
+         * about HARM, so "no harm" came back phrased as "no change". Describing
+         * what the user will see is now the FIRST question, and the denial is
+         * forbidden outright. */
+        rules: [
+            'Your REASON must first name what the user will actually see or feel — a button, a screen, a message, a vibration, a colour, a delay.',
+            'Never report that the change is invisible when the diff adds or alters markup, a notification, a setting, a label, a toast, an icon or a screen. Whether it HARMS anyone and whether it CHANGES anything visible are separate questions; answer both.',
+            /* Phrased as a constraint on the ANSWER, not as a model answer.
+             * The first wording — "New UI that harms nobody is a PASS whose
+             * reason describes the new UI" — was returned almost verbatim as a
+             * review: "This change adds new UI that harms nobody, and the reason
+             * describes the new UI." That is circular; it says the reason
+             * describes the UI instead of describing it. A rule that reads like
+             * a finished sentence will be copied as one. */
+            'A pure addition is still a change: judge it, do not wave it through.',
+            /* Naming something is a constraint on the WORDING of the reason. It
+             * is emphatically not an instruction to find something to object to,
+             * and the first version of it read that way: asked for a concrete
+             * noun, the lane produced "The user will see a new button labelled
+             * '_bv_save' and feel a vibration" — as a FAIL, citing a line that
+             * exists only inside a TEST FIXTURE in that diff. It had gone
+             * looking for a noun, found one in test data, and blocked on it.
+             * Passing with a vague reason was noise; blocking on a fabricated
+             * one is worse, so the boundary is now stated with the rule. */
+            'Your reason should name the control, screen, message or setting you are talking about, so it reads as a review of THIS change rather than one that would fit any. This is about how you word a reason — it is never a reason to FAIL, and never an instruction to go looking for something to object to.',
+            'Test files, fixtures and mock data are not the product. A button that exists only inside a test string is not something the user will ever see, and must not be described as if it were.',
         ],
     },
 ];
@@ -250,6 +292,9 @@ function prompt(reviewer, diff, truncated) {
         'Check specifically:',
         ...reviewer.focus.map((f) => `  - ${f}`),
         '',
+        ...(reviewer.rules && reviewer.rules.length
+            ? ['RULES FOR THIS REVIEWER:', ...reviewer.rules.map((r) => `  - ${r}`), '']
+            : []),
         // ── READ THE CODE, NOT THE PROSE ──────────────────────────────────
         // A real false positive from this board's first live run: the security
         // reviewer read comments describing the BUG BEING FIXED ("the agent
@@ -500,6 +545,135 @@ export function citesNonExecutableEvidence(evidence, diff) {
     ));
 }
 
+/* ── THE THIRD SIGNAL: A DENIAL THAT THE DIFF CONTRADICTS ────────────────────
+ *
+ * The two functions above catch a reviewer reading the diff's PROSE as its
+ * code. This one catches the opposite failure, in the user-impact lane: a
+ * reviewer that did not really look at the diff at all and reached for the
+ * safest sentence available — "no user-facing changes".
+ *
+ * It was returned on five consecutive pull requests that changed what appears
+ * on screen, including one whose entire content was replacing every visible
+ * glyph on three screens, and one that added a settings screen and a dashboard
+ * card to an app that had neither.
+ *
+ * WHY THIS IS IN CODE AND NOT ONLY IN THE PROMPT. The same argument this file
+ * already makes twice, above: instructions were added to the prompt after the
+ * first occurrence and the model ignored them repeatedly. A rule that the model
+ * can decline to follow is a request. This is the check.
+ *
+ * WHY IT DOES NOT CHANGE THE VERDICT. The verdict is usually right — new UI
+ * that harms nobody IS a pass. It is the stated reason that is false. Turning a
+ * correct PASS into a FAIL over a badly worded justification would block good
+ * changes and teach the board to say less, not more. So the vote stands and the
+ * reason is replaced with what can actually be established: that the diff
+ * touches the interface, and that the reviewer did not say how.
+ *
+ * DELIBERATELY NARROW. Only fires when the reason DENIES a visible change AND
+ * the diff demonstrably adds one. A reviewer that says "the new banner is
+ * clear and the wording is fine" is untouched, whatever else it says.
+ * ───────────────────────────────────────────────────────────────────────────*/
+
+/** Phrasings that assert the change cannot be seen. */
+const DENIAL = /\bno\s+(?:\w+\s+){0,2}user[- ]facing\s+(?:changes?|impact|modifications?|differences?)\b|\bnothing\s+(?:that\s+)?the\s+user\s+(?:will\s+)?(?:see|notice)\b|\bnot\s+visible\s+to\s+the\s+user\b|\bno\s+(?:visible|noticeable|perceptible)\s+changes?\b/i;
+
+/** Added lines that put something in front of a person. */
+const UI_MARKERS = [
+    /\binnerHTML\b/, /\btextContent\b/, /\bshowNotification\b/, /\bnotify\(/,
+    /\bshowActionableBanner\b/, /\bshowConfirm\(/, /\bsetting-(?:row|label|desc)\b/,
+    /<(?:button|div|span|select|option|input|label|dialog)\b/i,
+    /\bclass="[^"]*\b(?:btn|card|md-title|setting|toast|banner)\b/i,
+    /\bplaceholder\s*[:=]/, /\btitle\s*:\s*['"`]/, /\bWFIcon\(/,
+    /\bvibrate\b/, /\btriggerHaptic\b/,
+];
+
+/** Does this diff add something a person can see or feel? */
+export function addsUserVisibleSurface(diff) {
+    for (const line of addedCodeLines(diff)) {
+        for (const re of UI_MARKERS) if (re.test(line)) return true;
+    }
+    return false;
+}
+
+/**
+ * Is this reason a denial the diff contradicts? Pure, so the judgement can be
+ * argued with in a test rather than in production.
+ */
+export function deniesVisibleChange(reason, diff) {
+    if (!DENIAL.test(String(reason || ''))) return false;
+    return addsUserVisibleSurface(diff);
+}
+
+/** What to say instead. Never invents a finding — states only what is known. */
+export const DENIAL_REPLACEMENT =
+    'Reviewer reported no user-facing change, but the diff adds or alters interface code; '
+    + 'the vote stands and the stated reason does not.';
+
+/* ── THE FOURTH SIGNAL: A REASON THAT NAMES NOTHING ──────────────────────────
+ *
+ * On one pull request the user-impact lane produced three different reviews,
+ * and every one of them was a sentence lifted from the diff or the prompt:
+ *
+ *   1. a paraphrase of two TEST FIXTURES the change had just added
+ *   2. its own RULE read back — "adds new UI that harms nobody, and the reason
+ *      describes the new UI", which announces that the reason describes the UI
+ *      instead of describing it
+ *   3. "This causes no HARM" — a phrase quoted INSIDE that rule as an example
+ *
+ * Each fix removed one source of quotable text and the model found the next.
+ * That is not a prompting problem any further wording will solve; the lane is
+ * retrieving the nearest plausible sentence rather than reading the diff.
+ *
+ * What can be established mechanically is whether the reason mentions ANYTHING
+ * that appears in this particular diff. A review of a change to the haptics
+ * screen will contain a word like "haptic", "vibration", "intensity" or
+ * "settings"; a sentence that would fit any pull request contains none of them.
+ *
+ * SCOPED TO THIS ONE LANE ON PURPOSE. Architecture and security legitimately
+ * return short general statements — "no vulnerabilities introduced" is a
+ * complete and useful answer. Only the user-impact lane's whole job is to say
+ * what the person will see, which cannot be done without naming it.
+ *
+ * AND IT NEVER CHANGES THE VOTE, for the same reason as the check above.
+ * ───────────────────────────────────────────────────────────────────────────*/
+
+/* Words that appear in reviews of anything. Matching only these is what
+ * "generic" means here. */
+const REVIEW_VOCAB = new Set([
+    'change', 'changes', 'changed', 'user', 'users', 'this', 'that', 'with', 'from', 'they',
+    'pull', 'request', 'diff', 'code', 'pass', 'fail', 'harm', 'harms', 'harmful', 'impact',
+    'nobody', 'anyone', 'reason', 'review', 'reviewer', 'adds', 'added', 'introduces',
+    '新', 'does', 'would', 'could', 'should', 'there', 'their', 'about', 'which', 'where',
+    'facing', 'visible', 'noticeable', 'improvement', 'feature', 'features', 'behaviour',
+    'behavior', 'confusion', 'performance', 'degradation', 'removal', 'cause', 'causes',
+    'clear', 'plain', 'wording', 'nothing', 'anything', 'something', 'these', 'those',
+]);
+
+const WORDS = /[a-z][a-z0-9_]{3,}/g;
+
+/**
+ * Does this reason mention anything that is actually in this diff?
+ *
+ * Compared against the diff's ADDED lines only, and ignoring the vocabulary
+ * every review shares, so the question asked is narrow: did it name one thing
+ * this change touches?
+ */
+export function reasonNamesSomething(reason, diff) {
+    const added = new Set(String(addedCodeLines(diff).join(' ')).toLowerCase().match(WORDS) || []);
+    const words = String(reason || '').toLowerCase().match(WORDS) || [];
+    return words.some((w) => !REVIEW_VOCAB.has(w) && added.has(w));
+}
+
+/** A non-empty reason that names nothing in the diff it is reviewing. */
+export function reasonIsGeneric(reason, diff) {
+    const r = String(reason || '').trim();
+    if (!r) return false;                      // empty is handled elsewhere
+    return !reasonNamesSomething(r, diff);
+}
+
+export const GENERIC_REPLACEMENT =
+    'Reviewer gave a reason that names nothing in this diff; the vote stands and the stated reason does not.';
+
 export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null) {
     const r = lane.role;
     // Own providers first, then — only once those are exhausted — providers
@@ -578,6 +752,29 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                     ? `      evidence: ${evidence}`
                     : '      ⚠ NO EXECUTABLE EVIDENCE CITED — likely a reaction to comments/prose, not behaviour.');
             }
+
+            /* A PASS whose reason denies the change is visible, on a diff that
+             * demonstrably adds interface code. The VOTE is kept — new UI that
+             * harms nobody really is a pass — and only the false sentence is
+             * replaced. See the block above runReviewer for the five pull
+             * requests that made this a code check rather than a prompt line. */
+            let correctedReason = null;
+            let correctionWhy = '';
+            if (finalVote === 'pass' && deniesVisibleChange(parsed.reason, diff)) {
+                correctedReason = String(parsed.reason || '').slice(0, 300);
+                correctionWhy = DENIAL_REPLACEMENT;
+                console.log('      ⚠ REASON CORRECTED — reviewer denied a user-facing change that the diff makes.');
+            } else if (finalVote === 'pass' && r.name === 'user-impact'
+                       /* Only when there IS something to name. A backend-only
+                        * change genuinely has no user-facing part, and "no
+                        * user-facing changes" is then the correct review — the
+                        * check must not punish a reviewer for being right. */
+                       && addsUserVisibleSurface(diff)
+                       && reasonIsGeneric(parsed.reason, diff)) {
+                correctedReason = String(parsed.reason || '').slice(0, 300);
+                correctionWhy = GENERIC_REPLACEMENT;
+                console.log('      ⚠ REASON CORRECTED — reviewer named nothing in this diff.');
+            }
             return {
                 name: r.name,
                 vote: finalVote,
@@ -591,9 +788,14 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 // reason for passing — it is carried separately and rendered as
                 // what it is.
                 rejectedFinding,
+                // The reviewer's own words when they were checkable, kept so the
+                // board table can show what was said before it was corrected.
+                correctedReason,
                 reason: rejectedFinding
                     ? 'objection rejected — it restated the diff\'s own comments'
-                    : String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
+                    : correctedReason
+                        ? correctionWhy
+                        : String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
                 evidence: rejectedFinding ? '' : evidence,
                 concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
             };

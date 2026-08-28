@@ -109,7 +109,14 @@ describe('the figure on the button has the same origin as the figure in the ques
     });
 
     it('passes the payload on to the OS notification rather than dropping it', () => {
-        expect(html).toContain('_showOSNotification({ id, title, message, primary, secondary, confirm });');
+        /* The call is no longer a bare statement: showActionableBanner now waits
+         * on its answer, because _showOSNotification reports whether the device
+         * actually took the notification and the plain mirror is only sent when
+         * it did not. What matters here is unchanged — every field, `confirm`
+         * included, still reaches it. */
+        expect(html).toContain('_showOSNotification({ id, title, message, primary, secondary, confirm })');
+        expect(html, 'the result is ignored again, so the mirror cannot be gated on it')
+            .toContain('.then((shown) => { if (!shown) _plainMirror(); })');
     });
 });
 
