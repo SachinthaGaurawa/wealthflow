@@ -235,14 +235,31 @@ describe('the record, and the answer', () => {
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('the configuration report', () => {
     it('names every variable the hook actually reads', () => {
-        /* gmail-hook.js reads exactly four. Reporting a name it does NOT read —
-         * GMAIL_REFRESH_TOKEN, GCP_PROJECT_ID, PUB_SUB_TOPIC — would send
-         * somebody to set a variable that changes nothing, which is exactly what
-         * happened before this existed. */
-        const hook = fs.readFileSync(path.resolve(import.meta.dirname, '../gmail-hook.js'), 'utf8');
+        /* Reporting a name the pipeline does NOT read would send somebody to set
+         * a variable that changes nothing, which is exactly what happened before
+         * this existed.
+         *
+         * The search follows the read rather than one file. accessTokenFrom moved
+         * to google-oauth.mjs when /api/gmail-watch needed the identical refresh
+         * exchange, so GOOGLE_OAUTH_CLIENT_ID is still read on every push — one
+         * import further along. Pinning the check to gmail-hook.js alone would
+         * have called that an unread variable and pushed the next person to stop
+         * reporting a name the pipeline genuinely requires. */
+        const dir = path.resolve(import.meta.dirname, '..');
+        const readers = ['gmail-hook.js', 'google-oauth.mjs']
+            .map((f) => fs.readFileSync(path.join(dir, f), 'utf8'))
+            .join('\n');
         for (const name of missingConfig({})) {
-            expect(hook, `${name} is reported missing but the hook never reads it`).toContain(`env.${name}`);
+            expect(readers, `${name} is reported missing but nothing on the push path reads it`)
+                .toContain(`env.${name}`);
         }
+    });
+
+    it('the files it searches are the ones the hook actually pulls in', () => {
+        /* Otherwise the check above degrades quietly: add a file to the list and
+         * it will find anything, whether or not the hook still uses it. */
+        const hook = fs.readFileSync(path.resolve(import.meta.dirname, '../gmail-hook.js'), 'utf8');
+        expect(hook).toContain("from './google-oauth.mjs'");
     });
 
     it('reports nothing missing once they are set', () => {

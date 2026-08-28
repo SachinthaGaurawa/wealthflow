@@ -21310,6 +21310,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + (reason ? ' · ' + _wfEsc(reason) : '') + '</span>';
         }
 
+        /* The watch, in the header line. Named as a live fact with a date rather
+         * than a green tick: "connected" and "actually being delivered to" are
+         * different states, and conflating them is what let a mailbox report
+         * connected while nothing was ever pushed. */
+        function _mailWatchLabel() {
+            const w = _mailWatch;
+            if (!w) return '';
+            if (w.watching === false) return ' · <span style="color:var(--red);">not watching</span>';
+            if (w.expiring) return ` · <span style="color:var(--amber,#f59e0b);">watch expires in ${_wfEsc(String(w.daysLeft))}d</span>`;
+            if (w.expiresAt) return ` · watching until ${_wfEsc(new Date(w.expiresAt).toLocaleDateString())}`;
+            return '';
+        }
+
         function renderMailSync() {
             const host = $('wfMailSync');
             if (!host) return;
@@ -21354,6 +21367,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <b>${missing.map(_wfEsc).join('</b>, <b>')}</b>. Without these a push cannot be
                         verified even once a token is saved.</div>` : ''}
                 </div>`;
+            } else if (connected === true && _mailWatch && _mailWatch.watching === false) {
+                /* THE STATE THIS CHANGE EXISTS FOR. A mailbox can be perfectly
+                 * connected and still deliver nothing, because Google pushes only
+                 * while a watch is active. Before this the card said "Mailbox
+                 * connected" and stopped there, and the pipeline's silence was
+                 * indistinguishable from an empty inbox. */
+                const miss = Array.isArray(_mailWatch.missing) ? _mailWatch.missing : [];
+                banner = `<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.28);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                    <b style="color:var(--red);">Connected, but Gmail is not watching this mailbox.</b>
+                    Statements will not arrive on their own until a watch is registered.
+                    ${_mailWatch.error ? `<div style="margin-top:6px;">${_wfEsc(_mailWatch.error)}</div>` : ''}
+                    ${miss.length ? `<div style="margin-top:8px;">Still unset on the server:
+                        <b>${miss.map(_wfEsc).join('</b>, <b>')}</b>.</div>` : ''}
+                </div>`;
             } else if (connected === null) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Checking connection…</div>`;
             } else if (!st.items.length) {
@@ -21367,7 +21394,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         <div style="flex:1;min-width:0;">
                             <div style="font-weight:800;font-size:14.5px;color:var(--text);">Statement Sync</div>
                             <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
-                                ${connected === true ? 'Mailbox connected' : connected === false ? (_mailCheckError ? 'Check failed' : 'Not connected') : 'Checking…'}
+                                ${connected === true ? 'Mailbox connected' : connected === false ? (_mailCheckError ? 'Check failed' : 'Not connected') : 'Checking…'}${connected === true ? _mailWatchLabel() : ''}
                                 ${window.WFVault && window.WFVault.isUnlocked() ? ' · vault unlocked' : window.WFVault && window.WFVault.isSet() ? ' · vault locked' : ' · no passwords saved'}
                             </div>
                         </div>
@@ -21424,6 +21451,55 @@ table.amort tbody tr { page-break-inside: avoid; }
             let out = null;
             try { out = await r.json(); } catch (_) { out = null; }
             return { status: r.status, body: out };
+        }
+
+        /* What the server last said about the Gmail watch, or null.
+         *
+         * WHY A WATCH MATTERS AT ALL. Google publishes to the Pub/Sub topic only
+         * while the mailbox has an active users.watch. Nothing in this app ever
+         * registered one, so /api/gmail-hook had never been invoked and a
+         * mailbox reported as connected delivered nothing, forever. A watch also
+         * EXPIRES after seven days, which makes registering it once a pipeline
+         * with a week-long fuse rather than a finished feature. */
+        let _mailWatch = null;
+
+        async function _gmailWatch(method) {
+            if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
+            let token;
+            try { token = await currentUser.getIdToken(); } catch (_) { return null; }
+            const r = await fetch('/api/gmail-watch', {
+                method,
+                headers: { 'Authorization': 'Bearer ' + token },
+            });
+            let out = null;
+            try { out = await r.json(); } catch (_) { out = null; }
+            return { status: r.status, body: out };
+        }
+
+        /**
+         * Register the watch, or renew one close to expiring.
+         *
+         * Renewal is driven from here rather than from a scheduled job because
+         * a watch belongs to ONE mailbox and is registered with that mailbox's
+         * own credential — so it needs no new secret and nothing on the Actions
+         * budget. The cost is that it renews when the app is opened, on a
+         * six-day margin against a seven-day life. That is why the expiry is
+         * shown on the card: a pipeline that stops must say so, and silence is
+         * the exact failure this whole change exists to end.
+         */
+        async function _ensureMailWatch({ force = false } = {}) {
+            const seen = await _gmailWatch('GET');
+            if (!seen || seen.status !== 200 || !seen.body) { _mailWatch = null; return null; }
+            _mailWatch = seen.body;
+            if (!force && !seen.body.needsRenewal) return _mailWatch;
+            if (!seen.body.connected) return _mailWatch;
+            const done = await _gmailWatch('POST');
+            /* A failed renewal keeps the state we could read. Replacing it with
+             * null would hide a watch that is live but close to expiring — the
+             * one moment the card most needs to say something. */
+            if (done && done.status === 200 && done.body) _mailWatch = done.body;
+            else if (done && done.body && done.body.error) _mailWatch = { ..._mailWatch, error: String(done.body.error).slice(0, 200) };
+            return _mailWatch;
         }
 
         /* Why the last check could not be made, or null when it was made.
@@ -21687,10 +21763,21 @@ table.amort tbody tr { page-break-inside: avoid; }
                         return;
                     }
                     try { triggerHaptic('success'); } catch (_) {}
-                    notify('Gmail connected', 'success');
                     el.value = '';
                     close();
                     _mailSyncState.connected = true;
+                    try { renderMailSync(); } catch (_) {}
+
+                    /* REGISTER THE WATCH NOW. Saving the token is not connecting
+                     * the pipeline: Google publishes only while a watch is
+                     * active, and without this call the mailbox would sit there
+                     * "connected" and deliver nothing. The result decides which
+                     * message is shown, because "Gmail connected" over a failed
+                     * watch is the comfortable lie this change removes. */
+                    let w = null;
+                    try { w = await _ensureMailWatch({ force: true }); } catch (_) { w = null; }
+                    if (w && w.watching) notify('Gmail connected — watching for statements', 'success');
+                    else notify('Token saved, but Gmail is not watching yet', 'error');
                     try { renderMailSync(); } catch (_) {}
                 };
 
@@ -22600,7 +22687,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 renderMailSync();
                 if (_mailSyncState.connected === null) {
                     _mailConnected()
-                        .then((c) => { _mailSyncState.connected = c; renderMailSync(); })
+                        .then((c) => {
+                            _mailSyncState.connected = c;
+                            renderMailSync();
+                            /* And make sure Gmail is actually watching. This is
+                             * the renewal: a watch lasts seven days, so a check
+                             * on every load with a six-day margin is what keeps
+                             * the pipeline from quietly stopping on day eight. */
+                            if (c) return _ensureMailWatch().then(() => renderMailSync());
+                            return null;
+                        })
                         .catch(() => { _mailSyncState.connected = false; renderMailSync(); });
                 }
             } catch (_) {}
