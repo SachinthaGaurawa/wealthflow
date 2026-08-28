@@ -250,31 +250,7 @@ describe('when the server is not configured it says which part', () => {
     });
 });
 
-describe('no server file reads getAdminDb() as if it were the handle', () => {
-    /* The rule, in code rather than in a comment: this is the third time a
-     * shape mismatch at a module boundary has reached production, and a
-     * convention nobody can run is not a control. */
-    const files = fs.readdirSync(ROOT)
-        .filter((f) => /\.(js|mjs)$/.test(f) && f !== 'admin-db.mjs')
-        .filter((f) => fs.readFileSync(path.join(ROOT, f), 'utf8').includes('getAdminDb('));
-
-    it('finds the call sites it is meant to be guarding', () => {
-        expect(files.length).toBeGreaterThan(0);
-    });
-
-    for (const f of files) {
-        it(`${f} destructures every getAdminDb() result`, () => {
-            const src = fs.readFileSync(path.join(ROOT, f), 'utf8')
-                .replace(/\/\*[\s\S]*?\*\//g, '')      // comments discuss the bug;
-                .replace(/^[ \t]*\/\/.*$/gm, '');      // they must not trip the check
-            const calls = src.match(/^[^\n]*getAdminDb\s*\(/gm) || [];
-            for (const line of calls) {
-                if (/^\s*(export\s+)?(async\s+)?function\s/.test(line)) continue;   // its definition
-                if (/return\s+getAdminDb\s*\(/.test(line)) continue;                // a pass-through
-                if (!/getAdminDb\s*\(\s*\)/.test(line)) continue;
-                expect(line, `${f}: getAdminDb() must be destructured — it returns { db, reason, admin }, and the wrapper is always truthy`)
-                    .toMatch(/\{[^}]*\bdb\b[^}]*\}\s*=/);
-            }
-        });
-    }
-});
+/* The repo-wide destructure guard moved to test/admin_db_contract_test.js when
+ * it turned out to have missed gmail-hook.js: that file reaches the same
+ * bootstrap through getInboxDb(), an alias this suite's check never looked for.
+ * A guard that only covers the file it was written for is not a guard. */

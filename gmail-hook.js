@@ -51,9 +51,9 @@
 
 import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
 import { getInboxDb } from './inbox-store.mjs';
+import { accessTokenFrom, authed } from './google-oauth.mjs';
 
 const TOKENINFO = 'https://oauth2.googleapis.com/tokeninfo?id_token=';
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 /** Where a statement waits for a device. User-scoped: any device may claim it. */
@@ -126,25 +126,9 @@ export function decodeEnvelope(body) {
 
 /* ── 3. talking to Gmail ──────────────────────────────────────────────────── */
 
-async function accessTokenFrom(refreshToken, env, f) {
-    const body = new URLSearchParams({
-        client_id: env.GOOGLE_OAUTH_CLIENT_ID,
-        client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-    });
-    const r = await f(TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: body.toString(),
-    });
-    if (!r.ok) throw new Error('token refresh rejected');  // never includes the token
-    const out = await r.json();
-    if (!out.access_token) throw new Error('token refresh returned no access token');
-    return out.access_token;
-}
-
-const authed = (token) => ({ Authorization: `Bearer ${token}` });
+/* accessTokenFrom and authed now live in google-oauth.mjs — /api/gmail-watch
+ * needs the identical exchange, and two copies of a credential policy is one
+ * more than can be kept in step. Imported at the top of this file. */
 
 /**
  * The message ids added since `startHistoryId`.
@@ -196,8 +180,17 @@ export default async function handler(req, res) {
     const note = decodeEnvelope(req.body);
     if (!note) return j(res, 204, { ok: true, skipped: 'unreadable-envelope' });
 
-    const db = await getInboxDb();
-    if (!db || db.error) return j(res, 500, { ok: false, error: 'database unavailable' });
+    /* DESTRUCTURED. getInboxDb() re-exports getAdminDb() unchanged, so it
+     * returns { db, reason, admin } and not a handle — and `db.error` is a field
+     * that has never existed on it, so this guard could not fire whatever went
+     * wrong. Every Pub/Sub push would have died one line later on
+     * `db.collection is not a function`, exactly as /api/gmail-link did.
+     *
+     * It was never observed because it could not be: nothing in this repository
+     * calls Gmail's users.watch, so Google has never published to the topic and
+     * this handler has never run. Two defects, each hiding the other. */
+    const { db, reason } = await getInboxDb();
+    if (!db) return j(res, 500, { ok: false, error: String(reason || 'database unavailable').slice(0, 300) });
 
     const userKey = note.emailAddress.replace(/[^a-z0-9]/g, '_');
     const stateRef = db.collection(MAIL_ROOT).doc(userKey);

@@ -94,6 +94,12 @@ const HANDLERS = {
     // for READS, which is why the Statement Sync card could never see its own
     // state. Identity comes from a verified Firebase ID token and nothing else.
     'gmail-link': () => import('../gmail-link.js'),
+    // Asking Gmail to notify us at all. Google publishes to the topic only while
+    // a mailbox has an active users.watch, and nothing here ever registered one
+    // — so gmail-hook had never been invoked and a connected mailbox delivered
+    // nothing. A watch also expires after seven days, so this is called again on
+    // a six-day margin rather than once.
+    'gmail-watch': () => import('../gmail-watch.js'),
     'health': () => import('../health.js'),
     'inbox-ack': () => import('../inbox-ack.js'),
     'inbox-pull': () => import('../inbox-pull.js'),

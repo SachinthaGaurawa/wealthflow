@@ -45,11 +45,32 @@ function codeOnly(src) {
         .replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
-/** The body of a top-level `function NAME(` in the page, to its closing brace. */
+/**
+ * The body of a top-level `function NAME(` in the page, to its closing brace.
+ *
+ * BRACE COUNTING STARTS AFTER THE PARAMETER LIST, not at the first `{`. A
+ * destructured parameter — `function f({ force = false } = {})` — puts a brace
+ * before the body, so counting from the first one closes on the parameter list
+ * and returns a fragment. That is not hypothetical: it truncated
+ * _ensureMailWatch to a few characters here, and the identical mistake once
+ * returned 178 characters of a 5,212-character function on showActionableBanner.
+ * The failure mode is a test that reads almost nothing and passes.
+ */
 function functionBody(name) {
     const at = html.search(new RegExp(`\\n\\s*(?:async\\s+)?function ${name}\\s*\\(`));
     if (at < 0) return '';
-    let i = html.indexOf('{', at);
+    // Walk the parameter list to its matching ')' before looking for the body.
+    let p = html.indexOf('(', at);
+    let paren = 0;
+    let i = -1;
+    for (let j = p; j < html.length; j += 1) {
+        if (html[j] === '(') paren += 1;
+        else if (html[j] === ')') {
+            paren -= 1;
+            if (paren === 0) { i = html.indexOf('{', j); break; }
+        }
+    }
+    if (i < 0) return '';
     let depth = 0;
     for (let j = i; j < html.length; j += 1) {
         if (html[j] === '{') depth += 1;
@@ -286,5 +307,121 @@ describe('the card can tell a broken check from an empty one', () => {
         /* And the header line must stop claiming "Not connected" when the check
          * is what failed. */
         expect(body).toContain('Check failed');
+    });
+});
+
+/* ── CONNECTED IS NOT THE SAME AS DELIVERING ─────────────────────────────────
+ *
+ * Google publishes to the Pub/Sub topic only while the mailbox has an active
+ * users.watch. Nothing in this repository ever registered one — PUB_SUB_TOPIC
+ * was configured and read by nobody — so /api/gmail-hook had never been invoked
+ * and a mailbox reported as "connected" delivered nothing, forever. A watch also
+ * expires after seven days, so registering it once is a pipeline with a
+ * week-long fuse, not a finished feature.
+ *
+ * These pin the page's half: that it registers on connect, renews on load, and
+ * shows the expiry instead of letting a lapse pass as silence. */
+describe('the page actually asks Gmail to watch the mailbox', () => {
+    it('calls /api/gmail-watch', () => {
+        expect(codeOnly(html)).toContain("'/api/gmail-watch'");
+    });
+
+    it('registers the watch right after a token is saved', () => {
+        /* Saving a token is not connecting the pipeline. Without this call the
+         * mailbox sits "connected" and nothing is ever pushed to it. */
+        const body = functionBody('openGmailLink');
+        expect(body).toContain('_ensureMailWatch');
+        expect(body).toContain('force: true');
+    });
+
+    it('the success message depends on the watch, not on the save', () => {
+        /* "Gmail connected" over a failed watch is exactly the comfortable lie
+         * this change exists to remove. */
+        const body = codeOnly(functionBody('openGmailLink'));
+        const at = body.indexOf('_ensureMailWatch');
+        expect(at).toBeGreaterThan(-1);
+        expect(body.slice(at)).toMatch(/if\s*\(\s*w\s*&&\s*w\.watching\s*\)/);
+    });
+
+    it('renews on load, so a seven-day watch does not lapse unseen', () => {
+        const boot = functionBody('renderDash');
+        expect(boot).toContain('_ensureMailWatch');
+    });
+
+    it('the renewal margin leaves room under Gmail’s seven-day maximum', async () => {
+        const { WATCH } = await import('../gmail-watch.mjs');
+        expect(WATCH.RENEW_WITH_DAYS_LEFT).toBeLessThan(WATCH.MAX_LIFETIME_DAYS);
+    });
+
+    it('the card shows a connected-but-unwatched mailbox as a fault', () => {
+        const body = functionBody('renderMailSync');
+        expect(body).toContain('_mailWatch');
+        expect(body).toContain('not watching this mailbox');
+    });
+
+    it('the header line carries the expiry rather than a bare tick', () => {
+        const label = functionBody('_mailWatchLabel');
+        expect(label).toBeTruthy();
+        expect(label).toContain('watching until');
+        expect(label).toContain('expires in');
+    });
+});
+
+describe('the watch helper only renews when it should', () => {
+    /* Executed, not read — the same discipline the crash taught. */
+    function ensureWith(replies) {
+        const src = functionBody('_ensureMailWatch');
+        expect(src, 'index.html no longer defines _ensureMailWatch').toBeTruthy();
+        const calls = [];
+        const make = new Function('_gmailWatch', `
+            let _mailWatch = null;
+            ${src}
+            return { run: _ensureMailWatch, get state() { return _mailWatch; } };
+        `);
+        const h = make(async (method) => { calls.push(method); return replies[method] || null; });
+        return { ...h, run: h.run, calls, get state() { return h.state; } };
+    }
+
+    it('does not POST when the watch is fresh', async () => {
+        const h = ensureWith({ GET: { status: 200, body: { connected: true, watching: true, needsRenewal: false } } });
+        await h.run();
+        expect(h.calls).toEqual(['GET']);
+    });
+
+    it('POSTs when renewal is due', async () => {
+        const h = ensureWith({
+            GET: { status: 200, body: { connected: true, watching: false, needsRenewal: true } },
+            POST: { status: 200, body: { connected: true, watching: true, needsRenewal: false } },
+        });
+        await h.run();
+        expect(h.calls).toEqual(['GET', 'POST']);
+        expect(h.state.watching).toBe(true);
+    });
+
+    it('does not POST when no mailbox is connected', async () => {
+        /* There is nothing to register a watch WITH, and asking would produce a
+         * 409 the card would then have to explain. */
+        const h = ensureWith({ GET: { status: 200, body: { connected: false, watching: false, needsRenewal: true } } });
+        await h.run();
+        expect(h.calls).toEqual(['GET']);
+    });
+
+    it('a failed renewal keeps the state it could read, and records the error', async () => {
+        /* Blanking it would hide a watch that is live but close to expiring —
+         * the one moment the card most needs to say something. */
+        const h = ensureWith({
+            GET: { status: 200, body: { connected: true, watching: true, needsRenewal: true, daysLeft: 1 } },
+            POST: { status: 502, body: { ok: false, error: 'Gmail refused the watch (HTTP 403)' } },
+        });
+        await h.run();
+        expect(h.state.watching).toBe(true);
+        expect(h.state.daysLeft).toBe(1);
+        expect(h.state.error).toContain('403');
+    });
+
+    it('an unreadable GET leaves no stale state behind', async () => {
+        const h = ensureWith({ GET: { status: 500, body: null } });
+        expect(await h.run()).toBe(null);
+        expect(h.state).toBe(null);
     });
 });
