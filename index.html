@@ -16186,8 +16186,34 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             triggerHaptic(type === 'error' ? 'error' : (type === 'success' ? 'success' : 'light'));
             const el = document.createElement('div');
             el.className = `notif ${type}`;
-            const icons = { success: '✅', error: '❌', info: 'ℹ️', warn: '⚠️' };
-            el.innerHTML = `<span class="notif-ico">${icons[type] || 'ℹ️'}</span><span>${msg}</span>`;
+            /* Built as NODES, never as markup.
+             *
+             * A toast message is DATA: a vendor name a model read off a
+             * photographed receipt, an account label the owner typed, a
+             * server's error string passed straight through. It used to be
+             * interpolated into `innerHTML`, so whatever those strings
+             * contained was parsed as part of the page. Two hundred and
+             * seventy-seven call sites, and not one of them escaped its
+             * message — because nothing about `notify(msg)` said it had to.
+             *
+             * Now the message goes in as a text node and cannot be anything
+             * else. The only markup left is the icon, and it is chosen from a
+             * fixed table by `type`, never built from `msg`. */
+            const ico = document.createElement('span');
+            ico.className = 'notif-ico';
+            const NOTIF_ICON = { success: 'checkCircle', error: 'x', info: 'info', warn: 'alert' };
+            try {
+                /* No emoji fallback. If the icon set has not loaded, the toast
+                 * goes out without its glyph — the border colour already says
+                 * success from error — rather than reintroducing the character
+                 * the icon system exists to remove. */
+                const n = window.WFIconNode ? window.WFIconNode(NOTIF_ICON[type] || 'info') : null;
+                if (n) ico.appendChild(n);
+            } catch (_) {}
+            const body = document.createElement('span');
+            body.textContent = String(msg == null ? '' : msg);
+            el.appendChild(ico);
+            el.appendChild(body);
             $('notifs').appendChild(el);
             requestAnimationFrame(() => el.classList.add('show'));
             setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 3600);
