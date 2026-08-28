@@ -1119,7 +1119,7 @@
                         card_last4: '', currency: 'LKR', statement_period: ''
                     };
                     if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
-                    if (typeof window.notify === 'function') window.notify('✅ Imported ' + _htx.length + ' transactions from your e-statement.', 'success');
+                    if (typeof window.notify === 'function') window.notify('Imported ' + _htx.length + ' transactions from your e-statement.', 'success');
                     window._showCCReviewModal(_parsedH, ccotBank || 'Bank Statement');
                     inputEl.value = '';
                     return;
@@ -1210,7 +1210,7 @@
                         // unconditionally before, including for statements the parser
                         // could not check at all.
                         if (typeof window.notify === 'function') {
-                            var _n = '✅ Read ' + _rows.length + ' transactions directly from the PDF';
+                            var _n = 'Read ' + _rows.length + ' transactions directly from the PDF';
                             if (_rc.ok === true) window.notify(_n + ' — every amount checks out against the statement\'s own balance.', 'success');
                             else if (_rc.ok === false) window.notify(_n + ', but they don\'t add up to the closing balance (off by ' + Math.abs(_rc.difference) + '). Please check the list before saving.', 'warn');
                             else window.notify(_n + '. This statement prints no running balance, so please confirm the amounts.', 'success');
@@ -1233,7 +1233,7 @@
                 window._showScanOverlay(isPdf ? 'Reading PDF…' : 'Reading Image…',
                     'Optimising ' + sizeMB + 'MB ' + (isPdf ? 'PDF' : 'photo'), 8, isPdf ? 'fileText' : 'camera');
             else if (typeof window.notify === 'function')
-                window.notify(isPdf ? '📄 Processing PDF…' : '📸 Reading image…', 'info');
+                window.notify(isPdf ? 'Processing PDF…' : 'Reading image…', 'info');
 
             // ── v7.5.1 — honour the user's Scanner Settings (TF.js +
             //   scan mode) when extracting the image. Previously every
@@ -1487,7 +1487,7 @@
 
                 if (!ccotTxns || ccotTxns.length === 0) {
                     if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
-                    var ccotFailMsg = '⚠️ AI could not find any transactions.';
+                    var ccotFailMsg = 'AI could not find any transactions.';
                     if (ccotLastErr && ccotLastErr.message) ccotFailMsg += ' (' + ccotLastErr.message + ')';
                     ccotFailMsg += ' Try a clearer, well-lit photo of the full statement.';
                     if (typeof window.notify === 'function') window.notify(ccotFailMsg, 'error');
@@ -1521,7 +1521,7 @@
 
                 if (!normalised.length) {
                     if (typeof window.notify === 'function')
-                        window.notify('⚠️ Found rows but none had valid amounts. Try a clearer photo.', 'warn');
+                        window.notify('Found rows but none had valid amounts. Try a clearer photo.', 'warn');
                     inputEl.value = '';
                     return;
                 }
@@ -1543,11 +1543,11 @@
                 var elapsedC = ((Date.now() - startTime) / 1000).toFixed(1);
                 var byType = normalised.reduce(function (acc, t) { acc[t.type] = (acc[t.type] || 0) + 1; return acc; }, {});
                 var summary = Object.keys(byType).map(function (k) {
-                    var label = k === 'cash_advance' ? '💵 cash' : (k === 'fuel' ? '⛽ fuel' : (k === 'service_fee' ? '🧾 fees' : '🛒 purchases'));
+                    var label = k === 'cash_advance' ? 'cash' : (k === 'fuel' ? 'fuel' : (k === 'service_fee' ? 'fees' : 'purchases'));
                     return byType[k] + ' ' + label;
                 }).join(' · ');
                 if (typeof window.notify === 'function')
-                    window.notify('💳 ' + (ccotBank || 'CC') + ' · ' + normalised.length +
+                    window.notify((ccotBank || 'CC') + ' · ' + normalised.length +
                         ' transaction' + (normalised.length > 1 ? 's' : '') + ' · ' +
                         summary + ' · ' + elapsedC + 's', 'success');
                 console.group('[' + V + '] CCOT multi-transaction scan complete');
@@ -1729,7 +1729,7 @@
             // ---- STEP G: final result or failure ----
             if (!scanData || !scanData.result || !scanData.result.amount) {
                 if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
-                var failMsg = '⚠️ Could not extract the amount. ';
+                var failMsg = 'Could not extract the amount. ';
                 if (lastErr && lastErr.message) failMsg += '(' + lastErr.message + ') ';
                 failMsg += 'Try a clearer photo or PDF.';
                 if (typeof window.notify === 'function') window.notify(failMsg, 'error');
@@ -1764,19 +1764,19 @@
                 var elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
                 var conf = Math.round((scanData.confidence && scanData.confidence.overall || 0) * 100);
                 var engineCount = (scanData.engines || []).filter(function (en) { return en.success; }).length;
-                var label = isSubscription ? '📋 ' : (isCCOT ? '💳 ' : '✅ ');
+                var label = isSubscription ? 'Subscription · ' : (isCCOT ? 'Card · ' : '');
                 var vendorOrBank = isCCOT
                     ? (ccotBank || scanData.result.vendor || 'CC')
                     : (scanData.result.vendor || 'Bill');
                 var msg = label + vendorOrBank +
                     ' · LKR ' + ((typeof window.fmtN === 'function') ? window.fmtN(scanData.result.amount) : scanData.result.amount);
                 if (isSubscription && scanData.result._matchedSub)
-                    msg += '\n🔁 Found existing subscription — updates ' + scanData.result._matchedSub.name;
-                else if (priorMatch) msg += '\n🔁 Recurring bill — same as ' + priorMatch.month;
-                if (isPdf) msg += '\n📄 PDF · ' + pageCount + ' page' + (pageCount > 1 ? 's' : '') + ' scanned';
-                msg += '\n⚙️ ' + engineCount + ' engine' + (engineCount > 1 ? 's' : '') + ' · ' + conf + '% · ' + elapsed + 's';
+                    msg += '\nFound existing subscription — updates ' + scanData.result._matchedSub.name;
+                else if (priorMatch) msg += '\nRecurring bill — same as ' + priorMatch.month;
+                if (isPdf) msg += '\nPDF · ' + pageCount + ' page' + (pageCount > 1 ? 's' : '') + ' scanned';
+                msg += '\n' + engineCount + ' engine' + (engineCount > 1 ? 's' : '') + ' · ' + conf + '% · ' + elapsed + 's';
                 if (typeof window.notify === 'function') {
-                    var kind = (conf >= 75) ? 'success' : (conf >= 50 ? 'info' : 'warning');
+                    var kind = (conf >= 75) ? 'success' : (conf >= 50 ? 'info' : 'warn');
                     window.notify(msg, kind);
                 }
                 console.group('[' + V + '] Scan complete (' + (isSubscription ? 'subscription' : 'expense') + ')');
@@ -1787,13 +1787,13 @@
                 console.groupEnd();
             } else {
                 if (typeof window.notify === 'function')
-                    window.notify('⚠️ Could not fill form. Please enter manually.', 'warning');
+                    window.notify('Could not fill form. Please enter manually.', 'warn');
             }
         } catch (err) {
             console.error('[' + V + '] scan failed:', err);
             if (typeof window._hideScanOverlay === 'function') window._hideScanOverlay();
             if (typeof window.notify === 'function')
-                window.notify('⚠️ Scan failed: ' + (err.message || 'unknown error'), 'error');
+                window.notify('Scan failed: ' + (err.message || 'unknown error'), 'error');
             if (typeof window.triggerHaptic === 'function') window.triggerHaptic('error');
         } finally {
             if (inputEl) inputEl.value = '';

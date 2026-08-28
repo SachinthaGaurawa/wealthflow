@@ -48,20 +48,66 @@ const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{23E9}-\u
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const html = read('index.html');
 
+/* ---------------------------------------------------------------------------
+ * SOME OF THESE FUNCTIONS DO NOT RUN.
+ *
+ * index.html declares its functions at global scope, so a later file doing
+ * `window.handleAIScan = handleAIScanV4` does not merely add an alias — at
+ * global scope the declaration IS the window property, so the assignment
+ * replaces the binding index.html's own call sites resolve. The host copy
+ * stops running the moment that file loads.
+ *
+ * This cost two rounds in one change. The receipt-scanner migration cleaned
+ * every glyph out of index.html's handleAIScan and _showScanOverlay, and the
+ * count went down, and the tests went green, and the user saw exactly what
+ * they saw before — because wealthflow-ai-v4.js replaces both.
+ *
+ * So a hard-zero entry names the symbol, and the lookup follows the override
+ * to wherever the code that actually runs lives. The map is derived, not
+ * hand-written: anything matching `window.X = Y;` in a sibling file counts,
+ * so a new override starts being followed the day it is added.
+ * ------------------------------------------------------------------------ */
+const SIBLINGS = fs.readdirSync(ROOT).filter((f) => /^wealthflow-.*\.js$/.test(f));
+
+/** name -> { file, replacement } for every host function a sibling replaces. */
+function overrideMap() {
+    const out = {};
+    for (const f of SIBLINGS) {
+        let src;
+        try { src = read(f); } catch (_) { continue; }
+        for (const m of src.matchAll(/window\.([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*;/g)) {
+            if (m[1] !== m[2] && new RegExp(`function ${m[2]}\\s*\\(`).test(src)) {
+                out[m[1]] = { file: f, replacement: m[2] };
+            }
+        }
+    }
+    return out;
+}
+const OVERRIDES = overrideMap();
+
 function countIn(src) {
     return (String(src).match(EMOJI) || []).length;
 }
 
-/** The body of a top-level `function NAME(` in index.html. */
-function fn(name) {
-    const at = html.search(new RegExp(`\\n\\s*(?:async\\s+)?function ${name}\\s*\\(`));
+/** The body of a top-level `function NAME(` in a given source. */
+function bodyIn(src, name) {
+    const at = src.search(new RegExp(`\\n\\s*(?:async\\s+)?function ${name}\\s*\\(`));
     if (at < 0) return '';
     let depth = 0;
-    for (let j = html.indexOf('{', at); j < html.length; j += 1) {
-        if (html[j] === '{') depth += 1;
-        else if (html[j] === '}') { depth -= 1; if (depth === 0) return html.slice(at, j + 1); }
+    for (let j = src.indexOf('{', at); j < src.length; j += 1) {
+        if (src[j] === '{') depth += 1;
+        else if (src[j] === '}') { depth -= 1; if (depth === 0) return src.slice(at, j + 1); }
     }
-    return html.slice(at);
+    return src.slice(at);
+}
+
+/** The body of `function NAME(` in index.html. */
+function fn(name) { return bodyIn(html, name); }
+
+/** The body of whatever actually runs when NAME is called. */
+function liveFn(name) {
+    const o = OVERRIDES[name];
+    return o ? bodyIn(read(o.file), o.replacement) : fn(name);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -79,10 +125,25 @@ describe('the screens built under this rule carry no emoji at all', () => {
         ['_populateExpenseFromScan', 'the scanned-expense form filler'],
         ['notify', 'the toast every screen speaks through'],
     ])('%s (%s)', (name) => {
-        const body = fn(name);
-        expect(body, `${name} not found — this guard would pass vacuously`).toBeTruthy();
-        const found = body.match(EMOJI) || [];
-        expect(found, `emoji in ${name}: ${found.join(' ')}`).toEqual([]);
+        /* Both copies. The host declaration must stay clean because it is the
+         * fallback if the sibling file fails to load, and the override must be
+         * clean because it is what normally runs. Checking only one of them is
+         * how this migration passed while changing nothing on screen. */
+        for (const [body, where] of [[fn(name), name], [liveFn(name), OVERRIDES[name]
+            ? `${OVERRIDES[name].replacement} in ${OVERRIDES[name].file}` : name]]) {
+            expect(body, `${where} not found — this guard would pass vacuously`).toBeTruthy();
+            const found = body.match(EMOJI) || [];
+            expect(found, `emoji in ${where}: ${found.join(' ')}`).toEqual([]);
+        }
+    });
+
+    it('the override map is really finding overrides', () => {
+        /* If the derivation broke, every liveFn() above would quietly fall back
+         * to the host copy and the guard would go back to proving nothing. */
+        expect(Object.keys(OVERRIDES).length, 'no overrides detected at all').toBeGreaterThanOrEqual(5);
+        expect(OVERRIDES.handleAIScan, 'handleAIScan is replaced and this must know it').toBeTruthy();
+        expect(OVERRIDES.handleAIScan.replacement).toBe('handleAIScanV4');
+        expect(OVERRIDES._showScanOverlay.replacement).toBe('_showScanOverlayV5');
     });
 
     it('uses the icon system rather than a glyph of its own', () => {
@@ -153,9 +214,10 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * 1311 -> 1305: notify()'s icon table. Only six characters, but they were the
  * four glyphs printed on EVERY toast in the app — see test/notify_sink_test.js
  * for the larger reason that function was rewritten.
- * 1305 -> 1250: the RECEIPT SCANNER. handleAIScan went 27 -> 0, the two helpers
- * it drives went with it, and then the progress overlay took another 21 out of
- * wealthflow-ai-v4.js. See test/scan_overlay_test.js: three sinks on one screen
+ * 1305 -> 1223: the RECEIPT SCANNER, in both of its copies. index.html lost 34
+ * and wealthflow-ai-v4.js 48 — because the handler and the overlay index.html
+ * declares are BOTH replaced at load by that file, so cleaning only the host
+ * would have changed the count and nothing on the screen. See test/scan_overlay_test.js: three sinks on one screen
  * needing three different answers, one of which changes stored data — and a
  * fourth section on the discovery that the overlay index.html declares is not
  * the one the user sees.
@@ -164,7 +226,7 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * single function at 68, _showShareableUrlDialog the next at 43, then
  * handleAIScan at 27; renderDebtDemolisher (25) and appendAIMessage (21) are
  * what remain of the large ones. */
-const EMOJI_CEILING = 1250;
+const EMOJI_CEILING = 1223;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {

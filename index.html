@@ -16227,6 +16227,17 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             // Defensive de-dupe — never stack the identical toast in a tight window.
             // A single misbehaving loop must never flood the screen (belt-and-braces).
             try { const _n = Date.now(); if (msg === _wfLastNotifMsg && (_n - _wfLastNotifTs) < 2500) return; _wfLastNotifMsg = msg; _wfLastNotifTs = _n; } catch (_) {}
+            /* `warning` is what eleven call sites across this app actually
+             * pass, and it was never a type this function knew: the class
+             * became `notif warning`, which no rule in the stylesheet matches,
+             * so the toast lost its coloured border and fell through to the
+             * neutral info icon. Every one of those was written meaning to
+             * warn, and every one of them looked like a note.
+             *
+             * Normalised here rather than at eleven call sites, for the same
+             * reason the message is escaped here: the twelfth caller will
+             * write `warning` too. */
+            type = (type === 'warning') ? 'warn' : type;
             triggerHaptic(type === 'error' ? 'error' : (type === 'success' ? 'success' : 'light'));
             const el = document.createElement('div');
             el.className = `notif ${type}`;
