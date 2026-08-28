@@ -195,6 +195,30 @@ describe('the toast icon', () => {
         }
     });
 
+    it('names the SAME icons the runtime already substituted for those emoji', () => {
+        /* This is the fact that makes the swap invisible, and it is worth
+         * pinning because it is easy to get wrong in both directions.
+         *
+         * WFIconStripEmoji's observer walks rendered text and replaces known
+         * glyphs with icon nodes. Its table already sent the four toast emoji
+         * to these four icons, so the shape drawn on screen does not change —
+         * only when it is drawn (immediately, rather than after that observer's
+         * 120ms debounce) and where it comes from.
+         *
+         * Measured on main at 2a69b32 by driving the real app: every toast
+         * already rendered `wfi-checkCircle` / `wfi-x` / `wfi-info` /
+         * `wfi-alert`, each with stroke rgb(226,232,240).
+         *
+         * If someone later re-points either table, the two disagree and the
+         * toast starts drawing something the rest of the app does not. */
+        const legacy = { '\u2705': 'checkCircle', '\u274C': 'x', '\u2139\uFE0F': 'info', '\u26A0\uFE0F': 'alert' };
+        for (const [glyph, icon] of Object.entries(legacy)) {
+            const pair = new RegExp(`'${glyph.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&')}'\\s*:\\s*'${icon}'`);
+            expect(pair.test(ICONS), `the legacy table no longer maps that glyph to "${icon}"`).toBe(true);
+            expect(SRC, `notify() no longer names "${icon}"`).toContain(`'${icon}'`);
+        }
+    });
+
     it('carries no emoji, and does not fall back to one', () => {
         /* The owner's rule is icons, never emoji. The previous table was
          * ✅ ❌ ℹ️ ⚠️ with ℹ️ as the default — four glyphs on every screen in

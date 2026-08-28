@@ -16213,11 +16213,20 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             /* A toast says what KIND of thing happened through three channels,
              * so that losing any one of them still leaves the message legible:
              * the coloured left border, the icon (tinted to match that border
-             * by .notif.<type> .notif-ico), and the announcement below. The
-             * emoji these replace carried their colour built in — the tick was
-             * green, the cross red — while an SVG inherits `currentColor`, so
-             * the tint has to be given back deliberately or the change would
-             * cost a real signal rather than only changing how it is drawn. */
+             * by .notif.<type> .notif-ico), and the announcement below.
+             *
+             * WHAT THE ICON CHANGE IS AND IS NOT. The emoji table this replaces
+             * never reached the screen as emoji: WFIconStripEmoji's observer in
+             * wealthflow-icons.js already mapped those four glyphs to these four
+             * icons, so the drawn shape is unchanged. What changes is that it is
+             * drawn immediately instead of after that observer's 120ms debounce,
+             * and that it is no longer sourced from a character.
+             *
+             * The tint is therefore NEW, not a regression being repaired. Those
+             * substituted SVGs inherited `currentColor` — body text, identically
+             * grey for all four types — so a success toast and an error toast
+             * were told apart by a 3px stripe alone. Measured on main before
+             * this change: rgb(226,232,240) for every type. */
             el.setAttribute('role', type === 'error' ? 'alert' : 'status');
             el.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
 
