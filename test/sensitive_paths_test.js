@@ -520,3 +520,134 @@ describe('the regexes are valid and were really found', () => {
         expect(() => matches(AUTO_SAFE, 'anything.js')).not.toThrow();
     });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE FOURTH LIST — and the drift it was already carrying
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * fuzz-gate.yml decided "is this a critical path?" with its own inline grep,
+ * and it had ALREADY drifted from the rego it exists to serve: the rego counts
+ * firestore.indexes.json as sensitive, and the workflow's pattern did not
+ * mention it. So a PR touching that file was denied by RULE 1 for want of
+ * `fuzz-passed`, while the job that applies that label never ran on it —
+ * blocked with no way to satisfy the rule.
+ *
+ * Both workflows now read policy/critical-paths.regex, and this pins it to the
+ * rego so the drift cannot come back.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the critical-path pattern file agrees with the rego', () => {
+    const REGO = fs.readFileSync(path.join(ROOT, 'policy/wealthflow.rego'), 'utf8');
+    const RAW = fs.readFileSync(path.join(ROOT, 'policy/critical-paths.regex'), 'utf8');
+
+    /** The file as the workflows consume it: comments and blank lines stripped. */
+    const patterns = RAW.split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('#'));
+
+    const exactSet = (REGO.match(/sensitive_exact\s*:=\s*\{([^}]*)\}/) || [, ''])[1]
+        .split(',').map((x) => x.trim().replace(/^"|"$/g, '')).filter(Boolean);
+    const substrList = (REGO.match(/sensitive_substr\s*:=\s*\[([^\]]*)\]/) || [, ''])[1]
+        .split(',').map((x) => x.trim().replace(/^"|"$/g, '')).filter(Boolean);
+
+    /** grep -Ei -f semantics: any line matching, case-insensitively. */
+    const fileMatches = (f) => patterns.some((p) => new RegExp(p, 'i').test(f));
+
+    it('parsed real values out of both, rather than two empty lists', () => {
+        expect(patterns.length).toBeGreaterThan(5);
+        expect(exactSet.length).toBeGreaterThan(0);
+        expect(substrList.length).toBeGreaterThan(0);
+    });
+
+    it.each(exactSet.map((f) => [f]))('matches the rego-exact path %s', (f) => {
+        expect(fileMatches(f), `${f} is sensitive to the rego but the workflows would not detect it`).toBe(true);
+    });
+
+    it.each(substrList.map((p) => [p]))('matches a path containing the rego substring %s', (p) => {
+        expect(fileMatches(`some/path/${p}-thing.js`)).toBe(true);
+        expect(fileMatches(`SOME/PATH/${p.toUpperCase()}-THING.JS`), 'the rego lower-cases, so the grep must be -i').toBe(true);
+    });
+
+    it('THE DRIFT: firestore.indexes.json is covered', () => {
+        /* The exact file the inline pattern omitted. */
+        expect(fileMatches('firestore.indexes.json')).toBe(true);
+    });
+
+    it('does not match an ordinary file', () => {
+        for (const f of ['index.html', 'README.md', 'test/foo_test.js', 'wealthflow-sweep-ledger.js']) {
+            expect(fileMatches(f), f).toBe(false);
+        }
+    });
+});
+
+describe('the workflows use that file instead of their own copy', () => {
+    const fuzz = fs.readFileSync(path.join(ROOT, '.github/workflows/fuzz-gate.yml'), 'utf8');
+    const policy = fs.readFileSync(path.join(ROOT, '.github/workflows/policy-gate.yml'), 'utf8');
+
+    it.each([['fuzz-gate.yml', () => fuzz], ['policy-gate.yml', () => policy]])('%s reads policy/critical-paths.regex', (_n, get) => {
+        expect(get()).toContain('policy/critical-paths.regex');
+    });
+
+    it.each([['fuzz-gate.yml', () => fuzz], ['policy-gate.yml', () => policy]])('%s no longer inlines the old pattern', (_n, get) => {
+        /* The literal that had drifted. Its return would silently reintroduce
+         * a second definition of the same security judgement. */
+        expect(get()).not.toContain("firestore\\.rules|firebase\\.json|auth|oauth");
+    });
+
+    it('both match case-insensitively, as the rego does', () => {
+        for (const src of [fuzz, policy]) {
+            expect(src).toMatch(/grep -E[a-z]*i[a-z]* -f|grep -[a-z]*i[a-z]*E -f/);
+        }
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * RULE 1's INPUT: a check run, not a label
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the fuzz verdict cannot be lost or go stale', () => {
+    const policy = fs.readFileSync(path.join(ROOT, '.github/workflows/policy-gate.yml'), 'utf8');
+    const fuzz = fs.readFileSync(path.join(ROOT, '.github/workflows/fuzz-gate.yml'), 'utf8');
+
+    it('fuzz-gate still applies the label with GITHUB_TOKEN — which is why this is needed', () => {
+        /* Not a complaint about fuzz-gate: the label is useful to a human
+         * reading the PR. It simply cannot be the channel, because GitHub does
+         * not create workflow runs from GITHUB_TOKEN actions. */
+        expect(fuzz).toContain('gh pr edit "$PR" --add-label fuzz-passed');
+        expect(fuzz).toContain('GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}');
+    });
+
+    it('policy-gate resolves the verdict from the check run for the head sha', () => {
+        expect(policy).toContain('commits/$SHA/check-runs');
+        expect(policy).toContain('.check_runs[] | select(.name == "fuzz")');
+        expect(policy).toContain('SHA: ${{ github.event.pull_request.head.sha }}');
+    });
+
+    it('a label pasted on by hand does not satisfy RULE 1', () => {
+        /* The rego's own words: "a label that only the fuzz job can
+         * legitimately apply". The build step drops any incoming fuzz-passed
+         * and re-adds it only when the check says so. */
+        expect(policy).toContain('labels.indexOf("fuzz-passed")');
+        expect(policy).toContain('labels.splice(i, 1)');
+        expect(policy).toContain('if (process.env.FUZZ_VERIFIED === "yes") labels.push("fuzz-passed")');
+    });
+
+    it('fails closed on every path that is not a concluded success', () => {
+        const step = policy.slice(policy.indexOf("Resolve the fuzz gate's verdict"), policy.indexOf('Build PR input for policy'));
+        expect(step).toContain('echo "passed=no" >> "$GITHUB_OUTPUT"');
+        // and the only place it becomes yes
+        expect((step.match(/passed=yes/g) || []).length).toBe(1);
+        expect(step).toMatch(/if \[ "\$CONC" = "success" \]/);
+    });
+
+    it('is bounded, so a fuzz job that never finishes cannot hang the gate', () => {
+        const step = policy.slice(policy.indexOf("Resolve the fuzz gate's verdict"), policy.indexOf('Build PR input for policy'));
+        expect(step).toMatch(/seq 1 \d+/);
+        expect(step).toContain('did not conclude');
+    });
+
+    it('does not ask the question at all when no critical path changed', () => {
+        /* Otherwise every ordinary PR would wait six minutes for an answer that
+         * cannot matter. */
+        const step = policy.slice(policy.indexOf("Resolve the fuzz gate's verdict"), policy.indexOf('Build PR input for policy'));
+        expect(step).toContain('RULE 1 does not apply');
+    });
+});

@@ -102,7 +102,13 @@ describe('user text interpolated into markup is escaped', () => {
     const NOT_MARKUP = {
         'cause.label': 'the body of a system Notification, which is plain text — '
             + 'escaping would show a payee as &amp; rather than &',
-        'e.cat': 'a CSV cell, where an HTML entity would be written into the spreadsheet',
+        /* 'e.cat' was here, with the reason "a CSV cell, where an HTML entity
+         * would be written into the spreadsheet". That reason was exactly
+         * right — and the other three fields on the same three lines were being
+         * run through _wfEsc anyway, so the diagnosis was made and the fix went
+         * one field deep. The whole export now goes through _csvCell, which
+         * quotes to RFC 4180 instead of escaping to HTML, so there is nothing
+         * left to exempt. See test/csv_export_test.js. */
         'c.product': 'a plain-text summary assembled for the assistant, not markup',
     };
 

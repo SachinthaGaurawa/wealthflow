@@ -1,0 +1,26 @@
+# The critical paths, as ONE definition.
+#
+# grep -Ei -f reads this file as a list of extended regular expressions, one per
+# line, matched case-insensitively against the changed-file list — which is
+# exactly how policy/wealthflow.rego classifies them (sensitive_exact plus
+# sensitive_substr, compared against lower(f)).
+#
+# WHY IT IS A FILE. The pattern used to be inlined in fuzz-gate.yml AND listed
+# in the rego, and the two copies had already drifted: the rego counted
+# firestore.indexes.json as critical, the workflow's grep did not. A PR touching
+# that file was therefore denied for want of `fuzz-passed` while the job that
+# applies that label never even ran on it — blocked with no way to satisfy the
+# rule. Two copies of a security classifier is one more than can be kept in
+# step, and test/policy_gate_test.js now asserts this file and the rego agree.
+#
+# Lines beginning with # are comments and are stripped before use.
+firestore\.rules
+firebase\.json
+firestore\.indexes\.json
+auth
+oauth
+crypto
+fifo-reconcile
+allocator
+send-otp
+verify-otp
