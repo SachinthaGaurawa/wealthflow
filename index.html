@@ -21332,10 +21332,17 @@ table.amort tbody tr { page-break-inside: avoid; }
              * looking through the code. */
             let banner = '';
             if (connected === false) {
+                /* Name the missing piece. "Not connected" without a cause is the
+                 * sentence that sent the owner reading the source to find out
+                 * why, and the server already knows which variables are unset. */
+                const missing = (_mailStatus && Array.isArray(_mailStatus.missing)) ? _mailStatus.missing : [];
                 banner = `<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text2);line-height:1.6;">
-                    <b>Mailbox not connected.</b> Statements will not arrive on their own until Gmail
-                    push is set up for this account. Everything else here — parsing, unlocking,
-                    categorising — already works on files you upload by hand.
+                    <b>Mailbox not connected.</b> Statements will not arrive on their own until you
+                    connect Gmail. Everything else here — parsing, unlocking, categorising — already
+                    works on files you upload by hand.
+                    ${missing.length ? `<div style="margin-top:8px;">Also still unset on the server:
+                        <b>${missing.map(_wfEsc).join('</b>, <b>')}</b>. Without these a push cannot be
+                        verified even once a token is saved.</div>` : ''}
                 </div>`;
             } else if (connected === null) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Checking connection…</div>`;
@@ -21354,6 +21361,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 ${window.WFVault && window.WFVault.isUnlocked() ? ' · vault unlocked' : window.WFVault && window.WFVault.isSet() ? ' · vault locked' : ' · no passwords saved'}
                             </div>
                         </div>
+                        <button class="btn btn-secondary btn-sm" id="_ms_link" style="margin-right:8px;">
+                            ${(window.WFIcon ? WFIcon('lock') : '')} ${connected === true ? 'Mailbox' : 'Connect Gmail'}
+                        </button>
                         <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' ? 'disabled' : ''}>
                             ${st.stage === 'running'
                                 ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
@@ -21366,20 +21376,58 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>`;
             const b = host.querySelector('#_ms_run');
             if (b) b.onclick = () => { try { triggerHaptic('light'); } catch (_) {} runMailSync(); };
+            const l = host.querySelector('#_ms_link');
+            if (l) l.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openGmailLink(); };
         }
         window.renderMailSync = renderMailSync;
 
-        /** Is there a connected mailbox for this user? Read-only, cheap. */
+        /* ── ASKING THE SERVER, BECAUSE THE CLIENT CANNOT SEE wf-mail ─────────
+         *
+         * The first version of this read wf-mail directly from the browser. It
+         * could never work: firestore.rules ends with
+         *
+         *     match /{document=**} { allow read, write: if false; }
+         *
+         * and has no entry for wf-mail, so that branch is sealed to every
+         * client — for READS as well as writes. Every call was denied, caught by
+         * the catch below, and reported as "not connected". The card would have
+         * said that with a mailbox perfectly connected, because it could never
+         * see the answer.
+         *
+         * /api/gmail-link reaches Firestore with the Admin SDK, which bypasses
+         * rules, and returns only what the page may know — never the token.
+         */
+        let _mailStatus = null;
+
+        async function _gmailLink(method, body, query) {
+            if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
+            let token;
+            try { token = await currentUser.getIdToken(); } catch (_) { return null; }
+            const r = await fetch('/api/gmail-link' + (query || ''), {
+                method,
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                    ...(body ? { 'Content-Type': 'application/json' } : {}),
+                },
+                ...(body ? { body: JSON.stringify(body) } : {}),
+            });
+            let out = null;
+            try { out = await r.json(); } catch (_) { out = null; }
+            return { status: r.status, body: out };
+        }
+
+        /** Is there a connected mailbox for this user? */
         async function _mailConnected() {
             try {
-                if (!currentUser || !currentUser.email || !window.firebase) return false;
-                const snap = await firebase.firestore()
-                    .collection(MAIL_ROOT).doc(_mailUserKey(currentUser.email)).get();
-                /* `refresh_token` is what gmail-hook.js requires before it will
-                 * do anything at all, so its presence is the honest test of
-                 * "connected" — not merely that a document exists. */
-                return !!(snap.exists && snap.data() && snap.data().refresh_token);
+                const r = await _gmailLink('GET');
+                if (!r || !r.body) { _mailStatus = null; return false; }
+                _mailStatus = r.body;
+                /* `refresh_token` is what gmail-hook.js requires before it will do
+                 * anything, and the endpoint reports its presence as `connected`
+                 * without ever sending the value. */
+                return r.body.connected === true;
             } catch (_) {
+                _mailStatus = null;
                 return false;
             }
         }
@@ -21408,12 +21456,17 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             if (!window.WFMailIntake) return finish('Statement intake module is not loaded.');
 
+            /* Through the server, not Firestore. wf-mail is sealed to clients
+             * by firestore.rules, so the direct query this replaced was denied
+             * every time — the sync could never have fetched anything. */
             let docs = [];
             try {
-                const snap = await firebase.firestore()
-                    .collection(MAIL_ROOT).doc(_mailUserKey(currentUser.email))
-                    .collection('items').limit(window.WFMailIntake.BATCH || 25).get();
-                snap.forEach(d => docs.push({ id: d.id, manifest: d.data(), ref: d.ref }));
+                const r = await _gmailLink('GET', null, '?items=1');
+                if (!r || !r.body || r.body.ok !== true) {
+                    return finish('Could not read the mailbox store'
+                        + (r && r.body && r.body.error ? ': ' + r.body.error : '.'));
+                }
+                docs = Array.isArray(r.body.items) ? r.body.items : [];
             } catch (e) {
                 return finish('Could not read the mailbox store: ' + (e && e.message || 'unknown error'));
             }
@@ -21441,9 +21494,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const d = docs[i];
                 try {
                     set(i, { stage: 'assembling' });
-                    const parts = [];
-                    const ps = await d.ref.collection('parts').get();
-                    ps.forEach(p => parts.push(p.data()));
+                    // The parts arrive with the manifest; the server reads the
+                    // subcollection, because the page cannot.
+                    const parts = Array.isArray(d.parts) ? d.parts : [];
 
                     /* The stages below are observed, not announced. intakeStatement
                      * owns the pipeline — assembling, unlocking, parsing — and the
@@ -21510,6 +21563,121 @@ table.amort tbody tr { page-break-inside: avoid; }
             finish(null);
         }
         window.runMailSync = runMailSync;
+
+        /* ── CONNECTING THE MAILBOX ────────────────────────────────────────────
+         *
+         * The refresh token is pasted here and sent to /api/gmail-link, which
+         * writes it to wf-mail/{userKey} with the Admin SDK. The page never
+         * touches Firestore for this: that branch is sealed to clients, which is
+         * correct for a credential that can read an entire mailbox.
+         *
+         * WHAT THIS SCREEN IS HONEST ABOUT
+         *
+         * It does not pretend the token can be obtained here. Getting one needs
+         * a Google Cloud project, an OAuth client and a consent flow, none of
+         * which this app can do on the owner's behalf. So it says what is needed
+         * and where it comes from, rather than showing a "Connect" button that
+         * opens nothing.
+         */
+        async function openGmailLink() {
+            if (!currentUser) { notify('Sign in first', 'error'); return; }
+
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.innerHTML = `
+                <div class="md" style="max-width:560px;">
+                    <div class="md-hdr">
+                        <div class="md-title">${(window.WFIcon ? WFIcon('cloudDownload') : '')} Connect Gmail</div>
+                        <button class="md-x" aria-label="Close" id="_gl_close"><i data-wfi="x"></i></button>
+                    </div>
+                    <div id="_gl_body" style="padding:4px 0 8px;"></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_gl_close').onclick = close;
+            const body = overlay.querySelector('#_gl_body');
+            body.innerHTML = `<div style="font-size:12.5px;color:var(--text3);">Checking…</div>`;
+
+            const r = await _gmailLink('GET');
+            const st = (r && r.body) || {};
+            const missing = Array.isArray(st.missing) ? st.missing : [];
+
+            const draw = () => {
+                body.innerHTML = `
+                    ${st.connected ? `
+                        <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.28);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:14px;">
+                            <b style="color:var(--green);">Connected</b> as ${_wfEsc(st.email || '')}.
+                            ${st.lastPushMs
+                                ? `Gmail last delivered something on ${_wfEsc(new Date(st.lastPushMs).toLocaleString())}.`
+                                : 'Google has not pushed anything yet — that is expected until a matching email arrives.'}
+                        </div>` : ''}
+                    <div style="font-size:12.5px;color:var(--text2);line-height:1.65;margin-bottom:12px;">
+                        Paste the <b>refresh token</b> for the Google account whose statements you want
+                        read. It is stored on the server for this account only, is never sent back to
+                        this page, and can be revoked at any time from your Google account.
+                    </div>
+                    <div style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:14px;">
+                        It is the <code>refresh_token</code> value alone — not the access token
+                        (<code>ya29.…</code>), not the authorization code (<code>4/…</code>), not the
+                        client secret, and not the whole JSON block.
+                    </div>
+                    ${missing.length ? `
+                        <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);border-radius:10px;padding:11px 13px;font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px;">
+                            <b>Still unset on the server:</b> ${missing.map(_wfEsc).join(', ')}.
+                            A token saved now will be stored, but a push cannot be verified until these exist.
+                        </div>` : ''}
+                    <div class="fg">
+                        <input class="fi" id="_gl_tok" type="password" autocomplete="off" spellcheck="false"
+                            placeholder="1//0g…" style="width:100%;font-family:var(--mono);">
+                    </div>
+                    <div id="_gl_err" style="color:var(--red);font-size:12px;min-height:18px;"></div>
+                    <div class="md-ftr">
+                        ${st.connected ? '<button class="btn btn-ghost" id="_gl_unlink" style="color:var(--red);">Disconnect</button>' : '<span></span>'}
+                        <button class="btn btn-primary" id="_gl_save">${(window.WFIcon ? WFIcon('lock') : '')} Save token</button>
+                    </div>`;
+
+                body.querySelector('#_gl_save').onclick = async () => {
+                    const el = body.querySelector('#_gl_tok');
+                    const err = body.querySelector('#_gl_err');
+                    const v = el.value;
+                    if (!v || !v.trim()) { err.textContent = 'Paste the refresh token first'; return; }
+                    err.textContent = '';
+                    const res = await _gmailLink('POST', { refresh_token: v.trim() });
+                    if (!res || !res.body || res.body.ok !== true) {
+                        // The server's own message names WHICH mistake was made.
+                        err.textContent = (res && res.body && res.body.error) || 'Could not save';
+                        return;
+                    }
+                    try { triggerHaptic('success'); } catch (_) {}
+                    notify('Gmail connected', 'success');
+                    el.value = '';
+                    close();
+                    _mailSyncState.connected = true;
+                    try { renderMailSync(); } catch (_) {}
+                };
+
+                const un = body.querySelector('#_gl_unlink');
+                if (un) un.onclick = () => {
+                    showConfirm('trash', 'Disconnect this mailbox?',
+                        'The stored token is removed and statements stop arriving. Anything already filed stays.',
+                        'btn-danger', 'Disconnect', async () => {
+                            const res = await _gmailLink('DELETE');
+                            if (!res || !res.body || res.body.ok !== true) { notify('Could not disconnect', 'error'); return; }
+                            notify('Mailbox disconnected', 'info');
+                            close();
+                            _mailSyncState.connected = false;
+                            try { renderMailSync(); } catch (_) {}
+                        });
+                };
+            };
+            draw();
+            setTimeout(() => { const el = body.querySelector('#_gl_tok'); if (el) el.focus(); }, 250);
+        }
+        window.openGmailLink = openGmailLink;
 
         function renderSweeper() {
             const host = $('wfSweeper');
