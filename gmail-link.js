@@ -1,0 +1,172 @@
+/* =============================================================================
+ * gmail-link.js  →  /api/gmail-link
+ * -----------------------------------------------------------------------------
+ * The missing half of the mail pipeline: the endpoint that puts a refresh token
+ * where gmail-hook.js looks for it, and reports back whether one is there.
+ *
+ * GET   /api/gmail-link   → { connected, email?, linkedAt?, lastPushMs?, missing[] }
+ * POST  /api/gmail-link   { refresh_token }  → { ok, connected }
+ * DELETE /api/gmail-link  → { ok, connected: false }
+ *
+ * ── WHY AN ENDPOINT AND NOT A FIRESTORE WRITE FROM THE PAGE ─────────────────
+ *
+ * firestore.rules closes with `match /{document=**} { allow read, write: if false }`
+ * and has no entry for wf-mail. That branch is sealed to every client, which is
+ * right: it holds a credential that can read a person's whole mailbox.
+ *
+ * It also means the page cannot READ it — and the Statement Sync card shipped
+ * doing exactly that. Its connected-check queried wf-mail from the browser, so
+ * it was always denied, always caught, and always answered "not connected". It
+ * would have said that with a mailbox perfectly connected, because it could
+ * never see the answer. Both directions move here.
+ *
+ * The server reaches Firestore with the Admin SDK, which bypasses rules — the
+ * same mechanism inbox-store.mjs uses for wf-inbox, and the reason that branch
+ * can stay sealed while the pipeline works.
+ *
+ * ── WHICH MAKES identify() THE WHOLE BOUNDARY ───────────────────────────────
+ *
+ * Once rules are bypassed, Firestore no longer gets a vote: whatever document
+ * this file addresses is the document that gets read or written. The only thing
+ * standing between one account and another's Gmail credential is that the
+ * document key is derived from a VERIFIED email on a Firebase ID token, and
+ * from nothing the caller sends. That decision, and its refusals, live in
+ * gmail-link.mjs and are tested there.
+ *
+ * ENV: FIREBASE_SERVICE_ACCOUNT (Admin SDK), GOOGLE_OAUTH_CLIENT_ID,
+ *      GOOGLE_OAUTH_CLIENT_SECRET, GMAIL_PUBSUB_AUDIENCE.
+ * ===========================================================================*/
+
+import { getAdminDb, withDeadline } from './admin-db.mjs';
+import {
+    MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
+} from './gmail-link.mjs';
+
+function j(res, code, body) {
+    res.statusCode = code;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(JSON.stringify(body));
+}
+
+/** The Admin SDK's token verifier, or null when it is not configured. */
+async function verifier() {
+    try {
+        const mod = await import('firebase-admin');
+        const admin = mod.default || mod;
+        // getAdminDb() initialises the app; without it auth() has no credential.
+        const db = await getAdminDb();
+        if (!db) return null;
+        return (t) => admin.auth().verifyIdToken(t);
+    } catch (_) {
+        return null;
+    }
+}
+
+async function readBody(req) {
+    if (req.body && typeof req.body === 'object') return req.body;
+    try {
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        const raw = Buffer.concat(chunks).toString('utf8');
+        return raw ? JSON.parse(raw) : {};
+    } catch (_) { return {}; }
+}
+
+export default async function handler(req, res) {
+    const method = String(req.method || 'GET').toUpperCase();
+    if (!['GET', 'POST', 'DELETE'].includes(method)) {
+        return j(res, 405, { ok: false, error: 'method not allowed' });
+    }
+
+    const who = await identify(req, { verifyIdToken: await verifier() });
+    if (!who.ok) {
+        /* The reason is named but nothing about the stored state is revealed —
+         * a 403 that also said "and there is a mailbox linked here" would answer
+         * a question the caller has not earned. */
+        return j(res, who.status || 401, { ok: false, error: who.reason });
+    }
+
+    const db = await getAdminDb();
+    if (!db) return j(res, 503, { ok: false, error: 'database unavailable' });
+    const ref = db.collection(MAIL_ROOT).doc(who.userKey);
+
+    if (method === 'GET' && /[?&]items=1/.test(String(req.url || ''))) {
+        /* The pending statements, assembled parts and all.
+         *
+         * These go through the server for the same reason the status does: the
+         * items live under wf-mail, which is sealed to clients. What comes back
+         * is the CIPHERTEXT exactly as gmail-hook stored it — this endpoint
+         * holds no vault key and decrypts nothing. The PDF is opened on the
+         * device, with a password that never leaves it. */
+        try {
+            const snap = await withDeadline(ref.collection('items').limit(25).get(), 8000, 'wf-mail items');
+            const items = [];
+            for (const doc of (snap && snap.docs) || []) {
+                const parts = [];
+                try {
+                    const ps = await withDeadline(doc.ref.collection('parts').get(), 8000, 'parts');
+                    for (const p of (ps && ps.docs) || []) parts.push(p.data());
+                } catch (_) { /* an unreadable part shows up as a short assembly */ }
+                items.push({ id: doc.id, manifest: doc.data(), parts });
+            }
+            return j(res, 200, { ok: true, items });
+        } catch (_) {
+            return j(res, 503, { ok: false, error: 'items unreadable' });
+        }
+    }
+
+    if (method === 'GET') {
+        let snap;
+        try {
+            snap = await withDeadline(ref.get(), 8000, 'wf-mail');
+        } catch (_) {
+            return j(res, 503, { ok: false, error: 'state unreadable' });
+        }
+        return j(res, 200, {
+            ok: true,
+            ...statusOf(snap && snap.exists ? snap.data() : null),
+            /* Which environment variables are still unset. Reported so the card
+             * can name the missing piece instead of saying "not connected",
+             * which is the sentence that sent somebody reading the source. */
+            missing: missingConfig(process.env),
+        });
+    }
+
+    if (method === 'DELETE') {
+        try {
+            /* The token field only. The rest of the document — historyId above
+             * all — is the hook's record of what it has already ingested, and
+             * deleting that would make the next connection re-import the whole
+             * mailbox. Disconnecting is not the same as forgetting. */
+            const admin = (await import('firebase-admin')).default;
+            await withDeadline(ref.set({
+                refresh_token: admin.firestore.FieldValue.delete(),
+                unlinkedAt: Date.now(),
+            }, { merge: true }), 8000, 'wf-mail');
+        } catch (_) {
+            return j(res, 503, { ok: false, error: 'could not disconnect' });
+        }
+        return j(res, 200, { ok: true, connected: false });
+    }
+
+    const body = await readBody(req);
+    const token = body && body.refresh_token;
+    if (!looksLikeRefreshToken(token)) {
+        /* Says WHICH mistake without echoing the value back — an error that
+         * quotes the credential it rejected is how secrets reach logs. */
+        return j(res, 400, {
+            ok: false,
+            error: 'that does not look like a refresh token. It should be the '
+                 + 'refresh_token value alone — not an access token (ya29.…), not the '
+                 + 'authorization code (4/…), not the client secret, and not the whole JSON.',
+        });
+    }
+
+    try {
+        await withDeadline(ref.set(linkRecord(who.email, token), { merge: true }), 8000, 'wf-mail');
+    } catch (_) {
+        return j(res, 503, { ok: false, error: 'could not save' });
+    }
+    return j(res, 200, { ok: true, connected: true, email: who.email, missing: missingConfig(process.env) });
+}

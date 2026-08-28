@@ -24,6 +24,7 @@ rules_version = '2';
 //    s/{id}, shared_statements/{id}   public SHARE payloads       client SDK + REST
 //    shared_stmts/{id}, links/{id}    legacy public SHARE maps    read-only
 //    wf-inbox/**                      SMS bridge relay            Admin SDK only - SEALED
+//    wf-mail/**                       Gmail statement pipeline    Admin SDK only - SEALED
 //
 //  HOW SERVER ACCESS WORKS (this is what makes the sealed branches possible):
 //   • release-brain.js, approve-release.js, health.js and inbox-store.mjs use
@@ -212,6 +213,32 @@ service cloud.firestore {
     //  test/api_runtime_contract_test.js and the file is under the sensitive-path
     //  gate.
     match /wf-inbox/{deviceHash}/{document=**} {
+      allow read, write: if false;
+    }
+
+    // === 6b. wf-mail - Gmail statement pipeline ============================
+    //  SEALED, exactly like wf-inbox above, and for a stronger reason: this
+    //  branch holds a Google REFRESH TOKEN, a credential that can read the
+    //  owner's entire mailbox for as long as it is not revoked.
+    //
+    //  It was already sealed before this block existed, by the default-deny at
+    //  the end of this file. Writing it out changes no behaviour; it makes the
+    //  sealing DELIBERATE rather than incidental, so that adding a wf-mail rule
+    //  later is a decision somebody has to make on purpose.
+    //
+    //  IT ALSO SEALS READS, AND THAT MATTERED. The Statement Sync card first
+    //  shipped querying this branch straight from the browser to ask whether a
+    //  mailbox was connected. Every one of those calls was denied, caught, and
+    //  reported as "not connected" — the card would have said that with a
+    //  mailbox perfectly connected, because it could never see the answer.
+    //
+    //  Both directions now go through /api/gmail-link, which uses the Admin SDK
+    //  and bypasses these rules. That makes gmail-link.mjs's identify() the
+    //  whole boundary: the document key is derived from a VERIFIED email on a
+    //  Firebase ID token and from nothing the caller sends. Firestore no longer
+    //  gets a vote, which is why those checks are covered by
+    //  test/gmail_link_test.js and the file is under the sensitive-path gate.
+    match /wf-mail/{userKey}/{document=**} {
       allow read, write: if false;
     }
 

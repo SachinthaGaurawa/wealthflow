@@ -88,6 +88,12 @@ const HANDLERS = {
     // open; holds no vault key and never decrypts. Verifies the push's OIDC
     // token before doing anything, because this URL is public.
     'gmail-hook': () => import('../gmail-hook.js'),
+    // Connecting the mailbox: stores the refresh token gmail-hook.js reads from
+    // Firestore, and reports whether one is there. Both directions live on the
+    // server because firestore.rules seals wf-mail to every client — including
+    // for READS, which is why the Statement Sync card could never see its own
+    // state. Identity comes from a verified Firebase ID token and nothing else.
+    'gmail-link': () => import('../gmail-link.js'),
     'health': () => import('../health.js'),
     'inbox-ack': () => import('../inbox-ack.js'),
     'inbox-pull': () => import('../inbox-pull.js'),
