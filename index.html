@@ -10759,6 +10759,13 @@ YOUR PERSONALITY & CRITICAL RULES:
    • Match the user's effort: short messages get short replies, detailed messages earn detailed responses.
 
 3. FORMATTING FOR LONGER REPLIES — MAKE IT BEAUTIFUL & SCANNABLE (this is THE most important rule):
+   [The three glyphs this section asks for — warning, tick and bulb — are a
+   CONTRACT with appendAIMessage, which matches exactly those to build the
+   warning / success / info callouts. They are protocol between two halves of
+   this app, not decoration on a screen, so the emoji migration must leave them
+   alone: removing them here would silently flatten every AI answer while the
+   glyph count improved. test/ai_format_contract_test.js holds both ends
+   together.]
    When the answer needs more than 4 sentences, ALWAYS use this exact structure:
    
    ✨ HEADLINE (1 short sentence — the punchline first, BEFORE the explanation)
@@ -11088,7 +11095,13 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
              * these characters; this turns them into callouts. Strip them from
              * the match side and the callouts simply stop appearing. Only the
              * rendered span becomes an icon — and by concatenation, because a
-             * replacement string is not a template literal. */
+             * replacement string is not a template literal.
+             *
+             * The model writes them because buildSystemPrompt ASKS it to, in
+             * its FORMATTING section. These three are protocol between the two
+             * functions; changing either side alone breaks the formatting of
+             * every long AI answer. test/ai_format_contract_test.js fails if
+             * the two sets stop matching. */
             f = f.replace(/(^|\n)⚠️\s*(.+)/g, '$1<div class="ai-callout warning"><span class="ai-callout-icon">' + _ic('alert') + '</span><span>$2</span></div>');
             f = f.replace(/(^|\n)✅\s*(.+)/g, '$1<div class="ai-callout success"><span class="ai-callout-icon">' + _ic('checkCircle') + '</span><span>$2</span></div>');
             f = f.replace(/(^|\n)💡\s*(.+)/g, '$1<div class="ai-callout info"><span class="ai-callout-icon">' + _ic('info') + '</span><span>$2</span></div>');
