@@ -2476,7 +2476,18 @@
         .notif-ico {
             font-size: 15px;
             flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
         }
+
+        /* The icon takes the same colour as the toast's left border. The emoji
+         * these replaced were coloured glyphs; an inline SVG inherits the text
+         * colour instead, so without this a success and an error toast would
+         * differ only by a 3px stripe. */
+        .notif.success .notif-ico { color: var(--green); }
+        .notif.error .notif-ico { color: var(--red); }
+        .notif.info .notif-ico { color: var(--blue); }
+        .notif.warn .notif-ico { color: var(--accent); }
 
         /* ================== AUTOCOMPLETE ================== */
         .ac-wrap {
@@ -16199,20 +16210,33 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
              * Now the message goes in as a text node and cannot be anything
              * else. The only markup left is the icon, and it is chosen from a
              * fixed table by `type`, never built from `msg`. */
+            /* A toast says what KIND of thing happened through three channels,
+             * so that losing any one of them still leaves the message legible:
+             * the coloured left border, the icon (tinted to match that border
+             * by .notif.<type> .notif-ico), and the announcement below. The
+             * emoji these replace carried their colour built in — the tick was
+             * green, the cross red — while an SVG inherits `currentColor`, so
+             * the tint has to be given back deliberately or the change would
+             * cost a real signal rather than only changing how it is drawn. */
+            el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+            el.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+
             const ico = document.createElement('span');
             ico.className = 'notif-ico';
             const NOTIF_ICON = { success: 'checkCircle', error: 'x', info: 'info', warn: 'alert' };
+            let hasIcon = false;
             try {
-                /* No emoji fallback. If the icon set has not loaded, the toast
-                 * goes out without its glyph — the border colour already says
-                 * success from error — rather than reintroducing the character
-                 * the icon system exists to remove. */
+                /* No emoji fallback. If the icon set has not loaded — which
+                 * means every icon in the app is gone, not just this one — the
+                 * toast closes up around its message rather than reintroducing
+                 * the character the icon system exists to remove, and rather
+                 * than leaving an empty slot where a glyph should be. */
                 const n = window.WFIconNode ? window.WFIconNode(NOTIF_ICON[type] || 'info') : null;
-                if (n) ico.appendChild(n);
+                if (n) { ico.appendChild(n); hasIcon = true; }
             } catch (_) {}
             const body = document.createElement('span');
             body.textContent = String(msg == null ? '' : msg);
-            el.appendChild(ico);
+            if (hasIcon) el.appendChild(ico);
             el.appendChild(body);
             $('notifs').appendChild(el);
             requestAnimationFrame(() => el.classList.add('show'));

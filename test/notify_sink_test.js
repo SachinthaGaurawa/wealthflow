@@ -71,6 +71,9 @@ function harness() {
             className: '',
             children: [],
             text: null,
+            attrs: {},
+            setAttribute(k, v) { this.attrs[k] = String(v); },
+            getAttribute(k) { return this.attrs[k] ?? null; },
             appendChild(n) { this.children.push(n); return n; },
             remove() {},
             classList: { add() {}, remove() {} },
@@ -208,7 +211,9 @@ describe('the toast icon', () => {
         );
         const children = [];
         const el = () => ({
-            className: '', children: [], text: null,
+            className: '', children: [], text: null, attrs: {},
+            setAttribute(k, v) { this.attrs[k] = String(v); },
+            getAttribute(k) { return this.attrs[k] ?? null; },
             appendChild(n) { this.children.push(n); return n; },
             classList: { add() {}, remove() {} }, style: {},
             set textContent(v) { this.text = String(v); },
@@ -221,7 +226,30 @@ describe('the toast icon', () => {
             () => {}, () => {}, () => {},
         );
         expect(() => notify('Saved', 'success')).not.toThrow();
-        expect(children[0].children[1].text).toBe('Saved');
+        /* One child, not two: no empty icon slot is left behind. A blank span
+         * inside a flex row with `gap: 9px` is a visible notch of dead space
+         * before the text — the reviewer on #160 read the fallback branch as
+         * "the user sees a toast with no icon", and an orphan gap is the part
+         * of that reading which was fair. */
+        expect(children[0].children.length, 'an empty icon slot was left in the toast').toBe(1);
+        expect(children[0].children[0].text).toBe('Saved');
+    });
+
+    it('is tinted to match its own left border, not left as body text', () => {
+        /* The glyphs this replaced were coloured — a green tick, a red cross,
+         * an amber triangle — and are named here rather than spelled, so that
+         * a file arguing against emoji does not carry a row of them.
+         * An inline SVG inherits `currentColor`, so dropping the emoji without
+         * saying anything would have made a success and an error toast differ
+         * by a 3px stripe and nothing else. Named per type, because a spot
+         * check on two of the four is how a missing rule survives. */
+        for (const [type, token] of [
+            ['success', '--green'], ['error', '--red'],
+            ['info', '--blue'], ['warn', '--accent'],
+        ]) {
+            const rule = new RegExp(`\\.notif\\.${type}\\s+\\.notif-ico\\s*\\{[^}]*var\\(${token}\\)`);
+            expect(rule.test(HTML), `a ${type} toast's icon has no colour of its own`).toBe(true);
+        }
     });
 
     it('keeps the class the toast stylesheet targets', () => {
@@ -235,6 +263,33 @@ describe('the toast icon', () => {
 /* ═══════════════════════════════════════════════════════════════════════════
  * 3. What the rewrite must not have broken
  * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the toast is announced, not only drawn', () => {
+    /* Two hundred and seventy-seven toasts and not one of them was announced:
+     * the element carried no role and no live region, so a screen reader said
+     * nothing when a transfer saved or a scan failed. The icon and the border
+     * are both purely visual; this is the channel that does not depend on
+     * seeing the screen at all. */
+    it('an error interrupts, everything else waits its turn', () => {
+        const { notify, host } = harness();
+        notify('Could not save', 'error');
+        notify('Saved', 'success');
+        notify('Heads up', 'warn');
+        expect(host.children.map((t) => t.getAttribute('role')))
+            .toEqual(['alert', 'status', 'status']);
+        expect(host.children.map((t) => t.getAttribute('aria-live')))
+            .toEqual(['assertive', 'polite', 'polite']);
+    });
+
+    it('announces the message itself, since the icon carries no text', () => {
+        /* WFIconNode produces an aria-hidden SVG, so the span holding it
+         * contributes nothing to the accessible name. Everything a listener
+         * gets comes from the message node. */
+        const { notify, host } = harness();
+        notify('Transfer saved', 'success');
+        expect(host.children[0].children[1].text).toBe('Transfer saved');
+    });
+});
+
 describe('the flood guard', () => {
     it('still drops an identical toast repeated inside the window', () => {
         const { notify, host } = harness();
