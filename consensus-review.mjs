@@ -261,7 +261,7 @@ export const REVIEWERS = [
          * forbidden outright. */
         rules: [
             'Your REASON must first name what the user will actually see or feel — a button, a screen, a message, a vibration, a colour, a delay.',
-            'NEVER write "no user-facing changes" or any variant of it when the diff adds or alters markup, a notification, a setting, a label, a toast, an icon or a screen. "This causes no HARM" and "this changes NOTHING the user sees" are different statements. Say the first if you mean it; the second is a claim about the diff and is checked.',
+            'Never report that the change is invisible when the diff adds or alters markup, a notification, a setting, a label, a toast, an icon or a screen. Whether it HARMS anyone and whether it CHANGES anything visible are separate questions; answer both.',
             /* Phrased as a constraint on the ANSWER, not as a model answer.
              * The first wording — "New UI that harms nobody is a PASS whose
              * reason describes the new UI" — was returned almost verbatim as a
@@ -599,6 +599,71 @@ export const DENIAL_REPLACEMENT =
     'Reviewer reported no user-facing change, but the diff adds or alters interface code; '
     + 'the vote stands and the stated reason does not.';
 
+/* ── THE FOURTH SIGNAL: A REASON THAT NAMES NOTHING ──────────────────────────
+ *
+ * On one pull request the user-impact lane produced three different reviews,
+ * and every one of them was a sentence lifted from the diff or the prompt:
+ *
+ *   1. a paraphrase of two TEST FIXTURES the change had just added
+ *   2. its own RULE read back — "adds new UI that harms nobody, and the reason
+ *      describes the new UI", which announces that the reason describes the UI
+ *      instead of describing it
+ *   3. "This causes no HARM" — a phrase quoted INSIDE that rule as an example
+ *
+ * Each fix removed one source of quotable text and the model found the next.
+ * That is not a prompting problem any further wording will solve; the lane is
+ * retrieving the nearest plausible sentence rather than reading the diff.
+ *
+ * What can be established mechanically is whether the reason mentions ANYTHING
+ * that appears in this particular diff. A review of a change to the haptics
+ * screen will contain a word like "haptic", "vibration", "intensity" or
+ * "settings"; a sentence that would fit any pull request contains none of them.
+ *
+ * SCOPED TO THIS ONE LANE ON PURPOSE. Architecture and security legitimately
+ * return short general statements — "no vulnerabilities introduced" is a
+ * complete and useful answer. Only the user-impact lane's whole job is to say
+ * what the person will see, which cannot be done without naming it.
+ *
+ * AND IT NEVER CHANGES THE VOTE, for the same reason as the check above.
+ * ───────────────────────────────────────────────────────────────────────────*/
+
+/* Words that appear in reviews of anything. Matching only these is what
+ * "generic" means here. */
+const REVIEW_VOCAB = new Set([
+    'change', 'changes', 'changed', 'user', 'users', 'this', 'that', 'with', 'from', 'they',
+    'pull', 'request', 'diff', 'code', 'pass', 'fail', 'harm', 'harms', 'harmful', 'impact',
+    'nobody', 'anyone', 'reason', 'review', 'reviewer', 'adds', 'added', 'introduces',
+    '新', 'does', 'would', 'could', 'should', 'there', 'their', 'about', 'which', 'where',
+    'facing', 'visible', 'noticeable', 'improvement', 'feature', 'features', 'behaviour',
+    'behavior', 'confusion', 'performance', 'degradation', 'removal', 'cause', 'causes',
+    'clear', 'plain', 'wording', 'nothing', 'anything', 'something', 'these', 'those',
+]);
+
+const WORDS = /[a-z][a-z0-9_]{3,}/g;
+
+/**
+ * Does this reason mention anything that is actually in this diff?
+ *
+ * Compared against the diff's ADDED lines only, and ignoring the vocabulary
+ * every review shares, so the question asked is narrow: did it name one thing
+ * this change touches?
+ */
+export function reasonNamesSomething(reason, diff) {
+    const added = new Set(String(addedCodeLines(diff).join(' ')).toLowerCase().match(WORDS) || []);
+    const words = String(reason || '').toLowerCase().match(WORDS) || [];
+    return words.some((w) => !REVIEW_VOCAB.has(w) && added.has(w));
+}
+
+/** A non-empty reason that names nothing in the diff it is reviewing. */
+export function reasonIsGeneric(reason, diff) {
+    const r = String(reason || '').trim();
+    if (!r) return false;                      // empty is handled elsewhere
+    return !reasonNamesSomething(r, diff);
+}
+
+export const GENERIC_REPLACEMENT =
+    'Reviewer gave a reason that names nothing in this diff; the vote stands and the stated reason does not.';
+
 export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAttempt = null) {
     const r = lane.role;
     // Own providers first, then — only once those are exhausted — providers
@@ -684,9 +749,21 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
              * replaced. See the block above runReviewer for the five pull
              * requests that made this a code check rather than a prompt line. */
             let correctedReason = null;
+            let correctionWhy = '';
             if (finalVote === 'pass' && deniesVisibleChange(parsed.reason, diff)) {
                 correctedReason = String(parsed.reason || '').slice(0, 300);
+                correctionWhy = DENIAL_REPLACEMENT;
                 console.log('      ⚠ REASON CORRECTED — reviewer denied a user-facing change that the diff makes.');
+            } else if (finalVote === 'pass' && r.name === 'user-impact'
+                       /* Only when there IS something to name. A backend-only
+                        * change genuinely has no user-facing part, and "no
+                        * user-facing changes" is then the correct review — the
+                        * check must not punish a reviewer for being right. */
+                       && addsUserVisibleSurface(diff)
+                       && reasonIsGeneric(parsed.reason, diff)) {
+                correctedReason = String(parsed.reason || '').slice(0, 300);
+                correctionWhy = GENERIC_REPLACEMENT;
+                console.log('      ⚠ REASON CORRECTED — reviewer named nothing in this diff.');
             }
             return {
                 name: r.name,
@@ -707,7 +784,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 reason: rejectedFinding
                     ? 'objection rejected — it restated the diff\'s own comments'
                     : correctedReason
-                        ? DENIAL_REPLACEMENT
+                        ? correctionWhy
                         : String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
                 evidence: rejectedFinding ? '' : evidence,
                 concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],

@@ -54,6 +54,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     deniesVisibleChange, addsUserVisibleSurface, DENIAL_REPLACEMENT, REVIEWERS, runReviewer,
+    reasonIsGeneric, reasonNamesSomething, GENERIC_REPLACEMENT,
 } from '../consensus-review.mjs';
 
 const uiDiff = [
@@ -155,7 +156,7 @@ describe('the reviewer definition itself', () => {
     });
 
     it('forbids the denial in the prompt as well as in code', () => {
-        expect(ui.rules.join(' ')).toMatch(/NEVER write "no user-facing changes"/);
+        expect(ui.rules.join(' ')).toMatch(/Never report that the change is invisible/);
         expect(ui.rules.join(' ')).toMatch(/A pure addition is still a change/);
     });
 
@@ -206,7 +207,7 @@ describe('runReviewer applies it, not just exports it', () => {
     });
     const honest = JSON.stringify({
         verdict: 'pass',
-        reason: 'FIXTURE-D: adds one row and one dialog; wording is plain.',
+        reason: 'FIXTURE-D: the _bv_save button is plainly labelled.',
         evidence: '', concerns: [],
     });
 
@@ -221,13 +222,108 @@ describe('runReviewer applies it, not just exports it', () => {
     it('leaves an honest reason exactly as written', async () => {
         const v = await runReviewer(lane, uiDiff, false, stub(honest));
         expect(v.vote).toBe('pass');
-        expect(v.reason).toBe('FIXTURE-D: adds one row and one dialog; wording is plain.');
+        expect(v.reason).toBe('FIXTURE-D: the _bv_save button is plainly labelled.');
         expect(v.correctedReason).toBe(null);
     });
 
     it('leaves the denial alone when the diff really is invisible', async () => {
+        /* BOTH checks must stand down here. The denial is true, and the generic
+         * check must not fire either: a backend-only diff gives the lane nothing
+         * to name, so a general sentence is the correct answer rather than a
+         * symptom. An earlier version replaced this and would have punished a
+         * reviewer for being right. */
         const v = await runReviewer(lane, backendDiff, false, stub(denial));
         expect(v.reason).toContain('No user-facing changes');
         expect(v.correctedReason).toBe(null);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * A REASON THAT NAMES NOTHING
+ * ═══════════════════════════════════════════════════════════════════════════
+ * On the pull request that added the denial check, this lane produced THREE
+ * reviews and every one was a sentence lifted from the diff or the prompt:
+ *
+ *   1. a paraphrase of two test fixtures the change had just added
+ *   2. its own rule read back — "adds new UI that harms nobody, and the reason
+ *      describes the new UI"
+ *   3. "This causes no HARM" — a phrase quoted inside that rule as an example
+ *
+ * Each fix removed one source of quotable text and it found the next. Four
+ * prompt rewrites was enough to establish that no fifth would help.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a reason has to name something in the diff', () => {
+    const hapticDiff = [
+        '--- a/index.html', '+++ b/index.html',
+        "+        const HAPTIC_GAIN = { off: 0, subtle: 0.5, standard: 1, heavy: 1.6 };",
+        '+                        <option value="heavy">Heavy</option>',
+    ].join('\n');
+
+    it.each([
+        ['the third echo, verbatim', 'This causes no HARM'],
+        ['the second echo', 'This change adds new UI that harms nobody, and the reason describes the new UI.'],
+        ['a sentence that fits any PR', 'The change is a clear improvement for the user.'],
+    ])('catches %s', (_why, reason) => {
+        expect(reasonIsGeneric(reason, hapticDiff)).toBe(true);
+    });
+
+    it('lets a real review through', () => {
+        for (const r of [
+            'The new Heavy haptic option vibrates noticeably longer than Standard.',
+            'Adding an "off" level to HAPTIC_GAIN means the setting can now be silenced entirely.',
+        ]) {
+            expect(reasonIsGeneric(r, hapticDiff), r).toBe(false);
+        }
+    });
+
+    it('ignores the vocabulary every review shares', () => {
+        /* Otherwise "this change affects the user" would count as naming
+         * something, because words like "change" and "user" appear in the code
+         * of almost every diff.
+         *
+         * The added line here is real CODE, not a comment. The first version of
+         * this test used `+ // this change affects the user`, which
+         * addedCodeLines correctly discards as prose — so the token set was
+         * empty, the assertion held whatever the filter did, and a mutation
+         * deleting the filter survived. */
+        const d = ['--- a/x.js', '+++ b/x.js', '+ function applyChange(user) { return user; }'].join('\n');
+        expect(reasonNamesSomething('This change affects the user.', d)).toBe(false);
+        // and a word that is NOT shared vocabulary still counts
+        expect(reasonNamesSomething('applyChange now returns early.', d)).toBe(true);
+    });
+
+    it('does not treat an empty reason as generic', () => {
+        /* An absent reason is a different failure with its own handling — the
+         * unavailable path writes one. Reporting it here would replace a
+         * message that already explains itself with one that does not. */
+        const d = ['--- a/index.html', '+++ b/index.html', '+ <button>Go</button>'].join('\n');
+        expect(reasonIsGeneric('', d)).toBe(false);
+        expect(reasonIsGeneric(null, d)).toBe(false);
+        expect(reasonIsGeneric('   ', d)).toBe(false);
+    });
+
+    it('says nothing it cannot establish', () => {
+        expect(GENERIC_REPLACEMENT).toContain('names nothing in this diff');
+        expect(GENERIC_REPLACEMENT).toContain('the vote stands');
+        expect(GENERIC_REPLACEMENT).not.toMatch(/fail|defect|bug/i);
+    });
+
+    it('is applied by runReviewer, on this lane only', async () => {
+        const stub = (reason) => async (opts) => ({
+            text: JSON.stringify({ verdict: 'pass', reason, evidence: '', concerns: [] }),
+            provider: opts.only[0],
+        });
+        const ui = { role: REVIEWERS.find((r) => r.name === 'user-impact'), primary: 'cohere', fallbacks: [] };
+        const sec = { role: REVIEWERS.find((r) => r.name === 'security'), primary: 'mistral', fallbacks: [] };
+
+        const a = await runReviewer(ui, hapticDiff, false, stub('This causes no HARM'));
+        expect(a.vote, 'the vote must not change').toBe('pass');
+        expect(a.reason).toBe(GENERIC_REPLACEMENT);
+
+        /* Architecture and security legitimately answer in general terms — "no
+         * vulnerabilities introduced" is complete and useful. Only this lane's
+         * whole job is to say what the person will SEE. */
+        const b = await runReviewer(sec, hapticDiff, false, stub('No vulnerabilities introduced.'));
+        expect(b.reason).toBe('No vulnerabilities introduced.');
     });
 });
