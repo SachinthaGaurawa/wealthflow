@@ -43,7 +43,7 @@
 import { describe, it, expect } from 'vitest';
 import B, {
     LEDGER_SOURCES, HASH_BATCH, MAX_WINDOWS_PER_RUN, NOTIFY_REASONS,
-    rowFromRecord, ledgerHashes, planWindows, startCursor, nextStep, advance,
+    rowFromRecord, ledgerHashes, planWindows, startCursor, nextStep, advance, STATEMENT_TERMS,
     shouldPause, notifiable, runSummary,
 } from '../wealthflow-backfill.js';
 import { hashRow, occurrenceKey, classifyStatement } from '../wealthflow-statement-router.js';
@@ -431,5 +431,58 @@ describe('a backfill does not make a phone buzz fifty times', () => {
         for (const fn of ['ledgerHashes', 'planWindows', 'startCursor', 'nextStep', 'advance', 'notifiable']) {
             expect(typeof B[fn], fn).toBe('function');
         }
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE QUERY HAS TO ASK FOR BANKS NOBODY LISTED
+ * ═══════════════════════════════════════════════════════════════════════════
+ * This query used to be `has:attachment (from:a OR from:b ...)` over the four
+ * domains the ingest allowlist happened to name. The owner banks with more
+ * than ten institutions and index.html's own dropdown lists fifteen, so
+ * eleven of them were never ASKED FOR — no parser bug and no rejection to look
+ * up, because Gmail was never told those messages existed.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the scan query catches an unlisted bank', () => {
+    const NOW2 = Date.UTC(2026, 7, 15);
+    const q = (opts) => planWindows({ months: 1, now: NOW2, ...opts })[0].query;
+
+    it('asks for statement wording as well as known senders', () => {
+        const query = q({ senders: ['hnb.lk'] });
+        expect(query, 'a known sender must still match on WHO it is').toContain('from:hnb.lk');
+        expect(query, 'and an unlisted bank on WHAT it calls itself').toContain('"statement"');
+    });
+
+    it('the two are OR-ed, so either alone qualifies', () => {
+        const query = q({ senders: ['hnb.lk'] });
+        const group = query.slice(query.indexOf('('));
+        expect(group).toMatch(/from:hnb\.lk OR /);
+        expect(group).not.toMatch(/from:hnb\.lk AND /);
+    });
+
+    it('bounds the volume with filename:pdf rather than by sender', () => {
+        expect(q({})).toContain('filename:pdf');
+    });
+
+    it('applies no category filter, because banks land in Promotions', () => {
+        expect(q({ senders: ['hnb.lk'] })).not.toContain('category:');
+    });
+
+    it('still asks for exactly one month', () => {
+        expect(q({ senders: [] })).toMatch(/after:2026\/08\/01/);
+        expect(q({ senders: [] })).toMatch(/before:2026\/09\/01/);
+    });
+
+    it('every term is quoted, so a two-word term stays one term', () => {
+        const query = q({ terms: ['account advice'] });
+        expect(query).toContain('"account advice"');
+    });
+
+    it('the vocabulary is the one the ingest gate reads', () => {
+        /* One list. If the query searched for words the acceptance gate did
+         * not recognise, mail would be fetched and then thrown away. */
+        expect(Array.isArray(STATEMENT_TERMS)).toBe(true);
+        expect(STATEMENT_TERMS).toContain('statement');
+        expect(STATEMENT_TERMS.length).toBeGreaterThanOrEqual(5);
     });
 });
