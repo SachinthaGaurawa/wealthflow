@@ -143,12 +143,96 @@ jobs:
             echo "**Verdict:** \`${V:-unreadable}\` — ${R:-no reason given}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ── THE FUZZ VERDICT COMES FROM THE CHECK, NOT FROM A LABEL ─────────
+      #
+      # RULE 1 requires `fuzz-passed` before a critical path may merge, and
+      # fuzz-gate.yml applies that label with `gh pr edit` using GITHUB_TOKEN.
+      # GitHub does not create workflow runs from actions taken with
+      # GITHUB_TOKEN — that is its loop-prevention rule — so the `labeled` event
+      # fires and THIS WORKFLOW NEVER WAKES. fuzz-gate.yml's own header claims
+      # "the policy-gate workflow re-runs on the `labeled` event, so adding the
+      # label here unblocks it". It does not.
+      #
+      # Observed on #152: fuzz-gate applied `fuzz-passed` at 08:48:18 and no
+      # policy-gate run followed. That PR was unblocked only because a HUMAN
+      # later added `human-approved`, which does re-trigger. A PR whose only
+      # blocker is `fuzz-passed` — a critical-path change with no other
+      # sensitive file — stays red forever with nothing wrong with it.
+      #
+      # So the label stops being the channel. This asks the check run itself
+      # whether the fuzz suite passed ON THIS COMMIT, which is strictly better
+      # than a label in two ways: it cannot fail to be delivered, and it cannot
+      # be STALE. A label survives a push; a check run is bound to a SHA, so a
+      # `fuzz-passed` left over from an earlier commit can no longer speak for
+      # code that has changed since.
+      #
+      # FAILS CLOSED at every step: no critical path means the question is not
+      # asked at all; an unreadable API, a timeout, a failure or anything other
+      # than a concluded success leaves the verdict `no` and RULE 1 in force.
+      - name: Resolve the fuzz gate's verdict for this commit
+        id: fuzz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          FILES_RAW: ${{ steps.changed.outputs.files }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "passed=no" >> "$GITHUB_OUTPUT"
+
+          if [ -z "${SHA:-}" ]; then
+            echo "No pull-request head sha — the fuzz gate does not apply here."
+            exit 0
+          fi
+
+          # The SAME critical-path definition fuzz-gate.yml and the rego use.
+          grep -v '^#' policy/critical-paths.regex | grep -v '^[[:space:]]*$' > /tmp/wf-critical.regex
+          if ! printf '%s\n' "$FILES_RAW" | grep -Eiq -f /tmp/wf-critical.regex; then
+            echo "No critical path in this diff — RULE 1 does not apply."
+            exit 0
+          fi
+          echo "A critical path changed. Waiting for the fuzz gate's verdict on $SHA."
+
+          # Both workflows start together and the fuzz suite takes longer than
+          # this one, so the answer is normally not ready on the first look.
+          # Bounded: 24 x 15s = 6 minutes, then fail closed.
+          for i in $(seq 1 24); do
+            OUT=$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+                    --jq '[.check_runs[] | select(.name == "fuzz")]
+                          | sort_by(.started_at) | last
+                          | "\(.status // "none") \(.conclusion // "none")"' 2>/dev/null || echo "error none")
+            STATUS=${OUT%% *}
+            CONC=${OUT##* }
+            echo "  attempt $i: fuzz status=$STATUS conclusion=$CONC"
+
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONC" = "success" ]; then
+                echo "passed=yes" >> "$GITHUB_OUTPUT"
+                echo "The fuzz gate passed on this commit."
+              else
+                echo "The fuzz gate did not pass on this commit ($CONC) — RULE 1 stays in force."
+              fi
+              exit 0
+            fi
+            if [ "$STATUS" = "none" ] && [ "$i" -ge 4 ]; then
+              echo "::warning::No fuzz check run exists for this commit — RULE 1 stays in force."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::warning::The fuzz gate did not conclude within 6 minutes — RULE 1 stays in force."
+
       - name: Build PR input for policy evaluation
         env:
           # From the API read above, never from the event payload — see the note
           # on that step. This is the value the rego actually decides on.
           LABELS: ${{ steps.labels.outputs.json }}
           INDEX_VERDICT: ${{ steps.idx.outputs.verdict }}
+          # Not read from the PR's labels: resolved from the fuzz check run for
+          # this commit, because the label cannot re-trigger this workflow and
+          # can outlive the code it was granted for. See the step above.
+          FUZZ_VERIFIED: ${{ steps.fuzz.outputs.passed }}
         shell: bash
         run: |
           set -euo pipefail
@@ -156,6 +240,15 @@ jobs:
           node -e '
             const files=(process.env.FILES_RAW||"").split("\n").filter(Boolean);
             const labels=JSON.parse(process.env.LABELS||"[]");
+            /* RULE 1 reads `fuzz-passed` out of input.labels. It now gets there
+             * from the CHECK RUN rather than from the PR, so the rule is
+             * unchanged while the fact behind it became verifiable and
+             * commit-bound. A human cannot hand-apply their way past RULE 1 by
+             * pasting the label on, either — this list is rebuilt from the
+             * check, and a stale one is dropped. */
+            const i = labels.indexOf("fuzz-passed");
+            if (i >= 0) labels.splice(i, 1);
+            if (process.env.FUZZ_VERIFIED === "yes") labels.push("fuzz-passed");
             // Anything other than the literal string "safe" leaves RULE 2 in force.
             const index_html_verdict = process.env.INDEX_VERDICT === "safe" ? "safe" : "sensitive";
             require("fs").writeFileSync("pr-input.json", JSON.stringify({files,labels,index_html_verdict},null,2));

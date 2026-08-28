@@ -48,7 +48,14 @@ jobs:
         run: |
           set -uo pipefail
           echo "$FILES"
-          if echo "$FILES" | grep -E 'firestore\.rules|firebase\.json|auth|oauth|crypto|fifo-reconcile|allocator|send-otp|verify-otp' >/dev/null; then
+          # ONE definition, shared with policy-gate and checked against the
+          # rego by test/policy_gate_test.js. The inline pattern this replaces
+          # had already drifted from the policy: it omitted
+          # firestore.indexes.json, which the rego counts as critical — so a PR
+          # touching that file was denied for want of `fuzz-passed` while this
+          # job never ran to apply it.
+          grep -v '^#' policy/critical-paths.regex | grep -v '^[[:space:]]*$' > /tmp/wf-critical.regex
+          if echo "$FILES" | grep -Ei -f /tmp/wf-critical.regex >/dev/null; then
             echo "sensitive=yes" >> "$GITHUB_OUTPUT"
           else
             echo "sensitive=no" >> "$GITHUB_OUTPUT"

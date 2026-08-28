@@ -12257,6 +12257,42 @@ function _wfEsc(s) {
 }
 window._wfEsc = _wfEsc;
 
+/**
+ * One cell of a CSV file. NOT _wfEsc — that is an HTML escaper.
+ *
+ * The analytics export ran every text field through _wfEsc, which is wrong in
+ * both directions at once. It ADDED escaping a CSV must not have: a bank named
+ * "Sampath & Co" was written as "Sampath &amp; Co", and that is what the owner
+ * saw when the file opened in Excel. And it left out the escaping a CSV
+ * requires: a description containing a comma — "Dinner, groceries", which is
+ * most of them — split into two cells and shifted every column after it on that
+ * row, so the amount landed under the wrong heading. A newline in a value broke
+ * the row outright.
+ *
+ * RFC 4180: quote when the value contains a quote, a comma or a line break, and
+ * double the quotes inside.
+ *
+ * ── AND THE FORMULA GUARD ───────────────────────────────────────────────────
+ *
+ * A cell beginning =, +, - or @ is evaluated by Excel and Sheets when the file
+ * is opened. That is only a curiosity when every value is typed by the owner;
+ * it is not, any more. Statement descriptions arrive from the bank, and their
+ * text is whatever the other party wrote in a transfer memo — so this is
+ * attacker-influenceable input landing in a spreadsheet that auto-executes it.
+ * A leading formula character is therefore prefixed with an apostrophe, which
+ * Excel reads as "this is text" and does not display.
+ *
+ * NUMBERS ARE EXEMPT, deliberately: "-500" is a negative amount, not a formula,
+ * and guarding it would write '-500 and stop the column from summing.
+ */
+function _csvCell(v) {
+    const s = String(v == null ? '' : v);
+    const isNumber = /^-?\d+(?:\.\d+)?$/.test(s.trim());
+    const body = (!isNumber && /^[=+\-@\t\r]/.test(s)) ? "'" + s : s;
+    return /[",\n\r]/.test(body) ? '"' + body.replace(/"/g, '""') + '"' : body;
+}
+window._csvCell = _csvCell;
+
 /* A value going into a JS string literal that itself sits inside an HTML
  * attribute — onclick="fn('HERE')" — passes through two parsers, and _wfEsc
  * only covers the second. The HTML parser decodes entities BEFORE the value
@@ -25372,9 +25408,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             let csv = `WEALTHFLOW ANALYTICS REPORT,${MONTHS[month].toUpperCase()} ${year}\n\n`;
 
             csv += "TYPE,CATEGORY/BANK,DESCRIPTION,AMOUNT (LKR)\n";
-            md.loanItems.forEach(l => csv += `LOAN,${_wfEsc(l.bank)},${_wfEsc(l.name)},${l.amount}\n`);
-            md.ccItems2.forEach(c => csv += `CC INSTALLMENT,${_wfEsc(c.bank)},${_wfEsc(c.name)},${c.amount}\n`);
-            md.expItems.forEach(e => csv += `EXPENSE,${e.cat},${_wfEsc(e.name)},${e.amount}\n`);
+            /* _csvCell, not _wfEsc. See its definition: an HTML escaper wrote
+             * "Sampath &amp; Co" into the file, and left a comma in a
+             * description free to shift every column after it. */
+            const row = (...cells) => cells.map(_csvCell).join(',') + '\n';
+            md.loanItems.forEach(l => { csv += row('LOAN', l.bank, l.name, l.amount); });
+            md.ccItems2.forEach(c => { csv += row('CC INSTALLMENT', c.bank, c.name, c.amount); });
+            md.expItems.forEach(e => { csv += row('EXPENSE', e.cat, e.name, e.amount); });
 
             csv += `\nSUMMARY\nTotal Income,,${md.income}\nTotal Expenses,,${md.totalExp}\nNet Balance,,${md.balance}\n`;
 
