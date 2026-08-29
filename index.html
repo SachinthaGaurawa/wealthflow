@@ -1845,37 +1845,57 @@
             box-shadow: 0 4px 15px rgba(212, 175, 55, 0.3);
         }
 
-        /* ================== GRID ================== */
+        /* GRID — minmax(0,1fr) lets tracks shrink below intrinsic width (bare 1fr can't) */
         .g2 {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 16px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: clamp(10px, 1.4vw, 18px);
+            min-width: 0;
+            width: 100%;
         }
 
         .g3 {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: clamp(10px, 1.4vw, 18px);
+            min-width: 0;
+            width: 100%;
         }
 
         .g4 {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: clamp(10px, 1.4vw, 18px);
+            min-width: 0;
+            width: 100%;
         }
 
         .g5 {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 16px;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: clamp(10px, 1.4vw, 18px);
+            min-width: 0;
+            width: 100%;
+        }
+
+        /* grid/flex children may shrink below content width (stops bleeding out of boxes) */
+        .g2 > *,
+        .g3 > *,
+        .g4 > *,
+        .g5 > *,
+        .dash-chart-row > *,
+        .fr > * {
+            min-width: 0;
+            max-width: 100%;
         }
 
         .dash-chart-row {
             display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 16px;
+            grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+            gap: clamp(10px, 1.4vw, 18px);
             margin-bottom: 16px;
             width: 100%;
+            min-width: 0;
         }
 
         /* ================== TABLE ================== */
@@ -3957,7 +3977,16 @@
             margin-top: 3px;
         }
 
-        /* ================== RESPONSIVE ================== */
+        /* RESPONSIVE — fluid grid stepping, minmax(0,1fr) so nothing can overflow */
+        @media (max-width: 1400px) {
+            .g5 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 1180px) {
+            .g5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .g4 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+
         @media(max-width:900px) {
             .sidebar {
                 transform: translateX(-100%);
@@ -3966,10 +3995,13 @@
                 overflow: hidden;
                 display: flex !important;
                 flex-direction: column;
+                /* Slide in without pushing the content — no reflow jump. */
+                will-change: transform;
             }
 
             .sidebar.open {
                 transform: translateX(0);
+                box-shadow: 0 0 60px rgba(0, 0, 0, 0.55);
             }
 
             /* Inside mobile sidebar: nav scrolls, footer is always pinned visible at the bottom */
@@ -3992,6 +4024,7 @@
                 padding-bottom: max(12px, env(safe-area-inset-bottom));
                 border-top: 1px solid var(--border2);
                 z-index: 5;
+                min-height: 0;
             }
 
             .sidebar .sb-footer .sb-user {
@@ -4015,7 +4048,7 @@
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
-                max-width: 140px;
+                max-width: min(140px, 60vw);
             }
 
             .sidebar .sb-footer .sb-date {
@@ -4032,16 +4065,10 @@
                 display: flex;
             }
 
-            .g5 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .g4 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
+            .g5,
+            .g4,
             .g3 {
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
             .dash-chart-row {
@@ -4049,7 +4076,7 @@
             }
 
             .content {
-                padding: 14px 16px;
+                padding: clamp(12px, 2vw, 20px);
                 padding-bottom: calc(108px + env(safe-area-inset-bottom, 0px));
             }
 
@@ -4062,6 +4089,16 @@
                     10px
                     max(14px, env(safe-area-inset-left, 14px));
             }
+        }
+
+        @media (max-width: 640px) {
+            .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .g2 { gap: 10px; }
+            .g3,
+            .g4,
+            .g5 { gap: 10px; }
+            .card-header { flex-wrap: wrap; gap: 8px; }
+            .card-title { font-size: clamp(13px, 3.4vw, 15px); }
         }
 
         @media(max-width:540px) {
@@ -4089,8 +4126,11 @@
             }
 
             .tb-left .pg-title {
-                font-size: 13px;
-                max-width: 110px;
+                font-size: clamp(13px, 4vw, 16px);
+                max-width: min(110px, 34vw);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
 
             .month-badge {
@@ -5079,6 +5119,50 @@
             width: 88px; padding: 7px 9px; border-radius: 8px; font-variant-numeric: tabular-nums;
             border: 1px solid var(--border, rgba(127,127,127,.3));
             background: var(--bg1, transparent); color: var(--text1);
+        }
+
+        /* Infinity responsive core (v7.58): fluid type, anti-bleed, scroll safety.
+           Last, so this is the single source of truth from 320px to 4K. */
+        body { font-size: clamp(14px, 0.85rem + 0.3vw, 17px); }
+        .pg-title { font-size: clamp(15px, 2.4vw, 20px); }
+        .card-title, .gf-title, .sh-title, .md-title, .tgt-name, .loan-name { font-size: clamp(13px, 2.2vw, 17px); }
+        .card-sub, .stat-label, .tgt-dates, .loan-bank { font-size: clamp(10px, 1.8vw, 12px); }
+        .stat-val { font-size: clamp(17px, 3vw, 26px); }
+        .tgt-big { font-size: clamp(18px, 3vw, 24px); }
+        .loan-monthly { font-size: clamp(17px, 3vw, 23px); }
+        .sb-title { font-size: clamp(17px, 2.6vw, 21px); }
+        .sp-title { font-size: clamp(28px, 9vw, 46px); }
+        table { font-size: clamp(12px, 2.4vw, 14px); }
+        /* fluid horizontal padding only — the 112px bottom (AI button) is set earlier */
+        .card { padding: clamp(14px, 2vw, 22px); }
+        .golden-frame { padding: clamp(16px, 2.5vw, 28px); }
+        .mhero { padding: clamp(16px, 2.5vw, 24px); }
+        .content { padding-left: clamp(12px, 2.2vw, 26px); padding-right: clamp(12px, 2.2vw, 26px); }
+        .topbar, .tb-left, .tb-right, .card-header, .card-hdr-row, .gf-header,
+        .tgt-top, .loan-top, .sh, .sh-actions, .sort-bar, .wf-runway-head { flex-wrap: wrap; min-width: 0; }
+        body { overflow-wrap: break-word; }
+        img, svg, video, iframe { max-width: 100%; height: auto; }
+        .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; scrollbar-width: thin; }
+        .dash-chart-row > *, .card, .golden-frame { max-width: 100%; }
+        /* tables not in .tbl-wrap still slide instead of widening the page */
+        @media (max-width: 640px) {
+            .md table, .modal-body table, .card table { display: block; overflow-x: auto; }
+            .md table thead, .md table tbody,
+            .modal-body table thead, .modal-body table tbody,
+            .card table thead, .card table tbody { min-width: 0; }
+        }
+        /* essential footer: user · date · version never hidden */
+        .sb-footer { display: block !important; }
+        .sb-footer .sb-user { display: flex !important; align-items: center; gap: 8px; }
+        .sb-footer .sb-user-name, .sb-footer .sb-user-initial, .sb-footer .sb-user-photo { flex-shrink: 1; }
+        .sb-footer .sb-date, .sb-footer .sb-ver { display: block !important; }
+        /* 4K: content stays readable and centered */
+        @media (min-width: 2000px) {
+            .content { max-width: 1900px; margin: 0 auto; width: 100%; }
+            .g5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+            .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+            .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
 
     </style>
