@@ -116,7 +116,17 @@ describe('the endpoint is reachable and does what the page needs', () => {
     it('keeps historyId when disconnecting', () => {
         /* Deleting it would make the next connection re-import the entire
          * mailbox: to gmail-hook.js it means "already seen up to here". */
-        const del = endpoint.slice(endpoint.indexOf("method === 'DELETE'"), endpoint.indexOf('const body = await readBody'));
+        /* BOTH ends anchored on strings unique to this branch. The sender-list
+         * route added an earlier `method === 'DELETE'` AND an earlier
+         * `readBody`, and the original slice — first of each — inverted into an
+         * empty string. An empty slice fails `toContain`, so this one was
+         * caught; the same mistake around a `not.toMatch` would have passed
+         * forever while asserting nothing. */
+        const from = endpoint.indexOf("if (method === 'DELETE') {");
+        const to = endpoint.indexOf('looksLikeRefreshToken(token)');
+        expect(from, 'the disconnect branch is gone').toBeGreaterThan(-1);
+        expect(to, 'anchors are out of order — the slice would be empty').toBeGreaterThan(from);
+        const del = endpoint.slice(from, to);
         expect(del).toContain('refresh_token: admin.firestore.FieldValue.delete()');
         expect(del, 'the whole document is being deleted').not.toMatch(/ref\.delete\(\)/);
     });

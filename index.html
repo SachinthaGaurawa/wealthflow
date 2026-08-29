@@ -2484,6 +2484,35 @@
          * these replaced were coloured glyphs; an inline SVG inherits the text
          * colour instead, so without this a success and an error toast would
          * differ only by a 3px stripe. */
+        /* ── the statement-sender list ─────────────────────────────────────
+         * Every colour comes from a token, so the screen holds in both themes.
+         * A literal here is the classic unreadable-panel bug: it works in the
+         * theme it was written in and puts one theme's text on the other's
+         * ground everywhere else. */
+        .wf-sender-sec { margin-top: 16px; }
+        .wf-sender-h { font-size: 12px; font-weight: 800; letter-spacing: .04em;
+            text-transform: uppercase; color: var(--text2); }
+        .wf-sender-note { font-size: 11.5px; color: var(--text3); margin: 3px 0 8px; line-height: 1.55; }
+        .wf-sender-empty { font-size: 12px; color: var(--text3); padding: 9px 0; line-height: 1.6; }
+        .wf-sender-err { font-size: 12.5px; color: var(--red); padding: 8px 0; }
+        .wf-sender-lbl { display: block; font-size: 11px; font-weight: 700; color: var(--text3);
+            margin-bottom: 4px; letter-spacing: .02em; }
+        .wf-sender-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
+            border-top: 1px solid var(--border); }
+        .wf-sender-id { flex: 1; min-width: 0; }
+        .wf-sender-name { font-size: 13px; font-weight: 600; color: var(--text);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* The domain and the last subject line wrap rather than truncate: they
+         * are what the owner reads to recognise a sender, and half a domain is
+         * not something anyone can decide about. */
+        .wf-sender-sub { font-size: 11.5px; color: var(--text3); margin-top: 2px;
+            overflow-wrap: anywhere; line-height: 1.5; }
+        .wf-sender-acts { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;
+            justify-content: flex-end; }
+        @media (max-width: 520px) {
+            .wf-sender-row { flex-direction: column; align-items: stretch; }
+            .wf-sender-acts { justify-content: flex-start; }
+        }
         .notif.success .notif-ico { color: var(--green); }
         .notif.error .notif-ico { color: var(--red); }
         .notif.info .notif-ico { color: var(--blue); }
@@ -21563,21 +21592,45 @@ table.amort tbody tr { page-break-inside: avoid; }
             return '';
         }
 
+        /**
+         * A From header, as something to show in one line.
+         *
+         * The header is `Name <addr@domain>` as often as a bare address, and
+         * printing the whole thing puts a display name chosen by the sender
+         * into the card. The address is what the owner is deciding about. */
+        function _mailFromLabel(from) {
+            const raw = String(from || '').trim();
+            const angled = /<([^>]*)>/.exec(raw);
+            return ((angled ? angled[1] : raw).replace(/^mailto:/, '').trim() || raw).slice(0, 80);
+        }
+
+        /** How many senders the owner has approved, when the server has said. */
+        function _senderCountLabel() {
+            const n = _mailStatus ? Number(_mailStatus.senderCount) : NaN;
+            return Number.isFinite(n) && n > 0 ? ' (' + n + ')' : '';
+        }
+
         function renderMailSync() {
             const host = $('wfMailSync');
             if (!host) return;
             const st = _mailSyncState;
             const connected = st.connected;
 
-            const rows = st.items.map(it => `
-                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);">
+            const rows = st.items.map((it, i) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);flex-wrap:wrap;">
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                             ${_wfEsc(it.bank || 'Statement')}${it.filename ? ' · <span style="color:var(--text3);font-weight:400;">' + _wfEsc(it.filename) + '</span>' : ''}
                         </div>
                         ${it.note ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px;">${_wfEsc(it.note)}</div>` : ''}
+                        ${!it.known ? `<div style="font-size:11.5px;color:var(--text3);margin-top:3px;overflow-wrap:anywhere;">
+                            From ${_wfEsc(_mailFromLabel(it.from))} — not on your sender list.
+                        </div>` : ''}
                     </div>
                     ${_mailStageChip(it.stage, it.reason)}
+                    ${!it.known && it.from ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
+                        ${(window.WFIcon ? WFIcon('plus') : '')} Add sender
+                    </button>` : ''}
                 </div>`).join('');
 
             /* The honest empty states. Each names the ONE thing that is missing,
@@ -21623,6 +21676,22 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>`;
             } else if (connected === null) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Checking connection…</div>`;
+            } else if (connected === true && _mailStatus && Number(_mailStatus.senderCount) === 0) {
+                /* THE STATE THE OWNER'S COMPLAINT CAME FROM, NAMED.
+                 *
+                 * With no approved senders the scanner has to search by
+                 * keyword, and a keyword search over a mailbox finds bills,
+                 * receipts and invoices along with statements. That was
+                 * happening silently and looking like a bug in the parser. It
+                 * is not a bug — it is the only question that can be asked
+                 * before anyone says whose mail counts — and saying so turns an
+                 * unexplained mess into one tap. */
+                banner = `<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                    <b>WealthFlow does not know which senders are your banks yet.</b>
+                    Until you say, it has to search by keyword — which is how bills and receipts
+                    end up here alongside statements. Open <b>Senders</b> to approve the real ones;
+                    after that nothing else is even searched for.
+                </div>`;
             } else if (!st.items.length && !_firstScanDone()) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Your mailbox has not been scanned yet — this happens automatically on the next check.</div>`;
             } else if (!st.items.length) {
@@ -21649,6 +21718,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 ? ((window.WFIcon ? WFIcon('clock') : '') + ' Scanning' + (_scan.label ? ' ' + _wfEsc(_scan.label) : '') + '…')
                                 : ((window.WFIcon ? WFIcon('cloudDownload') : '') + ' Scan historical statements')}
                         </button>` : ''}
+                        ${connected === true ? `
+                        <button class="btn btn-secondary btn-sm" id="_ms_senders" style="margin-right:8px;">
+                            ${(window.WFIcon ? WFIcon('mail') : '')} Senders${_senderCountLabel()}
+                        </button>` : ''}
                         <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' || _scan.stage === 'running' ? 'disabled' : ''}>
                             ${st.stage === 'running'
                                 ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
@@ -21669,6 +21742,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (l) l.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openGmailLink(); };
             const sc = host.querySelector('#_ms_scan');
             if (sc) sc.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openBackfill(); };
+            const sn = host.querySelector('#_ms_senders');
+            if (sn) sn.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openSenderList(); };
+            /* The decision offered where the confusion is. Seeing an unfamiliar
+             * row and being sent to another screen to find it again is how a
+             * queue stops being read. */
+            host.querySelectorAll('[data-msadd]').forEach((btn) => {
+                btn.onclick = async () => {
+                    const it = st.items[Number(btn.getAttribute('data-msadd'))];
+                    if (!it || !it.from) return;
+                    try { triggerHaptic('light'); } catch (_) {}
+                    btn.disabled = true;
+                    await _sendersDo('add', it.from, { status: 'approved', name: it.bank || '' });
+                    runMailSync();
+                };
+            });
         }
         window.renderMailSync = renderMailSync;
 
@@ -22026,6 +22114,224 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.openBackfill = openBackfill;
 
+        /* ═══════════════════════════════════════════════════════════════════
+         * WHOSE MAIL COUNTS AS A STATEMENT — the list, and the screen for it
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The owner reported bills and receipts arriving in a screen meant for
+         * bank statements, and they were right about the remedy before I was:
+         * gather the addresses statements actually come from, let them delete
+         * the wrong ones and type in the missing ones.
+         *
+         * That is better than a cleverer filter, and not by a little. Every
+         * version of "guess harder" decides on someone's behalf which of their
+         * own senders are banks, gets a few wrong permanently, and never says
+         * which ones. The owner has fifteen institutions and knows exactly what
+         * they are. The guess is demoted to a suggestion: what arrives is
+         * offered, they decide, and the approved list becomes the Gmail query —
+         * so an unapproved sender is not filtered out after being fetched, it is
+         * never asked for.
+         *
+         * The list lives on the server, in the sealed wf-mail document beside
+         * the token, because the two things that consult it — the push hook and
+         * the scan endpoint — have no browser in front of them. A webhook fired
+         * by Google has no client to ask. */
+        let _senders = { stage: 'idle', approved: [], blocked: [], pending: [], error: null, busy: '' };
+
+        async function _sendersCall(method, body) {
+            if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
+            let token;
+            try { token = await currentUser.getIdToken(); } catch (_) { return null; }
+            const r = await fetch('/api/gmail-link?senders=1', {
+                method,
+                headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                ...(body ? { body: JSON.stringify(body) } : {}),
+            });
+            let out = null;
+            try { out = await r.json(); } catch (_) { out = null; }
+            return { status: r.status, body: out };
+        }
+
+        /** Fold a response into the local view. One shape, one place. */
+        function _sendersApply(r) {
+            if (!r || !r.body || r.body.ok !== true) {
+                _senders.error = (r && r.body && r.body.error) || 'the sender list could not be reached';
+                return false;
+            }
+            _senders.approved = Array.isArray(r.body.approved) ? r.body.approved : [];
+            _senders.blocked = Array.isArray(r.body.blocked) ? r.body.blocked : [];
+            _senders.pending = Array.isArray(r.body.pending) ? r.body.pending : [];
+            _senders.error = null;
+            return true;
+        }
+
+        async function _sendersLoad() {
+            _senders.stage = 'loading';
+            renderSenderList();
+            _sendersApply(await _sendersCall('GET', null));
+            _senders.stage = 'idle';
+            renderSenderList();
+        }
+
+        /**
+         * Every mutation, through one function.
+         *
+         * The server answers with the WHOLE list after every change, and this
+         * redraws from that answer rather than patching the local copy. A local
+         * patch is a second implementation of the merge rules, and the two
+         * drift — the screen then shows a list nobody has.
+         */
+        async function _sendersDo(action, value, extra) {
+            _senders.busy = String(value || action);
+            renderSenderList();
+            const r = await _sendersCall('POST', { action, value, ...(extra || {}) });
+            _senders.busy = '';
+            if (!_sendersApply(r)) {
+                notify(_senders.error, 'error');
+            } else if (action === 'add') {
+                notify('Added. The next scan will search this sender.', 'success');
+            }
+            renderSenderList();
+        }
+
+        function _senderRow(e, buttons) {
+            const seen = Number(e.seenCount) || 0;
+            return '<div class="wf-sender-row">'
+                + '<div class="wf-sender-id">'
+                +   '<div class="wf-sender-name">' + _wfEsc(e.name || e.id) + '</div>'
+                +   '<div class="wf-sender-sub">' + _wfEsc(e.id)
+                +     (seen ? ' &middot; seen ' + seen + (seen === 1 ? ' time' : ' times') : '')
+                +   '</div>'
+                +   (e.lastSubject ? '<div class="wf-sender-sub">' + _wfEsc(e.lastSubject) + '</div>' : '')
+                + '</div>'
+                + '<div class="wf-sender-acts">' + buttons + '</div>'
+                + '</div>';
+        }
+
+        function _senderBtn(action, value, label, icon, kind) {
+            const busy = _senders.busy === value;
+            return '<button class="btn btn-' + kind + ' btn-sm" data-sact="' + _wfEsc(action) + '"'
+                + ' data-sval="' + _wfEsc(value) + '"' + (busy ? ' disabled' : '') + '>'
+                + (window.WFIcon && WFIcon.has(icon) ? WFIcon(icon) : '') + ' ' + _wfEsc(label)
+                + '</button>';
+        }
+
+        function renderSenderList() {
+            const host = document.getElementById('_sl_body');
+            if (!host) return;
+            if (_senders.stage === 'loading') {
+                host.innerHTML = '<div style="font-size:12.5px;color:var(--text3);padding:12px 0;">Loading your senders…</div>';
+                return;
+            }
+
+            const pending = _senders.pending.map((e) => _senderRow(e,
+                _senderBtn('approve', e.id, 'This is my bank', 'check', 'primary')
+                + _senderBtn('block', e.id, 'Never', 'x', 'secondary'))).join('');
+
+            const approved = _senders.approved.map((e) => _senderRow(e,
+                _senderBtn('block', e.id, 'Block', 'x', 'secondary')
+                + _senderBtn('remove', e.id, 'Remove', 'trash', 'secondary'))).join('');
+
+            const blocked = _senders.blocked.map((e) => _senderRow(e,
+                _senderBtn('remove', e.id, 'Un-block', 'refresh', 'secondary'))).join('');
+
+            const section = (title, note, rows, empty) =>
+                '<div class="wf-sender-sec">'
+                + '<div class="wf-sender-h">' + title + '</div>'
+                + (note ? '<div class="wf-sender-note">' + note + '</div>' : '')
+                + (rows || '<div class="wf-sender-empty">' + empty + '</div>')
+                + '</div>';
+
+            host.innerHTML =
+                (_senders.error ? '<div class="wf-sender-err">' + _wfEsc(_senders.error) + '</div>' : '')
+                + section(
+                    'Waiting for you to decide' + (_senders.pending.length ? ' (' + _senders.pending.length + ')' : ''),
+                    'Senders that have mailed you a PDF. Nothing from these is filed until you say so.',
+                    pending,
+                    'Nothing new. Senders show up here as your mailbox is scanned.')
+                + section(
+                    'Your statement senders' + (_senders.approved.length ? ' (' + _senders.approved.length + ')' : ''),
+                    'Only these are searched for. Everything else is left alone.',
+                    approved,
+                    'None yet — until you approve one, WealthFlow has to guess, which is how bills and receipts got in.')
+                + (_senders.blocked.length ? section('Blocked', 'Refused before anything else is considered.', blocked, '') : '');
+
+            host.querySelectorAll('[data-sact]').forEach((b) => {
+                b.onclick = () => {
+                    const act = b.getAttribute('data-sact');
+                    const val = b.getAttribute('data-sval');
+                    try { triggerHaptic('light'); } catch (_) {}
+                    if (act === 'approve') return _sendersDo('status', val, { status: 'approved' });
+                    if (act === 'block') return _sendersDo('status', val, { status: 'blocked' });
+                    if (act === 'remove') return _sendersDo('remove', val);
+                    return undefined;
+                };
+            });
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(host); } catch (_) {}
+        }
+        window.renderSenderList = renderSenderList;
+
+        function openSenderList() {
+            if (!currentUser) { notify('Sign in first', 'error'); return; }
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.innerHTML =
+                '<div class="md" style="max-width:560px;">'
+                + '<div class="md-hdr">'
+                +   '<div class="md-title">' + (window.WFIcon ? WFIcon('mail') : '') + ' Statement senders</div>'
+                +   '<button class="md-x" aria-label="Close" id="_sl_x"><i data-wfi="x"></i></button>'
+                + '</div>'
+                + '<div style="font-size:12.5px;color:var(--text3);line-height:1.65;margin:2px 0 14px;">'
+                +   'WealthFlow searches your mailbox for these senders only. Add the address your bank '
+                +   'sends statements from — or just its domain, like <b>hnb.lk</b> — and everything else '
+                +   'stays out, including bills and receipts.'
+                + '</div>'
+                + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">'
+                +   '<div style="flex:1;min-width:170px;">'
+                +     '<label for="_sl_addr" class="wf-sender-lbl">Address or domain</label>'
+                +     '<input id="_sl_addr" class="inp" type="text" autocomplete="off" spellcheck="false" placeholder="statements@hnb.lk">'
+                +   '</div>'
+                +   '<div style="width:140px;">'
+                +     '<label for="_sl_name" class="wf-sender-lbl">Name (optional)</label>'
+                +     '<input id="_sl_name" class="inp" type="text" autocomplete="off" maxlength="60" placeholder="HNB">'
+                +   '</div>'
+                +   '<button class="btn btn-primary btn-sm" id="_sl_add" style="height:38px;">'
+                +     (window.WFIcon ? WFIcon('plus') : '') + ' Add</button>'
+                + '</div>'
+                + '<div id="_sl_body"></div>'
+                + '</div>';
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+                /* The card's subtitle counts approved senders, and the scan the
+                 * owner runs next depends on what they just decided. */
+                try { renderMailSync(); } catch (_) {}
+            };
+            overlay.querySelector('#_sl_x').onclick = close;
+
+            const addr = overlay.querySelector('#_sl_addr');
+            const nameEl = overlay.querySelector('#_sl_name');
+            const submit = () => {
+                const v = (addr && addr.value || '').trim();
+                if (!v) { notify('Type an address or a domain first', 'error'); return; }
+                const name = (nameEl && nameEl.value || '').trim();
+                if (addr) addr.value = '';
+                if (nameEl) nameEl.value = '';
+                _sendersDo('add', v, { status: 'approved', name });
+            };
+            overlay.querySelector('#_sl_add').onclick = submit;
+            /* Enter submits. Typing an address and pressing Enter is what
+             * everyone does, and a form that ignores it reads as broken. */
+            if (addr) addr.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } };
+            if (nameEl) nameEl.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } };
+
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(overlay); } catch (_) {}
+            _sendersLoad();
+        }
+        window.openSenderList = openSenderList;
+
         /* Why the last check could not be made, or null when it was made.
          *
          * THIS DISTINCTION IS THE POINT. The check used to return false for a
@@ -22111,6 +22417,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                 filename: d.manifest && d.manifest.filename,
                 stage: 'waiting',
                 note: null, reason: null,
+                /* WHO SENT IT, AND WHETHER THE OWNER HAS SAID SO.
+                 *
+                 * `known` has been computed since the pipeline was written and
+                 * stored by nothing until now, so a verified stranger drew
+                 * exactly like a confirmed bank and there was no way to tell
+                 * from the screen why a receipt was sitting in it. Storing the
+                 * field and then not reading it would be the same defect one
+                 * step further along, in the very change that names it.
+                 *
+                 * `!== false` on purpose: every document written before this
+                 * has no such field, and an absent one must not turn a filed
+                 * statement into an accusation. */
+                known: !(d.manifest && d.manifest.known === false),
+                from: (d.manifest && d.manifest.from) || '',
             }));
             renderMailSync();
 

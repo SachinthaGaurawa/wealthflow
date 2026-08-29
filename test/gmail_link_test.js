@@ -215,7 +215,29 @@ describe('the record, and the answer', () => {
 
     it('reports connected, and enough to show it is working', () => {
         expect(statusOf({ refresh_token: 'x'.repeat(40), email: 'p@g.com', linkedAt: 5, lastPushMs: 9, historyId: '42' }))
-            .toEqual({ connected: true, email: 'p@g.com', linkedAt: 5, lastPushMs: 9, historyId: '42' });
+            .toEqual({
+                connected: true, email: 'p@g.com', linkedAt: 5, lastPushMs: 9, historyId: '42',
+                /* Zero for a document written before the sender list existed —
+                 * which is the honest answer, and the one that makes the card
+                 * say "no senders approved yet" rather than looking curated. */
+                senderCount: 0,
+            });
+    });
+
+    it('counts only APPROVED senders, so a pending suggestion is not curation', () => {
+        /* The card uses this number to decide whether the scanner is still
+         * guessing. Counting a discovered-but-undecided sender would tell it the
+         * owner had chosen when they had not. */
+        const s = statusOf({
+            refresh_token: 'x'.repeat(40),
+            senders: [
+                { id: 'hnb.lk', status: 'approved' },
+                { id: 'dfcc.lk', status: 'approved' },
+                { id: 'netflix.com', status: 'blocked' },
+                { id: 'someshop.lk', status: 'new' },
+            ],
+        });
+        expect(s.senderCount).toBe(2);
     });
 
     it('reports not connected for a document with no token', () => {

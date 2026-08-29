@@ -37,7 +37,10 @@
  * ===========================================================================*/
 
 import { getAdminDb, withDeadline } from './admin-db.mjs';
-import { identify } from './gmail-link.mjs';
+import { identify, sendersOf, SENDERS_FIELD } from './gmail-link.mjs';
+import {
+    normalizeList, approvedClauses, policyFrom, recordSighting,
+} from './wealthflow-mail-senders.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
 import { MAIL_ROOT, windowFor, listUrl, boundedMax, pageResult } from './gmail-scan.mjs';
@@ -83,16 +86,13 @@ export default async function handler(req, res, deps) {
 
     const body = await readBody(req);
 
-    /* The window is DERIVED, never accepted. See gmail-scan.mjs: a free-text
-     * query parameter would turn a credential that can read the whole mailbox
-     * into a general mail-search proxy. */
-    const window = windowFor({ months: body.months, index: body.index, now: body.now });
-    if (!window) {
-        return j(res, 400, { ok: false, error: 'that is not a window this scan can ask for' });
-    }
-
     const ref = db.collection(MAIL_ROOT).doc(who.userKey);
 
+    /* THE STATE IS READ BEFORE THE WINDOW IS BUILT, and that ordering is the
+     * point: the window's query is now made of the owner's approved senders,
+     * which live in this document. Building it first would ask Gmail the old
+     * broad question — every PDF whose subject carries a common word — which is
+     * how bills and receipts reached a screen meant for statements. */
     let state;
     try {
         const snap = await withDeadline(ref.get(), 8000, 'wf-mail');
@@ -102,6 +102,25 @@ export default async function handler(req, res, deps) {
     }
     if (!state || !state.refresh_token) {
         return j(res, 409, { ok: false, error: 'no mailbox is connected yet', connected: false });
+    }
+
+    /* Read from the sealed document, never from the request. See windowFor. */
+    const senderList = normalizeList(sendersOf(state));
+    const policy = policyFrom(senderList);
+    /* Accumulates this page's sightings; written back once at the end rather
+     * than per message, because a document write per mail is how a scan of a
+     * busy month becomes a quota bill. */
+    let seen = senderList;
+
+    /* The window is DERIVED, never accepted. See gmail-scan.mjs: a free-text
+     * query parameter would turn a credential that can read the whole mailbox
+     * into a general mail-search proxy. */
+    const window = windowFor({
+        months: body.months, index: body.index, now: body.now,
+        senders: approvedClauses(senderList),
+    });
+    if (!window) {
+        return j(res, 400, { ok: false, error: 'that is not a window this scan can ask for' });
     }
 
     let token;
@@ -142,7 +161,16 @@ export default async function handler(req, res, deps) {
         /* The SAME plan the live hook applies: allowlisted sender, DKIM held,
          * an attachment worth taking. A second copy of that judgement is a
          * second place for a statement to be accepted that should not be. */
-        const plan = planMessage(msg);
+        const plan = planMessage(msg, policy);
+
+        /* THE GATHERING THE OWNER ASKED FOR.
+         *
+         * Recorded whether the message was taken or refused, and refused mail
+         * matters MORE: a sender nobody has approved yet is exactly the one to
+         * put in front of them. Without this the strict rule would be a wall —
+         * "not on your list" with no way to get on it. */
+        seen = recordSighting(seen, { from: plan.from, subject: plan.subject, now: Date.now() });
+
         if (!plan.ok) {
             if (isWorthTelling(plan)) {
                 skipped.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
@@ -180,6 +208,12 @@ export default async function handler(req, res, deps) {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
                     backfilled: true,
+                    /* FINALLY STORED. planMessage computed `known` from the
+                     * first day and no manifest had a place for it, so the
+                     * device could not tell a confirmed bank from a merely
+                     * verified stranger and drew them identically. */
+                    known: item.known !== false,
+                    from: item.from || '',
                 });
                 if (!write.ok) {
                     skipped.push({ bank: item.bank, reason: write.reason, text: REJECT_TEXT[write.reason] });
@@ -202,9 +236,23 @@ export default async function handler(req, res, deps) {
         }
     }
 
+    /* One write for the whole page. A failure here loses sightings, never a
+     * statement — the statements are already stored — so it is caught and the
+     * page still reports success. */
+    let discovered = 0;
+    try {
+        if (seen !== senderList) {
+            discovered = seen.filter((e) => e && e.status === 'new').length;
+            await withDeadline(ref.set({ [SENDERS_FIELD]: seen }, { merge: true }), 8000, 'wf-mail senders');
+        }
+    } catch (_) { /* the scan succeeded; the suggestions can wait for the next page */ }
+
     return j(res, 200, {
         ok: true,
         window: { label: window.label },
+        /* So the card can say "three senders are waiting for you to decide"
+         * rather than leaving the strict rule looking like a silent failure. */
+        discovered,
         ...pageResult({ ids, stored, skipped, pageToken: listed && listed.nextPageToken }),
     });
 }

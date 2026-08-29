@@ -158,6 +158,27 @@ export function linkRecord(email, refreshToken, now = Date.now()) {
  * or a first few characters would turn this endpoint into a way to read back a
  * credential a few bits at a time.
  */
+/* Where the owner's statement-sender list lives.
+ *
+ * The SAME sealed document as the refresh token, and for the same reason it
+ * cannot live on the device: the two things that consult it are the push hook
+ * and the scan endpoint, and neither has a browser in front of it. A webhook
+ * fired by Google has no client to ask.
+ *
+ * It is not a credential and it is not treated as one — but it is not nothing
+ * either. It names the institutions somebody banks with, which is why it goes
+ * behind the same identity boundary rather than somewhere more convenient, and
+ * why gmail-link.js derives the document key from a VERIFIED email and from
+ * nothing the caller sends. */
+export const SENDERS_FIELD = 'senders';
+
+/** The stored sender list, defaulted so a document written before it existed
+ *  reads as "nothing decided yet" rather than as an error. */
+export function sendersOf(doc) {
+    const v = doc && doc[SENDERS_FIELD];
+    return Array.isArray(v) ? v : [];
+}
+
 export function statusOf(doc) {
     const d = doc || null;
     if (!d || !d.refresh_token) return { connected: false };
@@ -169,6 +190,10 @@ export function statusOf(doc) {
         // "linked" from "linked and working".
         lastPushMs: Number(d.lastPushMs) || null,
         historyId: d.historyId ? String(d.historyId) : null,
+        /* Reported so the card can say "no senders approved yet" — the state
+         * where the scanner is still guessing and the owner has a decision to
+         * make — instead of looking identical to a curated one. */
+        senderCount: sendersOf(d).filter((e) => e && e.status === 'approved').length,
     };
 }
 

@@ -180,6 +180,21 @@ export async function ledgerHashes(appData, deps = {}) {
  * word that appears in the SUBJECT or BODY of a real statement mail, and every
  * addition widens the net for the quarantine queue too, so a term that also
  * matches shopping receipts costs the owner a review. */
+/* WHY `invoice` AND `bill` ARE NOT HERE.
+ *
+ * They were, and they are the direct cause of the owner's report that bills and
+ * receipts were arriving in a screen meant for bank statements. Those two words
+ * describe every non-statement financial mail ever sent — a utility bill, a
+ * shop receipt, a subscription charge, a phone top-up — and they were used
+ * TWICE: once to build the Gmail query, so the mail was fetched, and again in
+ * looksLikeStatement, so it was accepted. Each one matched both times.
+ *
+ * The rest of this list earns its place: `statement`, its spellings, and the
+ * three `advice` forms are what Sri Lankan banks actually title these mails,
+ * and none of them appears on a receipt. The rule for adding a term is
+ * unchanged and is now the whole point of the file: a word that also matches
+ * something that is not a statement costs the owner a review, so it does not
+ * go in. */
 export const STATEMENT_TERMS = [
     'statement',
     'e-statement',
@@ -187,8 +202,6 @@ export const STATEMENT_TERMS = [
     'account advice',
     'credit advice',
     'debit advice',
-    'invoice',
-    'bill',
 ];
 
 /** One month, as Gmail's after:/before: want it. */
@@ -201,12 +214,31 @@ const ymd = (d) => `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart
  * function of its inputs — a scan planner that reads the clock cannot be
  * tested, and this one decides how much of someone's mailbox gets read.
  */
-export function planWindows({ months = 24, now = Date.now(), senders = [], terms = STATEMENT_TERMS } = {}) {
+export function planWindows({
+    months = 24, now = Date.now(), senders = [], terms = STATEMENT_TERMS, discover = true,
+} = {}) {
     const depth = Math.max(1, Math.min(120, Math.floor(num(months)) || 1));
-    const fromClauses = senders.map((x) => s(x)).filter(Boolean).map((d) => `from:${d}`);
+    /* Accepts either bare domains or ready-made `from:` clauses, because the
+     * sender list hands over the latter and the built-in bank list the former.
+     * Normalising here means neither caller has to know what the other does. */
+    const fromClauses = arr(senders).map((x) => s(x)).filter(Boolean)
+        .map((d) => (d.startsWith('from:') ? d : `from:${d}`));
+
+    /* THE KEYWORD BRANCH IS FOR DISCOVERY, NOT FOR ROUTINE SCANNING.
+     *
+     * `has:attachment filename:pdf OR "statement"` asks Gmail for every PDF in
+     * the mailbox whose subject carries a common word, which is how a screen
+     * for bank statements filled up with everything else. Once the owner has
+     * approved even one sender, the question narrows to those senders and the
+     * keyword branch is dropped: an unapproved sender is then not fetched and
+     * discarded, it is never asked for — no quota, no download, no row.
+     *
+     * With no approved senders it stays on, because that is the only way to
+     * find out what to approve. */
+    const useTerms = discover || !fromClauses.length;
     /* Quoted, because several are two words and an unquoted "account advice"
      * would ask Gmail for two separate terms. */
-    const termClauses = (Array.isArray(terms) ? terms : []).map((t) => s(t)).filter(Boolean)
+    const termClauses = !useTerms ? [] : (Array.isArray(terms) ? terms : []).map((t) => s(t)).filter(Boolean)
         .map((t) => `"${t.replace(/"/g, '')}"`);
     const any = s([...fromClauses, ...termClauses].join(' OR '));
     const windows = [];

@@ -88,6 +88,15 @@ export const CONSUMER_MAIL = new Set([
 
 export const REJECT = {
     NOT_A_BANK: 'sender-not-on-allowlist',
+    /* The owner said no to this sender by name. Distinct from every other
+     * refusal here because it is the only one that is not a judgement: it is an
+     * instruction, and it is obeyed before anything else is considered. */
+    SENDER_BLOCKED: 'you-blocked-this-sender',
+    /* The owner has curated a list and this sender is not on it. Kept apart
+     * from NOT_A_STATEMENT so the review screen can say which of the two
+     * happened: "you have not decided about this one yet" is an invitation,
+     * "nothing about it says statement" is a verdict. */
+    NOT_ON_YOUR_LIST: 'sender-not-on-your-list',
     NOT_A_STATEMENT: 'unrecognised-sender-and-nothing-says-statement',
     DKIM_FAILED: 'dkim-did-not-pass',
     DKIM_DOMAIN_MISMATCH: 'signed-by-a-different-domain',
@@ -207,21 +216,46 @@ export function nameFromDomain(domain) {
  * @returns {{ok:true, bank:string, domain:string, known:boolean}
  *          | {ok:false, reason:string, detail:object}}
  */
-export function identifyBank(headers) {
+export function identifyBank(headers, policy = {}) {
     const h = {};
     for (const [k, v] of Object.entries(headers || {})) h[lower(k)] = v;
 
     const from = domainOf(h.from);
     if (!from) return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from: '(none)' } };
 
+    /* THE OWNER'S OWN ANSWER, ASKED FIRST.
+     *
+     * `policy.decide` is injected rather than imported so this module keeps no
+     * dependency on the one that stores the list — they would otherwise import
+     * each other. Absent, it answers `new` for everything, which is exactly the
+     * behaviour this function had before the list existed, so every existing
+     * caller and test is unaffected.
+     *
+     * A BLOCK IS OBEYED BEFORE ANYTHING ELSE IS CONSIDERED. It is the one
+     * decision here that cannot be wrong in a dangerous direction: refusing
+     * more mail than strictly necessary loses a statement the owner can fetch
+     * by hand, while accepting mail they told us to refuse is the complaint
+     * that produced this file. */
+    const decide = typeof policy.decide === 'function' ? policy.decide : null;
+    const said = decide ? (decide(h.from) || {}) : {};
+    if (said.verdict === 'blocked') {
+        return { ok: false, reason: REJECT.SENDER_BLOCKED, detail: { from } };
+    }
+
     const hit = BANKS.find((b) => isUnder(from, b.domain));
 
     if (!hit) {
         /* `hnb.lk.attacker.net` contains a listed domain without being under
-         * it. That is not an unrecognised bank, it is an impersonation. */
-        const lookalike = BANKS.find((b) => from.includes(b.domain));
+         * it. That is not an unrecognised bank, it is an impersonation.
+         *
+         * The owner's approved domains are checked HERE as well as the built-in
+         * list, and they matter more: a domain someone has explicitly approved
+         * is a domain worth impersonating, and it is the one they will read
+         * least carefully in a list of their own banks. */
+        const guarded = [...BANKS.map((b) => b.domain), ...(Array.isArray(policy.domains) ? policy.domains : [])];
+        const lookalike = guarded.find((d) => d && from !== lower(d) && from.includes(lower(d)) && !isUnder(from, lower(d)));
         if (lookalike) {
-            return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from, lookalikeOf: lookalike.domain } };
+            return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from, lookalikeOf: lower(lookalike) } };
         }
         if (CONSUMER_MAIL.has(from)) {
             return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from, personalMailbox: true } };
@@ -240,6 +274,22 @@ export function identifyBank(headers) {
             ok: false,
             reason: REJECT.DKIM_DOMAIN_MISMATCH,
             detail: { from, signedBy: [...passed].slice(0, 4) },
+        };
+    }
+
+    /* APPROVED BY THE OWNER — after the signature check, never instead of it.
+     * "This is one of mine" is not "trust this": the message still had to carry
+     * a passing signature from the domain it claims, and it did, above. What
+     * approval buys is that the statement is FILED rather than held, and that
+     * it is labelled with the name the owner gave it rather than one guessed
+     * from the domain. */
+    if (said.verdict === 'approved') {
+        return {
+            ok: true,
+            bank: (said.entry && said.entry.name) || (hit && hit.name) || nameFromDomain(from),
+            domain: from,
+            known: true,
+            approved: true,
         };
     }
 
@@ -454,17 +504,23 @@ export function betterCopy(a, b) {
     return a;
 }
 
-export function planMessage(message) {
+export function planMessage(message, policy = {}) {
     const headers = {};
     for (const h of (message && message.payload && message.payload.headers) || []) {
         if (h && h.name) headers[lower(h.name)] = h.value;
     }
 
-    const who = identifyBank(headers);
-    if (!who.ok) return { ok: false, ...who };
+    /* Carried out on every plan, refused or not, so the caller can offer the
+     * owner the senders it saw. The gathering the owner asked for depends on
+     * this being reported for mail that did NOT get in — a sender nobody has
+     * approved yet is exactly the one worth showing them. */
+    const seenFrom = String(headers.from || '');
+
+    const who = identifyBank(headers, policy);
+    if (!who.ok) return { ok: false, ...who, from: seenFrom, subject: headers.subject || '' };
 
     const what = selectAttachments(message && message.payload);
-    if (!what.ok) return { ok: false, ...what, bank: who.bank };
+    if (!what.ok) return { ok: false, ...what, bank: who.bank, from: seenFrom, subject: headers.subject || '' };
 
     /* An unrecognised sender has to LOOK like a statement as well as be
      * verified. A valid signature says the sender is who it claims; it says
@@ -478,12 +534,46 @@ export function planMessage(message) {
      * nothing. A KNOWN bank skips this entirely — HNB may title its statement
      * whatever it likes. */
     if (who.known === false) {
+        /* ONCE THE OWNER HAS A LIST, THE LIST DECIDES.
+         *
+         * The keyword test below is a guess, and a guess is what put utility
+         * bills and shop receipts in a screen meant for bank statements: it
+         * searched for the words `invoice` and `bill`, which describe every
+         * non-statement financial mail ever sent. Those two words are gone from
+         * the vocabulary now, but the deeper problem was that a guess was
+         * deciding at all.
+         *
+         * So an owner who has approved even one sender gets the strict rule: a
+         * sender they have not decided on is REFUSED, and offered to them
+         * instead. Nothing is lost — the refusal names the sender, one tap
+         * approves it, and the next scan brings its statements in.
+         *
+         * The guess survives only for someone who has not curated anything yet,
+         * where refusing everything would mean an empty screen and no way to
+         * discover what to approve. */
+        if (policy.curated) {
+            return {
+                ok: false,
+                reason: REJECT.NOT_ON_YOUR_LIST,
+                bank: who.bank,
+                detail: { from: who.domain },
+                from: seenFrom,
+                subject: headers.subject || '',
+            };
+        }
         const named = looksLikeStatement({
             subject: headers.subject || '',
             filenames: what.take.map((a) => a && a.filename).filter(Boolean),
         });
         if (!named) {
-            return { ok: false, reason: REJECT.NOT_A_STATEMENT, bank: who.bank, detail: { from: who.domain } };
+            return {
+                ok: false,
+                reason: REJECT.NOT_A_STATEMENT,
+                bank: who.bank,
+                detail: { from: who.domain },
+                from: seenFrom,
+                subject: headers.subject || '',
+            };
         }
     }
 
@@ -503,16 +593,30 @@ export function planMessage(message) {
             filename: a.filename,
             size: a.size,
             bank: who.bank,
-            /* False for a sender no one has confirmed. The write path holds
-             * these for review instead of filing them; see gmail-hook.js. */
+            /* False for a sender no one has confirmed.
+             *
+             * THIS FIELD WAS COMPUTED AND READ BY NOTHING. The comment that
+             * used to sit here said the write path held these for review. It
+             * did not: planWrite's manifest had no place for the flag, so
+             * neither gmail-hook.js nor gmail-scan.js could act on it, and a
+             * verified-but-unrecognised sender was filed exactly like a
+             * confirmed bank. Both call sites now put it in the manifest, and
+             * the mailbox card reads it back. */
             known: who.known !== false,
+            approved: who.approved === true,
+            from: seenFrom,
             messageId: message.id,
             receivedMs: Number(message.internalDate) || null,
             subject: headers.subject || '',
         });
     }
-    if (!items.length) return { ok: false, reason: REJECT.NO_ATTACHMENT, bank: who.bank, detail: {} };
-    return { ok: true, bank: who.bank, domain: who.domain, items, skipped: what.skipped };
+    if (!items.length) {
+        return { ok: false, reason: REJECT.NO_ATTACHMENT, bank: who.bank, detail: {}, from: seenFrom, subject: headers.subject || '' };
+    }
+    return {
+        ok: true, bank: who.bank, domain: who.domain, items, skipped: what.skipped,
+        from: seenFrom, subject: headers.subject || '', known: who.known !== false,
+    };
 }
 
 /* ── 5. what the user hears about ─────────────────────────────────────────── */
@@ -535,6 +639,8 @@ export function isWorthTelling(plan) {
 
 export const REJECT_TEXT = {
     [REJECT.NOT_A_BANK]: 'the sender is not one of your banks',
+    [REJECT.SENDER_BLOCKED]: 'you blocked this sender',
+    [REJECT.NOT_ON_YOUR_LIST]: 'the sender is not on your statement-sender list',
     [REJECT.NOT_A_STATEMENT]: 'the sender is not a bank you have confirmed, and nothing about the mail says statement',
     [REJECT.DKIM_FAILED]: 'it claims to be from your bank but carries no valid signature',
     [REJECT.DKIM_DOMAIN_MISMATCH]: 'it is signed by a domain other than the one it claims to be from',

@@ -67,7 +67,7 @@ export function scanSenders() {
  * on the first of a month would otherwise silently shift every window by one,
  * re-reading one month and skipping another.
  */
-export function windowFor({ months, index, now } = {}) {
+export function windowFor({ months, index, now, senders = null } = {}) {
     const m = Math.max(1, Math.min(SCAN.MAX_MONTHS, Math.floor(Number(months)) || 0));
     /* STRICT. `Number(null)` is 0 and `Number('')` is 0, so a lenient parse
      * turns a client that forgot to send an index into a request for window
@@ -80,7 +80,20 @@ export function windowFor({ months, index, now } = {}) {
     const at = Number(now);
     if (!Number.isFinite(i) || i < 0) return null;
     if (!Number.isFinite(at) || at <= 0) return null;
-    const windows = planWindows({ months: m, now: at, senders: scanSenders() });
+    /* THE OWNER'S APPROVED SENDERS, WHEN THEY HAVE ANY.
+     *
+     * `senders` is the list read from their sealed document by the handler —
+     * never anything the caller sent. That distinction is the whole reason this
+     * function derives the window instead of accepting one: the credential
+     * behind it can read an entire mailbox, and a query a caller could shape
+     * would make this a general mail-search proxy.
+     *
+     * With approved senders present the keyword branch is dropped, so mail from
+     * anyone else is not fetched at all. With none, the built-in list plus the
+     * statement vocabulary is the only way to discover what to approve. */
+    const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();
+    const discover = !(Array.isArray(senders) && senders.length);
+    const windows = planWindows({ months: m, now: at, senders: chosen, discover });
     return windows[i] || null;
 }
 
