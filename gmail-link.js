@@ -40,8 +40,12 @@
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import {
     MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
+    SENDERS_FIELD, sendersOf,
 } from './gmail-link.mjs';
 import { dedupeStored } from './wealthflow-mail-ingest.mjs';
+import {
+    addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
+} from './wealthflow-mail-senders.mjs';
 
 /* How many stored documents this endpoint will look at, and how many
  * statements it will return once duplicates are collapsed.
@@ -126,6 +130,71 @@ export default async function handler(req, res) {
     }
 
     const ref = db.collection(MAIL_ROOT).doc(who.userKey);
+
+    /* ── THE OWNER'S STATEMENT-SENDER LIST ───────────────────────────────────
+     *
+     * Read and written here rather than from the page for the reason every
+     * other wf-mail field is: firestore.rules seals that branch to clients, and
+     * the two things that actually CONSULT this list — the push hook and the
+     * scan endpoint — have no browser in front of them at all.
+     *
+     * Every mutation goes through wealthflow-mail-senders.mjs, which is where
+     * normalisation, the ceilings and the refusals live. This handler does not
+     * parse an address, decide what is a domain, or trim a list: a second copy
+     * of those rules is a second set of answers, and the two would drift. */
+    if (/[?&]senders=1/.test(String(req.url || ''))) {
+        if (method === 'DELETE') return j(res, 405, { ok: false, error: 'use POST with an action' });
+
+        let snap;
+        try {
+            snap = await withDeadline(ref.get(), 8000, 'wf-mail senders');
+        } catch (_) {
+            return j(res, 503, { ok: false, error: 'sender list unreadable' });
+        }
+        const current = normalizeList(sendersOf(snap && snap.exists ? snap.data() : null));
+
+        if (method === 'GET') {
+            return j(res, 200, { ok: true, senders: current, ...groupForDisplay(current) });
+        }
+
+        const body = await readBody(req);
+        const action = String((body && body.action) || '').toLowerCase();
+        const value = (body && body.value) != null ? String(body.value) : '';
+        const now = Date.now();
+        let result;
+
+        if (action === 'add') {
+            result = addSender(current, value, {
+                status: body && body.status === 'blocked' ? 'blocked' : 'approved',
+                name: (body && body.name) || '',
+                now,
+            });
+            if (!result.ok) {
+                /* The refusal is named in a sentence the owner can act on —
+                 * "that is a personal mailbox" tells them what to do next,
+                 * where "invalid" sends them to look for a bug. */
+                return j(res, 400, {
+                    ok: false, error: REASON_TEXT[result.reason] || 'that could not be added',
+                    reason: result.reason,
+                });
+            }
+        } else if (action === 'status') {
+            result = setStatus(current, value, String((body && body.status) || ''), { now });
+            if (!result.ok) return j(res, 404, { ok: false, error: 'no such sender' });
+        } else if (action === 'remove') {
+            result = removeSender(current, value);
+            if (!result.ok) return j(res, 404, { ok: false, error: 'no such sender' });
+        } else {
+            return j(res, 400, { ok: false, error: 'action must be add, status or remove' });
+        }
+
+        try {
+            await withDeadline(ref.set({ [SENDERS_FIELD]: result.list }, { merge: true }), 8000, 'wf-mail senders');
+        } catch (_) {
+            return j(res, 503, { ok: false, error: 'could not save the sender list' });
+        }
+        return j(res, 200, { ok: true, senders: result.list, ...groupForDisplay(result.list) });
+    }
 
     if (method === 'GET' && /[?&]items=1/.test(String(req.url || ''))) {
         /* The pending statements, assembled parts and all.

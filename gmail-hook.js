@@ -50,6 +50,8 @@
  * ===========================================================================*/
 
 import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
+import { normalizeList, policyFrom, recordSighting } from './wealthflow-mail-senders.mjs';
+import { sendersOf, SENDERS_FIELD } from './gmail-link.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 
@@ -207,6 +209,13 @@ export default async function handler(req, res) {
         return j(res, 204, { ok: true, skipped: 'mailbox-not-connected' });
     }
 
+    /* The owner's statement-sender list, from the sealed document — the same
+     * source and the same shape gmail-scan.js reads. A push has no client to
+     * ask, which is the reason this list lives on the server at all. */
+    const senderList = normalizeList(sendersOf(state));
+    const policy = policyFrom(senderList);
+    let seen = senderList;
+
     let token;
     try {
         token = await accessTokenFrom(state.refresh_token, env, f);
@@ -228,7 +237,14 @@ export default async function handler(req, res) {
             msg = await r.json();
         } catch (_) { continue; }
 
-        const plan = planMessage(msg);
+        const plan = planMessage(msg, policy);
+
+        /* Recorded on every message, taken or refused — see gmail-scan.js,
+         * which does exactly this. The two files apply one policy because they
+         * build it from one function; a rule applied in one of this pair and
+         * not the other is this repository's most repeated defect. */
+        seen = recordSighting(seen, { from: plan.from, subject: plan.subject, now: Date.now() });
+
         if (!plan.ok) {
             if (isWorthTelling(plan)) {
                 notable.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
@@ -267,6 +283,10 @@ export default async function handler(req, res) {
                 const write = planWrite(b64, {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
+                    /* See gmail-scan.js: computed since the beginning, stored
+                     * by nothing until now. */
+                    known: item.known !== false,
+                    from: item.from || '',
                 });
                 if (!write.ok) {
                     notable.push({ bank: item.bank, reason: write.reason, text: REJECT_TEXT[write.reason] });
@@ -296,6 +316,10 @@ export default async function handler(req, res) {
             historyId: listed.historyId || note.historyId,
             lastPushMs: Date.now(),
             ...(notable.length ? { notable: notable.slice(0, 10) } : {}),
+            /* Folded into the write that was already happening rather than
+             * costing a second one. Only when something actually changed, so a
+             * quiet push does not rewrite the list for nothing. */
+            ...(seen !== senderList ? { [SENDERS_FIELD]: seen } : {}),
         }, { merge: true });
     } catch (_) { /* the statements landed; the bookmark can catch up next push */ }
 
