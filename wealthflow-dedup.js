@@ -120,8 +120,8 @@
         // scoring
         if (mScore >= 0.99 && cardAgree) return { match: true, score: 1, certain: true, why: 'amount+day+merchant+card' };
         if (mScore >= 0.88 && sameMin)  return { match: true, score: 0.97, certain: true, why: 'amount+minute+merchant' };
-        if (mScore >= 0.88 && sameDay)  return { match: true, score: 0.9, certain: false, why: 'amount+day+merchant' };
         if (mScore >= 0.99 && sameDay)  return { match: true, score: 0.92, certain: false, why: 'amount+day+exact-merchant' };
+        if (mScore >= 0.88 && sameDay)  return { match: true, score: 0.9, certain: false, why: 'amount+day+merchant' };
         // amount + same minute but weak merchant: likely the SAME tx seen twice
         if (sameMin && mScore >= 0.6)   return { match: true, score: 0.85, certain: false, why: 'amount+minute' };
 

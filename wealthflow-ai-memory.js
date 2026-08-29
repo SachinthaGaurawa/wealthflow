@@ -205,8 +205,8 @@
                     // but apply learned module when the learned one is user-set.
                     if (r.userConfirmed && r.module) brain.routed.module = r.module;
                     const f = brain.routed.suggested_fields || (brain.routed.suggested_fields = {});
-                    if ('cat' in f || true) f.cat = r.category;
-                    if ('category' in f || true) f.category = r.category;
+                    f.cat = r.category;
+                    f.category = r.category;
                     brain.routed.confidence = Math.max(brain.routed.confidence || 0, r.confidence);
                     brain.routed.learned = true;
                 }
