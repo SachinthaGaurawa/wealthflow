@@ -289,12 +289,35 @@
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i].trim();
             if (!line) continue;
-            var d = dateAt(line);
-            if (!d) continue;
 
+            // Opening/closing balance lines carry no date, so they must be
+            // recognised BEFORE the date gate. Dropping them (the old code read the
+            // date first and skipped any line without one) left `reconciliation.opening`
+            // permanently null, so the whole-statement cross-check
+            // "opening + credits − debits = closing" — the only check that can notice
+            // a row that was silently skipped — could never run. It also left the
+            // first real row without a previous balance, so its direction had to be
+            // inferred from a CR/DR marker instead of verified by the running total.
             var isOpening = OPENING_RE.test(line);
             var isClosing = CLOSING_RE.test(line);
-            if (!isOpening && !isClosing && NOISE_RE.test(line)) continue;
+            if (isOpening || isClosing) {
+                var balTokens = moneyTokens(line);
+                if (balTokens.length) {
+                    cands.push({
+                        line: line,
+                        date: '',
+                        rest: line,
+                        block: trailingBlock(balTokens, line),
+                        opening: isOpening,
+                        closing: isClosing
+                    });
+                }
+                continue;
+            }
+
+            var d = dateAt(line);
+            if (!d) continue;
+            if (NOISE_RE.test(line)) continue;
 
             // Drop the post date and an immediately following value/effective date.
             var rest = line.slice(d.end);

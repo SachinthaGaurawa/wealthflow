@@ -127,6 +127,34 @@ describe('statement parser: cross-validation catches what a regex cannot', () =>
     });
 });
 
+describe('statement parser: undated opening/closing balance lines', () => {
+    // Real statements often print "Opening Balance 10,000.00" with no date at
+    // all. The parser's date gate used to drop those lines before OPENING_RE ever
+    // saw them, leaving reconciliation.opening permanently null — so the
+    // whole-statement cross-check could never run. They must be captured anyway.
+    const bank = [
+        'Opening Balance 10,000.00',
+        '01/07/2026 SALARY 50,000.00 60,000.00 CR',
+        '02/07/2026 GROCERY 5,000.00 55,000.00',
+        'Closing Balance 55,000.00',
+    ].join('\n');
+
+    it('captures an undated opening balance and reconciles the statement', () => {
+        const rc = P.parseStatement(bank).reconciliation;
+        expect(rc.opening).toBe(10000);
+        expect(rc.closing).toBe(55000);
+        expect(rc.ok).toBe(true);
+    });
+
+    it('seeds the running total so the first row is verified, not guessed', () => {
+        const rows = P.parseStatement(bank).rows;
+        expect(rows[0].narration).toContain('SALARY');
+        expect(rows[0].directionSource).toBe('balance');
+        expect(rows[0].balanceVerified).toBe(true);
+    });
+});
+
+
 describe('statement parser: header and summary lines are not transactions', () => {
     // The row filter is deliberately looser than it was — a single money token is
     // now enough, which is what makes credit-card statements parse. That shifts
