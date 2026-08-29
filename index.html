@@ -21799,6 +21799,50 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window._wfResetFirstScan = () => { try { localStorage.removeItem(MAIL_FIRST_SCAN_KEY); } catch (_) {} };
 
+        /* ── WHERE THE SCAN GOT TO ───────────────────────────────────────────
+         *
+         * The cursor lived in a module-scoped variable and nowhere else, so it
+         * did not survive a reload, a navigation, or even a second press of the
+         * button — runBackfill rebuilt it from scratch each time. A deep scan
+         * that cannot remember its own position is a scan of the newest six
+         * months, repeated.
+         *
+         * It goes in localStorage rather than the vault or the cloud because it
+         * is not sensitive and not shared: an index into a plan of month
+         * boundaries. No subject, no sender, no attachment, nothing about what
+         * was found — those live in wf-mail. Losing this record costs a
+         * repeated scan, never a lost statement, which is why a parse failure
+         * below simply starts over. */
+        const MAIL_SCAN_CURSOR_KEY = 'wf_mail_scan_cursor';
+        const SCAN_BATCH_REST_MS = 1200;
+
+        function _loadScanCursor() {
+            try {
+                const raw = localStorage.getItem(MAIL_SCAN_CURSOR_KEY);
+                if (!raw) return null;
+                const v = JSON.parse(raw);
+                return v && typeof v === 'object' ? v : null;
+            } catch (_) { return null; }
+        }
+        function _saveScanCursor(cursor) {
+            let raw = '';
+            try {
+                const rec = window.WFBackfill && window.WFBackfill.serializeCursor
+                    ? window.WFBackfill.serializeCursor(cursor) : null;
+                raw = rec ? JSON.stringify(rec) : '';
+            } catch (_) { raw = ''; }
+            if (!raw) return;
+            /* The write sits alone in its own try, right beside the catch that
+             * handles it: a full or blocked store costs a resumed scan, never a
+             * statement, and nothing after it may be skipped by the throw. */
+            try { localStorage.setItem(MAIL_SCAN_CURSOR_KEY, raw); } catch (_) {}
+        }
+        function _clearScanCursor() {
+            try { localStorage.removeItem(MAIL_SCAN_CURSOR_KEY); } catch (_) {}
+        }
+        window._wfScanCursor = () => _loadScanCursor();
+        window._wfResetScanCursor = () => _clearScanCursor();
+
         async function _gmailScan(payload) {
             if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
             let token;
@@ -21831,25 +21875,44 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (_scan.stage === 'running') return;
             if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
 
-            const now = Date.now();
-            _scan = {
-                stage: 'running',
-                cursor: window.WFBackfill.startCursor({ months, now }),
-                found: 0, months, label: '', error: null,
-            };
+            /* RESUMED, NOT RESTARTED.
+             *
+             * This line used to be startCursor(), unconditionally, on every
+             * call. Six windows is one run's worth; twenty-four months is a
+             * plan of twenty-four. So the run stopped at six and said "run it
+             * again to continue" — and running it again built a NEW cursor at
+             * index 0 and re-fetched the same six months. Months seven through
+             * twenty-four were not slow. They were unreachable, forever, by
+             * any number of presses, and everything older than half a year
+             * simply never synced. */
+            const saved = _loadScanCursor();
+            const cursor = window.WFBackfill.resumeCursor(saved, { months, now: Date.now() });
+            const resumed = !!(saved && cursor.index > 0);
+            _scan = { stage: 'running', cursor, found: 0, months, label: '', error: null };
             renderMailSync();
 
             const stop = (err) => {
                 _scan.stage = 'idle';
+                _scan.label = '';
                 if (err) _scan.error = String(err).slice(0, 200);
+                /* The cursor is KEPT on failure. A quota refusal or a dropped
+                 * connection is the case resuming was built for; throwing the
+                 * position away here would send the next attempt back to
+                 * index 0, which is the bug this function just stopped having. */
+                _saveScanCursor(_scan.cursor);
                 renderMailSync();
             };
 
-            /* Bounded by the engine's own limit AND by a hard ceiling on calls.
-             * A cursor bug that never advances would otherwise be an endless
-             * loop against someone's Gmail quota. */
+            if (resumed) {
+                notify(`Resuming your mailbox scan at ${_scan.cursor.windows[_scan.cursor.index].label}`, 'info');
+            }
+
+            /* Bounded by a hard ceiling on calls. A cursor bug that never
+             * advances would otherwise be an endless loop against someone's
+             * Gmail quota. 400 covers the deepest plan (120 windows) with
+             * paging room to spare. */
             let calls = 0;
-            const startIndex = _scan.cursor.index;
+            let batchStart = _scan.cursor.index;
             while (calls < 400) {
                 const step = window.WFBackfill.nextStep(_scan.cursor);
                 if (!step) break;
@@ -21857,8 +21920,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                 _scan.label = step.window.label;
                 renderMailSync();
 
+                /* The CURSOR's clock and depth, not this call's. The server
+                 * rebuilds the window from (months, now, index), so a resumed
+                 * scan that sent a fresh Date.now() would have index 7 mean a
+                 * different month on each side — silently re-reading one and
+                 * skipping another. */
                 const r = await _gmailScan({
-                    months, now,
+                    months: _scan.cursor.months,
+                    now: _scan.cursor.now,
                     index: _scan.cursor.index,
                     pageToken: step.pageToken || undefined,
                 });
@@ -21867,20 +21936,36 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
                 _scan.cursor = window.WFBackfill.advance(_scan.cursor, r.body);
                 _scan.found += Number(r.body.statements) || 0;
+                /* Written after every page, so an interruption at any point
+                 * costs one page rather than the whole scan. */
+                _saveScanCursor(_scan.cursor);
                 renderMailSync();
 
-                if (window.WFBackfill.shouldPause(startIndex, _scan.cursor)) break;
+                if (window.WFBackfill.shouldPause(batchStart, _scan.cursor)) {
+                    /* A BATCH BOUNDARY, NOT THE END.
+                     *
+                     * MAX_WINDOWS_PER_RUN exists so no single stretch of work
+                     * hogs the phone or hammers Gmail — and that is met by
+                     * resting here, not by stopping and asking a person to
+                     * press a button four more times. The rest keeps each
+                     * stretch bounded; the loop keeps the scan finishing. */
+                    batchStart = _scan.cursor.index;
+                    await new Promise((r2) => setTimeout(r2, SCAN_BATCH_REST_MS));
+                }
             }
 
             const done = !!(_scan.cursor && _scan.cursor.done);
             _scan.stage = 'idle';
             _scan.label = '';
+            /* A finished plan has nothing left to resume, and keeping it would
+             * make the NEXT scan think it was already complete. */
+            if (done) _clearScanCursor(); else _saveScanCursor(_scan.cursor);
             renderMailSync();
 
             if (!_scan.found) {
                 notify(done
                     ? 'Scan finished — no statements found in that period'
-                    : 'Scanned part of the period — no statements yet. Run it again to continue.', 'info');
+                    : 'Scan paused — no statements yet. It will pick up where it left off.', 'info');
                 return;
             }
 
@@ -21892,7 +21977,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             notify(`Found ${_scan.found} statement${_scan.found === 1 ? '' : 's'} — filing them now`, 'success');
             await runMailSync();
 
-            if (!done) notify('There is more history to scan. Run it again to continue.', 'info');
+            if (!done) notify('The scan paused part-way. It resumes from where it stopped.', 'info');
         }
         window.runBackfill = runBackfill;
 
