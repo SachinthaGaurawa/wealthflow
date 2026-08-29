@@ -129,13 +129,18 @@ export const BUDGETS = {
     // FUTURE, so the mailbox's existing statements were unreachable and the
     // backfill engine merged in #142 had no caller for its scan half at all.
     // This is the button, the depth picker, the progress state and the driver.
-    /* Raised from 1_783_000. The Infinity responsive core (v7.58) makes the grid
-     * classes (.g2–.g5), every flex/text surface and the page chrome overlap-and
-     * clip-proof: fluid minmax(0,1fr) tracks, clamp() typography and spacing,
-     * overflow-wrap so a long word/email/account number can never bleed out of
-     * its box, plus a 4K centering + essential-footer guard. Stylesheet-only,
-     * so no new request; ~4.5 KB of index.html added. */
-    htmlBytes: 1_792_000,        // measured 1,787,383 — infinity responsive core
+    /* Raised from 1_754_000. The mailbox card now scans the inbox's history by
+     * itself the first time it finds a connected mailbox with nothing in it.
+     *
+     * That is not a feature so much as the repair of a false statement: a Gmail
+     * watch reports only what arrives NEXT, so a freshly connected mailbox had
+     * never had anything look at the mail already in it, and the card said
+     * "Connected. No statements waiting" — true, and completely misleading. The
+     * owner reported it twice, the second time after being told it was fixed.
+     *
+     * Roughly 2.5 KB on 1.75 MB, for the trigger, the once-only marker, and the
+     * comments explaining why an automatic Gmail read is bounded and runs once. */
+    htmlBytes: 1_783_000,        // measured 1,778,072 — the statement-sender screen
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
