@@ -41,6 +41,18 @@ import { getAdminDb, withDeadline } from './admin-db.mjs';
 import {
     MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
 } from './gmail-link.mjs';
+import { dedupeStored } from './wealthflow-mail-ingest.mjs';
+
+/* How many stored documents this endpoint will look at, and how many
+ * statements it will return once duplicates are collapsed.
+ *
+ * The scan ceiling is the higher of the two on purpose: a store carrying
+ * several copies of each statement must still be able to yield a full page of
+ * DISTINCT ones. Both are bounded because this runs inside a function with a
+ * deadline, and an unbounded read of someone's whole mail history is how that
+ * deadline gets hit. */
+export const ITEMS_SCAN_MAX = 400;
+export const ITEMS_RETURN_MAX = 200;
 
 function j(res, code, body) {
     res.statusCode = code;
@@ -124,17 +136,39 @@ export default async function handler(req, res) {
          * holds no vault key and decrypts nothing. The PDF is opened on the
          * device, with a password that never leaves it. */
         try {
-            const snap = await withDeadline(ref.collection('items').limit(25).get(), 8000, 'wf-mail items');
-            const items = [];
+            /* THE CAP USED TO BE 25, AND IT WAS THE WRONG SHAPE OF LIMIT.
+             *
+             * A deep scan of two years across ten banks stores far more than
+             * twenty-five statements, so the owner could run a successful
+             * backfill and still be shown a fraction of it with nothing saying
+             * why. The ceiling is now high enough to hold a real history, and
+             * it is applied AFTER duplicates are collapsed so a store full of
+             * repeats cannot crowd out real statements. */
+            const snap = await withDeadline(ref.collection('items').limit(ITEMS_SCAN_MAX).get(), 8000, 'wf-mail items');
+            const rows = [];
             for (const doc of (snap && snap.docs) || []) {
+                rows.push({ id: doc.id, ref: doc.ref, manifest: doc.data() });
+            }
+
+            /* Collapsed BEFORE the parts are read. Assembling every copy of a
+             * statement only to throw all but one away is the same work done
+             * several times over, on a phone, for nothing. */
+            const keep = dedupeStored(rows).slice(0, ITEMS_RETURN_MAX);
+
+            const items = [];
+            for (const row of keep) {
                 const parts = [];
                 try {
-                    const ps = await withDeadline(doc.ref.collection('parts').get(), 8000, 'parts');
+                    const ps = await withDeadline(row.ref.collection('parts').get(), 8000, 'parts');
                     for (const p of (ps && ps.docs) || []) parts.push(p.data());
                 } catch (_) { /* an unreadable part shows up as a short assembly */ }
-                items.push({ id: doc.id, manifest: doc.data(), parts });
+                items.push({ id: row.id, manifest: row.manifest, parts });
             }
-            return j(res, 200, { ok: true, items });
+            /* `duplicates` is reported rather than hidden: the owner asked why
+             * the same statements kept appearing, and a number they can watch
+             * fall to zero is a better answer than a list that quietly got
+             * shorter. */
+            return j(res, 200, { ok: true, items, scanned: rows.length, duplicates: rows.length - dedupeStored(rows).length });
         } catch (_) {
             return j(res, 503, { ok: false, error: 'items unreadable' });
         }

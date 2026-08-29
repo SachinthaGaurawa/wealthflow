@@ -129,7 +129,18 @@ export const BUDGETS = {
     // FUTURE, so the mailbox's existing statements were unreachable and the
     // backfill engine merged in #142 had no caller for its scan half at all.
     // This is the button, the depth picker, the progress state and the driver.
-    htmlBytes: 1_754_000,        // measured 1,734,117 with the deep-scan UI
+    /* Raised from 1_754_000. The mailbox card now scans the inbox's history by
+     * itself the first time it finds a connected mailbox with nothing in it.
+     *
+     * That is not a feature so much as the repair of a false statement: a Gmail
+     * watch reports only what arrives NEXT, so a freshly connected mailbox had
+     * never had anything look at the mail already in it, and the card said
+     * "Connected. No statements waiting" — true, and completely misleading. The
+     * owner reported it twice, the second time after being told it was fixed.
+     *
+     * Roughly 2.5 KB on 1.75 MB, for the trigger, the once-only marker, and the
+     * comments explaining why an automatic Gmail read is bounded and runs once. */
+    htmlBytes: 1_760_000,        // measured 1,756,537
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

@@ -21623,8 +21623,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 </div>`;
             } else if (connected === null) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Checking connection…</div>`;
+            } else if (!st.items.length && !_firstScanDone()) {
+                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Your mailbox has not been scanned yet — this happens automatically on the next check.</div>`;
             } else if (!st.items.length) {
-                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. No statements waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.</div>`;
+                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Nothing waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}. Use <b>Scan historical statements</b> to search further back.</div>`;
             }
 
             host.innerHTML = `
@@ -21769,6 +21771,33 @@ table.amort tbody tr { page-break-inside: avoid; }
          * scan half with no caller at all. This is that caller.
          */
         let _scan = { stage: 'idle', cursor: null, found: 0, months: 0, label: '', error: null };
+
+        /* ── THE FIRST SCAN HAS TO HAPPEN WITHOUT BEING ASKED ────────────────
+         *
+         * Connecting a mailbox registers a Gmail watch, and a watch only ever
+         * reports what arrives NEXT. Everything already sitting in the inbox —
+         * which, on the day you connect, is all of it — is reached only by the
+         * historical scan, and that ran only when someone pressed a button.
+         *
+         * So a freshly connected mailbox showed "Connected. No statements
+         * waiting", which was true and completely misleading: nothing had ever
+         * looked. The owner reported exactly that, twice.
+         *
+         * This runs the scan once, the first time a connected mailbox is found
+         * with nothing in it. The marker is written BEFORE the scan rather than
+         * after: a scan that fails should not re-arm itself on every render
+         * against someone's Gmail quota, and the button is still there for a
+         * deliberate retry. */
+        const MAIL_FIRST_SCAN_KEY = 'wf_mail_first_scan';
+        const FIRST_SCAN_MONTHS = 24;
+
+        function _firstScanDone() {
+            try { return localStorage.getItem(MAIL_FIRST_SCAN_KEY) === '1'; } catch (_) { return true; }
+        }
+        function _markFirstScan() {
+            try { localStorage.setItem(MAIL_FIRST_SCAN_KEY, '1'); } catch (_) {}
+        }
+        window._wfResetFirstScan = () => { try { localStorage.removeItem(MAIL_FIRST_SCAN_KEY); } catch (_) {} };
 
         async function _gmailScan(payload) {
             if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
@@ -21999,6 +22028,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                 note: null, reason: null,
             }));
             renderMailSync();
+
+            /* A connected mailbox with nothing in it has almost certainly never
+             * been looked at, rather than being empty: the Gmail watch reports
+             * only what arrives next, so the whole existing inbox is reachable
+             * only through the historical scan. Run it once, here, instead of
+             * waiting for the owner to discover a button. */
+            if (!docs.length && !_firstScanDone() && _scan.stage !== 'running') {
+                _markFirstScan();
+                notify(`Scanning the last ${FIRST_SCAN_MONTHS} months of your mailbox for statements…`, 'info');
+                try { await runBackfill(FIRST_SCAN_MONTHS); } catch (_) { /* runBackfill reports its own failure */ }
+                /* Whatever it found is in the store now, so read it again
+                 * rather than leaving the card showing the empty answer. */
+                if (_scan.found > 0) { _mailSyncState.stage = 'idle'; return runMailSync(); }
+            }
 
             const set = (i, patch) => { Object.assign(_mailSyncState.items[i], patch); renderMailSync(); };
 
