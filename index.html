@@ -1908,6 +1908,14 @@
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
+            min-width: 0;
+        }
+        /* Only tables inside a scrollable .tbl-wrap get the 600px floor: the
+           wrapper slides them sideways on narrow screens. Every other table
+           (modal summaries, amortization schedules, …) must shrink to fit its
+           container, or it overflows/clips on phones — the global 600px floor
+           used to leak onto all of them. */
+        .tbl-wrap table {
             min-width: 600px;
         }
 
