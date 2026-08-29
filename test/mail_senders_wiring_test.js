@@ -163,6 +163,36 @@ describe('the owner can actually reach it', () => {
         expect(fn('_sendersApply')).toContain('r.body.approved');
     });
 
+    it('THE CARD READS `known` — storing it and not reading it is the same defect', () => {
+        /* The original bug in one line: planMessage computed this field, a
+         * comment claimed the write path acted on it, and no manifest carried
+         * it. Now both call sites store it. A screen that ignored it would be
+         * that defect one step further along, in the change that names it. */
+        const body = fn('runMailSync');
+        expect(body).toContain('d.manifest.known === false');
+        expect(body).toContain('d.manifest.from');
+    });
+
+    it('an unrecognised row says who sent it and offers the decision inline', () => {
+        const body = fn('renderMailSync');
+        expect(body).toContain('not on your sender list');
+        expect(body).toContain('data-msadd');
+        expect(body).toContain("_sendersDo('add', it.from");
+    });
+
+    it('a document written before the field existed is not treated as suspect', () => {
+        /* `known: undefined` must read as known. Written as `!== false` for
+         * exactly that reason — a truthiness test would turn every statement
+         * stored before this change into an accusation. */
+        const body = fn('runMailSync');
+        expect(body).not.toMatch(/known:\s*!!\s*\(?d\.manifest/);
+        expect(body).toContain('known: !(d.manifest && d.manifest.known === false)');
+    });
+
+    it('the sender shown is the address, not a display name the sender chose', () => {
+        expect(fn('_mailFromLabel')).toContain('<([^>]*)>');
+    });
+
     it('the empty state names the cause instead of looking like a bug', () => {
         const body = fn('renderMailSync');
         expect(body).toContain('does not know which senders are your banks yet');

@@ -21592,6 +21592,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             return '';
         }
 
+        /**
+         * A From header, as something to show in one line.
+         *
+         * The header is `Name <addr@domain>` as often as a bare address, and
+         * printing the whole thing puts a display name chosen by the sender
+         * into the card. The address is what the owner is deciding about. */
+        function _mailFromLabel(from) {
+            const raw = String(from || '').trim();
+            const angled = /<([^>]*)>/.exec(raw);
+            return ((angled ? angled[1] : raw).replace(/^mailto:/, '').trim() || raw).slice(0, 80);
+        }
+
         /** How many senders the owner has approved, when the server has said. */
         function _senderCountLabel() {
             const n = _mailStatus ? Number(_mailStatus.senderCount) : NaN;
@@ -21604,15 +21616,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             const st = _mailSyncState;
             const connected = st.connected;
 
-            const rows = st.items.map(it => `
-                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);">
+            const rows = st.items.map((it, i) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);flex-wrap:wrap;">
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                             ${_wfEsc(it.bank || 'Statement')}${it.filename ? ' · <span style="color:var(--text3);font-weight:400;">' + _wfEsc(it.filename) + '</span>' : ''}
                         </div>
                         ${it.note ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px;">${_wfEsc(it.note)}</div>` : ''}
+                        ${!it.known ? `<div style="font-size:11.5px;color:var(--text3);margin-top:3px;overflow-wrap:anywhere;">
+                            From ${_wfEsc(_mailFromLabel(it.from))} — not on your sender list.
+                        </div>` : ''}
                     </div>
                     ${_mailStageChip(it.stage, it.reason)}
+                    ${!it.known && it.from ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
+                        ${(window.WFIcon ? WFIcon('plus') : '')} Add sender
+                    </button>` : ''}
                 </div>`).join('');
 
             /* The honest empty states. Each names the ONE thing that is missing,
@@ -21726,6 +21744,19 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (sc) sc.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openBackfill(); };
             const sn = host.querySelector('#_ms_senders');
             if (sn) sn.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openSenderList(); };
+            /* The decision offered where the confusion is. Seeing an unfamiliar
+             * row and being sent to another screen to find it again is how a
+             * queue stops being read. */
+            host.querySelectorAll('[data-msadd]').forEach((btn) => {
+                btn.onclick = async () => {
+                    const it = st.items[Number(btn.getAttribute('data-msadd'))];
+                    if (!it || !it.from) return;
+                    try { triggerHaptic('light'); } catch (_) {}
+                    btn.disabled = true;
+                    await _sendersDo('add', it.from, { status: 'approved', name: it.bank || '' });
+                    runMailSync();
+                };
+            });
         }
         window.renderMailSync = renderMailSync;
 
@@ -22386,6 +22417,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                 filename: d.manifest && d.manifest.filename,
                 stage: 'waiting',
                 note: null, reason: null,
+                /* WHO SENT IT, AND WHETHER THE OWNER HAS SAID SO.
+                 *
+                 * `known` has been computed since the pipeline was written and
+                 * stored by nothing until now, so a verified stranger drew
+                 * exactly like a confirmed bank and there was no way to tell
+                 * from the screen why a receipt was sitting in it. Storing the
+                 * field and then not reading it would be the same defect one
+                 * step further along, in the very change that names it.
+                 *
+                 * `!== false` on purpose: every document written before this
+                 * has no such field, and an absent one must not turn a filed
+                 * statement into an accusation. */
+                known: !(d.manifest && d.manifest.known === false),
+                from: (d.manifest && d.manifest.from) || '',
             }));
             renderMailSync();
 
