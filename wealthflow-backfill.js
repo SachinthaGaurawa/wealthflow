@@ -233,6 +233,8 @@ export function planWindows({ months = 24, now = Date.now(), senders = [], terms
  * rest of the app's state, and complete enough that resuming does not re-read a
  * window that already finished. */
 export function startCursor(opts = {}) {
+    const now = num(opts.now) || Date.now();
+    const months = Math.max(1, Math.min(120, Math.floor(num(opts.months)) || 1));
     return {
         windows: planWindows(opts),
         index: 0,
@@ -240,8 +242,104 @@ export function startCursor(opts = {}) {
         done: false,
         scanned: 0,
         statements: 0,
-        started: num(opts.now) || Date.now(),
+        started: now,
+        /* THE CLOCK AND THE DEPTH TRAVEL WITH THE CURSOR.
+         *
+         * planWindows() is a pure function of (months, now), and the server
+         * rebuilds the very same window from the (months, now, index) it is
+         * sent. So the clock a scan STARTED with is part of that scan's
+         * identity: resume it against a fresh Date.now() and index 7 addresses
+         * a different month on each side. Carrying them here is what lets a
+         * cursor be put down and picked up — across a pause, a reload, or a
+         * week — and still mean the same thing. */
+        months,
+        now,
     };
+}
+
+/* ── RESUMING ─────────────────────────────────────────────────────────────
+ *
+ * MAX_WINDOWS_PER_RUN bounds one RUN. Nothing bounded the SCAN, because
+ * nothing carried a run's end into the next one: every call to the caller in
+ * index.html built a fresh cursor at index 0. Twenty-four planned windows, six
+ * done, and the message said "run it again to continue" — so the owner pressed
+ * it again and got months one through six a second time. Months seven through
+ * twenty-four were not slow to arrive. They were unreachable, by any number of
+ * presses, and the same six months were re-fetched every time.
+ *
+ * That is the whole of "not all my statements sync". The plan was right, the
+ * windows were right, the queries were right; the cursor was thrown away
+ * between runs.
+ *
+ * These two functions are the memory. They are pure and they are here rather
+ * than in the page for the same reason the planner is: what decides how much
+ * of someone's mailbox gets read should be testable without a mailbox. */
+
+/* Bumped when the persisted shape changes meaning. A cursor from an older
+ * version is dropped rather than guessed at — resuming half-understood state
+ * into a scan of somebody's mail is worse than starting over. */
+export const CURSOR_VERSION = 1;
+
+/** The small, storable record of where a scan got to. */
+export function serializeCursor(cursor) {
+    const c = cursor || {};
+    if (!arr(c.windows).length) return null;
+    return {
+        v: CURSOR_VERSION,
+        months: num(c.months),
+        now: num(c.now),
+        index: num(c.index),
+        pageToken: c.pageToken ? String(c.pageToken) : null,
+        scanned: num(c.scanned),
+        statements: num(c.statements),
+        done: !!c.done,
+        total: arr(c.windows).length,
+    };
+}
+
+/**
+ * A cursor to scan with: the saved one when it is still the same scan, a fresh
+ * one otherwise.
+ *
+ * A saved cursor is resumable only when it is the current version, not already
+ * finished, planned to the same depth, and pointing somewhere inside its own
+ * plan. Anything else — a different depth requested, a corrupt record, an index
+ * past the end — starts over, which is always correct and merely slower.
+ *
+ * Note what is NOT a reason to refuse: age. A month-old half-finished scan
+ * still describes real months of a real mailbox, and its windows are all in the
+ * past, so they cannot have changed. Refusing it on age would restart at index
+ * 0 — which is precisely the bug this exists to close.
+ */
+export function resumeCursor(saved, opts = {}) {
+    const want = Math.max(1, Math.min(120, Math.floor(num(opts.months)) || 1));
+    const fresh = () => startCursor({ ...opts, months: want });
+    const sv = saved && typeof saved === 'object' ? saved : null;
+    if (!sv) return fresh();
+    if (num(sv.v) !== CURSOR_VERSION) return fresh();
+    if (sv.done) return fresh();
+    if (num(sv.months) !== want) return fresh();
+    if (!num(sv.now)) return fresh();
+
+    const c = startCursor({ ...opts, months: want, now: num(sv.now) });
+    const index = num(sv.index);
+    if (!(index >= 0) || index >= c.windows.length) return fresh();
+
+    c.index = index;
+    c.pageToken = sv.pageToken ? String(sv.pageToken) : null;
+    c.scanned = num(sv.scanned);
+    c.statements = num(sv.statements);
+    c.done = false;
+    return c;
+}
+
+/** How far along a scan is, as a fraction, for something to draw. */
+export function scanProgress(cursor) {
+    const c = cursor || {};
+    const total = arr(c.windows).length;
+    if (!total) return 0;
+    if (c.done) return 1;
+    return Math.max(0, Math.min(1, num(c.index) / total));
 }
 
 /**
@@ -324,9 +422,9 @@ export function runSummary(result) {
 }
 
 const API = {
-    LEDGER_SOURCES, HASH_BATCH, MAX_WINDOWS_PER_RUN, NOTIFY_REASONS,
+    LEDGER_SOURCES, HASH_BATCH, MAX_WINDOWS_PER_RUN, NOTIFY_REASONS, CURSOR_VERSION,
     rowFromRecord, ledgerHashes, planWindows, startCursor, nextStep, advance,
-    shouldPause, notifiable, runSummary,
+    shouldPause, notifiable, runSummary, serializeCursor, resumeCursor, scanProgress,
 };
 
 /* The page reaches this through window, the same way every other wired

@@ -440,12 +440,20 @@ describe('the backfill engine is actually driven', () => {
     const code = codeOnly(html);
 
     it.each([
-        ['startCursor', 'the scan has no resumable state without it'],
+        ['resumeCursor', 'every run restarts at the newest month and the rest of the mailbox is unreachable'],
+        ['serializeCursor', 'the position is not written down and a reload loses the scan'],
         ['nextStep', 'nothing decides which window to read'],
         ['advance', 'the cursor never moves and the scan repeats one month'],
         ['shouldPause', 'a ten-year mailbox becomes one runaway loop'],
     ])('calls WFBackfill.%s — otherwise %s', (fn) => {
         expect(code).toContain(`WFBackfill.${fn}(`);
+    });
+
+    it('does not build a fresh cursor behind resumeCursor’s back', () => {
+        /* startCursor() is still the right function — for a scan that has no
+         * saved position. resumeCursor() calls it. The PAGE calling it directly
+         * is the defect: it made every run start at index 0. */
+        expect(code).not.toContain('WFBackfill.startCursor(');
     });
 
     it('still uses ledgerHashes, which is what keeps the backfill from duplicating', () => {
@@ -483,12 +491,52 @@ describe('the backfill engine is actually driven', () => {
     });
 
     it('sends the cursor’s own clock, so both sides plan the same windows', () => {
-        /* planWindows is a pure function of (months, now). If the server used
-         * its own clock, a scan running across midnight on the 1st would shift
-         * every window — re-reading one month and skipping another. */
+        /* planWindows is a pure function of (months, now), and the server
+         * rebuilds the window from the (months, now, index) it is sent. So the
+         * clock has to be the one the CURSOR was planned with — a resumed scan
+         * that sent a fresh Date.now() would make index 7 mean a different
+         * month on each side, re-reading one and skipping another. */
         const body = functionBody('runBackfill');
-        expect(body).toContain('startCursor({ months, now })');
-        expect(body).toMatch(/months,\s*now,/);
+        expect(body).toContain('months: _scan.cursor.months');
+        expect(body).toContain('now: _scan.cursor.now');
+    });
+
+    it('RESUMES the cursor rather than rebuilding it at index 0', () => {
+        /* The defect this replaced: runBackfill called startCursor() on every
+         * invocation, so the six windows one run covers were always the SAME
+         * six. "Run it again to continue" restarted. Anything older than half a
+         * year could not be reached by any number of presses. */
+        const body = functionBody('runBackfill');
+        expect(body).toContain('resumeCursor(saved,');
+        /* Named on the API object, so the prose above may still describe the
+         * defect by name without tripping its own guard. */
+        expect(body).not.toContain('WFBackfill.startCursor');
+    });
+
+    it('carries on past a batch boundary instead of asking for another press', () => {
+        /* shouldPause bounds a stretch of work. It used to `break`, ending the
+         * scan; now it rests and continues, so the plan actually finishes. */
+        const body = functionBody('runBackfill');
+        const pause = body.slice(body.indexOf('shouldPause('));
+        expect(pause).toContain('SCAN_BATCH_REST_MS');
+        expect(pause.slice(0, pause.indexOf('}'))).not.toMatch(/\bbreak\b/);
+    });
+
+    it('writes the position after every page, and keeps it when the scan fails', () => {
+        /* An interruption should cost one page, not the whole scan — and a
+         * failure is exactly the case resuming exists for, so the position
+         * must survive it. */
+        const body = functionBody('runBackfill');
+        expect(body).toContain('_saveScanCursor(_scan.cursor)');
+        const stop = body.slice(body.indexOf('const stop ='), body.indexOf('if (resumed)'));
+        expect(stop).toContain('_saveScanCursor(_scan.cursor)');
+    });
+
+    it('clears the position once the plan is finished', () => {
+        /* A completed cursor left behind would make the next scan resume into
+         * its own end and do nothing. */
+        const body = functionBody('runBackfill');
+        expect(body).toContain('if (done) _clearScanCursor();');
     });
 
     it('files what it found through the EXISTING sync, not a second pipeline', () => {
@@ -503,10 +551,14 @@ describe('the backfill engine is actually driven', () => {
         expect(body).toMatch(/calls\s*<\s*\d+/);
     });
 
-    it('says so when there is more history left', () => {
+    it('says so when there is more history left — without asking for a press', () => {
         /* A scan that stops at the batch limit and reports nothing looks like a
-         * scan that found nothing. */
+         * scan that found nothing. It used to say "run it again to continue",
+         * which was worse than silence: running it again restarted, so the
+         * sentence described something the code could not do. */
         const body = functionBody('runBackfill');
-        expect(body).toContain('more history to scan');
+        expect(body).toMatch(/paused/i);
+        expect(body).toMatch(/resumes from where it stopped|pick up where it left off/i);
+        expect(body).not.toMatch(/[Rr]un it again/);
     });
 });
