@@ -1691,6 +1691,17 @@
             margin-top: 2px;
         }
 
+        /* Card header: title + nowrap action buttons. Without flex-wrap the
+           buttons hold their width, crush the title to a few chars/line, and push
+           the last button off-screen (clipped by body overflow-x:hidden). */
+        .card-hdr-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+        .card-hdr-row > .card-hdr-main { flex: 1 1 190px; min-width: 0; }
+        .card-hdr-row > .card-hdr-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+        @media (max-width: 560px) {
+            .card-hdr-row > .card-hdr-actions { width: 100%; margin-left: 0; }
+            .card-hdr-row > .card-hdr-actions > .btn { flex: 1 1 auto; justify-content: center; }
+        }
+
         .stat-card {
             background: var(--card);
             border: 1px solid var(--border);
@@ -2150,11 +2161,15 @@
             align-items: center;
             justify-content: space-between;
             margin-bottom: 20px;
+            flex-wrap: wrap; /* title + nowrap buttons: wrap instead of crushing/clipping */
+            gap: 10px;
         }
 
         .md-title {
             font-size: 16px;
             font-weight: 700;
+            min-width: 0;
+            overflow-wrap: break-word; /* long bank names / refs break instead of widening the modal */
         }
 
         .md-x {
@@ -2186,6 +2201,7 @@
             margin-top: 20px;
             padding-top: 16px;
             border-top: 1px solid var(--border);
+            flex-wrap: wrap; /* nowrap buttons stack on a narrow modal instead of overflowing */
         }
 
         /* ================== CONFIRM ================== */
@@ -3820,7 +3836,14 @@
             padding: 12px 0;
             border-bottom: 1px solid rgba(255, 255, 255, .04);
             gap: 12px;
+            flex-wrap: wrap; /* label + nowrap control: wrap instead of squeezing text off-screen */
         }
+
+        /* Text must be allowed to shrink below its longest word (flex default
+           min-width:auto refuses) — only 1 of 64 sites set this inline. */
+        .setting-info { flex: 1 1 200px; min-width: 0; }
+        .setting-info .setting-label,
+        .setting-info .setting-desc { overflow-wrap: break-word; } /* emails / API keys / refs wrap */
 
         [data-theme="light"] .setting-row {
             border-bottom: 1px solid rgba(0, 0, 0, .05);
@@ -21708,33 +21731,35 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             host.innerHTML = `
                 <div class="card" style="padding:16px;">
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-                        <div style="font-size:20px;display:flex;align-items:center;color:var(--accent);">${(window.WFIcon && WFIcon.has('cloudDownload')) ? WFIcon('cloudDownload') : ''}</div>
-                        <div style="flex:1;min-width:0;">
+                    <div class="card-hdr-row">
+                        <div style="font-size:20px;display:flex;align-items:center;color:var(--accent);flex-shrink:0;">${(window.WFIcon && WFIcon.has('cloudDownload')) ? WFIcon('cloudDownload') : ''}</div>
+                        <div class="card-hdr-main">
                             <div style="font-weight:800;font-size:14.5px;color:var(--text);">Statement Sync</div>
                             <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
                                 ${connected === true ? 'Mailbox connected' : connected === false ? (_mailCheckError ? 'Check failed' : 'Not connected') : 'Checking…'}${connected === true ? _mailWatchLabel() : ''}
                                 ${window.WFVault && window.WFVault.isUnlocked() ? ' · vault unlocked' : window.WFVault && window.WFVault.isSet() ? ' · vault locked' : ' · no passwords saved'}
                             </div>
                         </div>
-                        <button class="btn btn-secondary btn-sm" id="_ms_link" style="margin-right:8px;">
-                            ${(window.WFIcon ? WFIcon('lock') : '')} ${connected === true ? 'Mailbox' : 'Connect Gmail'}
-                        </button>
-                        ${connected === true ? `
-                        <button class="btn btn-primary btn-sm" id="_ms_scan" style="margin-right:8px;" ${_scan.stage === 'running' || st.stage === 'running' ? 'disabled' : ''}>
-                            ${_scan.stage === 'running'
-                                ? ((window.WFIcon ? WFIcon('clock') : '') + ' Scanning' + (_scan.label ? ' ' + _wfEsc(_scan.label) : '') + '…')
-                                : ((window.WFIcon ? WFIcon('cloudDownload') : '') + ' Scan historical statements')}
-                        </button>` : ''}
-                        ${connected === true ? `
-                        <button class="btn btn-secondary btn-sm" id="_ms_senders" style="margin-right:8px;">
-                            ${(window.WFIcon ? WFIcon('mail') : '')} Senders${_senderCountLabel()}
-                        </button>` : ''}
-                        <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' || _scan.stage === 'running' ? 'disabled' : ''}>
-                            ${st.stage === 'running'
-                                ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
-                                : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
-                        </button>
+                        <div class="card-hdr-actions">
+                            <button class="btn btn-secondary btn-sm" id="_ms_link">
+                                ${(window.WFIcon ? WFIcon('lock') : '')} ${connected === true ? 'Mailbox' : 'Connect Gmail'}
+                            </button>
+                            ${connected === true ? `
+                            <button class="btn btn-primary btn-sm" id="_ms_scan" ${_scan.stage === 'running' || st.stage === 'running' ? 'disabled' : ''}>
+                                ${_scan.stage === 'running'
+                                    ? ((window.WFIcon ? WFIcon('clock') : '') + ' Scanning' + (_scan.label ? ' ' + _wfEsc(_scan.label) : '') + '…')
+                                    : ((window.WFIcon ? WFIcon('cloudDownload') : '') + ' Scan historical statements')}
+                            </button>` : ''}
+                            ${connected === true ? `
+                            <button class="btn btn-secondary btn-sm" id="_ms_senders">
+                                ${(window.WFIcon ? WFIcon('mail') : '')} Senders${_senderCountLabel()}
+                            </button>` : ''}
+                            <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' || _scan.stage === 'running' ? 'disabled' : ''}>
+                                ${st.stage === 'running'
+                                    ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
+                                    : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
+                            </button>
+                        </div>
                     </div>
                     ${banner}
                     ${rows}
