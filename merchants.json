@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 110,
-  "updated": "2026-08-29",
+  "version": 111,
+  "updated": "2026-08-30",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -44,7 +44,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 920,
+  "count": 922,
   "merchants": [
     {
       "key": "bake house",
@@ -3610,6 +3610,13 @@
       "source": "seed"
     },
     {
+      "key": "apple",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "apple store",
       "category": "Shopping",
       "goesTo": "expenses",
@@ -5494,6 +5501,13 @@
     },
     {
       "key": "dialog wifi",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "dialogtv",
       "category": "Telecom",
       "goesTo": "subscription",
       "confidence": 0.99,
