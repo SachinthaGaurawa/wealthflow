@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 113,
+  "version": 114,
   "updated": "2026-08-31",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -44,7 +44,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 927,
+  "count": 929,
   "merchants": [
     {
       "key": "bake house",
@@ -535,6 +535,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "shangri",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "shanmugas",
@@ -3571,6 +3578,13 @@
       "key": "sampath leasing",
       "category": "Leasing",
       "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "hilton",
+      "category": "Other",
+      "goesTo": "expenses",
       "confidence": 0.99,
       "source": "web-verified"
     },
