@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 114,
-  "updated": "2026-08-31",
+  "version": 115,
+  "updated": "2026-09-01",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -44,7 +44,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 929,
+  "count": 931,
   "merchants": [
     {
       "key": "bake house",
@@ -6361,6 +6361,13 @@
       "source": "seed"
     },
     {
+      "key": "ceb electricity",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "ceylon electricity",
       "category": "Utilities",
       "goesTo": "subscription",
@@ -6506,6 +6513,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "nwsdb water",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "prepaid meter",
