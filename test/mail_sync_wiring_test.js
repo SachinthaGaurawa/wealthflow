@@ -451,9 +451,19 @@ describe('the backfill engine is actually driven', () => {
 
     it('does not build a fresh cursor behind resumeCursor’s back', () => {
         /* startCursor() is still the right function — for a scan that has no
-         * saved position. resumeCursor() calls it. The PAGE calling it directly
-         * is the defect: it made every run start at index 0. */
-        expect(code).not.toContain('WFBackfill.startCursor(');
+         * saved position. resumeCursor() calls it. The HISTORICAL scan calling
+         * it directly is the defect: it made every run start at index 0.
+         *
+         * RETARGETED, NOT RELAXED. The sender-discovery run is a fresh
+         * six-month look with nothing to resume — deliberately not persisted,
+         * so that it cannot overwrite the historical scan's position — and it
+         * builds its cursor honestly. So the guard is now exact: there is
+         * exactly ONE direct caller, and it is that one. A second caller
+         * appearing anywhere in the page still fails here. */
+        const hits = [...code.matchAll(/WFBackfill\.startCursor\(/g)];
+        expect(hits.length, 'a new direct caller of startCursor appeared').toBe(1);
+        expect(functionBody('runSenderDiscovery')).toContain('WFBackfill.startCursor(');
+        expect(functionBody('runBackfill')).not.toContain('WFBackfill.startCursor(');
     });
 
     it('still uses ledgerHashes, which is what keeps the backfill from duplicating', () => {

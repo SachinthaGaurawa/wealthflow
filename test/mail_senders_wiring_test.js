@@ -86,7 +86,12 @@ describe('the push hook and the scan endpoint apply ONE policy', () => {
 describe('an unapproved sender is never asked for', () => {
     it('windowFor takes the owner’s senders', () => {
         expect(scanPlan).toContain('senders = null');
-        expect(scanPlan).toContain('planWindows({ months: m, now: at, senders: chosen, discover })');
+        /* The window is built from the list, and from the list only. `discover`
+         * became a parameter when a run had to be able to widen the QUESTION
+         * without widening what is stored — so the flag is read here rather
+         * than derived, and `chosen` is still what the query is made of. */
+        expect(scanPlan).toContain('planWindows({ months: m, now: at, senders: chosen, discover: wide })');
+        expect(scanPlan).toContain('const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();');
     });
 
     it('the handler reads the state BEFORE it builds the window', () => {

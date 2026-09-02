@@ -2534,6 +2534,16 @@
         .wf-sender-note { font-size: 11.5px; color: var(--text3); margin: 3px 0 8px; line-height: 1.55; }
         .wf-sender-empty { font-size: 12px; color: var(--text3); padding: 9px 0; line-height: 1.6; }
         .wf-sender-err { font-size: 12.5px; color: var(--red); padding: 8px 0; }
+        /* Wraps rather than shrinks: on a narrow phone the sentence takes the
+         * width and the button drops beneath it, which is the one arrangement
+         * that never truncates either. */
+        .wf-sender-find {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            padding: 11px 12px; margin: 0 0 14px;
+            border: 1px solid var(--border); border-radius: 10px;
+            background: var(--bg2, rgba(127,127,127,0.06));
+        }
+        .wf-sender-find-txt { flex: 1; min-width: 190px; font-size: 12px; color: var(--text3); line-height: 1.6; }
         .wf-sender-lbl { display: block; font-size: 11px; font-weight: 700; color: var(--text3);
             margin-bottom: 4px; letter-spacing: .02em; }
         .wf-sender-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
@@ -22624,6 +22634,81 @@ table.amort tbody tr { page-break-inside: avoid; }
          * by Google has no client to ask. */
         let _senders = { stage: 'idle', approved: [], blocked: [], pending: [], error: null, busy: '' };
 
+        /* ── FINDING THE BANKS THE OWNER HAS NOT APPROVED YET ────────────────
+         *
+         * THE TRAP IN THE RULE ABOVE, AND THE OWNER'S LOUDEST COMPLAINT.
+         *
+         * Once one sender is approved, the scan asks Gmail about THAT sender
+         * and nobody else — which is exactly right for routine scanning, and
+         * fatal for discovery. An owner with ten banks approves the three they
+         * happened to see, and the other seven can never appear on this screen,
+         * because nothing ever asks about them again. "Ten accounts, three or
+         * four syncing" is not a parser bug or a filter bug. It is this.
+         *
+         * A discovery run widens the QUESTION for one scan: every PDF whose
+         * subject carries a statement word, from anyone. It widens nothing that
+         * gets stored — mail from an unapproved sender is refused before an
+         * attachment is fetched, and the run's only lasting effect is that the
+         * sender appears here, for the owner to decide about. */
+        const DISCOVERY_MONTHS = 6;
+        /* One call per window, plus paging room. Bounded because this is
+         * somebody's Gmail quota and a cursor that fails to advance would
+         * otherwise spend all of it. */
+        const DISCOVERY_MAX_CALLS = 30;
+        let _discover = { stage: 'idle', label: '', found: 0, error: null };
+
+        async function runSenderDiscovery(months = DISCOVERY_MONTHS) {
+            if (_discover.stage === 'running') return;
+            if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
+            _discover = { stage: 'running', label: '', found: 0, error: null };
+            renderSenderList();
+
+            /* ITS OWN CURSOR, AND DELIBERATELY NOT SAVED. The historical scan's
+             * cursor is a position in a long job the owner can resume; writing
+             * this six-month walk over it would send that job back to the
+             * month this one happened to reach. */
+            let cursor = window.WFBackfill.startCursor({ months, now: Date.now() });
+            let calls = 0;
+            while (calls < DISCOVERY_MAX_CALLS) {
+                const step = window.WFBackfill.nextStep(cursor);
+                if (!step) break;
+                calls += 1;
+                _discover.label = step.window.label;
+                renderSenderList();
+                const r = await _gmailScan({
+                    months: cursor.months,
+                    now: cursor.now,
+                    index: cursor.index,
+                    pageToken: step.pageToken || undefined,
+                    /* The one widening this endpoint accepts. */
+                    discover: true,
+                });
+                if (!r || r.status !== 200 || !r.body || r.body.ok !== true) {
+                    _discover.error = (r && r.body && r.body.error) || 'the search could not be completed';
+                    break;
+                }
+                cursor = window.WFBackfill.advance(cursor, r.body);
+                /* The server counts undecided senders across the WHOLE list, so
+                 * this is a running total rather than a per-page one. */
+                if (Number.isFinite(Number(r.body.discovered))) _discover.found = Number(r.body.discovered);
+            }
+
+            _discover.stage = 'idle';
+            _discover.label = '';
+            /* The list is re-read from the server rather than patched, for the
+             * same reason every other mutation here is. */
+            await _sendersLoad();
+            if (_discover.error) notify(_discover.error, 'error');
+            else if (_senders.pending.length) {
+                notify(_senders.pending.length + ' sender'
+                    + (_senders.pending.length === 1 ? '' : 's') + ' waiting for you to decide', 'success');
+            } else {
+                notify('No senders found that you have not already decided about', 'info');
+            }
+            renderSenderList();
+        }
+        window.runSenderDiscovery = runSenderDiscovery;
+
         async function _sendersCall(method, body) {
             if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
             let token;
@@ -22728,19 +22813,42 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + (rows || '<div class="wf-sender-empty">' + empty + '</div>')
                 + '</div>';
 
+            /* THE BUTTON THAT ANSWERS "WHY ARE ONLY THREE OF MY TEN BANKS
+             * HERE?" — offered on the screen where the question is asked,
+             * rather than on another one the owner has to find. It says what it
+             * will do and what it will not: it looks, it does not file. */
+            const finding = _discover.stage === 'running';
+            const discoverBar =
+                '<div class="wf-sender-find">'
+                + '<div class="wf-sender-find-txt">'
+                +   '<b>Missing a bank?</b> Search the last ' + DISCOVERY_MONTHS + ' months for anyone who has '
+                +   'sent you a statement and list them here to approve. Nothing is filed by this — mail from '
+                +   'a sender you have not approved is refused before it is even downloaded.'
+                + '</div>'
+                + '<button class="btn btn-secondary btn-sm" id="_sl_find"' + (finding ? ' disabled' : '') + '>'
+                +   (window.WFIcon && WFIcon.has('scan') ? WFIcon('scan') : '')
+                +   (finding ? ' Searching' + (_discover.label ? ' ' + _wfEsc(_discover.label) : '') + '…' : ' Find my banks')
+                + '</button>'
+                + '</div>';
+
             host.innerHTML =
                 (_senders.error ? '<div class="wf-sender-err">' + _wfEsc(_senders.error) + '</div>' : '')
+                + discoverBar
                 + section(
                     'Waiting for you to decide' + (_senders.pending.length ? ' (' + _senders.pending.length + ')' : ''),
                     'Senders that have mailed you a PDF. Nothing from these is filed until you say so.',
                     pending,
-                    'Nothing new. Senders show up here as your mailbox is scanned.')
+                    'Nothing new. Senders show up here as your mailbox is scanned — or press '
+                        + '<b>Find my banks</b> above to go and look now.')
                 + section(
                     'Your statement senders' + (_senders.approved.length ? ' (' + _senders.approved.length + ')' : ''),
                     'Only these are searched for. Everything else is left alone.',
                     approved,
                     'None yet — until you approve one, WealthFlow has to guess, which is how bills and receipts got in.')
                 + (_senders.blocked.length ? section('Blocked', 'Refused before anything else is considered.', blocked, '') : '');
+
+            const find = host.querySelector('#_sl_find');
+            if (find) find.onclick = () => { try { triggerHaptic('light'); } catch (_) {} runSenderDiscovery(); };
 
             host.querySelectorAll('[data-sact]').forEach((b) => {
                 b.onclick = () => {
