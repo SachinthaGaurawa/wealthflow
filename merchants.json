@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 116,
-  "updated": "2026-09-01",
+  "version": 117,
+  "updated": "2026-09-02",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -44,7 +44,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 933,
+  "count": 938,
   "merchants": [
     {
       "key": "bake house",
@@ -4296,6 +4296,13 @@
       "source": "seed"
     },
     {
+      "key": "asana",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "atlassian",
       "category": "Software",
       "goesTo": "subscription",
@@ -4350,6 +4357,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "bitbucket",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
     },
     {
       "key": "bitdefender",
@@ -4723,6 +4737,13 @@
       "source": "web-verified"
     },
     {
+      "key": "monday",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "ms365",
       "category": "Software",
       "goesTo": "subscription",
@@ -4933,6 +4954,13 @@
       "source": "ai-consensus"
     },
     {
+      "key": "trello",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "trend micro",
       "category": "Software",
       "goesTo": "expenses",
@@ -4973,6 +5001,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "woocommerce",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
     },
     {
       "key": "wordpress",
