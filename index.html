@@ -225,7 +225,27 @@
         href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
     <link rel="apple-touch-startup-image"
         href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
+    <!-- ── CONNECTION HINTS ────────────────────────────────────────────────
+         Every new origin costs a DNS lookup, a TCP handshake and a TLS
+         handshake before its first byte. On a phone that is comfortably
+         200-500ms each, and without a hint they happen one after another,
+         DISCOVERED as the parser reaches whatever needs them.
+
+         Only fonts.googleapis.com was hinted — and that is the stylesheet
+         host, not the font host. The faces themselves come from
+         fonts.gstatic.com, so the handshake that actually delays text was
+         starting last. That pairing is the classic miss and it is why the
+         crossorigin attribute is here: a font fetch is CORS, and a preconnect
+         without it opens a connection the font request cannot reuse.
+
+         Kept to the five origins used on EVERY load. A preconnect to somewhere
+         the page may not touch is a wasted connection, not a free one. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://res.cloudinary.com">
+    <link rel="preconnect" href="https://www.gstatic.com">
+    <link rel="preconnect" href="https://firestore.googleapis.com">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     <link
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">

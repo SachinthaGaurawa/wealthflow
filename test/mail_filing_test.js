@@ -413,3 +413,44 @@ describe('the check button stops re-offering what is done', () => {
         expect(call).not.toContain("WFIcon('trash')");
     });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * STARTUP: CONNECTION HINTS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the origins used on every load are pre-connected', () => {
+    /* Measured before touching anything: the page is already well structured —
+     * 48 deferred scripts, 12 modules, only two blocking, and the 1.49 MB inline
+     * script sits after <body> so markup can paint. Both blocking scripts have
+     * to block: wealthflow-icons.js has NINE top-level callers in that inline
+     * script, and wealthflow-stability.js installs the error handlers that
+     * everything after it relies on.
+     *
+     * So the cheap structural wins were already taken. What was missing was
+     * connection setup: five origins are contacted on every load and one was
+     * hinted. */
+    const head = html.slice(0, html.indexOf('</head>'));
+
+    it.each([
+        ['https://fonts.googleapis.com', 'the font stylesheet host'],
+        ['https://fonts.gstatic.com', 'the font FILE host — the one that actually delays text'],
+        ['https://res.cloudinary.com', 'the logo, which is above the fold'],
+        ['https://www.gstatic.com', 'the Firebase SDK'],
+        ['https://firestore.googleapis.com', 'the database, contacted every session'],
+    ])('preconnects %s (%s)', (origin) => {
+        expect(head).toContain(`<link rel="preconnect" href="${origin}"`);
+    });
+
+    it('the font host hint carries crossorigin, or the connection cannot be reused', () => {
+        /* A font fetch is CORS. A preconnect without crossorigin opens a
+         * connection the font request will not use, so the handshake is paid
+         * twice and the hint is worse than useless. */
+        expect(head).toMatch(/<link rel="preconnect" href="https:\/\/fonts\.gstatic\.com" crossorigin>/);
+    });
+
+    it('does not hint origins the page may never touch', () => {
+        /* A preconnect to somewhere unused is a wasted connection, not a free
+         * one. Six hints for five always-used origins plus one dns-prefetch. */
+        const hints = (head.match(/rel="(?:preconnect|dns-prefetch)"/g) || []).length;
+        expect(hints).toBeLessThanOrEqual(7);
+    });
+});
