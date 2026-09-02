@@ -118,7 +118,12 @@ describe('a parsed row is translated into what the review screen reads', () => {
 
     it('is actually applied to the rows on their way to the screen', () => {
         /* A translator nothing calls is the defect this whole file is about. */
-        expect(fn('_reviewMailStatements')).toContain('.map(_mailRowForReview)');
+        /* Applied per row rather than through .map, because each row also
+         * needs its own doubt looked up — but STILL applied, which is the only
+         * thing this asserts. A translator nothing calls is the defect. */
+        const body = fn('_reviewMailStatements');
+        expect(body).toContain('_mailRowForReview(');
+        expect(body, 'the intake’s doubt is not looked up per row').toContain('doubts.get(');
     });
 });
 

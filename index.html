@@ -414,11 +414,6 @@
          refund from a restaurant is a credit, and "Dining" is an expense.
          window.WFVendorOsint -->
     <script type="module" src="wealthflow-vendor-osint.js"></script>
-    <!-- Quarantine bridge — turns a held statement row into the object the
-         review queue already understands, so rows the intake correctly held
-         back stop being invisible. Never pre-selects a module whose direction
-         contradicts the bank. window.WFQuarantine -->
-    <script type="module" src="wealthflow-quarantine.js"></script>
     <!-- Historical backfill — the statements already sitting in the mailbox,
          and the ledger-wide dedup that nothing had ever passed a hash set to.
          window.WFBackfill -->
@@ -22667,7 +22662,22 @@ table.amort tbody tr { page-break-inside: avoid; }
                             stage: 'ready',
                             note: `${rows.length} transaction${rows.length === 1 ? '' : 's'} ready for you to check`,
                         });
-                        _ready.push({ key: d.id, bank, rows, last4: (d.manifest && d.manifest.card_last4) || '' });
+                        /* Row-scope refusals only. A statement-scope one means
+                         * nothing was read at all, and that path never reaches
+                         * here — it is the `held` branch above. */
+                        const doubts = new Map();
+                        const QT = (window.WFMailIntake && window.WFMailIntake.QUARANTINE_TEXT) || {};
+                        for (const q of (Array.isArray(res.quarantined) ? res.quarantined : [])) {
+                            if (!q || q.scope !== 'row' || !q.row) continue;
+                            doubts.set(
+                                _mailRowKey(q.row.date, q.row.amount, q.row.desc),
+                                QT[q.reason] || 'the bank’s figures and the suggested category disagree',
+                            );
+                        }
+                        _ready.push({
+                            key: d.id, bank, rows, doubts,
+                            last4: (d.manifest && d.manifest.card_last4) || '',
+                        });
                     }
                 } catch (e) {
                     set(i, { stage: 'failed', reason: (e && e.message || 'error').slice(0, 60) });
@@ -22677,7 +22687,13 @@ table.amort tbody tr { page-break-inside: avoid; }
             /* Opened AFTER the loop, so the owner is not interrupted between
              * statements while the rest are still being decrypted. */
             if (_ready.length) _reviewMailStatements(_ready);
-            try { renderDash(); renderQuarantineTile && renderQuarantineTile(); } catch (_) {}
+            /* renderQuarantineTile() used to be called here. It was never
+             * defined anywhere, so the bare identifier threw a ReferenceError
+             * that this try/catch swallowed on every single sync — which is
+             * also why nobody noticed that the tile it was meant to draw did
+             * not exist either. Held rows now arrive flagged on the review
+             * screen instead; see _mailRowForReview. */
+            try { renderDash(); } catch (_) {}
             finish(null);
         }
         window.runMailSync = runMailSync;
@@ -22734,7 +22750,17 @@ table.amort tbody tr { page-break-inside: avoid; }
          * confirmed by the statement's running balance, must arrive flagged or
          * it looks exactly as trustworthy as one the bank's arithmetic proved.
          */
-        function _mailRowForReview(r) {
+        /* One printed row, as a key both the parser's rows and the intake's
+         * quarantine records can be reduced to. Date, amount and the first
+         * words of the descriptor — the three things both sides carry, and
+         * enough to tell two rows of a statement apart. */
+        function _mailRowKey(date, amount, desc) {
+            return String(date || '') + '|' + Math.round(Math.abs(Number(amount) || 0) * 100)
+                + '|' + String(desc || '').toUpperCase().replace(/\s+/g, ' ').trim().slice(0, 40);
+        }
+        window._mailRowKey = _mailRowKey;
+
+        function _mailRowForReview(r, why) {
             const row = r || {};
             return {
                 date: row.date || '',
@@ -22746,7 +22772,21 @@ table.amort tbody tr { page-break-inside: avoid; }
                 direction: row.direction || '',
                 balance: row.balance,
                 ref: row.ref || '',
-                _needsReview: row.needsReview === true,
+                /* THE INTAKE'S DOUBT, CARRIED ACROSS.
+                 *
+                 * crossCheck() holds back a row whose routed module contradicts
+                 * the direction the bank proved — money out routed as income,
+                 * say. #175 fed the review screen the PARSER's rows, which know
+                 * nothing of that, so a row the intake had refused arrived on
+                 * the screen looking exactly as trustworthy as one it accepted.
+                 * A pre-selected destination that contradicts the bank gets
+                 * confirmed as fast as one that agrees — faster, since there is
+                 * nothing to notice. */
+                _needsReview: row.needsReview === true || !!why,
+                /* Left empty when the intake gave no reason: the review screen
+                 * then derives its own wording from _directionSource, which is
+                 * the more specific answer for a row the PARSER doubted. */
+                _reviewWhy: why || '',
                 _directionSource: row.directionSource || '',
             };
         }
@@ -22775,7 +22815,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (!groups.has(bank)) groups.set(bank, { bank, keys: [], rows: [], last4: r.last4 || '' });
                 const g = groups.get(bank);
                 g.keys.push(r.key);
-                g.rows.push(...(Array.isArray(r.rows) ? r.rows : []).map(_mailRowForReview));
+                const doubts = (r.doubts instanceof Map) ? r.doubts : new Map();
+                for (const row of (Array.isArray(r.rows) ? r.rows : [])) {
+                    g.rows.push(_mailRowForReview(
+                        row,
+                        doubts.get(_mailRowKey(row.date, row.amount, row.description || row.narration)) || '',
+                    ));
+                }
                 if (!g.last4 && r.last4) g.last4 = r.last4;
             }
             const first = groups.values().next().value;
