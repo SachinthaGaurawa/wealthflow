@@ -130,6 +130,44 @@ export function mask(secret) {
     return `${s.slice(0, 8)}…${'*'.repeat(6)}… (${s.length} chars)`;
 }
 
+/**
+ * Replace every credential-shaped run inside a block of text with a stand-in.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS HERE RATHER THAN AT ITS ONE CALLER.
+ *
+ * `mask()` above hides a value this scanner already isolated. This hides values
+ * inside text that was never scanned — text that arrives from somewhere else and
+ * is about to be published.
+ *
+ * The consensus review board quotes lines of the diff it is reviewing into a
+ * comment it posts on the pull request. On a PUBLIC repository that comment is
+ * world-readable. A pull request whose whole purpose is to DELETE a committed
+ * credential contains that credential on its removed lines — so the board
+ * reprinted one verbatim, in public, in the report that approved the removal.
+ * The review machinery undid the fix it was approving.
+ *
+ * Any text that (a) comes from outside this process and (b) is about to be
+ * published should go through here first. That is why it lives beside the
+ * patterns rather than inside the reviewer: the next publisher should not have
+ * to rediscover the problem to find the answer.
+ *
+ * NOTE ON `private-key`: that pattern matches the PEM header, so this masks the
+ * header and leaves any base64 body. The body alone is not a usable key block
+ * and callers truncate long quotes anyway — but do not read this as a promise
+ * to strip an entire embedded key file.
+ */
+export function redact(text) {
+    if (text == null) return '';
+    let s;
+    if (typeof text === 'string') s = text;
+    else { try { s = String(text); } catch (_) { return '[unprintable]'; } }
+    for (const { re } of SECRET_PATTERNS) {
+        re.lastIndex = 0;
+        s = s.replace(re, (m) => `[redacted ${m.length}-char credential]`);
+    }
+    return s;
+}
+
 /** Scan one file's text. Returns findings. */
 export function scanText(file, text) {
     const findings = [];
