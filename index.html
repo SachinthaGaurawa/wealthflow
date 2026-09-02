@@ -21777,10 +21777,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                     showConfirm(
                         'trash',
                         'Remove this statement?',
-                        'This deletes ' + (it.filename || it.bank || 'the statement')
-                            + ' from WealthFlow\'s mailbox store. Nothing already filed in your ledger changes, and '
-                            + 'the original stays in your Gmail — but it will be fetched again on the next scan '
-                            + 'unless you also block ' + who + ' in Senders.',
+                        /* THE WARNING COMES SECOND, not last. It was the final
+                         * clause of a three-clause sentence, which is where a
+                         * consequence goes to be missed — and removing a
+                         * statement without blocking its sender is a footgun:
+                         * the next scan fetches it straight back, and it looks
+                         * as though the Remove button did nothing. What it
+                         * does, then what to watch out for, then the
+                         * reassurances. */
+                        'This removes ' + (it.filename || it.bank || 'the statement')
+                            + ' from WealthFlow\'s mailbox store. It will come back on the next scan '
+                            + 'unless you also block ' + who + ' in Senders. '
+                            + 'Nothing already filed in your ledger changes, and the original stays in your Gmail.',
                         'btn-danger', 'Remove',
                         async () => {
                             btn.disabled = true;

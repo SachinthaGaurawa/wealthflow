@@ -273,7 +273,12 @@ describe('the check button stops re-offering what is done', () => {
         expect(block).toContain('showConfirm(');
         expect(block).toContain('Nothing already filed in your ledger changes');
         expect(block, 'it does not warn that the statement comes back')
-            .toContain('fetched again on the next scan');
+            .toContain('come back on the next scan');
+        /* THE WARNING BEFORE THE REASSURANCES. A consequence placed after two
+         * calming clauses is a consequence people skip — and removing without
+         * blocking looks exactly like the button doing nothing. */
+        expect(block.indexOf('come back on the next scan'))
+            .toBeLessThan(block.indexOf('Nothing already filed'));
     });
 
     it('the confirmation is not HTML-escaped — showConfirm uses textContent', () => {
