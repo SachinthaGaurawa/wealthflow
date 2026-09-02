@@ -48,6 +48,20 @@ export const SECRET_PATTERNS = [
     { id: 'mindsdb', label: 'MindsDB key', re: /\bmdb_[A-Za-z0-9]{8}\.[A-Za-z0-9]{20,}\b/g },
     { id: 'aws', label: 'AWS access key id', re: /\bAKIA[0-9A-Z]{16}\b/g },
     { id: 'slack', label: 'Slack token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g },
+    /* THE SHAPE THIS SCANNER DID NOT KNOW, AND MISSED FOR MONTHS.
+     *
+     * An Ollama Cloud key is 32 hex characters, a dot, then an opaque suffix —
+     * a shape no pattern above matches. One was hardcoded in api/ai.js and
+     * api/vision-scan.js as a "low-trust fallback", in a PUBLIC repository,
+     * while this scanner ran green on every commit and the CI check reported
+     * "No committed credentials".
+     *
+     * A scanner that reports clean because it was never taught the shape is
+     * worse than no scanner: it converts an absence of knowledge into a
+     * statement of safety. The pattern is added here rather than the key being
+     * quietly deleted, because the deletion fixes one file and this fixes the
+     * next one nobody has written yet. */
+    { id: 'ollama', label: 'Ollama Cloud key', re: /\b[0-9a-f]{32}\.[A-Za-z0-9]{20,}\b/g },
     { id: 'private-key', label: 'Private key block', re: /-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/g },
 ];
 
@@ -114,6 +128,44 @@ export function mask(secret) {
     else { try { s = String(secret); } catch (_) { return '***'; } }
     if (s.length <= 12) return '*'.repeat(s.length);
     return `${s.slice(0, 8)}…${'*'.repeat(6)}… (${s.length} chars)`;
+}
+
+/**
+ * Replace every credential-shaped run inside a block of text with a stand-in.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS HERE RATHER THAN AT ITS ONE CALLER.
+ *
+ * `mask()` above hides a value this scanner already isolated. This hides values
+ * inside text that was never scanned — text that arrives from somewhere else and
+ * is about to be published.
+ *
+ * The consensus review board quotes lines of the diff it is reviewing into a
+ * comment it posts on the pull request. On a PUBLIC repository that comment is
+ * world-readable. A pull request whose whole purpose is to DELETE a committed
+ * credential contains that credential on its removed lines — so the board
+ * reprinted one verbatim, in public, in the report that approved the removal.
+ * The review machinery undid the fix it was approving.
+ *
+ * Any text that (a) comes from outside this process and (b) is about to be
+ * published should go through here first. That is why it lives beside the
+ * patterns rather than inside the reviewer: the next publisher should not have
+ * to rediscover the problem to find the answer.
+ *
+ * NOTE ON `private-key`: that pattern matches the PEM header, so this masks the
+ * header and leaves any base64 body. The body alone is not a usable key block
+ * and callers truncate long quotes anyway — but do not read this as a promise
+ * to strip an entire embedded key file.
+ */
+export function redact(text) {
+    if (text == null) return '';
+    let s;
+    if (typeof text === 'string') s = text;
+    else { try { s = String(text); } catch (_) { return '[unprintable]'; } }
+    for (const { re } of SECRET_PATTERNS) {
+        re.lastIndex = 0;
+        s = s.replace(re, (m) => `[redacted ${m.length}-char credential]`);
+    }
+    return s;
 }
 
 /** Scan one file's text. Returns findings. */

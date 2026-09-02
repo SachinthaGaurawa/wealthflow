@@ -37,6 +37,12 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import { chat, extractJson, describeAvailability, assignProviders, orderFor } from './autonomy/llm-router.mjs';
 import * as Budget from './autonomy/provider-budget.mjs';
+/* THE BOARD PUBLISHES WHAT THE REVIEWERS SAY, AND REVIEWERS QUOTE THE DIFF.
+ * A pull request that DELETES a committed credential carries that credential
+ * on its removed lines, so a reviewer citing one republished it verbatim in a
+ * world-readable comment — on the very pull request that was removing it.
+ * Every reviewer-supplied string is redacted on its way out, below. */
+import { redact } from './autonomy/secret-scan.mjs';
 
 const MAX_DIFF = 60_000;
 
@@ -844,7 +850,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
             // Still `unclear` after the retries is a parse failure, not an objection:
             // count it as a non-vote so it neither blocks nor silently approves.
             let finalVote = vote === 'unclear' ? 'unavailable' : vote;
-            console.log(`  ${r.name} (${res.provider}) → ${finalVote.toUpperCase()}${parsed.reason ? `: ${parsed.reason}` : ''}`);
+            console.log(`  ${r.name} (${res.provider}) → ${finalVote.toUpperCase()}${parsed.reason ? `: ${redact(parsed.reason)}` : ''}`);
 
             // The reviewer answered, so it is NOT `unavailable` — that state means
             // nobody looked, and would make the board report itself degraded and
@@ -866,7 +872,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                             ? 'the reason calls something new, but the cited line REPLACED one reading the same words'
                             : null;
                 if (why) {
-                    rejectedFinding = { reason: String(parsed.reason || '').slice(0, 300), evidence, why };
+                    rejectedFinding = { reason: redact(String(parsed.reason || '')).slice(0, 300), evidence: redact(evidence), why };
                     finalVote = 'pass';
                     console.log(`      ⚠ FINDING REJECTED — ${why}.`);
                     console.log('        See the rejection block above runReviewer for why this is');
@@ -880,7 +886,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                 // of a reviewer reacting to prose rather than behaviour, and the human
                 // needs to see that instantly to decide on an override.
                 console.log(evidence
-                    ? `      evidence: ${evidence}`
+                    ? `      evidence: ${redact(evidence)}`
                     : '      ⚠ NO EXECUTABLE EVIDENCE CITED — likely a reaction to comments/prose, not behaviour.');
             }
 
@@ -892,7 +898,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
             let correctedReason = null;
             let correctionWhy = '';
             if (finalVote === 'pass' && deniesVisibleChange(parsed.reason, diff)) {
-                correctedReason = String(parsed.reason || '').slice(0, 300);
+                correctedReason = redact(String(parsed.reason || '')).slice(0, 300);
                 correctionWhy = DENIAL_REPLACEMENT;
                 console.log('      ⚠ REASON CORRECTED — reviewer denied a user-facing change that the diff makes.');
             } else if (finalVote === 'pass' && r.name === 'user-impact'
@@ -902,7 +908,7 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                         * check must not punish a reviewer for being right. */
                        && addsUserVisibleSurface(diff)
                        && reasonIsGeneric(parsed.reason, diff)) {
-                correctedReason = String(parsed.reason || '').slice(0, 300);
+                correctedReason = redact(String(parsed.reason || '')).slice(0, 300);
                 correctionWhy = GENERIC_REPLACEMENT;
                 console.log('      ⚠ REASON CORRECTED — reviewer named nothing in this diff.');
             }
@@ -932,9 +938,9 @@ export async function runReviewer(lane, diff, truncated, chatImpl = chat, onAtte
                     ? `objection rejected — ${rejectedFinding.why || 'it restated the diff'}`.slice(0, 300)
                     : correctedReason
                         ? correctionWhy
-                        : String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : '')).slice(0, 300),
-                evidence: rejectedFinding ? '' : evidence,
-                concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String).slice(0, 6) : [],
+                        : redact(String(parsed.reason || (finalVote === 'unavailable' ? 'no parseable verdict after 3 attempts' : ''))).slice(0, 300),
+                evidence: rejectedFinding ? '' : redact(evidence),
+                concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map((c) => redact(String(c))).slice(0, 6) : [],
             };
         } catch (e) {
             // This provider is down. Move to the next one reserved for THIS lane.
