@@ -115,7 +115,7 @@ function loadMerge({ decoy = false } = {}) {
         blockAt('function _persistLocal(key, value, raw)'),
         blockAt('function _persistRaw(key, str)'),
         blockAt('function _wfStampKey(k)'),
-        blockAt('function _wfMergeKeyed(localVal, cloudVal, lts, cts)'),
+        blockAt('function _wfMergeKeyed(localVal, cloudVal, lts, cts, lFields, cFields)'),
         blockAt('function _wfApplyCloudData(cloudData)'),
     ].join('\n');
     const api = new Function('localStorage', 'appData', 'notify', 'console', 'window',
@@ -357,6 +357,83 @@ describe('a deletion is never lost in silence', () => {
         expect(A.notes[0][1]).toMatch(/storage/i);
     });
 
+    it('THE OWNER\u2019S BUG: a stale device must not revert a setting it never touched', () => {
+        /* Reported as "an option I switched off comes back on by itself hours or
+         * days later". Reproduced in a browser: it is not a race — both
+         * cloud-apply windows are synchronous, so a click cannot land inside
+         * one — it is the GRANULARITY of the stamp.
+         *
+         *   phone   t=100  notifications -> off, pushes
+         *   laptop  t=200  stale copy (still on), changes ONLY theme, and pushes
+         *                  the WHOLE settings object
+         *   phone   merges: 200 > 100, cloud wins the clash -> back on.
+         *
+         * The union preserves KEYS the loser holds; it does not preserve the
+         * loser's VALUES. */
+        const { api } = loadMerge();
+        const local = { theme: 'dark', notifications: false };
+        const cloud = { theme: 'light', notifications: true };
+
+        // Without field stamps — the behaviour that produced the report.
+        expect(api._wfMergeKeyed(local, cloud, 100, 200).notifications,
+            'the key-level path no longer reproduces the bug — this test has stopped '
+            + 'proving anything about the fix below').toBe(true);
+
+        // With them: the laptop stamped only `theme`, so it has no claim on
+        // `notifications` at any timestamp.
+        const merged = api._wfMergeKeyed(local, cloud, 100, 200,
+            { notifications: 100, theme: 10 }, { notifications: 50, theme: 200 });
+        expect(merged.notifications, 'the setting still reverts').toBe(false);
+        expect(merged.theme, 'the laptop\u2019s real change was discarded — this must not '
+            + 'become "local always wins"').toBe('light');
+    });
+
+    it('and both devices reach that same answer from their own side', () => {
+        /* Not commutative means the two never agree and the setting flaps. */
+        const { api } = loadMerge();
+        const local = { theme: 'dark', notifications: false };
+        const cloud = { theme: 'light', notifications: true };
+        const lf = { notifications: 100, theme: 10 };
+        const cf = { notifications: 50, theme: 200 };
+        const a = api._wfMergeKeyed(local, cloud, 100, 200, lf, cf);
+        const b = api._wfMergeKeyed(cloud, local, 200, 100, cf, lf);
+        expect(b).toEqual(a);
+    });
+
+    it('a field only one side has is never dropped', () => {
+        const { api } = loadMerge();
+        const out = api._wfMergeKeyed({ a: 1, onlyLocal: 'x' }, { a: 2, onlyCloud: 'y' },
+            10, 20, { a: 10 }, { a: 20 });
+        expect(out.onlyLocal).toBe('x');
+        expect(out.onlyCloud).toBe('y');
+        expect(out.a, 'the stamped field did not follow its stamp').toBe(2);
+    });
+
+    it('a document written before field stamps existed still converges', () => {
+        /* Every stored document predates this. If the absence of _kuf made the
+         * merge answer "neither side has an opinion", every one of them would
+         * stop converging on upgrade. */
+        const { api } = loadMerge();
+        const local = { notifications: false };
+        const cloud = { notifications: true };
+        expect(api._wfMergeKeyed(local, cloud, 100, 200, null, null).notifications).toBe(true);
+        expect(api._wfMergeKeyed(local, cloud, 200, 100, undefined, undefined).notifications).toBe(false);
+    });
+
+    it('one side having field stamps and the other not still resolves', () => {
+        /* The real upgrade window: this device has them, the other has not
+         * pushed since updating. The unstamped side falls back to its KEY
+         * stamp, so it keeps a real claim rather than losing everything. */
+        const { api } = loadMerge();
+        const local = { notifications: false, theme: 'dark' };
+        const cloud = { notifications: true, theme: 'light' };
+        // Cloud's key stamp is 500; local stamped only `theme`, at 900.
+        const out = api._wfMergeKeyed(local, cloud, 100, 500, { theme: 900 }, null);
+        expect(out.theme, 'the newer local field lost to an older key stamp').toBe('dark');
+        expect(out.notifications, 'the unstamped local field should fall back to its key '
+            + 'stamp (100) and lose to the cloud (500)').toBe(true);
+    });
+
     it('the write path actually stamps the key it just wrote', () => {
         // The merge only has a clock because DB.set sets one. Extracting
         // _wfMergeKeyed and driving it directly proves the merge; it does not
@@ -365,9 +442,26 @@ describe('a deletion is never lost in silence', () => {
         expect(set, 'DB.set no longer stamps the key — every non-record field silently '
             + 'loses its clock and the merge falls back to whatever the cloud says')
             .toMatch(/_wfStampKey\(k\)/);
-        expect(set, 'the stamp is applied while a cloud snapshot is being written back, '
+        /* The GUARD, not the adjacency. This asserted that _wfStampKey followed
+         * `!isSyncingFromCloud) { try {` immediately, which broke the moment a
+         * second stamp was added inside the same guard — reporting a missing
+         * guard when the guard was there and had grown. What must hold is that
+         * BOTH stamps are inside it. */
+        const guardAt = set.indexOf('!isSyncingFromCloud');
+        expect(guardAt, 'the stamp is applied while a cloud snapshot is being written back, '
             + 'so a merge would mark the incoming data as a fresh local edit')
-            .toMatch(/!isSyncingFromCloud\s*\)\s*\{\s*try\s*\{\s*_wfStampKey\(k\)/);
+            .toBeGreaterThan(-1);
+        const guarded = set.slice(guardAt, set.indexOf('appData[k] = v', guardAt));
+        expect(guarded, 'the key stamp escaped the sync guard').toMatch(/_wfStampKey\(k\)/);
+        expect(guarded, 'the FIELD stamp escaped the sync guard — a cloud write would be '
+            + 'recorded as this device having edited each field')
+            .toMatch(/_wfStampFields\(k, v\)/);
+        /* Fields BEFORE the key is not cosmetic: _wfStampFields diffs the
+         * incoming value against what is still on disk, and _persistLocal is
+         * what replaces it. */
+        expect(guarded.indexOf('_wfStampFields'), 'the field stamp runs after the key stamp; '
+            + 'harmless today, but the ordering that matters is fields BEFORE the disk write')
+            .toBeLessThan(guarded.indexOf('_wfStampKey'));
         const del = blockAt('            delKey(field, key, silent = false) {');
         expect(del, 'removing a map key is an update to that key, but DB.delKey does not '
             + 'stamp it — a stale cloud copy can then re-add what the user just removed')

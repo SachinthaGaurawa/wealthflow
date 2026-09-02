@@ -7749,13 +7749,112 @@
             appData._kut[k] = Date.now();
             _persistRaw('wf2__kut', JSON.stringify(appData._kut));
         }
+
+        /* ── WHY A KEY STAMP IS NOT ENOUGH ───────────────────────────────────
+         *
+         * The owner reported an option they had switched off coming back on by
+         * itself hours or days later. Reproduced in a browser, and it is not a
+         * race — both cloud-apply windows are synchronous, so a click cannot
+         * land inside one. It is the granularity of the stamp.
+         *
+         * `settings` is ONE key holding many fields, and the stamp is per KEY.
+         * So:
+         *
+         *   phone   t=100  notifications -> off, pushes.  cloud: off @100
+         *   laptop  t=200  (stale copy, still has ON) changes ANY other
+         *                  setting — theme, currency, anything — and pushes
+         *                  the WHOLE object.            cloud: on  @200
+         *   phone   merges: 200 > 100, cloud wins the clash -> ON again.
+         *
+         * The union preserves KEYS the loser holds; it does not preserve the
+         * loser's VALUES. So one write from a device that is stale about a
+         * field silently reverts that field, having never touched it.
+         *
+         * The fix is field-level last-write-wins: stamp only what actually
+         * CHANGED, and merge plain objects field by field. A device that never
+         * touched `notifications` then has no claim on it at any timestamp.
+         *
+         * The previous value is read back from localStorage rather than from
+         * appData, and that is not incidental: DB.getObj hands callers the LIVE
+         * object, so `const s = DB.getObj('settings'); s.x = 1; DB.set(...)`
+         * has already mutated appData before this runs. Disk still holds the
+         * value as it was last written, which is exactly the "before" this diff
+         * needs. Changing getObj to copy would touch 97 call sites and a hot
+         * read path; reading disk touches one function. */
+        function _wfStampFields(k, nextVal) {
+            if (_WF_KUT_EXEMPT[k] || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
+            const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+            if (!plain(nextVal)) return;
+
+            let prev = null;
+            try {
+                const raw = localStorage.getItem('wf2_' + k);
+                if (raw != null) prev = JSON.parse(raw);
+            } catch (_) { prev = null; }
+
+            const now = Date.now();
+            if (!appData._kuf || typeof appData._kuf !== 'object') appData._kuf = {};
+            const forKey = (appData._kuf[k] && typeof appData._kuf[k] === 'object') ? appData._kuf[k] : {};
+
+            /* A key with nothing on disk is a first write: stamp every field, so
+             * this device has a real claim on each rather than an empty one. */
+            const before = plain(prev) ? prev : {};
+            let changed = false;
+            for (const f of Object.keys(nextVal)) {
+                if (JSON.stringify(before[f]) !== JSON.stringify(nextVal[f])) { forKey[f] = now; changed = true; }
+            }
+            /* A field the caller REMOVED keeps its old stamp deliberately: removal
+             * across devices is _tomb's job, and inventing a stamp for something
+             * that is no longer there would let this device win an argument about
+             * a value it does not hold. */
+            if (!changed) return;
+            appData._kuf[k] = forKey;
+            _persistRaw('wf2__kuf', JSON.stringify(appData._kuf));
+        }
         // Merge ONE non-record key. Newer stamp wins; equal stamps fall back to a
         // deterministic content compare so both devices choose the same side. The
         // result is commutative: a device holding (X@10, cloud Y@20) and a device
         // holding (Y@20, cloud X@10) compute the identical value.
-        function _wfMergeKeyed(localVal, cloudVal, lts, cts) {
+        function _wfMergeKeyed(localVal, cloudVal, lts, cts, lFields, cFields) {
             if (localVal === undefined) return cloudVal;
             if (cloudVal === undefined) return localVal;
+
+            /* FIELD-LEVEL FIRST, when either side has field stamps to offer.
+             *
+             * Whole-object last-write-wins is what let a device that was stale
+             * about one setting revert it by writing a different one. Per field,
+             * a device only wins what it actually touched. Falls back to the key
+             * stamp for a field neither side has stamped — a document written
+             * before this existed — so an old cloud copy still converges instead
+             * of being treated as having no opinion at all. */
+            const plainF = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+            const lf = plainF(lFields) ? lFields : null;
+            const cf = plainF(cFields) ? cFields : null;
+            if ((lf || cf) && plainF(localVal) && plainF(cloudVal)) {
+                const out = {};
+                const names = {};
+                Object.keys(localVal).forEach((n) => { names[n] = 1; });
+                Object.keys(cloudVal).forEach((n) => { names[n] = 1; });
+                const at = (m, n, fallback) => {
+                    const v = m && m[n];
+                    return (typeof v === 'number' && isFinite(v)) ? v : fallback;
+                };
+                for (const n of Object.keys(names)) {
+                    const inL = Object.prototype.hasOwnProperty.call(localVal, n);
+                    const inC = Object.prototype.hasOwnProperty.call(cloudVal, n);
+                    if (!inC) { out[n] = localVal[n]; continue; }
+                    if (!inL) { out[n] = cloudVal[n]; continue; }
+                    const a = at(lf, n, lts);
+                    const b = at(cf, n, cts);
+                    /* Same tie-break as the key path, so both devices choose the
+                     * same side without talking to each other. */
+                    const localWinsField = (a !== b)
+                        ? a > b
+                        : JSON.stringify(localVal[n]) >= JSON.stringify(cloudVal[n]);
+                    out[n] = localWinsField ? localVal[n] : cloudVal[n];
+                }
+                return out;
+            }
             // Neither side has ever been stamped — a document written before this
             // clock existed. Keep LOCAL, which is both the behaviour settings had
             // before and the only answer that cannot destroy an unpushed edit. The
@@ -7806,7 +7905,7 @@
         // local priority; everything else copies from cloud. Returns flags so the
         // caller can re-render and — when the merged truth is newer than the cloud
         // copy — push it back up so the cloud converges too.
-        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, _wipedAt: 1, _wipedAck: 1, driveBridge: 1, driveRefresh: 1 };
+        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, _kuf: 1, _wipedAt: 1, _wipedAck: 1, driveBridge: 1, driveRefresh: 1 };
         function _wfApplyCloudData(cloudData) {
             const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
             if (!cloudData || typeof cloudData !== 'object') return res;
@@ -7887,6 +7986,10 @@
             // 3) Everything else — newest-wins per key, unioned, never cloud-clobbered.
             const localKut = (appData._kut && typeof appData._kut === 'object') ? appData._kut : {};
             const cloudKut = (cloudData._kut && typeof cloudData._kut === 'object') ? cloudData._kut : {};
+            /* Per-FIELD stamps. Absent on a document written before they existed,
+             * which is why every read of them defaults rather than assumes. */
+            const localKuf = (appData._kuf && typeof appData._kuf === 'object') ? appData._kuf : {};
+            const cloudKuf = (cloudData._kuf && typeof cloudData._kuf === 'object') ? cloudData._kuf : {};
             const _stampOf = (m, k) => (typeof m[k] === 'number' && isFinite(m[k]) ? m[k] : 0);
             const _plainKeys = {};
             Object.keys(cloudData).forEach(k => { _plainKeys[k] = 1; });
@@ -7911,7 +8014,8 @@
                     return;
                 }
                 const merged = _wfMergeKeyed(appData[key], cloudData[key],
-                    _stampOf(localKut, key), _stampOf(cloudKut, key));
+                    _stampOf(localKut, key), _stampOf(cloudKut, key),
+                    localKuf[key], cloudKuf[key]);
                 const mj = JSON.stringify(merged);
                 if (mj !== JSON.stringify(appData[key])) {
                     appData[key] = merged;
@@ -8032,7 +8136,13 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 // Without this stamp the merge has no way to tell a fresh local edit
                 // from a stale cloud copy, and step 3 of the applier simply took the
                 // cloud's word for it.
-                if (!isSyncingFromCloud) { try { _wfStampKey(k); } catch (_) {} }
+                if (!isSyncingFromCloud) {
+                    /* Fields BEFORE the key: _wfStampFields diffs against what is
+                     * on disk, and _persistLocal below is what replaces it. Stamp
+                     * after that and every field would compare equal to itself. */
+                    try { _wfStampFields(k, v); } catch (_) {}
+                    try { _wfStampKey(k); } catch (_) {}
+                }
                 appData[k] = v;
                 // Persist. See _persistLocal: this line used to be bare, and a full
                 // localStorage threw out of DB.set into whatever click handler called
