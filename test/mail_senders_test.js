@@ -164,6 +164,24 @@ describe('normalizeSender refuses what should never become a rule', () => {
 /* ═══════════════════════════════════════════════════════════════════════════
  * WHOSE RULE WINS
  * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a raw From header is what the Add button hands in', () => {
+    /* The mailbox card's "Add sender" passes it.from — the header as it
+     * arrived, display name and all — straight into addSender. So this parser
+     * takes attacker-shaped input, not only what the owner types. */
+    it('adds the real address, not one quoted in the display name', () => {
+        const r = addSender([], '"Statements <statements@hnb.lk>" <someone@elsewhere.example>', { now: 1 });
+        expect(r.ok).toBe(true);
+        expect(r.entry.id).toBe('someone@elsewhere.example');
+        expect(r.entry.domain).toBe('elsewhere.example');
+    });
+
+    it('the ordinary shapes are unchanged', () => {
+        expect(addSender([], 'HNB <statements@hnb.lk>', { now: 1 }).entry.id).toBe('statements@hnb.lk');
+        expect(addSender([], 'hnb.lk', { now: 1 }).entry.id).toBe('hnb.lk');
+        expect(addSender([], '@hnb.lk', { now: 1 }).entry.id).toBe('hnb.lk');
+    });
+});
+
 describe('matchSender: most specific wins, and a block wins a tie', () => {
     const list = normalizeList([
         { id: 'hnb.lk', status: STATUS.APPROVED },
@@ -207,6 +225,33 @@ describe('matchSender: most specific wins, and a block wins a tie', () => {
 
     it('an undecided entry decides nothing', () => {
         expect(matchSender([{ id: 'seen.lk', status: STATUS.NEW }], 'a@seen.lk').verdict).toBe(STATUS.NEW);
+    });
+
+    /* ── THE DISPLAY NAME DOES NOT GET A VOTE ────────────────────────────
+     *
+     * A quoted display name can carry angle brackets around anything, and this
+     * function used to read the FIRST angled group. Two consequences, both on
+     * screens where the owner acts: a message from a stranger could be matched
+     * against an approved address it merely quoted, and a real bank's statement
+     * could be attributed to a name the sender chose. */
+    it('matches on the real address, not one quoted in the display name', () => {
+        const l = normalizeList([
+            { id: 'statements@hnb.lk', status: STATUS.APPROVED },
+            { id: 'hnb.lk', status: STATUS.APPROVED },
+        ]);
+        const forged = '"Statements <statements@hnb.lk>" <someone@elsewhere.example>';
+        expect(matchSender(l, forged).verdict).toBe(STATUS.NEW);
+        expect(matchSender(l, forged).address).toBe('someone@elsewhere.example');
+        /* And the genuine shape still matches, including the address rule. */
+        expect(matchSender(l, 'HNB <statements@hnb.lk>').verdict).toBe(STATUS.APPROVED);
+    });
+
+    it('a blocked address is not escaped by quoting an approved one', () => {
+        const l = normalizeList([
+            { id: 'promo@hnb.lk', status: STATUS.BLOCKED },
+            { id: 'hnb.lk', status: STATUS.APPROVED },
+        ]);
+        expect(matchSender(l, '"HNB <statements@hnb.lk>" <promo@hnb.lk>').verdict).toBe(STATUS.BLOCKED);
     });
 
     it('answers `new`, never throws, for a From it cannot parse', () => {

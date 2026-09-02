@@ -121,11 +121,42 @@ const lower = (s) => String(s == null ? '' : s).toLowerCase().trim();
 
 /* ── 1. who sent it ───────────────────────────────────────────────────────── */
 
+/**
+ * The address out of a From header, whatever shape the display name takes.
+ *
+ * A DISPLAY NAME IS NOT AN ADDRESS, AND IT CAN BE MADE TO LOOK LIKE ONE. The
+ * header is `display-name <addr-spec>`, and the display name may be a quoted
+ * string carrying anything at all — including angle brackets around something
+ * shaped exactly like an address:
+ *
+ *     From: "Statements <statements@hnb.lk>" <someone@elsewhere.example>
+ *
+ * Every reader here took the FIRST angled group, which is the one inside the
+ * quotes: the sender's own text decided who the message was from. Downstream
+ * that was a signature check against the wrong domain — so a real statement was
+ * refused — and, on the mailbox card, a row attributed to a sender that never
+ * sent it, which is a row the owner could approve or sweep by mistake.
+ *
+ * Quoted strings are removed first, then the LAST angled group is taken, which
+ * is the addr-spec in every shape a mail client produces.
+ */
+export function addressOf(from) {
+    const s = lower(from);
+    /* Backslash escapes honoured, so a quoted string containing \" does not end
+     * where it appears to. An unterminated quote matches nothing and leaves the
+     * header exactly as it was — the angle brackets below still decide. */
+    const bare = s.replace(/"(?:[^"\\]|\\.)*"/g, ' ');
+    let addr = '';
+    const re = /<([^<>]*)>/g;
+    let m;
+    while ((m = re.exec(bare)) !== null) addr = m[1];
+    if (!addr) addr = bare;
+    return addr.replace(/^mailto:/, '').replace(/[<>\s,;]+$/, '').trim();
+}
+
 /** The domain out of a From header, whatever shape the display name takes. */
 export function domainOf(from) {
-    const s = lower(from);
-    const angled = /<([^>]*)>/.exec(s);
-    const addr = angled ? angled[1] : s;
+    const addr = addressOf(from);
     const at = addr.lastIndexOf('@');
     if (at < 0) return '';
     return addr.slice(at + 1).replace(/[>\s,;]+$/, '').trim();
@@ -652,7 +683,7 @@ export const REJECT_TEXT = {
 const API = {
     BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
-    domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
+    addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
     itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement, nameFromDomain,
     dedupeStored, betterCopy,
 };

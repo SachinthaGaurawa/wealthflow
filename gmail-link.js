@@ -45,6 +45,7 @@ import {
 import { dedupeStored } from './wealthflow-mail-ingest.mjs';
 import {
     addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
+    matchSender, hasApproved,
 } from './wealthflow-mail-senders.mjs';
 
 /* How many stored documents this endpoint will look at, and how many
@@ -305,6 +306,60 @@ export default async function handler(req, res) {
          * is the CIPHERTEXT exactly as gmail-hook stored it — this endpoint
          * holds no vault key and decrypts nothing. The PDF is opened on the
          * device, with a password that never leaves it. */
+
+        /* ── WHOSE MAIL THIS IS, DECIDED NOW — NOT WHEN IT ARRIVED ───────────
+         *
+         * The manifest carries a `known` flag written at fetch time. Reading
+         * only that flag leaves two holes, and both are the owner's actual
+         * complaint:
+         *
+         *   - EVERY DOCUMENT STORED BEFORE THE SENDER LIST EXISTED HAS NO SUCH
+         *     FIELD. Those are precisely the bills and receipts a keyword
+         *     search pulled in, and an absent flag reads as "known" — so they
+         *     draw on the card exactly like a confirmed bank's statement.
+         *   - A DECISION MADE LATER CHANGES NOTHING. Block a sender today and
+         *     the mail it already sent keeps its old flag forever.
+         *
+         * So the verdict is recomputed on every listing, against the list as it
+         * stands, by the same matchSender the hook and the scanner use. The
+         * stored flag stays where it is: this endpoint decides what to SAY
+         * about a document, and never rewrites it. */
+        let senderList = [];
+        try {
+            const mailDoc = await withDeadline(ref.get(), 8000, 'wf-mail senders');
+            senderList = normalizeList(sendersOf(mailDoc && mailDoc.exists ? mailDoc.data() : null));
+        } catch (_) {
+            /* An unreadable list is not an empty one. It leaves `decided` false
+             * below, which is the answer that makes the device fall back to the
+             * stored flag and offer nothing for removal — a read that failed
+             * must never present itself as "none of these are yours". */
+            senderList = [];
+        }
+        /* Only meaningful once the owner has approved somebody. With an empty
+         * list every sender is equally undecided, the scanner is still guessing
+         * by keyword, and calling a statement "not on your list" would be
+         * blaming the owner for a list they have not been asked to make. */
+        const decided = hasApproved(senderList);
+        const verdictOf = (manifest) => {
+            const from = String((manifest && manifest.from) || '').trim();
+            /* NO SENDER RECORDED IS NOT AN ANSWER OF "STRANGER". Documents
+             * written before the From header was stored cannot be attributed to
+             * anybody, and a statement from a real bank would be indistinguish-
+             * able from a receipt if absence were read as refusal. `unrecorded`
+             * is its own verdict, and the device neither holds nor sweeps it. */
+            if (!from) return { verdict: 'unrecorded', id: '', name: '', address: '' };
+            const hit = matchSender(senderList, from);
+            return {
+                verdict: hit.verdict,
+                id: (hit.entry && hit.entry.id) || '',
+                name: (hit.entry && hit.entry.name) || '',
+                /* The address, not the raw header: a display name is chosen by
+                 * the sender, and this one ends up on a confirmation that asks
+                 * the owner to delete something. */
+                address: hit.address || '',
+            };
+        };
+
         try {
             /* THE CAP USED TO BE 25, AND IT WAS THE WRONG SHAPE OF LIMIT.
              *
@@ -342,7 +397,11 @@ export default async function handler(req, res) {
                     const ps = await withDeadline(row.ref.collection('parts').get(), 8000, 'parts');
                     for (const p of (ps && ps.docs) || []) parts.push(p.data());
                 } catch (_) { /* an unreadable part shows up as a short assembly */ }
-                items.push({ id: row.id, manifest: row.manifest, parts });
+                /* Alongside the manifest, never inside it. The manifest is
+                 * what the hook wrote; this is what the list says today, and
+                 * merging the two would make a re-decision look like a stored
+                 * fact. */
+                items.push({ id: row.id, manifest: row.manifest, parts, sender: verdictOf(row.manifest) });
             }
             /* `duplicates` is reported rather than hidden: the owner asked why
              * the same statements kept appearing, and a number they can watch
@@ -351,6 +410,10 @@ export default async function handler(req, res) {
             return j(res, 200, {
                 ok: true, items, scanned: rows.length,
                 duplicates: rows.length - collapsed.length,
+                /* Whether the sender verdicts above mean anything at all. The
+                 * device gates every decision it makes from them on this. */
+                decided,
+                approvedCount: senderList.filter((e) => e.status === 'approved').length,
                 /* Reported, not hidden: "12 already filed" is the sentence that
                  * tells the owner an empty list means finished rather than
                  * broken. Computed from the same collapse the list came from,

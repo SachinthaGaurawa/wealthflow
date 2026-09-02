@@ -21736,7 +21736,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return String(email || '').replace(/[^a-z0-9]/g, '_');
         }
 
-        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0, sweeping: false };
+        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false };
 
         /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
          * inherits the chip's own colour through stroke="currentColor", so each
@@ -21786,9 +21786,144 @@ table.amort tbody tr { page-break-inside: avoid; }
          * printing the whole thing puts a display name chosen by the sender
          * into the card. The address is what the owner is deciding about. */
         function _mailFromLabel(from) {
-            const raw = String(from || '').trim();
-            const angled = /<([^>]*)>/.exec(raw);
-            return ((angled ? angled[1] : raw).replace(/^mailto:/, '').trim() || raw).slice(0, 80);
+            const raw = String(from || '').trim().toLowerCase();
+            /* THE SAME RULE THE SERVER USES — see addressOf in
+             * wealthflow-mail-ingest.mjs. A display name may be a quoted string
+             * holding something shaped like an address in angle brackets, so
+             * the quoted parts come out first and the LAST angled group wins.
+             * Taking the first one lets the sender choose the label this screen
+             * shows, on a row that offers to delete or approve them. */
+            /* \x22 is the double quote, spelled so that it is not one: this
+             * file is sliced by tests that brace-match source, and a quote
+             * character inside a regex literal reads to them as the start of a
+             * string. The pattern is the same one addressOf uses. */
+            const bare = raw.replace(/\x22(?:[^\x22\\]|\\.)*\x22/g, ' ');
+            let addr = '';
+            const re = /<([^<>]*)>/g;
+            let m;
+            while ((m = re.exec(bare)) !== null) addr = m[1];
+            if (!addr) addr = bare;
+            return (addr.replace(/^mailto:/, '').replace(/[<>\s,;]+$/, '').trim() || raw).slice(0, 80);
+        }
+
+        /* ── WHAT THE OWNER'S LIST SAYS ABOUT A STORED STATEMENT ─────────────
+         *
+         * The verdict is recomputed by the server on every listing — see the
+         * items branch of gmail-link.js — because the flag in the manifest was
+         * written when the statement arrived and cannot know about a decision
+         * made afterwards. Everything below reads that live verdict and treats
+         * the stored flag as the fallback for a document too old to have one.
+         *
+         * `unrecorded` is NOT a refusal. A statement stored before the From
+         * header was kept cannot be attributed to anyone, and guessing would
+         * mean offering a real bank's statement for deletion. */
+        const _MAIL_VERDICTS = ['approved', 'blocked', 'new'];
+
+        /** The live verdict for a listed statement, or '' when there is none. */
+        function _mailVerdict(d, decided) {
+            const v = d && d.sender && d.sender.verdict;
+            return (decided && _MAIL_VERDICTS.indexOf(v) >= 0) ? v : '';
+        }
+
+        /**
+         * Is this from a sender the owner has approved — as of now?
+         *
+         * Falls back to the manifest's flag whenever the list cannot answer:
+         * no approved senders yet, an unreadable list, or a document with no
+         * sender recorded. An absent flag counts as known, because every
+         * document written before the flag existed has none and a filed
+         * statement must not become an accusation on upgrade.
+         */
+        function _mailKnownNow(d, decided) {
+            const v = _mailVerdict(d, decided);
+            if (v) return v === 'approved';
+            return !(d && d.manifest && d.manifest.known === false);
+        }
+
+        /**
+         * The statements the owner could clear in one go, and who sent them.
+         *
+         * ONLY what the list has actually ruled on. A statement whose sender is
+         * unrecorded, or one listed while the owner has approved nobody, is not
+         * in here at all — a sweep that includes documents nothing has judged is
+         * a delete-by-guess, and this deletes.
+         */
+        function _mailSweepable() {
+            if (!_mailSyncState.decided) return [];
+            return _mailSyncState.items.filter(
+                (it) => it.verdict === 'blocked' || it.verdict === 'new');
+        }
+
+        /** Those statements grouped by sender, largest group first. */
+        function _mailSweepGroups(list) {
+            const by = new Map();
+            for (const it of list) {
+                const who = _mailFromLabel(it.from) || (it.bank || 'unknown sender');
+                by.set(who, (by.get(who) || 0) + 1);
+            }
+            return [...by.entries()].sort((a, b) => b[1] - a[1]);
+        }
+
+        /* One request per this many keys. The server caps a delete list at
+         * ITEMS_DELETE_MAX (250) and returns at most ITEMS_RETURN_MAX (200)
+         * statements, so a sweep of everything visible is always one call —
+         * the loop exists so that a raised ceiling on either side cannot
+         * silently start dropping the tail of the list. */
+        const MAIL_DELETE_CHUNK = 200;
+
+        /**
+         * Remove every listed statement from senders the owner has not approved.
+         *
+         * DELETION IS THE ONE ACTION ON THIS CARD THAT CANNOT BE UNDONE, so the
+         * keys are named explicitly, one list, computed here from what is on the
+         * screen. The server evaluates no rule of its own — "delete everything
+         * matching a pattern" is a sentence that, with one bad pattern, ends
+         * someone's statement history.
+         */
+        async function _mailSweepUnapproved() {
+            const targets = _mailSweepable();
+            if (!targets.length) return;
+            const groups = _mailSweepGroups(targets);
+            const named = groups.slice(0, 6).map(([who, n]) => who + ' (' + n + ')').join(', ');
+            const rest = groups.length > 6 ? ', and ' + (groups.length - 6) + ' more' : '';
+            showConfirm(
+                'trash',
+                'Remove ' + targets.length + ' statement' + (targets.length === 1 ? '' : 's') + '?',
+                /* Counts first, then who, then what survives. Not escaped:
+                 * showConfirm assigns this with textContent, and an escaped
+                 * string prints "&amp;" at any sender with an ampersand. */
+                'From ' + groups.length + ' sender' + (groups.length === 1 ? '' : 's') + ' you have not approved: '
+                    + named + rest + '. '
+                    + 'These are the bills and receipts a keyword search collected before you made your '
+                    + 'sender list — none of them has been filed to your records. '
+                    + 'Nothing is removed from Gmail: approve a sender and scan again and its statements come back.',
+                'btn-danger',
+                'Remove ' + targets.length,
+                async () => {
+                    const keys = targets.map((t) => t.key).filter(Boolean);
+                    let removed = 0;
+                    let failed = 0;
+                    for (let i = 0; i < keys.length; i += MAIL_DELETE_CHUNK) {
+                        const slice = keys.slice(i, i + MAIL_DELETE_CHUNK);
+                        try {
+                            const r = await _gmailLink('POST', { action: 'delete', keys: slice }, '?items=1');
+                            if (r && r.body && r.body.ok === true) {
+                                removed += Number(r.body.deleted) || 0;
+                                failed += Array.isArray(r.body.failed) ? r.body.failed.length : 0;
+                            } else {
+                                failed += slice.length;
+                            }
+                        } catch (_) { failed += slice.length; }
+                    }
+                    /* Both numbers, always. A sweep that removed most of them
+                     * and quietly gave up on the rest is how the same rows come
+                     * back on the next refresh and the button looks broken. */
+                    if (removed) notify('Removed ' + removed + (failed ? ' · ' + failed + ' could not be removed' : ''), failed ? 'info' : 'success');
+                    else notify('Nothing could be removed', 'error');
+                    _mailSyncState.stage = 'idle';
+                    runMailSync();
+                },
+            );
         }
 
         /** How many senders the owner has approved, when the server has said. */
@@ -21811,11 +21946,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                         ${it.note ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px;">${_wfEsc(it.note)}</div>` : ''}
                         ${!it.known ? `<div style="font-size:11.5px;color:var(--text3);margin-top:3px;overflow-wrap:anywhere;">
-                            From ${_wfEsc(_mailFromLabel(it.from))} — not on your sender list.
+                            From ${_wfEsc(_mailFromLabel(it.from))} — ${it.verdict === 'blocked'
+                                ? 'you blocked this sender.'
+                                : 'not on your sender list.'}
                         </div>` : ''}
                     </div>
                     ${_mailStageChip(it.stage, it.reason)}
-                    ${!it.known && it.from ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
+                    ${!it.known && it.from && it.verdict !== 'blocked' ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
                         ${(window.WFIcon ? WFIcon('plus') : '')} Add sender
                     </button>` : ''}
                     <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-msdel="${_wfEsc(String(i))}"
@@ -21889,6 +22026,32 @@ table.amort tbody tr { page-break-inside: avoid; }
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Nothing waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.${st.filed ? ' ' + _wfEsc(String(st.filed)) + ' statement' + (st.filed === 1 ? '' : 's') + ' already checked in.' : ''} Use <b>Scan historical statements</b> to search further back.</div>`;
             }
 
+            /* ── CLEARING WHAT THE KEYWORD SEARCH LEFT BEHIND ────────────────
+             *
+             * Stopping bills and receipts being FETCHED removed none of the
+             * ones already stored, so the screen looked exactly as it did
+             * before the fix that claimed to address it. Removing them one row
+             * at a time, each behind its own confirmation, is not an answer
+             * when there are eighty of them.
+             *
+             * The strip appears only when the owner's list has actually ruled
+             * on something. It is a statement of fact first — these are held,
+             * nothing from them has been filed — and an offer second, because
+             * the safe outcome for someone who ignores it is the current one. */
+            const sweep = _mailSweepable();
+            const sweepStrip = sweep.length ? `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;
+                            background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.22);border-radius:10px;">
+                    <div style="flex:1;min-width:190px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                        <b>${_wfEsc(String(sweep.length))} of these are from senders you have not approved.</b>
+                        They are held where they are — nothing from them reaches your records. Most will be
+                        the bills and receipts collected before you made your sender list.
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="_ms_sweep" style="color:var(--red);flex-shrink:0;">
+                        ${(window.WFIcon ? WFIcon('trash') : '')} Remove all ${_wfEsc(String(sweep.length))}
+                    </button>
+                </div>` : '';
+
             host.innerHTML = `
                 <div class="card" style="padding:16px;">
                     <div class="card-hdr-row">
@@ -21924,6 +22087,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                     </div>
                     ${banner}
+                    ${sweepStrip}
                     ${rows}
                     ${_scan.stage === 'running' ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">
                         Scanning ${_wfEsc(String(_scan.months))} months${_scan.label ? ' · ' + _wfEsc(_scan.label) : ''}${_scan.found ? ' · ' + _wfEsc(String(_scan.found)) + ' found' : ''}…
@@ -21939,6 +22103,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (sc) sc.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openBackfill(); };
             const sn = host.querySelector('#_ms_senders');
             if (sn) sn.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openSenderList(); };
+            const sw = host.querySelector('#_ms_sweep');
+            if (sw) sw.onclick = () => { try { triggerHaptic('light'); } catch (_) {} _mailSweepUnapproved(); };
             /* The decision offered where the confusion is. Seeing an unfamiliar
              * row and being sent to another screen to find it again is how a
              * queue stops being read. */
@@ -22750,6 +22916,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * an empty list because everything is done look identical, and
                  * the owner has already been burnt by that distinction. */
                 _mailSyncState.filed = Number(r.body.filed) || 0;
+                /* Whether the sender verdicts on these rows mean anything: the
+                 * server answers false when the owner has approved nobody, and
+                 * when it could not read the list at all. Either way the rows
+                 * fall back to the flag stored with them. */
+                _mailSyncState.decided = r.body.decided === true;
             } catch (e) {
                 return finish('Could not read the mailbox store: ' + (e && e.message || 'unknown error'));
             }
@@ -22772,7 +22943,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * `!== false` on purpose: every document written before this
                  * has no such field, and an absent one must not turn a filed
                  * statement into an accusation. */
-                known: !(d.manifest && d.manifest.known === false),
+                /* AND DECIDED AGAINST THE LIST AS IT IS NOW. Reading only the
+                 * stored flag left the owner's actual complaint untouched:
+                 * every bill and receipt collected before the sender list
+                 * existed carries no flag at all, so it drew — and was opened,
+                 * parsed and offered for filing — exactly like a confirmed
+                 * bank's statement. See _mailKnownNow. */
+                known: _mailKnownNow(d, _mailSyncState.decided),
+                verdict: _mailVerdict(d, _mailSyncState.decided),
                 from: (d.manifest && d.manifest.from) || '',
             }));
             renderMailSync();

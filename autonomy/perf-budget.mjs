@@ -140,7 +140,13 @@ export const BUDGETS = {
      *
      * Roughly 2.5 KB on 1.75 MB, for the trigger, the once-only marker, and the
      * comments explaining why an automatic Gmail read is bounded and runs once. */
-    htmlBytes: 1_818_000,        // measured 1,813,662 — per-field merge stamps
+    /* Raised for the sweep that clears what the keyword search left behind:
+     * the card's strip, the confirmation that names every sender and count
+     * before anything is deleted, the chunked delete, and the header parser
+     * that stops a display name being read as the address. Roughly 5 KB on
+     * 1.81 MB — all of it on a path that deletes documents, where the comment
+     * explaining WHY a key is named explicitly is worth its bytes. */
+    htmlBytes: 1_834_000,        // measured 1,828,483 — the unapproved-sender sweep
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
