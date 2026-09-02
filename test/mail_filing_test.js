@@ -281,6 +281,53 @@ describe('the check button stops re-offering what is done', () => {
             .toBeLessThan(block.indexOf('Nothing already filed'));
     });
 
+    it('showConfirm’s detail is a textContent sink, and stays one', () => {
+        /* THIS TEST EXISTS BECAUSE A REVIEWER REPORTED THE OPPOSITE.
+         *
+         * The board's security lane failed this PR for "using textContent with
+         * untrusted input" in the confirmation dialog, calling it a new XSS
+         * sink. textContent is the SAFE sink — the browser never parses what is
+         * assigned to it as markup — so the report inverts the property it
+         * names, and the change it asks for (escaping) is the documented BUG:
+         * an escaped string prints "&amp;" at any payee with an ampersand.
+         *
+         * But the safety of every caller, not only this one, rests on two
+         * assignments that nothing pinned. If someone ever changed them to
+         * innerHTML, every showConfirm() call in the file would become an
+         * injection sink at once, silently. So the property is pinned here.
+         *
+         * `confDet` and `confMsg` appear exactly twice each in index.html: the
+         * empty element in the markup, and the assignment. Any third reference
+         * is worth a human reading it. */
+        for (const id of ['confDet', 'confMsg']) {
+            const refs = html.split(id).length - 1;
+            expect(refs, `${id} is referenced somewhere new — check it is not innerHTML`).toBe(2);
+            expect(html).toContain(`$('${id}').textContent =`);
+            expect(html, `${id} is written with innerHTML`).not.toMatch(
+                new RegExp(`\\$\\('${id}'\\)\\.innerHTML`),
+            );
+        }
+    });
+
+    it('the icon hydrator cannot reach that text', () => {
+        /* The one remaining path worth ruling out: showConfirm hydrates icons
+         * across the whole modal afterwards. It only touches `i[data-wfi]`
+         * ELEMENTS and writes from its own icon table, keyed by the attribute
+         * and guarded by a lookup — it can neither find a text node nor write
+         * anything a caller supplied. */
+        const icons = fs.readFileSync(path.join(ROOT, 'wealthflow-icons.js'), 'utf8');
+        const body = icons.slice(icons.indexOf('function hydrate'), icons.indexOf('function hydrate') + 600);
+        expect(body).toContain("querySelectorAll('i[data-wfi]");
+        expect(body).toContain('if (P[n])');
+        expect(body).toContain('el.innerHTML = svg(n)');
+        /* COUNTED, not pattern-matched against a negative lookahead: with
+         * `\s*` before it the lookahead can match zero spaces and succeed
+         * against " svg(n)", so that guard passed on any input. Exactly one
+         * innerHTML assignment, and it is the one read above. */
+        const writes = body.match(/innerHTML\s*=/g) || [];
+        expect(writes.length, 'the hydrator has more than one innerHTML write').toBe(1);
+    });
+
     it('the confirmation is not HTML-escaped — showConfirm uses textContent', () => {
         /* An escaped string prints "&amp;" at any payee with an ampersand.
          * This file already documents that trap for notification bodies. */
