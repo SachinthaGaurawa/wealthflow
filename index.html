@@ -21579,7 +21579,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return String(email || '').replace(/[^a-z0-9]/g, '_');
         }
 
-        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0 };
+        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0, sweeping: false };
 
         /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
          * inherits the chip's own colour through stroke="currentColor", so each
@@ -21758,9 +21758,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 ${(window.WFIcon ? WFIcon('mail') : '')} Senders${_senderCountLabel()}
                             </button>` : ''}
                             <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' || _scan.stage === 'running' ? 'disabled' : ''}>
-                                ${st.stage === 'running'
-                                    ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
-                                    : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
+                                ${st.sweeping
+                                    ? ((window.WFIcon ? WFIcon('cloudDownload') : '') + ' Fetching…')
+                                    : st.stage === 'running'
+                                        ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
+                                        : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
                             </button>
                         </div>
                     </div>
@@ -21988,6 +21990,74 @@ table.amort tbody tr { page-break-inside: avoid; }
          * was found — those live in wf-mail. Losing this record costs a
          * repeated scan, never a lost statement, which is why a parse failure
          * below simply starts over. */
+        /* ── WHY "CHECK NOW" HAS TO ACTUALLY FETCH ───────────────────────────
+         *
+         * The owner reported a statement that arrived yesterday, from a sender
+         * on their approved list, that never appeared. It is not a filter bug,
+         * a parser bug or a sender-list bug. Nothing had gone looking for it.
+         *
+         * Everything after the first scan depended on the Gmail PUSH, and the
+         * push depends on a watch that Google expires after seven days. That
+         * watch is renewed by the PAGE — so it renews only while somebody has
+         * the app open. Close the app for a week and the watch lapses; mail
+         * arrives; Google publishes nothing; and the history bookmark the hook
+         * reads forward from ages out behind it. Every statement in that gap is
+         * unreachable, permanently, because the one button that looks like it
+         * would go and get them only re-listed what was already stored.
+         *
+         * I diagnosed exactly this in #165 — "the check button never fetches
+         * mail" — and then fixed it only for the FIRST scan. That was the wrong
+         * size of fix: it closed the empty-mailbox case and left the ongoing
+         * one open, which is the case the owner actually lives in.
+         *
+         * So a check now sweeps the last two months before it lists anything.
+         * Two, not one, because a statement issued on the 31st and fetched on
+         * the 1st is otherwise in neither window. It is bounded, it reuses the
+         * scan endpoint (which derives its query from the owner's approved
+         * senders — no new surface), and it is throttled so a repeated press
+         * costs nothing. The push stays: it is faster when it works. This is
+         * what makes it not the only thing that works. */
+        const RECENT_SWEEP_MONTHS = 2;
+        /* A floor between sweeps. runMailSync is also called after filing, and
+         * a fetch per press of a button people press twice is a quota bill. */
+        const SWEEP_MIN_GAP_MS = 45 * 1000;
+        const SWEEP_MAX_PAGES = 8;
+        let _lastSweepMs = 0;
+
+        /**
+         * Fetch anything recent the push did not deliver. Returns how many
+         * statements were newly stored.
+         *
+         * Failures are swallowed on purpose: a sweep that cannot reach Gmail
+         * must still leave the owner looking at whatever IS stored, rather than
+         * replacing their statements with an error about a background refresh.
+         */
+        async function _recentSweep(force) {
+            if (_scan.stage === 'running') return 0;
+            const now = Date.now();
+            if (!force && _lastSweepMs && (now - _lastSweepMs) < SWEEP_MIN_GAP_MS) return 0;
+            _lastSweepMs = now;
+
+            let found = 0;
+            try {
+                for (let index = 0; index < RECENT_SWEEP_MONTHS; index += 1) {
+                    let pageToken;
+                    for (let page = 0; page < SWEEP_MAX_PAGES; page += 1) {
+                        const r = await _gmailScan({
+                            months: RECENT_SWEEP_MONTHS, now, index,
+                            ...(pageToken ? { pageToken } : {}),
+                        });
+                        if (!r || r.status !== 200 || !r.body || r.body.ok !== true) return found;
+                        found += Number(r.body.statements) || 0;
+                        pageToken = r.body.pageToken;
+                        if (!pageToken) break;
+                    }
+                }
+            } catch (_) { /* see above: never replace the list with a refresh error */ }
+            return found;
+        }
+        window._wfRecentSweep = _recentSweep;
+
         const MAIL_SCAN_CURSOR_KEY = 'wf_mail_scan_cursor';
         const SCAN_BATCH_REST_MS = 1200;
 
@@ -22482,6 +22552,19 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!_mailSyncState.connected) { _mailSyncState.items = []; return finish(null); }
 
             if (!window.WFMailIntake) return finish('Statement intake module is not loaded.');
+
+            /* GO AND LOOK, THEN LIST. Before this, a check listed the store and
+             * nothing else — so a statement the push never delivered (a lapsed
+             * watch, an aged-out history bookmark, a failed delivery) was
+             * invisible no matter how many times the button was pressed. See
+             * _recentSweep. */
+            _mailSyncState.sweeping = true;
+            renderMailSync();
+            const swept = await _recentSweep(false);
+            _mailSyncState.sweeping = false;
+            if (swept > 0) {
+                notify(String(swept) + ' new statement' + (swept === 1 ? '' : 's') + ' found in your mailbox', 'success');
+            }
 
             /* Through the server, not Firestore. wf-mail is sealed to clients
              * by firestore.rules, so the direct query this replaced was denied

@@ -83,6 +83,65 @@ describe('a mail statement’s rows actually reach the ledger', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * CHECK NOW GOES AND LOOKS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a check fetches, it does not only re-list', () => {
+    /* THE REPORT: a statement arrived, from a sender on the approved list, and
+     * never appeared. Nothing had gone looking for it.
+     *
+     * Everything after the first scan rested on the Gmail PUSH, and the push
+     * rests on a watch Google expires after seven days — renewed by the PAGE,
+     * so only while somebody has the app open. Close the app for a week and the
+     * watch lapses, mail arrives, nothing is published, and the history
+     * bookmark the hook reads forward from ages out behind it. Every statement
+     * in that gap was unreachable, permanently, because the one button that
+     * looks like it would go and get them only re-listed the store.
+     *
+     * Diagnosed in #165 and then fixed only for the FIRST scan — the wrong size
+     * of fix, closing the empty-mailbox case and leaving the one the owner
+     * lives in. */
+    it('the sweep exists and is called from the check, before the listing', () => {
+        const body = fn('runMailSync');
+        expect(fn('_recentSweep'), '_recentSweep is gone').toBeTruthy();
+        const sweep = body.indexOf('_recentSweep(');
+        const list = body.indexOf("'?items=1'");
+        expect(sweep, 'the check no longer fetches').toBeGreaterThan(-1);
+        expect(sweep, 'it lists the store before going to look').toBeLessThan(list);
+    });
+
+    it('it sweeps TWO months, not one', () => {
+        /* A statement issued on the 31st and fetched on the 1st is in neither
+         * window otherwise. */
+        expect(html).toMatch(/RECENT_SWEEP_MONTHS\s*=\s*2\b/);
+    });
+
+    it('it is bounded and throttled', () => {
+        /* A fetch per press of a button people press twice is a quota bill, and
+         * an unbounded page loop is how one runs out entirely. */
+        const body = fn('_recentSweep');
+        expect(body).toContain('SWEEP_MIN_GAP_MS');
+        expect(body).toContain('SWEEP_MAX_PAGES');
+    });
+
+    it('a failed sweep leaves the stored statements on screen', () => {
+        /* Replacing somebody's statements with an error about a background
+         * refresh is worse than the refresh silently not happening. */
+        const body = fn('_recentSweep');
+        expect(body).toMatch(/catch \(_\)/);
+        expect(body).toContain('return found');
+    });
+
+    it('the query still comes from the server, never from the page', () => {
+        /* The scan endpoint derives the window from the owner's approved
+         * senders. A page that sent its own query would make a credential that
+         * reads a whole mailbox into a search proxy. */
+        const body = fn('_recentSweep');
+        expect(body).not.toMatch(/query|from:|has:attachment/);
+        expect(body).toContain('_gmailScan(');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * THE NAMES THE TWO SIDES USE
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('a parsed row is translated into what the review screen reads', () => {
