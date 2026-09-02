@@ -67,7 +67,7 @@ export function scanSenders() {
  * on the first of a month would otherwise silently shift every window by one,
  * re-reading one month and skipping another.
  */
-export function windowFor({ months, index, now, senders = null } = {}) {
+export function windowFor({ months, index, now, senders = null, discover = null } = {}) {
     const m = Math.max(1, Math.min(SCAN.MAX_MONTHS, Math.floor(Number(months)) || 0));
     /* STRICT. `Number(null)` is 0 and `Number('')` is 0, so a lenient parse
      * turns a client that forgot to send an index into a request for window
@@ -90,10 +90,24 @@ export function windowFor({ months, index, now, senders = null } = {}) {
      *
      * With approved senders present the keyword branch is dropped, so mail from
      * anyone else is not fetched at all. With none, the built-in list plus the
-     * statement vocabulary is the only way to discover what to approve. */
+     * statement vocabulary is the only way to discover what to approve.
+     *
+     * ── AND THAT LAST RULE HAD A TRAP IN IT ─────────────────────────────────
+     *
+     * Approve one bank and discovery is off FOREVER. An owner with ten banks
+     * approves the three they happened to see, and the other seven can never
+     * appear on the screen that offers senders to approve — because nothing
+     * ever asks Gmail about them again. They reported exactly that: ten
+     * accounts, three or four syncing, and no way to tell why.
+     *
+     * So `discover` can now be turned on deliberately for one scan. It widens
+     * the QUESTION, never the answer: mail from an unapproved sender is still
+     * refused before a single attachment is fetched, and all a discovery run
+     * can do is put that sender's address on the list for the owner to decide
+     * about. The default is unchanged for every existing caller. */
     const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();
-    const discover = !(Array.isArray(senders) && senders.length);
-    const windows = planWindows({ months: m, now: at, senders: chosen, discover });
+    const wide = discover === null ? !(Array.isArray(senders) && senders.length) : discover === true;
+    const windows = planWindows({ months: m, now: at, senders: chosen, discover: wide });
     return windows[i] || null;
 }
 

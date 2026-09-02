@@ -18,9 +18,19 @@ import path from 'node:path';
 const html = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf8');
 
 function rule(selector) {
-    // Escapes the selector for a literal regex, then finds its first `{ … }`.
+    /* The BASE rule for this selector, not the first rule that happens to
+     * MENTION it.
+     *
+     * The old version matched anywhere, so `body.wf-compact .setting-row {…}`
+     * — a density override added later — was returned as if it were
+     * `.setting-row`, and a guard about wrapping failed over a rule that says
+     * nothing about wrapping. A test that reads the wrong rule is a test that
+     * reports the wrong file as broken.
+     *
+     * "Base" means the selector stands alone in its selector list: at the start
+     * of the block, or straight after a comma or a newline. */
     const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const m = html.match(new RegExp(esc + '\\s*\\{([^}]*)\\}'));
+    const m = html.match(new RegExp('(?:^|[,{}\\n])\\s*' + esc + '\\s*\\{([^}]*)\\}', 'm'));
     return m ? m[1] : '';
 }
 

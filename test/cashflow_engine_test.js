@@ -282,6 +282,38 @@ describe('commitments', () => {
         expect(of(r, 'cheques').every((c) => c.certainty === 'committed')).toBe(true);
     });
 
+    it('AN ANNUAL PAYOUT IS PROJECTED ONCE A YEAR, NOT TWELVE TIMES', () => {
+        /* THE DEFECT THIS CLOSES, and it inflated the one number this module
+         * exists to produce. `income` records carry `freq`, and saveIncome puts
+         * the PER-PAYOUT figure in a field called `monthly` for every cadence:
+         * annual is amount*rate/100, the whole year's interest. This loop read
+         * that field and pushed it in every month, so an annual holding was
+         * projected at 12x its real income and a quarterly one at 4x — on a
+         * projection whose entire purpose is "which day do I run out of
+         * money". */
+        const A = LEDGER();
+        A.income = [{ id: 'IA', name: 'Treasury bond', company: 'CBSL', monthly: 240000, day: 12, start: '2025-04-12', freq: 'annual' }];
+        const year = of(commitments(A, D(AS_OF), addDays(D(AS_OF), 365)), 'income');
+        expect(year.map((i) => i.date)).toEqual(['2027-04-12']);
+    });
+
+    it('a quarterly payout lands every third month', () => {
+        const A = LEDGER();
+        A.income = [{ id: 'IQ', name: 'Unit trust', company: 'NDB', monthly: 45000, day: 10, start: '2026-01-10', freq: 'quarterly' }];
+        const year = of(commitments(A, D(AS_OF), addDays(D(AS_OF), 210)), 'income');
+        expect(year.map((i) => i.date)).toEqual(['2026-10-10', '2027-01-10']);
+    });
+
+    it('a monthly source is unchanged, and so is one with no freq at all', () => {
+        /* The regression guard on the fix. Most stored records are monthly, and
+         * a record written before `freq` existed has none — dropping either
+         * from the projection would be a worse bug than the one being fixed. */
+        const A = LEDGER();
+        A.income = [{ id: 'IM', name: 'FD interest', company: 'BOC', monthly: 22000, day: 1, start: '2025-01-01' }];
+        const q = of(commitments(A, D(AS_OF), addDays(D(AS_OF), 90)), 'income');
+        expect(q.map((i) => i.date)).toEqual(['2026-09-01', '2026-10-01', '2026-11-01']);
+    });
+
     it('projects one series per recurring expense, not one row per stored month', () => {
         const A = LEDGER();
         A.expenses.push({ id: 'E1b', desc: 'Rent', cat: 'Housing', amount: 55000, month: '2026-07', recurring: true, completed: false });

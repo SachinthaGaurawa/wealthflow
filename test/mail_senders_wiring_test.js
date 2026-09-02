@@ -86,7 +86,12 @@ describe('the push hook and the scan endpoint apply ONE policy', () => {
 describe('an unapproved sender is never asked for', () => {
     it('windowFor takes the owner’s senders', () => {
         expect(scanPlan).toContain('senders = null');
-        expect(scanPlan).toContain('planWindows({ months: m, now: at, senders: chosen, discover })');
+        /* The window is built from the list, and from the list only. `discover`
+         * became a parameter when a run had to be able to widen the QUESTION
+         * without widening what is stored — so the flag is read here rather
+         * than derived, and `chosen` is still what the query is made of. */
+        expect(scanPlan).toContain('planWindows({ months: m, now: at, senders: chosen, discover: wide })');
+        expect(scanPlan).toContain('const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();');
     });
 
     it('the handler reads the state BEFORE it builds the window', () => {
@@ -167,9 +172,16 @@ describe('the owner can actually reach it', () => {
         /* The original bug in one line: planMessage computed this field, a
          * comment claimed the write path acted on it, and no manifest carried
          * it. Now both call sites store it. A screen that ignored it would be
-         * that defect one step further along, in the change that names it. */
+         * that defect one step further along, in the change that names it.
+         *
+         * The read moved into _mailKnownNow when the verdict started being
+         * recomputed against the owner's current list — the stored flag is now
+         * the FALLBACK for a document too old to have one, rather than the only
+         * answer. Retargeted, not relaxed: the flag must still be read, and the
+         * loop must still get its answer from the function that reads it. */
+        expect(fn('_mailKnownNow')).toContain('d.manifest.known === false');
         const body = fn('runMailSync');
-        expect(body).toContain('d.manifest.known === false');
+        expect(body).toContain('_mailKnownNow(d,');
         expect(body).toContain('d.manifest.from');
     });
 
@@ -184,13 +196,21 @@ describe('the owner can actually reach it', () => {
         /* `known: undefined` must read as known. Written as `!== false` for
          * exactly that reason — a truthiness test would turn every statement
          * stored before this change into an accusation. */
-        const body = fn('runMailSync');
-        expect(body).not.toMatch(/known:\s*!!\s*\(?d\.manifest/);
-        expect(body).toContain('known: !(d.manifest && d.manifest.known === false)');
+        const body = fn('_mailKnownNow');
+        expect(body).not.toMatch(/return\s*!!\s*\(?d/);
+        expect(body).toContain('return !(d && d.manifest && d.manifest.known === false)');
     });
 
     it('the sender shown is the address, not a display name the sender chose', () => {
-        expect(fn('_mailFromLabel')).toContain('<([^>]*)>');
+        /* RUN, not read. The rule is no longer one regex: a display name may be
+         * a quoted string carrying angle brackets around something shaped like
+         * an address, and the first angled group is then the sender's own text
+         * — printed on a row that offers to approve or delete them. Asserting
+         * on the source would pass on any pattern at all. */
+        const label = new Function('return ' + fn('_mailFromLabel').trim())();
+        expect(label('HNB <statements@hnb.lk>')).toBe('statements@hnb.lk');
+        expect(label('statements@hnb.lk')).toBe('statements@hnb.lk');
+        expect(label('"Your Bank <first@display.example>" <real@hnb.lk>')).toBe('real@hnb.lk');
     });
 
     it('the empty state names the cause instead of looking like a bug', () => {

@@ -51,7 +51,7 @@
  * or reads a clock it was not handed.
  * ===========================================================================*/
 
-import { domainOf, isUnder, nameFromDomain, CONSUMER_MAIL } from './wealthflow-mail-ingest.mjs';
+import { addressOf, domainOf, isUnder, nameFromDomain, CONSUMER_MAIL } from './wealthflow-mail-ingest.mjs';
 
 const lower = (s) => String(s == null ? '' : s).toLowerCase().trim();
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -110,10 +110,15 @@ export function normalizeSender(input) {
     if (!raw) return { ok: false, reason: REASON.EMPTY };
     if (raw.length > MAX_ID + 80) return { ok: false, reason: REASON.TOO_LONG };
 
-    /* `Name <addr>` — take what is inside the angle brackets. */
-    const angled = /<([^>]*)>/.exec(raw);
-    if (angled) raw = angled[1].trim();
-    /* A bare `mailto:` survives a copy out of some clients. */
+    /* `Name <addr>` — take the address, through the one parser. This is not
+     * only what the owner types: the mailbox card's "Add sender" button hands
+     * this function a RAW From header, so a display name built to look like an
+     * address would otherwise be approved in place of the real sender.
+     *
+     * A bare `mailto:` survives a copy out of some clients; addressOf strips
+     * it, and the second strip below covers the shape that never went through
+     * angle brackets at all. */
+    raw = addressOf(raw) || raw;
     raw = raw.replace(/^mailto:/, '').trim();
 
     let local = '';
@@ -214,9 +219,10 @@ export function normalizeList(list) {
  */
 export function matchSender(list, from) {
     const entries = normalizeList(list);
-    const raw = lower(from);
-    const angled = /<([^>]*)>/.exec(raw);
-    const address = (angled ? angled[1] : raw).replace(/^mailto:/, '').trim();
+    /* One parser for the header, shared with domainOf — a second reading of
+     * the same string is how the address a decision is made about and the
+     * domain it is made against end up naming different people. */
+    const address = addressOf(from);
     const domain = domainOf(from);
     if (!domain) return { verdict: STATUS.NEW, entry: null, address: '', domain: '' };
 
@@ -344,10 +350,33 @@ export function recordSighting(list, { from = '', subject = '', now = 0 } = {}) 
  * which costs no quota, no attachment download and no row on a screen.
  */
 export function approvedClauses(list) {
+    /* FETCH BY DOMAIN, DECIDE BY ADDRESS.
+     *
+     * This used to emit `from:statements@hnb.lk` for an address entry — an
+     * EXACT-address query. The owner adds the address printed on the statement
+     * they are looking at; the bank then sends the next one from
+     * `estatement@hnb.lk`, or `no-reply@`, or `alerts@`, and it is never
+     * fetched. Not filtered out, not held for review: never asked for. The
+     * owner had done everything right and the statement was invisible, which is
+     * exactly what they reported.
+     *
+     * So the QUERY widens to the domain while the POLICY stays where they put
+     * it. matchSender is untouched, so only the address they approved is filed
+     * automatically; another address at the same domain arrives as a sender
+     * waiting for a decision, with one tap to accept it. Widening what is
+     * FETCHED cannot file anything — that is what makes this safe — and it is
+     * the only way a bank's second address can ever become visible.
+     *
+     * De-duplicated: two approved addresses at one domain are one clause, not
+     * two identical ones. */
+    const seen = new Set();
     const out = [];
     for (const e of normalizeList(list)) {
         if (e.status !== STATUS.APPROVED) continue;
-        out.push(e.kind === 'address' ? `from:${e.id}` : `from:${e.domain}`);
+        const clause = `from:${e.domain}`;
+        if (seen.has(clause)) continue;
+        seen.add(clause);
+        out.push(clause);
     }
     return out;
 }

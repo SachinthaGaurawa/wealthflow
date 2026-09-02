@@ -45,6 +45,38 @@ function fn(name) {
     return next < 0 ? html.slice(m.index) : html.slice(m.index, m.index + m[0].length + next);
 }
 
+/**
+ * The bodies of every `max-width` media block at or below `px`, brace-matched.
+ *
+ * The first version of this sliced with `([\s\S]*?)\n        \}` and the
+ * non-greedy capture ran straight past the end of a block that contained nested
+ * rules — so a "what is inside the mobile blocks" check was reading top-level
+ * rules that follow them, and reported the base .g5 rule as a mobile override.
+ */
+function mediaBlocksUpTo(px, source) {
+    /* COMMENTS OUT FIRST. A comment inside a media block that MENTIONS `.g5`
+     * (for instance, one explaining why the override that used to be there was
+     * removed) is matched by any selector regex, and the scan then runs on to
+     * the next real declaration and reports it under the wrong selector. A
+     * guard that a comment can trip is a guard that gets weakened to shut it
+     * up. Rules only. */
+    const css = String(source).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    const out = [];
+    const re = /@media[^{]*max-width:\s*(\d+)px[^{]*\{/g;
+    let m;
+    while ((m = re.exec(css)) !== null) {
+        if (Number(m[1]) > px) continue;
+        let depth = 1;
+        let i = m.index + m[0].length;
+        for (; i < css.length && depth > 0; i += 1) {
+            if (css[i] === '{') depth += 1;
+            else if (css[i] === '}') depth -= 1;
+        }
+        out.push(css.slice(m.index + m[0].length, i - 1));
+    }
+    return out.join('\n');
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * THE ONE THAT MATTERS
  * ═══════════════════════════════════════════════════════════════════════════*/
@@ -79,6 +111,65 @@ describe('a mail statement’s rows actually reach the ledger', () => {
         const at = body.indexOf('_parsed = out');
         expect(at).toBeGreaterThan(-1);
         expect(body.slice(at, at + 60)).toContain('return out');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * CHECK NOW GOES AND LOOKS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a check fetches, it does not only re-list', () => {
+    /* THE REPORT: a statement arrived, from a sender on the approved list, and
+     * never appeared. Nothing had gone looking for it.
+     *
+     * Everything after the first scan rested on the Gmail PUSH, and the push
+     * rests on a watch Google expires after seven days — renewed by the PAGE,
+     * so only while somebody has the app open. Close the app for a week and the
+     * watch lapses, mail arrives, nothing is published, and the history
+     * bookmark the hook reads forward from ages out behind it. Every statement
+     * in that gap was unreachable, permanently, because the one button that
+     * looks like it would go and get them only re-listed the store.
+     *
+     * Diagnosed in #165 and then fixed only for the FIRST scan — the wrong size
+     * of fix, closing the empty-mailbox case and leaving the one the owner
+     * lives in. */
+    it('the sweep exists and is called from the check, before the listing', () => {
+        const body = fn('runMailSync');
+        expect(fn('_recentSweep'), '_recentSweep is gone').toBeTruthy();
+        const sweep = body.indexOf('_recentSweep(');
+        const list = body.indexOf("'?items=1'");
+        expect(sweep, 'the check no longer fetches').toBeGreaterThan(-1);
+        expect(sweep, 'it lists the store before going to look').toBeLessThan(list);
+    });
+
+    it('it sweeps TWO months, not one', () => {
+        /* A statement issued on the 31st and fetched on the 1st is in neither
+         * window otherwise. */
+        expect(html).toMatch(/RECENT_SWEEP_MONTHS\s*=\s*2\b/);
+    });
+
+    it('it is bounded and throttled', () => {
+        /* A fetch per press of a button people press twice is a quota bill, and
+         * an unbounded page loop is how one runs out entirely. */
+        const body = fn('_recentSweep');
+        expect(body).toContain('SWEEP_MIN_GAP_MS');
+        expect(body).toContain('SWEEP_MAX_PAGES');
+    });
+
+    it('a failed sweep leaves the stored statements on screen', () => {
+        /* Replacing somebody's statements with an error about a background
+         * refresh is worse than the refresh silently not happening. */
+        const body = fn('_recentSweep');
+        expect(body).toMatch(/catch \(_\)/);
+        expect(body).toContain('return found');
+    });
+
+    it('the query still comes from the server, never from the page', () => {
+        /* The scan endpoint derives the window from the owner's approved
+         * senders. A page that sent its own query would make a credential that
+         * reads a whole mailbox into a search proxy. */
+        const body = fn('_recentSweep');
+        expect(body).not.toMatch(/query|from:|has:attachment/);
+        expect(body).toContain('_gmailScan(');
     });
 });
 
@@ -352,5 +443,147 @@ describe('the check button stops re-offering what is done', () => {
         const call = block.slice(block.indexOf('showConfirm('), block.indexOf("'btn-danger'"));
         expect(call).toContain("'trash'");
         expect(call).not.toContain("WFIcon('trash')");
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * STARTUP: CONNECTION HINTS
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the origins used on every load are pre-connected', () => {
+    /* Measured before touching anything: the page is already well structured —
+     * 48 deferred scripts, 12 modules, only two blocking, and the 1.49 MB inline
+     * script sits after <body> so markup can paint. Both blocking scripts have
+     * to block: wealthflow-icons.js has NINE top-level callers in that inline
+     * script, and wealthflow-stability.js installs the error handlers that
+     * everything after it relies on.
+     *
+     * So the cheap structural wins were already taken. What was missing was
+     * connection setup: five origins are contacted on every load and one was
+     * hinted. */
+    const head = html.slice(0, html.indexOf('</head>'));
+
+    it.each([
+        ['https://fonts.googleapis.com', 'the font stylesheet host'],
+        ['https://fonts.gstatic.com', 'the font FILE host — the one that actually delays text'],
+        ['https://res.cloudinary.com', 'the logo, which is above the fold'],
+        ['https://www.gstatic.com', 'the Firebase SDK'],
+        ['https://firestore.googleapis.com', 'the database, contacted every session'],
+    ])('preconnects %s (%s)', (origin) => {
+        expect(head).toContain(`<link rel="preconnect" href="${origin}"`);
+    });
+
+    it('the font host hint carries crossorigin, or the connection cannot be reused', () => {
+        /* A font fetch is CORS. A preconnect without crossorigin opens a
+         * connection the font request will not use, so the handshake is paid
+         * twice and the hint is worse than useless. */
+        expect(head).toMatch(/<link rel="preconnect" href="https:\/\/fonts\.gstatic\.com" crossorigin>/);
+    });
+
+    it('does not hint origins the page may never touch', () => {
+        /* A preconnect to somewhere unused is a wasted connection, not a free
+         * one. Six hints for five always-used origins plus one dns-prefetch. */
+        const hints = (head.match(/rel="(?:preconnect|dns-prefetch)"/g) || []).length;
+        expect(hints).toBeLessThanOrEqual(7);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LAYOUT: THE CONTRACT THAT KEEPS PAGES INSIDE THE VIEWPORT
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('wide content scrolls, decoration is clipped', () => {
+    /* Audited across five viewports (360, 390, 768, 1280, 1920) and nine
+     * screens with seeded records, plus every md* modal at the three narrow
+     * widths. Result: no page scrolls sideways and nothing paints off-screen.
+     *
+     * Two things I nearly "fixed" and must not: the CC tables reported as 621px
+     * over at 360px are inside .tbl-wrap and are SUPPOSED to extend — that is
+     * what horizontal scrolling is; and .stat-card's 20px is a decorative
+     * circle placed at right:-20px and clipped on purpose. A detector that
+     * counts either as breakage sends someone to break working CSS. */
+    const css = html.slice(0, html.indexOf('</style>') + 8);
+
+    it('wide tables scroll rather than clip', () => {
+        expect(css).toMatch(/\.tbl-wrap\s*\{[^}]*overflow-x:\s*auto/);
+        expect(css, 'the min-width that makes the wrapper slide is gone')
+            .toMatch(/\.tbl-wrap table\s*\{[^}]*min-width:\s*600px/);
+    });
+
+    it('and the scroll is usable on a phone', () => {
+        /* Momentum scrolling, and a swipe that stays in the table instead of
+         * triggering the browser's back gesture. */
+        const block = css.slice(css.indexOf('.tbl-wrap {'), css.indexOf('.tbl-wrap {') + 700);
+        expect(block).toMatch(/-webkit-overflow-scrolling:\s*touch/);
+        expect(block).toMatch(/overscroll-behavior-x:\s*contain/);
+    });
+
+    it('the first column stays put while the rest slides', () => {
+        expect(css).toMatch(/\.tbl-wrap table th:first-child[^{]*\{[^}]*position:\s*sticky/);
+    });
+
+    it('a section carrying a bleed decoration clips it', () => {
+        /* .settings-section holds an 80px watermark at top:-20px; right:-20px.
+         * .stat-card has always clipped its equivalent; this one did not, and
+         * stood 3px past the viewport at 360px. Three pixels in Chromium — but
+         * a decoration hanging 20px outside an unclipped box is exactly what
+         * produces a stray horizontal scroll on a browser whose viewport
+         * arithmetic differs. */
+        expect(css).toMatch(/\.settings-section\s*\{[\s\S]*?overflow:\s*hidden/);
+        expect(css).toMatch(/\.stat-card\s*\{[^}]*overflow:\s*hidden/);
+    });
+
+    it('nothing is hidden on mobile just to save room', () => {
+        /* The owner asked for this by name: the user, time and date must stay
+         * visible on a phone. A display:none inside a max-width media query is
+         * the lazy way to stop an overflow, and it removes what they asked to
+         * keep.
+         *
+         * THE FIRST VERSION OF THIS GUARD NAMED SELECTORS THIS APP DOES NOT
+         * HAVE — `.user-name`, `#wfClock`, `.footer-date`. None of the three is
+         * in index.html, so it asserted that three non-existent things were not
+         * hidden and passed for free. It was written from the owner's words
+         * rather than from the markup, which is exactly the defect this
+         * repository keeps producing in another form: a guard wired to nothing.
+         * The names below are the real ones, and the existence check underneath
+         * is what stops it going vacuous again. */
+        const REAL = ['.sb-user-name', '.sb-user', '#sbDate', '.sb-footer'];
+        for (const sel of REAL) {
+            const token = sel.startsWith('#') ? `id="${sel.slice(1)}"` : `class="${sel.slice(1)}`;
+            expect(html.includes(token) || html.includes(sel.slice(1)),
+                `${sel} is not in the markup — this guard would pass vacuously`).toBe(true);
+        }
+        const mobileBlocks = mediaBlocksUpTo(768, css);
+        for (const banned of REAL) {
+            expect(mobileBlocks, `${banned} is hidden on small screens`)
+                .not.toMatch(new RegExp(banned.replace(/[.#]/g, '\\$&') + '[^{]*\\{[^}]*display:\\s*none'));
+        }
+    });
+
+    it('AND THE GRIDS SCALE INSTEAD OF STEPPING', () => {
+        /* The owner asked for fluid layout by name: no hardcoded column counts,
+         * minmax() grids that scale to any screen. A fixed `repeat(4, 1fr)`
+         * holds four columns from 1024px to 1025px and then jumps. */
+        for (const g of ['.g2', '.g3', '.g4', '.g5']) {
+            const rule = new RegExp(g.replace('.', '\\.') + '\\s*\\{[^}]*grid-template-columns:\\s*([^;]+);');
+            const m = rule.exec(css);
+            expect(m, `${g} is gone from the stylesheet — retarget this test`).toBeTruthy();
+            expect(m[1], `${g} still has a hardcoded column count`).toContain('auto-fit');
+            /* min(100%, N) and not a bare N: a track wider than its container
+             * is what pushes a grid past the viewport edge, and no amount of
+             * media queries below it can pull it back. */
+            expect(m[1], `${g} can force a track wider than its container`).toContain('min(100%');
+        }
+    });
+
+    it('and the step-downs that would override them are gone', () => {
+        /* A media query setting a FIXED count would put the step straight back
+         * where the fluid rule removed it. Read as "any column count declared
+         * for .g* inside a small-screen block that is not auto-fit", so a rule
+         * that legitimately keeps something at one column still has to say so
+         * fluidly. */
+        const blocks = mediaBlocksUpTo(1024, css);
+        const fixed = [...blocks.matchAll(/\.g[2-5][^{]*\{[^}]*grid-template-columns:\s*([^;]+);/g)]
+            .map((m) => m[1].trim())
+            .filter((v) => !v.includes('auto-fit'));
+        expect(fixed, 'a media query re-imposes a fixed column count').toEqual([]);
     });
 });

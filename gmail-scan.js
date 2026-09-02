@@ -118,6 +118,16 @@ export default async function handler(req, res, deps) {
     const window = windowFor({
         months: body.months, index: body.index, now: body.now,
         senders: approvedClauses(senderList),
+        /* THE ONE THING THE CALLER MAY WIDEN, AND IT WIDENS NOTHING THAT GETS
+         * STORED. A discovery run asks Gmail about every PDF whose subject
+         * carries a statement word, so a bank the owner has never approved can
+         * finally appear on the screen that offers senders to approve. What
+         * comes back is still judged by the same policy: an unapproved sender
+         * is refused before an attachment is fetched, and the run's only
+         * lasting effect is a sighting. Anything else here would be a
+         * caller-shaped query against a credential that can read a whole
+         * mailbox. */
+        discover: body.discover === true ? true : null,
     });
     if (!window) {
         return j(res, 400, { ok: false, error: 'that is not a window this scan can ask for' });

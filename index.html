@@ -225,7 +225,27 @@
         href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
     <link rel="apple-touch-startup-image"
         href="https://res.cloudinary.com/dzrfpc9be/image/upload/v1778426077/WealthFlow_Logo_extc7w.png">
+    <!-- ── CONNECTION HINTS ────────────────────────────────────────────────
+         Every new origin costs a DNS lookup, a TCP handshake and a TLS
+         handshake before its first byte. On a phone that is comfortably
+         200-500ms each, and without a hint they happen one after another,
+         DISCOVERED as the parser reaches whatever needs them.
+
+         Only fonts.googleapis.com was hinted — and that is the stylesheet
+         host, not the font host. The faces themselves come from
+         fonts.gstatic.com, so the handshake that actually delays text was
+         starting last. That pairing is the classic miss and it is why the
+         crossorigin attribute is here: a font fetch is CORS, and a preconnect
+         without it opens a connection the font request cannot reuse.
+
+         Kept to the five origins used on EVERY load. A preconnect to somewhere
+         the page may not touch is a wasted connection, not a free one. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://res.cloudinary.com">
+    <link rel="preconnect" href="https://www.gstatic.com">
+    <link rel="preconnect" href="https://firestore.googleapis.com">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
     <link
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700;800;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
@@ -418,6 +438,19 @@
          and the ledger-wide dedup that nothing had ever passed a hash set to.
          window.WFBackfill -->
     <script type="module" src="wealthflow-backfill.js"></script>
+    <!-- v7.67.0 — The verification matrix. A due date is a QUESTION, not an
+         answer: it decides which payouts and bills are due, which have been
+         confirmed, which are late and which the owner has flagged, and the
+         dashboard queue draws that. Nothing here writes a ledger row — the
+         owner's rule is that a static calendar must never post money that may
+         not have arrived. ESM, so type="module" is load-bearing; window.WFVerify. -->
+    <script type="module" src="wealthflow-verify-matrix.js"></script>
+    <!-- v7.67.0 — Liquidity & Credit Hub. Pawned collateral (what it costs to
+         redeem today, and how long is left before the broker can sell it) and
+         money lent to people (partial repayments, further advances, settlement).
+         Pure arithmetic, no DOM: the page draws what it says, and no event moves
+         a balance until it is confirmed. ESM; window.WFLiquidity. -->
+    <script type="module" src="wealthflow-liquidity.js"></script>
     <!-- Dynamic amortization — how many payments are actually left after an
          over- or underpayment, which the fixed l.duration could never answer.
          window.WFAmortize -->
@@ -1369,7 +1402,7 @@
         }
 
         .pg-title {
-            font-size: 17px;
+            font-size: clamp(15px, 4vw, 17px);
             font-weight: 700;
         }
 
@@ -1490,8 +1523,21 @@
             height: 22px;
         }
 
-        .spin-once svg {
-            animation: trueSpin 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+        /* ── THE SPIN IS THE WORK, NOT A GESTURE ─────────────────────────────
+         *
+         * This was `spin-once`: a 0.7s one-shot added on click and never
+         * removed. Measured against a 1.5s pull, the icon stopped turning
+         * 800ms BEFORE the data arrived — and on a slow connection it stops
+         * within the first second of a five-second sync. That is exactly the
+         * "it looks like it refreshes" the owner reported: the animation was
+         * never connected to anything.
+         *
+         * It now runs INFINITE while a refresh is in flight, and the class is
+         * removed in a finally block when the whole cycle — pull, merge,
+         * re-render — has finished. Linear, because a spinner that eases is
+         * pretending to be a progress bar; this one only says "still working". */
+        .is-refreshing svg {
+            animation: trueSpin 0.8s linear infinite;
         }
 
         @keyframes trueSpin {
@@ -1701,7 +1747,9 @@
             background: var(--card);
             border: 1px solid var(--border);
             border-radius: var(--r);
-            padding: 16px 20px;
+            /* 40px of horizontal padding out of a 156px card is a quarter of
+             * it. Fluid, capped at the desktop figure. */
+            padding: clamp(12px, 3.4vw, 16px) clamp(13px, 4.2vw, 20px);
             position: relative;
             overflow: hidden;
             transition: all .2s;
@@ -1756,7 +1804,12 @@
         }
 
         .stat-val {
-            font-size: 21px;
+            /* FLUID, AND CAPPED AT WHAT IT ALWAYS WAS. A money figure is the
+             * longest string on these cards and the one that must not wrap or
+             * clip; 21px in a 156px card is where it starts to. The clamp only
+             * ever makes it smaller, so every screen wide enough today looks
+             * exactly as it did. */
+            font-size: clamp(16px, 4.2vw, 21px);
             font-weight: 800;
             font-family: var(--mono);
             margin: 5px 0 3px;
@@ -1841,27 +1894,49 @@
         }
 
         /* ================== GRID ================== */
+        /* ── THE GRIDS SCALE, THEY DO NOT STEP ───────────────────────────────
+         *
+         * These were fixed column counts — 5, 4, 3, 2 — with two media queries
+         * stepping them down to 2 and then to 1. Between those steps nothing
+         * responded to anything: a 5-column row held its five columns from
+         * 1024px all the way to 1025px and then jumped, and a 700px tablet got
+         * the same two columns as a 420px phone.
+         *
+         * `auto-fit` with a minimum makes the count fall out of the width
+         * instead. The number in each minmax() is the narrowest that content
+         * stays readable at; below it a column drops out on its own, at
+         * whatever width that happens to be on the device in front of the
+         * owner rather than at a breakpoint guessed here.
+         *
+         * `min(100%, N)` is load-bearing and not decoration: a bare minmax(N,
+         * 1fr) forces a track N wide even when the container is narrower, and
+         * that — not the content — is what pushes a grid past the viewport
+         * edge. With min() the track can never be wider than what holds it.
+         *
+         * The desktop layout is unchanged: auto-fit collapses the tracks it
+         * cannot fill, so five cards in a wide container still sit five
+         * across. */
         .g2 {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
             gap: 16px;
         }
 
         .g3 {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
             gap: 16px;
         }
 
         .g4 {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
             gap: 16px;
         }
 
         .g5 {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 158px), 1fr));
             gap: 16px;
         }
 
@@ -2514,6 +2589,74 @@
         .wf-sender-note { font-size: 11.5px; color: var(--text3); margin: 3px 0 8px; line-height: 1.55; }
         .wf-sender-empty { font-size: 12px; color: var(--text3); padding: 9px 0; line-height: 1.6; }
         .wf-sender-err { font-size: 12.5px; color: var(--red); padding: 8px 0; }
+        /* Wraps rather than shrinks: on a narrow phone the sentence takes the
+         * width and the button drops beneath it, which is the one arrangement
+         * that never truncates either. */
+        /* The hub's sub-navigation. A flex row that WRAPS rather than
+         * shrinking: two tabs on a 320px phone stay legible by dropping to two
+         * lines, where a shrink-to-fit row truncates both labels. */
+        /* ── COMPACT MODE, WHICH USED TO BE A SWITCH THAT DID NOTHING ────────
+         *
+         * The row is labelled "Reduce spacing for smaller screens and faster
+         * scanning." It wrote `compactMode` to settings, the value synced, the
+         * toggle stayed on across reloads — and not one pixel moved, because
+         * nothing in the app ever read it. A switch that saves a value and
+         * changes nothing is exactly what "the options are not working" means,
+         * and calling it wired because it reached DB.set was answering the
+         * wrong question.
+         *
+         * Spacing is the promise, so spacing is what it changes. Padding only:
+         * no font sizes, no hidden rows, nothing removed from the screen — the
+         * owner asked for density, not for less. */
+        body.wf-compact { --r: 12px; }
+        body.wf-compact .card { padding: 13px; }
+        body.wf-compact .stat-card { padding: clamp(9px, 2.6vw, 12px) clamp(10px, 3.2vw, 14px); }
+        body.wf-compact .content { padding: 10px 12px; padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+        body.wf-compact .setting-row { padding-top: 10px; padding-bottom: 10px; }
+        body.wf-compact .liq-row { padding: 9px 0; }
+        body.wf-compact .g2, body.wf-compact .g3,
+        body.wf-compact .g4, body.wf-compact .g5 { gap: 10px; }
+
+        .liq-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+        .liq-tab {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 9px 15px; border-radius: 11px; cursor: pointer;
+            font-size: 13px; font-weight: 700; letter-spacing: .2px;
+            color: var(--text3); background: var(--card);
+            border: 1px solid var(--border);
+            transition: color .15s ease, border-color .15s ease, background .15s ease;
+        }
+        .liq-tab:hover { color: var(--text); }
+        .liq-tab.active { color: var(--accent); border-color: var(--accent); background: rgba(212,175,55,0.08); }
+        .liq-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .liq-row { border-top: 1px solid var(--border); padding: 12px 0; }
+        .liq-row:first-child { border-top: 0; }
+        .liq-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+        .liq-name { font-size: 14px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+        .liq-sub { font-size: 11.5px; color: var(--text3); }
+        .liq-acts { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 9px; }
+        .liq-chip {
+            font-size: 10.5px; font-weight: 800; letter-spacing: .4px;
+            border-radius: 20px; padding: 3px 9px; white-space: nowrap;
+        }
+        /* The timeline of a debtor's history. The rail is drawn with a border on
+         * the container rather than a pseudo-element per row, so a long history
+         * costs one paint instead of forty. */
+        .liq-tl { margin: 10px 0 0 6px; padding-left: 14px; border-left: 2px solid var(--border); }
+        .liq-tl-item { position: relative; padding: 7px 0; font-size: 12.5px; color: var(--text2); }
+        .liq-tl-item::before {
+            content: ''; position: absolute; left: -19px; top: 13px;
+            width: 8px; height: 8px; border-radius: 50%; background: var(--border2, var(--border));
+        }
+        .liq-tl-item.is-in::before { background: var(--green); }
+        .liq-tl-item.is-out::before { background: var(--red); }
+        .wf-sender-find {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            padding: 11px 12px; margin: 0 0 14px;
+            border: 1px solid var(--border); border-radius: 10px;
+            background: var(--bg2, rgba(127,127,127,0.06));
+        }
+        .wf-sender-find-txt { flex: 1; min-width: 190px; font-size: 12px; color: var(--text3); line-height: 1.6; }
         .wf-sender-lbl { display: block; font-size: 11px; font-weight: 700; color: var(--text3);
             margin-bottom: 4px; letter-spacing: .02em; }
         .wf-sender-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
@@ -3808,11 +3951,25 @@
 
         /* ================== SETTINGS ================== */
         .settings-section {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--r);
-            padding: 20px;
-            margin-bottom: 14px;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: var(--r); padding: 20px; margin-bottom: 14px;
+            /* CLIPPED, like .stat-card, and for the same reason. Each of these
+             * sections carries a decorative 80px watermark positioned at
+             * top:-20px; right:-20px — deliberately hanging outside so it reads
+             * as a corner flourish. .stat-card has overflow:hidden and turns it
+             * into one; this did not, so on a 360px screen the watermark stood
+             * 3px past the viewport edge.
+             *
+             * Three pixels in Chromium. On a browser whose viewport arithmetic
+             * differs — iOS Safari, or any device with a different scrollbar
+             * model — a decoration hanging 20px outside an unclipped box is
+             * exactly what produces a stray horizontal scroll and elements that
+             * look like they are sticking off the screen.
+             *
+             * Checked before adding: the watermark is the ONLY absolutely
+             * positioned descendant across all 16 sections, so nothing here
+             * relies on escaping the box. */
+            overflow: hidden;
         }
 
         .settings-title {
@@ -4027,18 +4184,10 @@
                 display: flex;
             }
 
-            .g5 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .g4 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .g3 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
+            /* .g5, .g4 and .g3 used to be forced to two columns here. They
+             * are auto-fit now, so the column count already follows the width
+             * — and re-imposing a count would put the step back exactly where
+             * this removed it. */
             .dash-chart-row {
                 grid-template-columns: 1fr;
             }
@@ -4061,10 +4210,10 @@
 
         @media(max-width:540px) {
 
-            .g5,
-            .g4,
-            .g3,
-            .g2,
+            /* Only .fr is pinned to one column here. The .g* grids are
+             * auto-fit and reach one column on their own when the container
+             * cannot hold two — which on a 320px phone happens without this
+             * rule, and on a 430px one correctly does not. */
             .fr {
                 grid-template-columns: 1fr;
             }
@@ -5451,6 +5600,8 @@
                 </div>
                 <div class="nav-item" onclick="showPage('cheques',this)"><span class="nav-icon"><i data-wfi="cheque"></i></span> Cheques <span
                         class="nb" id="nb-chq" style="display:none">!</span></div>
+                <div class="nav-item" onclick="showPage('liquidity',this)"><span class="nav-icon"><i data-wfi="gem"></i></span> Liquidity &
+                    Credit</div>
                 <div class="sb-group">Tracking</div>
                 <div class="nav-item" onclick="showPage('expenses',this)"><span class="nav-icon"><i data-wfi="receipt"></i></span> Monthly
                     Expenses</div>
@@ -5530,6 +5681,13 @@
 
                 <div class="page active" id="page-dashboard">
                     <div id="wfBrief" style="margin-bottom:16px;"></div>
+                    <!-- The Pending Inflow Queue. A date arriving is not evidence
+                         that money arrived, so a due payout produces a QUESTION
+                         here and nothing else moves until it is answered.
+                         Rendered by renderVerifyQueue() from WFVerify; hidden
+                         when there is nothing to answer, because an empty box
+                         asking nothing is noise on the page the app opens on. -->
+                    <div id="wfVerifyQueue" style="margin-bottom:16px; display:none;"></div>
                     <!-- Committed cash flow runway. Rendered by renderRunwayCard()
                          from WFCashflow; hidden until there is something to say, so
                          a new account with an empty ledger is not shown a scary
@@ -5775,6 +5933,22 @@
                     </div>
                 </div>
 
+                <!-- ═══ LIQUIDITY & CREDIT HUB ═══════════════════════════════
+                     Two ledgers with nowhere else to live: collateral pawned for
+                     cash, and money lent to people who repay when they can.
+                     Both are drawn by renderLiquidity() from WFLiquidity, and
+                     NEITHER moves a balance on its own — every event waits for
+                     the same confirmation the income queue asks for. -->
+                <div class="page" id="page-liquidity">
+                    <div class="liq-tabs" role="tablist">
+                        <button class="liq-tab active" id="liqTabPawn" role="tab" onclick="setLiquidityTab('pawn')">
+                            <i data-wfi="gem"></i> Pawned assets</button>
+                        <button class="liq-tab" id="liqTabDebt" role="tab" onclick="setLiquidityTab('debt')">
+                            <i data-wfi="user"></i> Debtors</button>
+                    </div>
+                    <div class="g4" id="liqStats" style="margin-bottom:16px;"></div>
+                    <div id="liqBody"></div>
+                </div>
                 <div class="page" id="page-expenses">
                     <div class="sh">
                         <div class="sh-title">Monthly Expenses</div>
@@ -7476,6 +7650,19 @@
             auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
+            /* The verification queue's three answers. `incomeReceived` was
+             * already the "yes" for money in; these are the "not yet" for money
+             * in, and the same pair for money out.
+             *
+             * THEY MUST BE DECLARED HERE. The hydration loops iterate appData's
+             * OWN keys, so a key missing from this object is a key that is
+             * never read back from disk or from the cloud — the same defect
+             * that once dropped incomeRecv and subscriptions. */
+            incomeDelayed: {}, billPaid: {}, billDelayed: {},
+            /* Pawned collateral, and money lent to people. Records with ids,
+             * so they sit in _WF_RECORD_KEYS and merge per record across
+             * devices like every other ledger here. */
+            pawns: [], debtors: [],
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the
@@ -7532,7 +7719,7 @@
         // by recency (newest wins) with tombstones removing deleted rows. This merge
         // is commutative + idempotent, so every device converges to the union of the
         // newest records — no whole-document clobber, deletes included.
-        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps'];
+        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors'];
         const _WF_TOMB_TTL = 100 * 24 * 3600 * 1000;   // keep tombstones ~100 days, then prune
 
         // A record's effective update time: explicit _ut, else parsed createdAt, else 0.
@@ -7749,13 +7936,125 @@
             appData._kut[k] = Date.now();
             _persistRaw('wf2__kut', JSON.stringify(appData._kut));
         }
+
+        /* ── WHY A KEY STAMP IS NOT ENOUGH ───────────────────────────────────
+         *
+         * The owner reported an option they had switched off coming back on by
+         * itself hours or days later. Reproduced in a browser, and it is not a
+         * race — both cloud-apply windows are synchronous, so a click cannot
+         * land inside one. It is the granularity of the stamp.
+         *
+         * `settings` is ONE key holding many fields, and the stamp is per KEY.
+         * So:
+         *
+         *   phone   t=100  notifications -> off, pushes.  cloud: off @100
+         *   laptop  t=200  (stale copy, still has ON) changes ANY other
+         *                  setting — theme, currency, anything — and pushes
+         *                  the WHOLE object.            cloud: on  @200
+         *   phone   merges: 200 > 100, cloud wins the clash -> ON again.
+         *
+         * The union preserves KEYS the loser holds; it does not preserve the
+         * loser's VALUES. So one write from a device that is stale about a
+         * field silently reverts that field, having never touched it.
+         *
+         * The fix is field-level last-write-wins: stamp only what actually
+         * CHANGED, and merge plain objects field by field. A device that never
+         * touched `notifications` then has no claim on it at any timestamp.
+         *
+         * The previous value is read back from localStorage rather than from
+         * appData, and that is not incidental: DB.getObj hands callers the LIVE
+         * object, so `const s = DB.getObj('settings'); s.x = 1; DB.set(...)`
+         * has already mutated appData before this runs. Disk still holds the
+         * value as it was last written, which is exactly the "before" this diff
+         * needs. Changing getObj to copy would touch 97 call sites and a hot
+         * read path; reading disk touches one function. */
+        function _wfStampFields(k, nextVal) {
+            if (_WF_KUT_EXEMPT[k] || _WF_SYNC_META_KEYS[k] || _WF_RECORD_KEYS.indexOf(k) !== -1) return;
+            const plain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+            if (!plain(nextVal)) return;
+
+            let prev = null;
+            try {
+                const raw = localStorage.getItem('wf2_' + k);
+                if (raw != null) prev = JSON.parse(raw);
+            } catch (_) { prev = null; }
+
+            const now = Date.now();
+            if (!appData._kuf || typeof appData._kuf !== 'object') appData._kuf = {};
+            const forKey = (appData._kuf[k] && typeof appData._kuf[k] === 'object') ? appData._kuf[k] : {};
+
+            /* A key with nothing on disk is a first write: stamp every field, so
+             * this device has a real claim on each rather than an empty one. */
+            const before = plain(prev) ? prev : {};
+            let changed = false;
+            for (const f of Object.keys(nextVal)) {
+                if (JSON.stringify(before[f]) !== JSON.stringify(nextVal[f])) { forKey[f] = now; changed = true; }
+            }
+            /* A field the caller REMOVED keeps its old stamp deliberately: removal
+             * across devices is _tomb's job, and inventing a stamp for something
+             * that is no longer there would let this device win an argument about
+             * a value it does not hold. */
+            if (!changed) return;
+            appData._kuf[k] = forKey;
+            _persistRaw('wf2__kuf', JSON.stringify(appData._kuf));
+        }
         // Merge ONE non-record key. Newer stamp wins; equal stamps fall back to a
         // deterministic content compare so both devices choose the same side. The
         // result is commutative: a device holding (X@10, cloud Y@20) and a device
         // holding (Y@20, cloud X@10) compute the identical value.
-        function _wfMergeKeyed(localVal, cloudVal, lts, cts) {
+        function _wfMergeKeyed(localVal, cloudVal, lts, cts, lFields, cFields) {
             if (localVal === undefined) return cloudVal;
             if (cloudVal === undefined) return localVal;
+
+            /* FIELD-LEVEL FIRST, when either side has field stamps to offer.
+             *
+             * Whole-object last-write-wins is what let a device that was stale
+             * about one setting revert it by writing a different one. Per field,
+             * a device only wins what it actually touched. Falls back to the key
+             * stamp for a field neither side has stamped — a document written
+             * before this existed — so an old cloud copy still converges instead
+             * of being treated as having no opinion at all. */
+            const plainF = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+            const lf = plainF(lFields) ? lFields : null;
+            const cf = plainF(cFields) ? cFields : null;
+            if ((lf || cf) && plainF(localVal) && plainF(cloudVal)) {
+                const out = {};
+                const names = {};
+                Object.keys(localVal).forEach((n) => { names[n] = 1; });
+                Object.keys(cloudVal).forEach((n) => { names[n] = 1; });
+                /* NO FIELD MAP AT ALL means a document written before field
+                 * stamps existed: fall back to the key stamp, so it keeps a real
+                 * claim instead of losing everything.
+                 *
+                 * A field map that simply LACKS THIS FIELD means the opposite —
+                 * that device has been stamping fields and never stamped this
+                 * one, so it has not touched it. Reading the key stamp there was
+                 * a hole straight back into the bug: a stale device with a huge
+                 * key stamp would win a field it never edited, which is the
+                 * whole complaint. Caught by driving the real toggleSetting
+                 * rather than DB.set — the version of this that only tested
+                 * DB.set passed. */
+                const at = (m, n, fallback) => {
+                    if (!m) return fallback;
+                    const v = m[n];
+                    return (typeof v === 'number' && isFinite(v)) ? v : 0;
+                };
+                for (const n of Object.keys(names)) {
+                    const inL = Object.prototype.hasOwnProperty.call(localVal, n);
+                    const inC = Object.prototype.hasOwnProperty.call(cloudVal, n);
+                    if (!inC) { out[n] = localVal[n]; continue; }
+                    if (!inL) { out[n] = cloudVal[n]; continue; }
+                    const a = at(lf, n, lts);
+                    const b = at(cf, n, cts);
+                    /* Same tie-break as the key path, so both devices choose the
+                     * same side without talking to each other. */
+                    const localWinsField = (a !== b)
+                        ? a > b
+                        : JSON.stringify(localVal[n]) >= JSON.stringify(cloudVal[n]);
+                    out[n] = localWinsField ? localVal[n] : cloudVal[n];
+                }
+                return out;
+            }
             // Neither side has ever been stamped — a document written before this
             // clock existed. Keep LOCAL, which is both the behaviour settings had
             // before and the only answer that cannot destroy an unpushed edit. The
@@ -7806,7 +8105,7 @@
         // local priority; everything else copies from cloud. Returns flags so the
         // caller can re-render and — when the merged truth is newer than the cloud
         // copy — push it back up so the cloud converges too.
-        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, _wipedAt: 1, _wipedAck: 1, driveBridge: 1, driveRefresh: 1 };
+        const _WF_SYNC_META_KEYS = { _lastModified: 1, _lastModifiedBy: 1, _writeDeviceId: 1, _writeTs: 1, _tomb: 1, _kut: 1, _kuf: 1, _wipedAt: 1, _wipedAck: 1, driveBridge: 1, driveRefresh: 1 };
         function _wfApplyCloudData(cloudData) {
             const res = { nonSessionChanged: false, sessionsChanged: false, needPush: false };
             if (!cloudData || typeof cloudData !== 'object') return res;
@@ -7887,6 +8186,10 @@
             // 3) Everything else — newest-wins per key, unioned, never cloud-clobbered.
             const localKut = (appData._kut && typeof appData._kut === 'object') ? appData._kut : {};
             const cloudKut = (cloudData._kut && typeof cloudData._kut === 'object') ? cloudData._kut : {};
+            /* Per-FIELD stamps. Absent on a document written before they existed,
+             * which is why every read of them defaults rather than assumes. */
+            const localKuf = (appData._kuf && typeof appData._kuf === 'object') ? appData._kuf : {};
+            const cloudKuf = (cloudData._kuf && typeof cloudData._kuf === 'object') ? cloudData._kuf : {};
             const _stampOf = (m, k) => (typeof m[k] === 'number' && isFinite(m[k]) ? m[k] : 0);
             const _plainKeys = {};
             Object.keys(cloudData).forEach(k => { _plainKeys[k] = 1; });
@@ -7911,7 +8214,8 @@
                     return;
                 }
                 const merged = _wfMergeKeyed(appData[key], cloudData[key],
-                    _stampOf(localKut, key), _stampOf(cloudKut, key));
+                    _stampOf(localKut, key), _stampOf(cloudKut, key),
+                    localKuf[key], cloudKuf[key]);
                 const mj = JSON.stringify(merged);
                 if (mj !== JSON.stringify(appData[key])) {
                     appData[key] = merged;
@@ -8032,7 +8336,13 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 // Without this stamp the merge has no way to tell a fresh local edit
                 // from a stale cloud copy, and step 3 of the applier simply took the
                 // cloud's word for it.
-                if (!isSyncingFromCloud) { try { _wfStampKey(k); } catch (_) {} }
+                if (!isSyncingFromCloud) {
+                    /* Fields BEFORE the key: _wfStampFields diffs against what is
+                     * on disk, and _persistLocal below is what replaces it. Stamp
+                     * after that and every field would compare equal to itself. */
+                    try { _wfStampFields(k, v); } catch (_) {}
+                    try { _wfStampKey(k); } catch (_) {}
+                }
                 appData[k] = v;
                 // Persist. See _persistLocal: this line used to be bare, and a full
                 // localStorage threw out of DB.set into whatever click handler called
@@ -8572,9 +8882,22 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         }
 
         // Force re-read from Firestore server (bypass cache)
+        /**
+         * Pull the whole document from the SERVER and merge it in.
+         *
+         * ONE DOCUMENT IS EVERY COLLECTION. WealthFlow keeps income, expenses,
+         * loans, cards, cheques, targets, subscriptions, settings and the rest
+         * as fields of a single Firestore document, so `{ source: 'server' }`
+         * here is a complete re-read of all of them — not a per-collection
+         * loop, which would be several round trips for the same bytes.
+         *
+         * It returns whether anything was actually there, and it no longer
+         * paints: the caller repaints every surface once this resolves.
+         */
         async function forceSyncFromCloud() {
-            if (!userDocRef) { notify('Not connected to cloud.', 'error'); return; }
+            if (!userDocRef) { notify('Not connected to cloud.', 'error'); return { ok: false, pulled: false }; }
             setSyncStatus('syncing');
+            let pulled = false;
             try {
                 const doc = await userDocRef.get({ source: 'server' });
                 if (doc.exists) {
@@ -8608,19 +8931,22 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setSyncStatus('online');
                     lastSyncTime = Date.now();
                     console.log('[SYNC] ✅ Force-pulled from cloud');
-                    notify('Data synced from cloud! ☁️', 'success');
-                    try {
-                        if ($('app').classList.contains('show')) {
-                            const active = document.querySelector('.page.active');
-                            if (active) renderPage(active.id.replace('page-', ''));
-                            updateCCOTBadge();
-                            updateChequeBadge();
-                        }
-                    } catch (renderErr) {
-                        // Data is safe and we ARE online — this is purely a view issue.
-                        console.error('[SYNC] Re-render after sync failed (data safe, connection fine):', renderErr);
-                        try { _wfLogClientError('render-after-sync', renderErr); } catch (_) {}
-                    }
+                    notify('Synced — showing the latest from all your devices', 'success');
+                    /* THE RE-RENDER USED TO LIVE HERE, and it covered the active
+                     * page and two badges. It has moved to refreshAllSurfaces(),
+                     * which the only caller runs after this resolves: this
+                     * function pulls and merges, that one paints. Doing both
+                     * here made "everything on screen is current" depend on
+                     * which of them somebody remembered to extend. */
+                    pulled = true;
+                } else {
+                    /* NO CLOUD DOCUMENT YET — a brand-new account, or one whose
+                     * first push has not landed. The old code fell straight out
+                     * of the `if`, leaving the badge on "Syncing…" for the rest
+                     * of the session with nothing coming. There is nothing to
+                     * pull, and saying so is the honest end of the cycle. */
+                    setSyncStatus(navigator.onLine ? 'online' : 'offline');
+                    notify('Nothing in the cloud for this account yet — this device is the source.', 'info');
                 }
             } catch (err) {
                 console.error('[SYNC] ❌ Force pull failed:', err);
@@ -8634,7 +8960,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setSyncStatus('offline');
                     notify('Offline — changes will sync automatically when you reconnect.', 'error');
                 }
+                return { ok: false, pulled: false };
             }
+            return { ok: true, pulled };
         }
 
         function setSyncStatus(state) {
@@ -11956,6 +12284,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         function checkAndSendAIReminders() {
             if (Notification.permission !== 'granted') return;
+            /* "AI Auto-Notifications — AI proactively sends smart financial
+             * reminders and insights." That switch is what THIS function is,
+             * and nothing read it: turning it off changed nothing at all.
+             * Read before anything is sent, and read from storage rather than
+             * from a cached copy, so switching it off takes effect on the next
+             * sweep rather than on the next reload. */
+            const _aiPrefs = DB.getObj('settings', {});
+            if (_aiPrefs.aiNotifications === false) return;
             const now = new Date();
             const day = now.getDate();
             const hour = now.getHours();
@@ -11997,12 +12333,24 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 }
             });
 
-            // Monthly budget check (15th of month)
-            if (day === 15) {
+            /* Monthly budget check.
+             *
+             * THREE THINGS WERE WRONG WITH IT, and all three are the same kind
+             * of wrong: the code and the switch beside it disagreed.
+             *
+             *   - `notifBudget` — "Budget Alerts" in Settings — was read by
+             *     nothing, so the switch could not turn this off.
+             *   - the row promises "exceeds 50% of income by mid-month" and the
+             *     code used 60%. The label is what the owner reads, so the code
+             *     now matches it rather than the other way round.
+             *   - it fired only on the 15th. A phone not opened that day never
+             *     got it, and the alert simply vanished for that month. The
+             *     window is four days; the per-month key still keeps it to one. */
+            if (day >= 14 && day <= 17 && _aiPrefs.notifBudget !== false) {
                 const notifKey = `wf_notif_budget_${curMonth}`;
                 if (!localStorage.getItem(notifKey) && ctx.totalMonthlyIncome > 0) {
                     const spentPct = Math.round((ctx.thisMonthExpenses / ctx.totalMonthlyIncome) * 100);
-                    if (spentPct > 60) {
+                    if (spentPct > 50) {
                         sendSmartNotification('📊 Mid-Month Budget Alert', `You've spent ${spentPct}% of income. LKR ${ctx.netMonthlyCashFlow.toLocaleString()} remaining. Review your expenses!`, null);
                         _persistRaw(notifKey, '1');
                     }
@@ -16033,25 +16381,112 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
-        function refreshApp(btn) {
-            if (btn) {
-                btn.classList.remove('spin-once');
-                void btn.offsetWidth;
-                btn.classList.add('spin-once');
-            }
+        /* One refresh at a time. Without this, three taps on a slow connection
+         * start three server reads whose merges race each other — and the
+         * button gave no sign that the first was still running, so tapping
+         * again was the natural thing to do. */
+        let _refreshInFlight = false;
 
-            if (navigator.onLine && userDocRef) {
-                // Force pull latest data from cloud FIRST, then re-render
-                forceSyncFromCloud();
-            } else {
-                // Offline — just re-render with current local data
-                const active = document.querySelector('.page.active');
-                if (active) renderPage(active.id.replace('page-', ''));
-                updateCCOTBadge();
-                updateChequeBadge();
-                notify('Offline: Will sync when connection is restored.', 'warn');
+        /* A full turn of the icon. If the pull comes back in 40ms the spinner
+         * would otherwise flash and vanish, which reads as "nothing happened"
+         * — the very impression this whole change exists to remove. The floor
+         * never DELAYS the data: the render is already done and on screen; only
+         * the animation is held to one rotation. */
+        const REFRESH_MIN_SPIN_MS = 800;
+
+        /**
+         * The Refresh button, end to end.
+         *
+         * WHAT IT USED TO DO. It added a 0.7-second one-shot animation and
+         * called forceSyncFromCloud() WITHOUT awaiting it. The pull is a
+         * network round trip — measured at 1.5s against a stubbed slow
+         * connection — so the icon finished turning long before the data
+         * arrived, and nothing on screen changed at the moment it did. The data
+         * pull itself worked; the feedback was fiction, and the re-render
+         * afterwards covered one page and two badges.
+         *
+         * Now the click owns the whole cycle: pull, merge, repaint every
+         * surface, and only then stop the spinner. Everything below is awaited,
+         * and the spin comes off in a finally so a failure cannot leave the
+         * icon turning forever.
+         */
+        async function refreshApp(btn) {
+            if (_refreshInFlight) return;
+            _refreshInFlight = true;
+            const started = Date.now();
+            if (btn) {
+                btn.classList.add('is-refreshing');
+                btn.setAttribute('aria-busy', 'true');
+                btn.disabled = true;
+            }
+            try {
+                if (navigator.onLine && userDocRef) {
+                    /* AWAITED. This one word is most of the bug. */
+                    await forceSyncFromCloud();
+                } else {
+                    notify('Offline — showing what is on this device. It will sync when you reconnect.', 'warn');
+                }
+                /* REPAINTED WHETHER OR NOT THE PULL FOUND ANYTHING NEW. A
+                 * refresh that only repaints when the cloud differs is a
+                 * refresh that does nothing on the day the owner most wants
+                 * reassurance that the screen is current. */
+                refreshAllSurfaces();
+            } catch (e) {
+                console.error('[REFRESH] failed:', e);
+                notify('Could not refresh — your data is safe on this device.', 'error');
+            } finally {
+                const spent = Date.now() - started;
+                const rest = Math.max(0, REFRESH_MIN_SPIN_MS - spent);
+                setTimeout(() => {
+                    if (btn) {
+                        btn.classList.remove('is-refreshing');
+                        btn.removeAttribute('aria-busy');
+                        btn.disabled = false;
+                    }
+                    _refreshInFlight = false;
+                }, rest);
             }
         }
+        window.refreshApp = refreshApp;
+
+        /**
+         * Repaint everything the screen shows, not just the page in front.
+         *
+         * The old refresh re-rendered `renderPage(active)` plus two badges.
+         * Everything else kept whatever it had: the sidebar counts, the date,
+         * the balance figures, the DSCR numbers, and the whole dashboard when
+         * the owner happened to be standing on another page. Data pulled from
+         * the cloud was correct in `appData` and stale on screen, which is
+         * indistinguishable from a refresh that did not fetch.
+         *
+         * Every step is guarded on its own. One malformed record must not stop
+         * the other eight surfaces from repainting — this file has already been
+         * burnt once by a render error being reported as a lost connection.
+         */
+        function refreshAllSurfaces() {
+            const active = document.querySelector('.page.active');
+            const activeId = active ? active.id.replace('page-', '') : '';
+            const step = (what, run) => {
+                try { run(); } catch (e) {
+                    console.error('[REFRESH] ' + what + ' did not repaint (data is safe):', e && e.message);
+                }
+            };
+
+            step('display settings', () => _applyDisplaySettings());
+            step('date', () => updateDateTime());
+            step('cc one-time badge', () => updateCCOTBadge());
+            step('cheque badge', () => updateChequeBadge());
+            step('install badge', () => updatePWAStatusBadge());
+            step('balances', () => renderBalance());
+            step('dscr', () => renderDSCR());
+            /* The dashboard is repainted even when it is not in front, because
+             * its figures are the ones the owner checks first on returning to
+             * it — and skipped when it IS in front, since renderPage below
+             * would then draw it twice. */
+            if (activeId !== 'dashboard') step('dashboard', () => renderDash());
+            step('the page you are on', () => { if (activeId) renderPage(activeId); });
+        }
+        window.refreshAllSurfaces = refreshAllSurfaces;
 
         // ==================== LUXURY HAPTIC FEEDBACK ENGINE v3 ====================
         // Android: Real vibration via navigator.vibrate (when truly supported)
@@ -16527,6 +16962,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // Auto-detect category from expense description
         async function autoDetectCategory(desc) {
             if (!desc || desc.length < 3) return;
+            /* "Smart Expense Suggestions — AI suggests expense categories as
+             * you type descriptions." This function IS that feature, and the
+             * switch that names it was read by nothing: turning it off left the
+             * category still moving under the owner's hands. Read live, so it
+             * takes effect on the next keystroke rather than the next reload. */
+            try { if (DB.getObj('settings', {}).smartExpenseSuggest === false) return; } catch (_) {}
             const cat = await autoCategorizeExpense(desc);
             if (cat) {
                 const sel = $('e_cat');
@@ -16662,7 +17103,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         // ==================== SIDEBAR ====================
-        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Installments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions' };
+        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Installments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions', liquidity: '<i data-wfi="gem"></i> Liquidity &amp; Credit Hub' };
 
         function showPage(name, navEl) {
             // RESTORED v6.9.2: biometric guard for sensitive zones
@@ -16726,7 +17167,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function renderPage(name) {
             // _wfCapMore needs to know which page to repaint.
             window._wfActivePage = name;
-            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv, crib: () => { try { if (window.WFCrib) window.WFCrib.render(); } catch (_) {} } };
+            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv, liquidity: renderLiquidity, crib: () => { try { if (window.WFCrib) window.WFCrib.render(); } catch (_) {} } };
             if (fn[name]) fn[name]();
             // v7.69.0 — ONE hook for every screen. Whatever page you open, its intelligence
             // strip is painted at the top. Pages with nothing to say render nothing at all.
@@ -17768,6 +18209,25 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const calc = calcEMI(amount, rate, dur);
                 monthly = override || Math.round(calc);
             }
+            /* THE THRESHOLD THAT WARNED NOBODY.
+             *
+             * Settings carries "Loan Interest Alert Threshold — warn when a
+             * new loan rate exceeds this percentage", with a 8%–25% picker.
+             * Every mention of that value in this file was in the picker's own
+             * markup: it was stored, synced, remembered across reloads and read
+             * by nothing. This is the moment its label names — a loan being
+             * saved — so this is where it speaks.
+             *
+             * It WARNS. It does not refuse: the rate is a fact about a loan the
+             * owner has already taken, and a form that would not accept it
+             * would just lose the record. */
+            try {
+                const _lim = Number(DB.getObj('settings', {}).loanAlertPct) || 15;
+                if (rate > _lim) {
+                    notify(`${name} is at ${rate}% — above your ${_lim}% alert threshold`, 'warning');
+                }
+            } catch (_) { /* a preference must never block a save */ }
+
             const rec = {
                 id: editMode || uid(), name, bank, amount, rate, duration: dur, monthly, start,
                 paymentMethod,
@@ -21579,7 +22039,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return String(email || '').replace(/[^a-z0-9]/g, '_');
         }
 
-        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0 };
+        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false, locked: 0 };
 
         /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
          * inherits the chip's own colour through stroke="currentColor", so each
@@ -21629,15 +22089,855 @@ table.amort tbody tr { page-break-inside: avoid; }
          * printing the whole thing puts a display name chosen by the sender
          * into the card. The address is what the owner is deciding about. */
         function _mailFromLabel(from) {
-            const raw = String(from || '').trim();
-            const angled = /<([^>]*)>/.exec(raw);
-            return ((angled ? angled[1] : raw).replace(/^mailto:/, '').trim() || raw).slice(0, 80);
+            const raw = String(from || '').trim().toLowerCase();
+            /* THE SAME RULE THE SERVER USES — see addressOf in
+             * wealthflow-mail-ingest.mjs. A display name may be a quoted string
+             * holding something shaped like an address in angle brackets, so
+             * the quoted parts come out first and the LAST angled group wins.
+             * Taking the first one lets the sender choose the label this screen
+             * shows, on a row that offers to delete or approve them. */
+            /* \x22 is the double quote, spelled so that it is not one: this
+             * file is sliced by tests that brace-match source, and a quote
+             * character inside a regex literal reads to them as the start of a
+             * string. The pattern is the same one addressOf uses. */
+            const bare = raw.replace(/\x22(?:[^\x22\\]|\\.)*\x22/g, ' ');
+            let addr = '';
+            const re = /<([^<>]*)>/g;
+            let m;
+            while ((m = re.exec(bare)) !== null) addr = m[1];
+            if (!addr) addr = bare;
+            return (addr.replace(/^mailto:/, '').replace(/[<>\s,;]+$/, '').trim() || raw).slice(0, 80);
+        }
+
+        /* ── WHAT THE OWNER'S LIST SAYS ABOUT A STORED STATEMENT ─────────────
+         *
+         * The verdict is recomputed by the server on every listing — see the
+         * items branch of gmail-link.js — because the flag in the manifest was
+         * written when the statement arrived and cannot know about a decision
+         * made afterwards. Everything below reads that live verdict and treats
+         * the stored flag as the fallback for a document too old to have one.
+         *
+         * `unrecorded` is NOT a refusal. A statement stored before the From
+         * header was kept cannot be attributed to anyone, and guessing would
+         * mean offering a real bank's statement for deletion. */
+        const _MAIL_VERDICTS = ['approved', 'blocked', 'new'];
+
+        /** The live verdict for a listed statement, or '' when there is none. */
+        function _mailVerdict(d, decided) {
+            const v = d && d.sender && d.sender.verdict;
+            return (decided && _MAIL_VERDICTS.indexOf(v) >= 0) ? v : '';
+        }
+
+        /**
+         * Is this from a sender the owner has approved — as of now?
+         *
+         * Falls back to the manifest's flag whenever the list cannot answer:
+         * no approved senders yet, an unreadable list, or a document with no
+         * sender recorded. An absent flag counts as known, because every
+         * document written before the flag existed has none and a filed
+         * statement must not become an accusation on upgrade.
+         */
+        function _mailKnownNow(d, decided) {
+            const v = _mailVerdict(d, decided);
+            if (v) return v === 'approved';
+            return !(d && d.manifest && d.manifest.known === false);
+        }
+
+        /**
+         * The statements the owner could clear in one go, and who sent them.
+         *
+         * ONLY what the list has actually ruled on. A statement whose sender is
+         * unrecorded, or one listed while the owner has approved nobody, is not
+         * in here at all — a sweep that includes documents nothing has judged is
+         * a delete-by-guess, and this deletes.
+         */
+        function _mailSweepable() {
+            if (!_mailSyncState.decided) return [];
+            return _mailSyncState.items.filter(
+                (it) => it.verdict === 'blocked' || it.verdict === 'new');
+        }
+
+        /** Those statements grouped by sender, largest group first. */
+        function _mailSweepGroups(list) {
+            const by = new Map();
+            for (const it of list) {
+                const who = _mailFromLabel(it.from) || (it.bank || 'unknown sender');
+                by.set(who, (by.get(who) || 0) + 1);
+            }
+            return [...by.entries()].sort((a, b) => b[1] - a[1]);
+        }
+
+        /* One request per this many keys. The server caps a delete list at
+         * ITEMS_DELETE_MAX (250) and returns at most ITEMS_RETURN_MAX (200)
+         * statements, so a sweep of everything visible is always one call —
+         * the loop exists so that a raised ceiling on either side cannot
+         * silently start dropping the tail of the list. */
+        const MAIL_DELETE_CHUNK = 200;
+
+        /**
+         * Remove every listed statement from senders the owner has not approved.
+         *
+         * DELETION IS THE ONE ACTION ON THIS CARD THAT CANNOT BE UNDONE, so the
+         * keys are named explicitly, one list, computed here from what is on the
+         * screen. The server evaluates no rule of its own — "delete everything
+         * matching a pattern" is a sentence that, with one bad pattern, ends
+         * someone's statement history.
+         */
+        async function _mailSweepUnapproved() {
+            const targets = _mailSweepable();
+            if (!targets.length) return;
+            const groups = _mailSweepGroups(targets);
+            const named = groups.slice(0, 6).map(([who, n]) => who + ' (' + n + ')').join(', ');
+            const rest = groups.length > 6 ? ', and ' + (groups.length - 6) + ' more' : '';
+            showConfirm(
+                'trash',
+                'Remove ' + targets.length + ' statement' + (targets.length === 1 ? '' : 's') + '?',
+                /* Counts first, then who, then what survives. Not escaped:
+                 * showConfirm assigns this with textContent, and an escaped
+                 * string prints "&amp;" at any sender with an ampersand. */
+                'From ' + groups.length + ' sender' + (groups.length === 1 ? '' : 's') + ' you have not approved: '
+                    + named + rest + '. '
+                    + 'These are the bills and receipts a keyword search collected before you made your '
+                    + 'sender list — none of them has been filed to your records. '
+                    + 'Nothing is removed from Gmail: approve a sender and scan again and its statements come back.',
+                'btn-danger',
+                'Remove ' + targets.length,
+                async () => {
+                    const keys = targets.map((t) => t.key).filter(Boolean);
+                    let removed = 0;
+                    let failed = 0;
+                    for (let i = 0; i < keys.length; i += MAIL_DELETE_CHUNK) {
+                        const slice = keys.slice(i, i + MAIL_DELETE_CHUNK);
+                        try {
+                            const r = await _gmailLink('POST', { action: 'delete', keys: slice }, '?items=1');
+                            if (r && r.body && r.body.ok === true) {
+                                removed += Number(r.body.deleted) || 0;
+                                failed += Array.isArray(r.body.failed) ? r.body.failed.length : 0;
+                            } else {
+                                failed += slice.length;
+                            }
+                        } catch (_) { failed += slice.length; }
+                    }
+                    /* Both numbers, always. A sweep that removed most of them
+                     * and quietly gave up on the rest is how the same rows come
+                     * back on the next refresh and the button looks broken. */
+                    if (removed) notify('Removed ' + removed + (failed ? ' · ' + failed + ' could not be removed' : ''), failed ? 'info' : 'success');
+                    else notify('Nothing could be removed', 'error');
+                    _mailSyncState.stage = 'idle';
+                    runMailSync();
+                },
+            );
         }
 
         /** How many senders the owner has approved, when the server has said. */
         function _senderCountLabel() {
             const n = _mailStatus ? Number(_mailStatus.senderCount) : NaN;
             return Number.isFinite(n) && n > 0 ? ' (' + n + ')' : '';
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
+         * LIQUIDITY & CREDIT HUB — pawned collateral, and money lent to people
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * Two ledgers the app had nowhere to put. They share a screen because
+         * they answer one question — what is my cash tied up in, and when does
+         * it come back — and they share a rule with everything else here:
+         * NOTHING MOVES A BALANCE ON ITS OWN. A repayment logged is a claim
+         * until somebody says they saw it in the bank, and until then it is
+         * counted separately and shown as pending.
+         *
+         * The arithmetic lives in wealthflow-liquidity.js, which has no DOM and
+         * no clock. This draws what it says.
+         */
+        let _liqTab = 'pawn';
+
+        function setLiquidityTab(tab) {
+            _liqTab = (tab === 'debt') ? 'debt' : 'pawn';
+            try { triggerHaptic('light'); } catch (_) {}
+            const p = $('liqTabPawn');
+            const d = $('liqTabDebt');
+            if (p) p.classList.toggle('active', _liqTab === 'pawn');
+            if (d) d.classList.toggle('active', _liqTab === 'debt');
+            renderLiquidity();
+        }
+        window.setLiquidityTab = setLiquidityTab;
+
+        /** A chip, in the colour its state has earned. */
+        function _liqChip(text, colour, tint) {
+            return '<span class="liq-chip" style="color:' + colour + ';background:' + tint + ';">'
+                + _wfEsc(text) + '</span>';
+        }
+
+        function renderLiquidity() {
+            const host = $('liqBody');
+            const stats = $('liqStats');
+            if (!host || !stats) return;
+            if (!window.WFLiquidity) {
+                host.innerHTML = '<div class="card" style="padding:16px;font-size:12.5px;color:var(--text3);">'
+                    + 'The liquidity module did not load, so nothing here can be calculated. '
+                    + 'Reload the app; if it persists, the file wealthflow-liquidity.js is missing from the deploy.'
+                    + '</div>';
+                stats.innerHTML = '';
+                return;
+            }
+            const L = window.WFLiquidity;
+            const now = new Date();
+            const pawns = DB.get('pawns') || [];
+            const debtors = DB.get('debtors') || [];
+
+            if (_liqTab === 'pawn') {
+                const t = L.pawnTotals(pawns, now);
+                stats.innerHTML = `
+                    <div class="stat-card sc-gold"><div class="stat-label">Advanced</div><div class="stat-val">${fmtS(t.principal)}</div></div>
+                    <div class="stat-card sc-red"><div class="stat-label">Interest so far</div><div class="stat-val">${fmtS(t.interest)}</div></div>
+                    <div class="stat-card sc-blue"><div class="stat-label">To redeem all</div><div class="stat-val">${fmtS(t.payable)}</div></div>
+                    <div class="stat-card ${t.overdue ? 'sc-red' : 'sc-green'}"><div class="stat-label">Active tickets</div><div class="stat-val">${t.active}${t.overdue ? ' · ' + t.overdue + ' overdue' : ''}</div></div>`;
+
+                const rows = pawns.map((p, i) => {
+                    const st = L.pawnStatus(p, now);
+                    const chip = st.state === L.PAWN_STATE.REDEEMED
+                        ? _liqChip('REDEEMED', 'var(--green)', 'rgba(34,197,94,0.12)')
+                        : st.state === L.PAWN_STATE.OVERDUE
+                            ? _liqChip('OVERDUE', 'var(--red)', 'rgba(239,68,68,0.12)')
+                            : st.warn
+                                ? _liqChip(st.daysToMaturity + ' DAYS LEFT', 'var(--amber,#f59e0b)', 'rgba(245,158,11,0.12)')
+                                : _liqChip('ACTIVE', 'var(--text3)', 'rgba(127,127,127,0.12)');
+                    return `
+                    <div class="liq-row">
+                        <div class="liq-head">
+                            <div class="liq-name" style="flex:1;min-width:150px;">${_wfEsc(p.item || 'Pawned item')}</div>
+                            ${chip}
+                            <div style="font-weight:800;font-size:14px;color:var(--accent);">${fmtS(st.payable)}</div>
+                        </div>
+                        <div class="liq-sub" style="margin-top:3px;">
+                            ${p.ticket ? 'Ticket ' + _wfEsc(p.ticket) + ' · ' : ''}${_wfEsc(p.pawnDate || '')}${p.maturity ? ' → ' + _wfEsc(p.maturity) : ''}
+                            · ${fmtS(st.principal)} advanced at ${_wfEsc(String(p.rate || 0))}%/month
+                            ${p.interestMode === 'compound' ? ' compounded' : ''}
+                        </div>
+                        <div class="liq-sub" style="margin-top:2px;">
+                            ${st.state === L.PAWN_STATE.REDEEMED
+                                ? 'Redeemed ' + _wfEsc(String(p.redeemedAt || '').slice(0, 10)) + ' · interest paid ' + fmtS(st.interest)
+                                : st.months + ' month' + (st.months === 1 ? '' : 's') + ' of interest so far: ' + fmtS(st.interest)}
+                        </div>
+                        <div class="liq-acts">
+                            ${st.state !== L.PAWN_STATE.REDEEMED
+                                ? `<button class="btn btn-primary btn-sm" data-liq-redeem="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('check') : '')} Redeemed</button>` : ''}
+                            <button class="btn btn-secondary btn-sm" data-liq-pedit="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('edit') : '')} Edit</button>
+                            <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-liq-pdel="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('trash') : 'Delete')}</button>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                host.innerHTML = `
+                    <div class="card" style="padding:16px;">
+                        <div class="card-hdr-row">
+                            <div class="card-hdr-main">
+                                <div style="font-weight:800;font-size:14.5px;color:var(--text);">Pawned assets ledger</div>
+                                <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
+                                    Interest is charged per month and a part month counts as a whole one — the same way the counter bills it.
+                                </div>
+                            </div>
+                            <div class="card-hdr-actions">
+                                <button class="btn btn-primary btn-sm" id="_liq_addp">${(window.WFIcon ? WFIcon('plus') : '')} Add ticket</button>
+                            </div>
+                        </div>
+                        ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nothing pawned. Add a ticket and this tracks what it costs to redeem, and warns you before the maturity date passes.</div>'}
+                    </div>`;
+
+                const add = host.querySelector('#_liq_addp');
+                if (add) add.onclick = () => openPawnModal(null);
+                host.querySelectorAll('[data-liq-pedit]').forEach((b) => {
+                    b.onclick = () => openPawnModal(pawns[Number(b.getAttribute('data-liq-pedit'))]);
+                });
+                host.querySelectorAll('[data-liq-redeem]').forEach((b) => {
+                    b.onclick = () => _redeemPawn(pawns[Number(b.getAttribute('data-liq-redeem'))]);
+                });
+                host.querySelectorAll('[data-liq-pdel]').forEach((b) => {
+                    b.onclick = () => _deletePawn(pawns[Number(b.getAttribute('data-liq-pdel'))]);
+                });
+            } else {
+                const t = L.debtorTotals(debtors, now);
+                stats.innerHTML = `
+                    <div class="stat-card sc-gold"><div class="stat-label">Owed to you</div><div class="stat-val">${fmtS(t.outstanding)}</div></div>
+                    <div class="stat-card sc-blue"><div class="stat-label">Lent in total</div><div class="stat-val">${fmtS(t.lent)}</div></div>
+                    <div class="stat-card sc-green"><div class="stat-label">Repaid</div><div class="stat-val">${fmtS(t.repaid)}</div></div>
+                    <div class="stat-card ${t.pending ? 'sc-red' : 'sc-green'}"><div class="stat-label">Open debtors</div><div class="stat-val">${t.open}${t.pending ? ' · ' + t.pending + ' unconfirmed' : ''}</div></div>`;
+
+                const rows = debtors.map((d, i) => {
+                    const su = L.debtorSummary(d, now);
+                    const open = su.state === L.DEBT_STATE.OPEN;
+                    const chip = open
+                        ? _liqChip('OPEN', 'var(--accent)', 'rgba(212,175,55,0.12)')
+                        : _liqChip('SETTLED', 'var(--green)', 'rgba(34,197,94,0.12)');
+                    const tl = su.events.slice(-6).reverse().map((e) => {
+                        const isIn = e.kind === L.EVENT.REPAYMENT;
+                        return `<div class="liq-tl-item ${isIn ? 'is-in' : 'is-out'}">
+                            <b style="color:${isIn ? 'var(--green)' : 'var(--red)'};">${isIn ? '+' : '-'}${fmtS(e.amount)}</b>
+                            · ${_wfEsc(e.date || '')} · ${_wfEsc(e.kind === L.EVENT.TOPUP ? 'further capital' : e.kind)}
+                            ${e.confirmed ? '' : ' · <span style="color:var(--amber,#f59e0b);font-weight:700;">waiting for your confirmation</span>'}
+                            ${e.note ? '<div style="color:var(--text3);font-size:11.5px;">' + _wfEsc(e.note) + '</div>' : ''}
+                        </div>`;
+                    }).join('');
+                    return `
+                    <div class="liq-row">
+                        <div class="liq-head">
+                            <div class="liq-name" style="flex:1;min-width:150px;">${_wfEsc(d.name || 'Debtor')}</div>
+                            ${chip}
+                            <div style="font-weight:800;font-size:14px;color:${open ? 'var(--accent)' : 'var(--text3)'};">${fmtS(su.outstanding)}</div>
+                        </div>
+                        <div class="liq-sub" style="margin-top:3px;">
+                            ${fmtS(su.lent)} lent · ${fmtS(su.repaid)} repaid${d.note ? ' · ' + _wfEsc(d.note) : ''}
+                            ${su.pending ? ' · <b style="color:var(--amber,#f59e0b);">' + su.pending + ' unconfirmed, not counted above</b>' : ''}
+                        </div>
+                        ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
+                        <div class="liq-acts">
+                            <button class="btn btn-primary btn-sm" data-liq-pay="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('coins') : '')} Log repayment</button>
+                            <button class="btn btn-secondary btn-sm" data-liq-top="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('plus') : '')} Lend more</button>
+                            ${su.outstanding > 0 ? `<button class="btn btn-secondary btn-sm" data-liq-settle="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('checkCircle') : '')} Settle in full</button>` : ''}
+                            <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-liq-ddel="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('trash') : 'Delete')}</button>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                host.innerHTML = `
+                    <div class="card" style="padding:16px;">
+                        <div class="card-hdr-row">
+                            <div class="card-hdr-main">
+                                <div style="font-weight:800;font-size:14.5px;color:var(--text);">Debtor directory</div>
+                                <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
+                                    Every repayment and every further advance waits for your confirmation before it counts.
+                                </div>
+                            </div>
+                            <div class="card-hdr-actions">
+                                <button class="btn btn-primary btn-sm" id="_liq_addd">${(window.WFIcon ? WFIcon('plus') : '')} Add debtor</button>
+                            </div>
+                        </div>
+                        ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nobody owes you anything here yet. Add a debtor to track partial repayments, further advances and what is still outstanding.</div>'}
+                    </div>`;
+
+                const add = host.querySelector('#_liq_addd');
+                if (add) add.onclick = () => openDebtorModal(null);
+                host.querySelectorAll('[data-liq-pay]').forEach((b) => {
+                    b.onclick = () => openDebtorEvent(debtors[Number(b.getAttribute('data-liq-pay'))], 'repayment');
+                });
+                host.querySelectorAll('[data-liq-top]').forEach((b) => {
+                    b.onclick = () => openDebtorEvent(debtors[Number(b.getAttribute('data-liq-top'))], 'topup');
+                });
+                host.querySelectorAll('[data-liq-settle]').forEach((b) => {
+                    b.onclick = () => _settleDebtor(debtors[Number(b.getAttribute('data-liq-settle'))]);
+                });
+                host.querySelectorAll('[data-liq-ddel]').forEach((b) => {
+                    b.onclick = () => _deleteDebtor(debtors[Number(b.getAttribute('data-liq-ddel'))]);
+                });
+            }
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(host); } catch (_) {}
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(stats); } catch (_) {}
+        }
+        window.renderLiquidity = renderLiquidity;
+
+        /* A small overlay, built the way openSenderList builds its own: the
+         * static modal markup in this file is already long, and these three
+         * forms are only ever opened from this screen. */
+        function _liqOverlay(title, bodyHtml, onOpen) {
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.innerHTML = '<div class="md" style="max-width:460px;">'
+                + '<div class="md-hdr"><div class="md-title">' + title + '</div>'
+                + '<button class="md-x" aria-label="Close" id="_liq_x"><i data-wfi="x"></i></button></div>'
+                + bodyHtml + '</div>';
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_liq_x').onclick = close;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(overlay); } catch (_) {}
+            try { initMoneyInputs(); } catch (_) {}
+            if (typeof onOpen === 'function') onOpen(overlay, close);
+            return overlay;
+        }
+
+        const _liqToday = () => new Date().toISOString().slice(0, 10);
+
+        function openPawnModal(existing) {
+            const p = existing || {};
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('gem') : '') + (existing ? ' Edit ticket' : ' Add pawned item'),
+                '<div class="fg"><label class="fl" for="_pw_item">Item</label>'
+                + '<input class="fi" id="_pw_item" placeholder="Gold chain, 2 pav" value="' + _wfEsc(p.item || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_ticket">Ticket number</label>'
+                + '<input class="fi" id="_pw_ticket" placeholder="A-4471" value="' + _wfEsc(p.ticket || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_principal">Amount advanced</label>'
+                + '<input class="fi" id="_pw_principal" inputmode="decimal" value="' + _wfEsc(String(p.principal || '')) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_rate">Interest, % per month</label>'
+                + '<input class="fi" id="_pw_rate" inputmode="decimal" placeholder="2.2" value="' + _wfEsc(String(p.rate || '')) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_mode">How it is charged</label>'
+                + '<select class="fi" id="_pw_mode">'
+                + '<option value="simple"' + (p.interestMode === 'compound' ? '' : ' selected') + '>Simple — on the amount advanced</option>'
+                + '<option value="compound"' + (p.interestMode === 'compound' ? ' selected' : '') + '>Compound — monthly</option>'
+                + '</select></div>'
+                + '<div class="fg"><label class="fl" for="_pw_date">Pawn date</label>'
+                + '<input class="fi" id="_pw_date" type="date" value="' + _wfEsc(p.pawnDate || _liqToday()) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_maturity">Maturity date</label>'
+                + '<input class="fi" id="_pw_maturity" type="date" value="' + _wfEsc(p.maturity || '') + '"></div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_pw_save" style="width:100%;">Save</button></div>',
+                (ov, close) => {
+                    ov.querySelector('#_pw_save').onclick = () => {
+                        const item = (ov.querySelector('#_pw_item').value || '').trim();
+                        const principal = parseMoney(ov.querySelector('#_pw_principal').value);
+                        const rate = parseFloat(ov.querySelector('#_pw_rate').value) || 0;
+                        if (!item || !principal) { notify('Name the item and the amount advanced', 'error'); return; }
+                        const arrp = (DB.get('pawns') || []).slice();
+                        const rec = {
+                            id: (existing && existing.id) || uid(),
+                            createdAt: (existing && existing.createdAt) || new Date().toISOString(),
+                            item, ticket: (ov.querySelector('#_pw_ticket').value || '').trim(),
+                            principal, rate,
+                            interestMode: ov.querySelector('#_pw_mode').value,
+                            pawnDate: ov.querySelector('#_pw_date').value || _liqToday(),
+                            maturity: ov.querySelector('#_pw_maturity').value || '',
+                            ...(existing && existing.redeemedAt ? { redeemedAt: existing.redeemedAt, state: existing.state } : {}),
+                        };
+                        const at = arrp.findIndex((x) => x && x.id === rec.id);
+                        if (at > -1) arrp[at] = rec; else arrp.push(rec);
+                        DB.set('pawns', arrp);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(existing ? 'Ticket updated' : 'Ticket added', 'success');
+                        close();
+                        renderLiquidity();
+                    };
+                },
+            );
+        }
+        window.openPawnModal = openPawnModal;
+
+        /* Redeeming is a fact, not a calculation, so it asks for the date it
+         * actually happened — interest stops there, not on the day the owner
+         * got round to recording it. */
+        function _redeemPawn(p) {
+            if (!p) return;
+            const st = window.WFLiquidity.pawnStatus(p, new Date());
+            showConfirm(
+                'checkCircle',
+                'Mark this ticket redeemed?',
+                'This records ' + (p.item || 'the item') + ' as redeemed today for ' + fmtS(st.payable)
+                    + ' (' + fmtS(st.principal) + ' advanced plus ' + fmtS(st.interest) + ' interest). '
+                    + 'Interest stops accruing on that date. Nothing is deducted from any balance — record the payment '
+                    + 'as an expense yourself if you track it there.',
+                'btn-primary', 'Redeemed',
+                () => {
+                    const arrp = (DB.get('pawns') || []).slice();
+                    const at = arrp.findIndex((x) => x && x.id === p.id);
+                    if (at < 0) return;
+                    arrp[at] = { ...arrp[at], redeemedAt: _liqToday(), state: 'REDEEMED', redeemedFor: st.payable };
+                    DB.set('pawns', arrp);
+                    try { triggerHaptic('success'); } catch (_) {}
+                    notify('Redeemed', 'success');
+                    renderLiquidity();
+                },
+            );
+        }
+
+        function _deletePawn(p) {
+            if (!p) return;
+            showConfirm(
+                'trash', 'Delete this ticket?',
+                'This removes ' + (p.item || 'the ticket') + ' and its interest history from WealthFlow. It cannot be undone.',
+                'btn-danger', 'Delete',
+                () => {
+                    DB.set('pawns', (DB.get('pawns') || []).filter((x) => x && x.id !== p.id));
+                    notify('Deleted', 'success');
+                    renderLiquidity();
+                },
+            );
+        }
+
+        function openDebtorModal(existing) {
+            const d = existing || {};
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('user') : '') + (existing ? ' Edit debtor' : ' Add debtor'),
+                '<div class="fg"><label class="fl" for="_db_name">Name</label>'
+                + '<input class="fi" id="_db_name" placeholder="Nimal" value="' + _wfEsc(d.name || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_db_amount">Amount lent</label>'
+                + '<input class="fi" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
+                + '<div class="fg"><label class="fl" for="_db_date">Date lent</label>'
+                + '<input class="fi" id="_db_date" type="date" value="' + _liqToday() + '"></div>'
+                + '<div class="fg"><label class="fl" for="_db_note">Note</label>'
+                + '<input class="fi" id="_db_note" maxlength="200" placeholder="For the shop renovation" value="' + _wfEsc(d.note || '') + '"></div>'
+                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;">'
+                + 'The first advance is recorded as an event, so the timeline shows it beside every repayment and every further advance.'
+                + '</div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_db_save" style="width:100%;">Save</button></div>',
+                (ov, close) => {
+                    ov.querySelector('#_db_save').onclick = () => {
+                        const name = (ov.querySelector('#_db_name').value || '').trim();
+                        const amount = parseMoney(ov.querySelector('#_db_amount').value);
+                        if (!name) { notify('Name the debtor', 'error'); return; }
+                        if (!existing && !amount) { notify('How much was lent?', 'error'); return; }
+                        const list = (DB.get('debtors') || []).slice();
+                        let rec = {
+                            id: (existing && existing.id) || uid(),
+                            createdAt: (existing && existing.createdAt) || new Date().toISOString(),
+                            name, note: (ov.querySelector('#_db_note').value || '').trim(),
+                            events: (existing && Array.isArray(existing.events)) ? existing.events.slice() : [],
+                            ...(existing && existing.closedAt ? { closedAt: existing.closedAt } : {}),
+                        };
+                        if (amount) {
+                            /* CONFIRMED on the spot. Handing somebody cash is
+                             * something the owner just did — asking them to
+                             * verify their own action a second time is the
+                             * ceremony this app is trying to remove. What waits
+                             * for confirmation is money moving in the OTHER
+                             * direction, which is a claim about the bank. */
+                            const r = window.WFLiquidity.addEvent(rec, {
+                                kind: 'lent', amount, date: ov.querySelector('#_db_date').value || _liqToday(),
+                                id: uid(), now: Date.now(), confirmed: true,
+                            });
+                            if (r.ok) rec = r.debtor;
+                        }
+                        const at = list.findIndex((x) => x && x.id === rec.id);
+                        if (at > -1) list[at] = rec; else list.push(rec);
+                        DB.set('debtors', list);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(existing ? 'Debtor updated' : 'Debtor added', 'success');
+                        close();
+                        renderLiquidity();
+                    };
+                },
+            );
+        }
+        window.openDebtorModal = openDebtorModal;
+
+        /**
+         * Log a repayment or a further advance.
+         *
+         * A repayment arrives UNCONFIRMED: it is a claim that money reached the
+         * bank, which is exactly the kind of claim the owner said must never
+         * post itself. A further advance is money they just handed over, so it
+         * is confirmed as it is written.
+         */
+        function openDebtorEvent(d, kind) {
+            if (!d) return;
+            const isPay = kind === 'repayment';
+            _liqOverlay(
+                (window.WFIcon ? WFIcon(isPay ? 'coins' : 'plus') : '')
+                    + (isPay ? ' Repayment from ' : ' Lend more to ') + _wfEsc(d.name || 'debtor'),
+                '<div class="fg"><label class="fl" for="_ev_amount">Amount</label>'
+                + '<input class="fi" id="_ev_amount" inputmode="decimal"></div>'
+                + '<div class="fg"><label class="fl" for="_ev_date">Date</label>'
+                + '<input class="fi" id="_ev_date" type="date" value="' + _liqToday() + '"></div>'
+                + '<div class="fg"><label class="fl" for="_ev_note">Note</label>'
+                + '<input class="fi" id="_ev_note" maxlength="200"></div>'
+                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;">'
+                + (isPay
+                    ? 'This is logged as waiting for your confirmation — it will not reduce what is outstanding until you confirm it on the dashboard.'
+                    : 'Money you have handed over is recorded straight away, and the outstanding balance rises by it.')
+                + '</div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_ev_save" style="width:100%;">Save</button></div>',
+                (ov, close) => {
+                    ov.querySelector('#_ev_save').onclick = () => {
+                        const amount = parseMoney(ov.querySelector('#_ev_amount').value);
+                        if (!amount) { notify('How much?', 'error'); return; }
+                        const list = (DB.get('debtors') || []).slice();
+                        const at = list.findIndex((x) => x && x.id === d.id);
+                        if (at < 0) return;
+                        const r = window.WFLiquidity.addEvent(list[at], {
+                            kind: isPay ? 'repayment' : 'topup',
+                            amount,
+                            date: ov.querySelector('#_ev_date').value || _liqToday(),
+                            note: (ov.querySelector('#_ev_note').value || '').trim(),
+                            id: uid(), now: Date.now(),
+                            confirmed: !isPay,
+                        });
+                        if (!r.ok) { notify('That could not be recorded', 'error'); return; }
+                        list[at] = r.debtor;
+                        DB.set('debtors', list);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(isPay ? 'Logged — confirm it on the dashboard once it is in the bank' : 'Recorded', 'success');
+                        close();
+                        renderLiquidity();
+                        try { renderVerifyQueue(); } catch (_) {}
+                    };
+                },
+            );
+        }
+        window.openDebtorEvent = openDebtorEvent;
+
+        function _settleDebtor(d) {
+            if (!d) return;
+            const su = window.WFLiquidity.debtorSummary(d, new Date());
+            showConfirm(
+                'checkCircle', 'Settle in full?',
+                'This records a final repayment of ' + fmtS(su.outstanding) + ' from ' + (d.name || 'this debtor')
+                    + ' and closes them. It waits for your confirmation on the dashboard before it counts, '
+                    + 'so nothing changes until you have seen the money.',
+                'btn-primary', 'Settle',
+                () => {
+                    const list = (DB.get('debtors') || []).slice();
+                    const at = list.findIndex((x) => x && x.id === d.id);
+                    if (at < 0) return;
+                    const r = window.WFLiquidity.settleInFull(list[at], { date: _liqToday(), id: uid(), now: Date.now() });
+                    if (!r.ok) { notify('There is nothing outstanding to settle', 'info'); return; }
+                    list[at] = r.debtor;
+                    DB.set('debtors', list);
+                    notify('Recorded — confirm it on the dashboard once the money is in', 'success');
+                    renderLiquidity();
+                    try { renderVerifyQueue(); } catch (_) {}
+                },
+            );
+        }
+
+        function _deleteDebtor(d) {
+            if (!d) return;
+            showConfirm(
+                'trash', 'Delete this debtor?',
+                'This removes ' + (d.name || 'the debtor') + ' and their whole repayment history from WealthFlow. It cannot be undone.',
+                'btn-danger', 'Delete',
+                () => {
+                    DB.set('debtors', (DB.get('debtors') || []).filter((x) => x && x.id !== d.id));
+                    notify('Deleted', 'success');
+                    renderLiquidity();
+                },
+            );
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
+         * THE PENDING INFLOW QUEUE — a due date is a question, not an answer
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The owner's rule, in their words: "The system must NEVER
+         * automatically post or mark income as Received based on a static
+         * calendar. If a transaction fails to arrive in the bank, blind
+         * automation will corrupt the balance sheet."
+         *
+         * The app already asked the question — a banner on the pay day — and
+         * that banner is a MOMENT. Close the app that day and the question is
+         * gone while the money is still unconfirmed, with nothing on any screen
+         * saying so. This is the queue that keeps asking: every payout whose
+         * date has passed and which nobody has answered, in one place, with one
+         * tap to answer it.
+         *
+         * NOTHING HERE WRITES A LEDGER ROW. Approving an inflow records the
+         * answer in `incomeReceived`, which is the same field the existing
+         * confirmation writes and the same field the dashboard already reads.
+         * Approving a bill records `billPaid` and NOTHING else: the
+         * subscription record is already the commitment and is already counted,
+         * so creating an expense here would double every premium the moment
+         * this screen was used — the exact corruption the rule above exists to
+         * prevent.
+         *
+         * The decisions live in wealthflow-verify-matrix.js, which has no DOM,
+         * no storage and no clock. This function draws what that module says.
+         */
+        function renderVerifyQueue() {
+            const host = $('wfVerifyQueue');
+            if (!host) return;
+            if (!window.WFVerify) { host.style.display = 'none'; return; }
+
+            let rows = [];
+            try {
+                const now = new Date();
+                rows = window.WFVerify.pendingInflows(appData, now)
+                    .concat(window.WFVerify.pendingOutflows(appData, now));
+                /* And the money lent to people. A repayment logged but not yet
+                 * seen in the bank is the same kind of claim as a salary that
+                 * was due yesterday, so it belongs in the same queue rather
+                 * than in a second one on another screen. */
+                if (window.WFLiquidity) {
+                    rows = rows.concat(window.WFLiquidity.pendingLiquidity(appData, now));
+                }
+            } catch (_) { rows = []; }
+
+            if (!rows.length) {
+                /* Hidden, not "All clear!". The dashboard already carries a
+                 * brief that says what needs attention; a second empty box
+                 * congratulating the owner is noise on the page the app opens
+                 * on. */
+                host.style.display = 'none';
+                host.innerHTML = '';
+                return;
+            }
+            host.style.display = '';
+
+            const t = window.WFVerify.queueTotals(rows);
+            const V = window.WFVerify.VERIFY;
+            /* Capped so a six-month gap does not produce a wall. The count in
+             * the header is the true number, so the cap can never hide how much
+             * is waiting. */
+            const shown = rows.slice(0, 8);
+
+            const chip = (r) => {
+                if (r.state === V.DELAYED) {
+                    return '<span style="font-size:10.5px;font-weight:800;letter-spacing:.4px;color:var(--amber,#f59e0b);'
+                        + 'background:rgba(245,158,11,0.12);border-radius:20px;padding:3px 9px;">FLAGGED LATE</span>';
+                }
+                if (r.late) {
+                    return '<span style="font-size:10.5px;font-weight:800;letter-spacing:.4px;color:var(--red);'
+                        + 'background:rgba(239,68,68,0.12);border-radius:20px;padding:3px 9px;">'
+                        + _wfEsc(String(r.daysLate)) + ' DAYS LATE</span>';
+                }
+                return '<span style="font-size:10.5px;font-weight:800;letter-spacing:.4px;color:var(--text3);'
+                    + 'background:rgba(127,127,127,0.12);border-radius:20px;padding:3px 9px;">PENDING</span>';
+            };
+
+            const body = shown.map((r, i) => `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 0;border-top:1px solid var(--border);">
+                    <div style="flex:1;min-width:170px;">
+                        <div style="font-size:13.5px;font-weight:700;color:var(--text);overflow-wrap:anywhere;">
+                            ${_wfEsc(r.name)}${r.company ? ' <span style="color:var(--text3);font-weight:400;">· ' + _wfEsc(r.company) + '</span>' : ''}
+                        </div>
+                        <div style="font-size:11.5px;color:var(--text3);margin-top:2px;">
+                            ${r.kind === 'outflow' ? 'Due' : 'Expected'} ${_wfEsc(r.dueISO)} · ${_wfEsc(r.monthKey)}
+                        </div>
+                    </div>
+                    <div style="font-weight:800;font-size:14px;flex-shrink:0;color:${r.kind === 'outflow' ? 'var(--red)' : 'var(--green)'};">
+                        ${r.kind === 'outflow' ? '-' : '+'}${_wfEsc(fmtS(r.amount))}
+                    </div>
+                    ${chip(r)}
+                    <div style="display:flex;gap:7px;flex-shrink:0;">
+                        <button class="btn btn-primary btn-sm" data-vq-ok="${_wfEsc(String(i))}">
+                            ${(window.WFIcon ? WFIcon('check') : '')} ${r.kind === 'outflow' ? 'Paid' : 'Received'}
+                        </button>
+                        <button class="btn btn-secondary btn-sm" data-vq-late="${_wfEsc(String(i))}">
+                            ${r.source === 'debtor' ? 'Remove' : (r.state === V.DELAYED ? 'Clear flag' : 'Not yet')}
+                        </button>
+                    </div>
+                </div>`).join('');
+
+            host.innerHTML = `
+                <div class="card" style="padding:16px;">
+                    <div class="card-hdr-row">
+                        <div style="font-size:20px;display:flex;align-items:center;color:var(--accent);flex-shrink:0;">${(window.WFIcon && WFIcon.has('checkCircle')) ? WFIcon('checkCircle') : ''}</div>
+                        <div class="card-hdr-main">
+                            <div style="font-weight:800;font-size:14.5px;color:var(--text);">Awaiting your confirmation</div>
+                            <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
+                                ${_wfEsc(String(t.count))} due${t.late ? ' · ' + _wfEsc(String(t.late)) + ' late' : ''}${t.delayed ? ' · ' + _wfEsc(String(t.delayed)) + ' flagged' : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <div style="font-size:12px;color:var(--text3);line-height:1.6;margin:2px 0 4px;">
+                        ${t.inflow ? _wfEsc(fmtS(t.inflow)) + ' expected in' : ''}${t.inflow && t.outflow ? ' · ' : ''}${t.outflow ? _wfEsc(fmtS(t.outflow)) + ' expected out' : ''}.
+                        <b>Nothing here has been added to your balance.</b> These are dates that have passed —
+                        confirm the ones that actually happened.
+                    </div>
+                    ${body}
+                    ${rows.length > shown.length ? `<div style="font-size:11.5px;color:var(--text3);padding-top:10px;">
+                        ${_wfEsc(String(rows.length - shown.length))} more waiting — confirm these and the rest appear.
+                    </div>` : ''}
+                </div>`;
+
+            host.querySelectorAll('[data-vq-ok]').forEach((b) => {
+                b.onclick = () => {
+                    const r = shown[Number(b.getAttribute('data-vq-ok'))];
+                    if (!r) return;
+                    try { triggerHaptic('success'); } catch (_) {}
+                    b.disabled = true;
+                    _verifyConfirm(r);
+                };
+            });
+            host.querySelectorAll('[data-vq-late]').forEach((b) => {
+                b.onclick = () => {
+                    const r = shown[Number(b.getAttribute('data-vq-late'))];
+                    if (!r) return;
+                    try { triggerHaptic('light'); } catch (_) {}
+                    _verifyFlagLate(r);
+                };
+            });
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(host); } catch (_) {}
+        }
+        window.renderVerifyQueue = renderVerifyQueue;
+
+        /**
+         * One tap: this one happened.
+         *
+         * The EXPECTED figure is recorded, because one tap is what was asked
+         * for and the expected figure is right almost every time. The toast
+         * says which number went in and where to change it — a prompt on every
+         * confirmation is how a queue of eight becomes something nobody
+         * finishes.
+         */
+        function _verifyConfirm(row) {
+            const now = Date.now();
+            /* A debtor's event is not a monthly slot — it is one entry in that
+             * person's ledger, and confirming it belongs to the module that
+             * owns the arithmetic. Handled first so it can never fall through
+             * to a map keyed by month. */
+            if (row.source === 'debtor') {
+                const list = (DB.get('debtors') || []).slice();
+                const at = list.findIndex((x) => x && x.id === row.sourceId);
+                if (at < 0) return;
+                const r = window.WFLiquidity.confirmEvent(list[at], row.eventId, { now });
+                if (!r.ok) { notify('That entry is no longer there', 'info'); renderVerifyQueue(); return; }
+                list[at] = r.debtor;
+                DB.set('debtors', list);
+                notify(fmtS(row.amount) + ' confirmed for ' + (row.name || 'this debtor'), 'success');
+                renderVerifyQueue();
+                try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
+                try { renderDash(); } catch (_) {}
+                return;
+            }
+            if (row.kind === 'outflow') {
+                const paid = DB.getObj('billPaid', {});
+                paid[row.key] = { confirmedAt: now, month: row.monthKey, amount: row.amount, via: 'queue' };
+                DB.set('billPaid', paid);
+                const flagged = DB.getObj('billDelayed', {});
+                if (flagged[row.key]) { delete flagged[row.key]; DB.set('billDelayed', flagged); }
+            } else {
+                const got = DB.getObj('incomeReceived', {});
+                got[row.key] = { confirmedAt: now, month: row.monthKey, amount: row.amount, via: 'queue' };
+                DB.set('incomeReceived', got);
+                const flagged = DB.getObj('incomeDelayed', {});
+                if (flagged[row.key]) { delete flagged[row.key]; DB.set('incomeDelayed', flagged); }
+            }
+            notify(fmtS(row.amount) + ' confirmed for ' + row.monthKey
+                + ' · open ' + (row.kind === 'outflow' ? 'Subscriptions' : 'Income') + ' to change the figure', 'success');
+            renderVerifyQueue();
+            try { renderDash(); } catch (_) {}
+        }
+
+        /**
+         * Not yet — and it stays in the queue.
+         *
+         * A delayed payout is not a dismissed one. The flag changes what the
+         * row SAYS, so the owner can tell "I know about this one" from "I have
+         * not looked", and the row keeps asking until it is confirmed. Nothing
+         * about the ledger changes either way, which is the point: a late
+         * deposit must never be able to move a balance.
+         */
+        function _verifyFlagLate(row) {
+            /* For a debtor's event there is nothing to flag: the row IS the
+             * "not yet". What the owner might need instead is to take back an
+             * entry they logged by mistake, which is otherwise unreachable —
+             * an unconfirmed repayment with a typo in it would sit in the queue
+             * for good. */
+            if (row.source === 'debtor') {
+                showConfirm(
+                    'trash', 'Remove this entry?',
+                    'This deletes the ' + fmtS(row.amount) + ' entry from ' + (row.name || 'this debtor')
+                        + "'s history. Nothing else changes — it was never counted, because it was never confirmed.",
+                    'btn-danger', 'Remove',
+                    () => {
+                        const list = (DB.get('debtors') || []).slice();
+                        const at = list.findIndex((x) => x && x.id === row.sourceId);
+                        if (at < 0) return;
+                        const events = (list[at].events || []).filter((e) => !(e && e.id === row.eventId && e.confirmed === false));
+                        list[at] = { ...list[at], events };
+                        DB.set('debtors', list);
+                        notify('Removed', 'success');
+                        renderVerifyQueue();
+                        try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
+                    },
+                );
+                return;
+            }
+            const field = row.kind === 'outflow' ? 'billDelayed' : 'incomeDelayed';
+            const map = DB.getObj(field, {});
+            if (map[row.key]) delete map[row.key];
+            else map[row.key] = { at: Date.now(), month: row.monthKey, due: row.dueISO };
+            DB.set(field, map);
+            renderVerifyQueue();
         }
 
         function renderMailSync() {
@@ -21654,11 +22954,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                         ${it.note ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px;">${_wfEsc(it.note)}</div>` : ''}
                         ${!it.known ? `<div style="font-size:11.5px;color:var(--text3);margin-top:3px;overflow-wrap:anywhere;">
-                            From ${_wfEsc(_mailFromLabel(it.from))} — not on your sender list.
+                            From ${_wfEsc(_mailFromLabel(it.from))} — ${it.verdict === 'blocked'
+                                ? 'you blocked this sender.'
+                                : 'not on your sender list.'}
                         </div>` : ''}
                     </div>
                     ${_mailStageChip(it.stage, it.reason)}
-                    ${!it.known && it.from ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
+                    ${!it.known && it.from && it.verdict !== 'blocked' ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
                         ${(window.WFIcon ? WFIcon('plus') : '')} Add sender
                     </button>` : ''}
                     <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-msdel="${_wfEsc(String(i))}"
@@ -21732,6 +23034,59 @@ table.amort tbody tr { page-break-inside: avoid; }
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Nothing waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.${st.filed ? ' ' + _wfEsc(String(st.filed)) + ' statement' + (st.filed === 1 ? '' : 's') + ' already checked in.' : ''} Use <b>Scan historical statements</b> to search further back.</div>`;
             }
 
+            /* ── CLEARING WHAT THE KEYWORD SEARCH LEFT BEHIND ────────────────
+             *
+             * Stopping bills and receipts being FETCHED removed none of the
+             * ones already stored, so the screen looked exactly as it did
+             * before the fix that claimed to address it. Removing them one row
+             * at a time, each behind its own confirmation, is not an answer
+             * when there are eighty of them.
+             *
+             * The strip appears only when the owner's list has actually ruled
+             * on something. It is a statement of fact first — these are held,
+             * nothing from them has been filed — and an offer second, because
+             * the safe outcome for someone who ignores it is the current one. */
+            /* ── THE STATEMENTS THAT ARRIVED AND COULD NOT BE OPENED ─────────
+             *
+             * Sri Lankan banks lock statement PDFs, and the vault that holds
+             * those passwords is locked itself until the owner enters their
+             * PIN. So the honest sequence is: the statement arrived, it was
+             * fetched, and it is sitting there unread — which is a different
+             * thing from a missing statement and needs a different sentence.
+             *
+             * One action for all of them, offered where they are. The vault
+             * modal calls back on close, so unlocking and re-checking is one
+             * decision rather than two. */
+            const vaultLocked = !!(window.WFVault && window.WFVault.isSet() && !window.WFVault.isUnlocked());
+            const lockedCount = Number(_mailSyncState.locked) || 0;
+            const lockStrip = lockedCount ? `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;
+                            background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.26);border-radius:10px;">
+                    <div style="flex:1;min-width:190px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                        <b>${_wfEsc(String(lockedCount))} statement${lockedCount === 1 ? ' is' : 's are'} password-protected and could not be opened.</b>
+                        ${vaultLocked
+                            ? 'Your statement vault is locked, so none of your saved passwords were tried.'
+                            : 'None of your saved passwords opened ' + (lockedCount === 1 ? 'it' : 'them') + ' — add the one your bank uses.'}
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="_ms_vault" style="flex-shrink:0;">
+                        ${(window.WFIcon ? WFIcon('lock') : '')} ${vaultLocked ? 'Unlock vault' : 'Add a password'}
+                    </button>
+                </div>` : '';
+
+            const sweep = _mailSweepable();
+            const sweepStrip = sweep.length ? `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;
+                            background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.22);border-radius:10px;">
+                    <div style="flex:1;min-width:190px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                        <b>${_wfEsc(String(sweep.length))} of these are from senders you have not approved.</b>
+                        They are held where they are — nothing from them reaches your records. Most will be
+                        the bills and receipts collected before you made your sender list.
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="_ms_sweep" style="color:var(--red);flex-shrink:0;">
+                        ${(window.WFIcon ? WFIcon('trash') : '')} Remove all ${_wfEsc(String(sweep.length))}
+                    </button>
+                </div>` : '';
+
             host.innerHTML = `
                 <div class="card" style="padding:16px;">
                     <div class="card-hdr-row">
@@ -21758,13 +23113,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 ${(window.WFIcon ? WFIcon('mail') : '')} Senders${_senderCountLabel()}
                             </button>` : ''}
                             <button class="btn btn-secondary btn-sm" id="_ms_run" ${st.stage === 'running' || _scan.stage === 'running' ? 'disabled' : ''}>
-                                ${st.stage === 'running'
-                                    ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
-                                    : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
+                                ${st.sweeping
+                                    ? ((window.WFIcon ? WFIcon('cloudDownload') : '') + ' Fetching…')
+                                    : st.stage === 'running'
+                                        ? ((window.WFIcon ? WFIcon('clock') : '') + ' Checking…')
+                                        : ((window.WFIcon ? WFIcon('refresh') : '') + ' Check now')}
                             </button>
                         </div>
                     </div>
                     ${banner}
+                    ${lockStrip}
+                    ${sweepStrip}
                     ${rows}
                     ${_scan.stage === 'running' ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">
                         Scanning ${_wfEsc(String(_scan.months))} months${_scan.label ? ' · ' + _wfEsc(_scan.label) : ''}${_scan.found ? ' · ' + _wfEsc(String(_scan.found)) + ' found' : ''}…
@@ -21780,6 +23139,23 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (sc) sc.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openBackfill(); };
             const sn = host.querySelector('#_ms_senders');
             if (sn) sn.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openSenderList(); };
+            const sw = host.querySelector('#_ms_sweep');
+            if (sw) sw.onclick = () => { try { triggerHaptic('light'); } catch (_) {} _mailSweepUnapproved(); };
+            const vb = host.querySelector('#_ms_vault');
+            if (vb) vb.onclick = () => {
+                try { triggerHaptic('light'); } catch (_) {}
+                /* RE-READ ON CLOSE, not "now press Check now again". The
+                 * statements are already in the store; the only thing that was
+                 * missing is the key, and once it is there the retry is not a
+                 * second decision the owner should have to make. */
+                openBankVault({
+                    onClose: () => {
+                        if (window.WFVault && window.WFVault.isUnlocked() && _mailSyncState.stage !== 'running') {
+                            runMailSync();
+                        }
+                    },
+                });
+            };
             /* The decision offered where the confusion is. Seeing an unfamiliar
              * row and being sent to another screen to find it again is how a
              * queue stops being read. */
@@ -21908,13 +23284,19 @@ table.amort tbody tr { page-break-inside: avoid; }
         /**
          * Register the watch, or renew one close to expiring.
          *
-         * Renewal is driven from here rather than from a scheduled job because
-         * a watch belongs to ONE mailbox and is registered with that mailbox's
-         * own credential — so it needs no new secret and nothing on the Actions
-         * budget. The cost is that it renews when the app is opened, on a
-         * six-day margin against a seven-day life. That is why the expiry is
-         * shown on the card: a pipeline that stops must say so, and silence is
-         * the exact failure this whole change exists to end.
+         * Driven from here because a watch belongs to ONE mailbox and is
+         * registered with that mailbox's own credential — so it needs no new
+         * secret, and it happens while the owner is looking at the result. On a
+         * six-day margin against a seven-day life, an app opened weekly never
+         * lapses.
+         *
+         * IT USED TO BE THE ONLY RENEWAL, AND THAT WAS THE HOLE. A week nobody
+         * opens the app is a week the watch expires: Gmail publishes nothing,
+         * the hook is never invoked, and this card says "Connected" — because
+         * the mailbox is. /api/gmail-renew now does the same renewal on a
+         * schedule for every connected mailbox. This one stays because it is
+         * the one that runs when the owner is present to see it fail; the
+         * expiry is still shown here for the same reason.
          */
         async function _ensureMailWatch({ force = false } = {}) {
             const seen = await _gmailWatch('GET');
@@ -21988,6 +23370,74 @@ table.amort tbody tr { page-break-inside: avoid; }
          * was found — those live in wf-mail. Losing this record costs a
          * repeated scan, never a lost statement, which is why a parse failure
          * below simply starts over. */
+        /* ── WHY "CHECK NOW" HAS TO ACTUALLY FETCH ───────────────────────────
+         *
+         * The owner reported a statement that arrived yesterday, from a sender
+         * on their approved list, that never appeared. It is not a filter bug,
+         * a parser bug or a sender-list bug. Nothing had gone looking for it.
+         *
+         * Everything after the first scan depended on the Gmail PUSH, and the
+         * push depends on a watch that Google expires after seven days. That
+         * watch is renewed by the PAGE — so it renews only while somebody has
+         * the app open. Close the app for a week and the watch lapses; mail
+         * arrives; Google publishes nothing; and the history bookmark the hook
+         * reads forward from ages out behind it. Every statement in that gap is
+         * unreachable, permanently, because the one button that looks like it
+         * would go and get them only re-listed what was already stored.
+         *
+         * I diagnosed exactly this in #165 — "the check button never fetches
+         * mail" — and then fixed it only for the FIRST scan. That was the wrong
+         * size of fix: it closed the empty-mailbox case and left the ongoing
+         * one open, which is the case the owner actually lives in.
+         *
+         * So a check now sweeps the last two months before it lists anything.
+         * Two, not one, because a statement issued on the 31st and fetched on
+         * the 1st is otherwise in neither window. It is bounded, it reuses the
+         * scan endpoint (which derives its query from the owner's approved
+         * senders — no new surface), and it is throttled so a repeated press
+         * costs nothing. The push stays: it is faster when it works. This is
+         * what makes it not the only thing that works. */
+        const RECENT_SWEEP_MONTHS = 2;
+        /* A floor between sweeps. runMailSync is also called after filing, and
+         * a fetch per press of a button people press twice is a quota bill. */
+        const SWEEP_MIN_GAP_MS = 45 * 1000;
+        const SWEEP_MAX_PAGES = 8;
+        let _lastSweepMs = 0;
+
+        /**
+         * Fetch anything recent the push did not deliver. Returns how many
+         * statements were newly stored.
+         *
+         * Failures are swallowed on purpose: a sweep that cannot reach Gmail
+         * must still leave the owner looking at whatever IS stored, rather than
+         * replacing their statements with an error about a background refresh.
+         */
+        async function _recentSweep(force) {
+            if (_scan.stage === 'running') return 0;
+            const now = Date.now();
+            if (!force && _lastSweepMs && (now - _lastSweepMs) < SWEEP_MIN_GAP_MS) return 0;
+            _lastSweepMs = now;
+
+            let found = 0;
+            try {
+                for (let index = 0; index < RECENT_SWEEP_MONTHS; index += 1) {
+                    let pageToken;
+                    for (let page = 0; page < SWEEP_MAX_PAGES; page += 1) {
+                        const r = await _gmailScan({
+                            months: RECENT_SWEEP_MONTHS, now, index,
+                            ...(pageToken ? { pageToken } : {}),
+                        });
+                        if (!r || r.status !== 200 || !r.body || r.body.ok !== true) return found;
+                        found += Number(r.body.statements) || 0;
+                        pageToken = r.body.pageToken;
+                        if (!pageToken) break;
+                    }
+                }
+            } catch (_) { /* see above: never replace the list with a refresh error */ }
+            return found;
+        }
+        window._wfRecentSweep = _recentSweep;
+
         const MAIL_SCAN_CURSOR_KEY = 'wf_mail_scan_cursor';
         const SCAN_BATCH_REST_MS = 1200;
 
@@ -22225,6 +23675,81 @@ table.amort tbody tr { page-break-inside: avoid; }
          * by Google has no client to ask. */
         let _senders = { stage: 'idle', approved: [], blocked: [], pending: [], error: null, busy: '' };
 
+        /* ── FINDING THE BANKS THE OWNER HAS NOT APPROVED YET ────────────────
+         *
+         * THE TRAP IN THE RULE ABOVE, AND THE OWNER'S LOUDEST COMPLAINT.
+         *
+         * Once one sender is approved, the scan asks Gmail about THAT sender
+         * and nobody else — which is exactly right for routine scanning, and
+         * fatal for discovery. An owner with ten banks approves the three they
+         * happened to see, and the other seven can never appear on this screen,
+         * because nothing ever asks about them again. "Ten accounts, three or
+         * four syncing" is not a parser bug or a filter bug. It is this.
+         *
+         * A discovery run widens the QUESTION for one scan: every PDF whose
+         * subject carries a statement word, from anyone. It widens nothing that
+         * gets stored — mail from an unapproved sender is refused before an
+         * attachment is fetched, and the run's only lasting effect is that the
+         * sender appears here, for the owner to decide about. */
+        const DISCOVERY_MONTHS = 6;
+        /* One call per window, plus paging room. Bounded because this is
+         * somebody's Gmail quota and a cursor that fails to advance would
+         * otherwise spend all of it. */
+        const DISCOVERY_MAX_CALLS = 30;
+        let _discover = { stage: 'idle', label: '', found: 0, error: null };
+
+        async function runSenderDiscovery(months = DISCOVERY_MONTHS) {
+            if (_discover.stage === 'running') return;
+            if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
+            _discover = { stage: 'running', label: '', found: 0, error: null };
+            renderSenderList();
+
+            /* ITS OWN CURSOR, AND DELIBERATELY NOT SAVED. The historical scan's
+             * cursor is a position in a long job the owner can resume; writing
+             * this six-month walk over it would send that job back to the
+             * month this one happened to reach. */
+            let cursor = window.WFBackfill.startCursor({ months, now: Date.now() });
+            let calls = 0;
+            while (calls < DISCOVERY_MAX_CALLS) {
+                const step = window.WFBackfill.nextStep(cursor);
+                if (!step) break;
+                calls += 1;
+                _discover.label = step.window.label;
+                renderSenderList();
+                const r = await _gmailScan({
+                    months: cursor.months,
+                    now: cursor.now,
+                    index: cursor.index,
+                    pageToken: step.pageToken || undefined,
+                    /* The one widening this endpoint accepts. */
+                    discover: true,
+                });
+                if (!r || r.status !== 200 || !r.body || r.body.ok !== true) {
+                    _discover.error = (r && r.body && r.body.error) || 'the search could not be completed';
+                    break;
+                }
+                cursor = window.WFBackfill.advance(cursor, r.body);
+                /* The server counts undecided senders across the WHOLE list, so
+                 * this is a running total rather than a per-page one. */
+                if (Number.isFinite(Number(r.body.discovered))) _discover.found = Number(r.body.discovered);
+            }
+
+            _discover.stage = 'idle';
+            _discover.label = '';
+            /* The list is re-read from the server rather than patched, for the
+             * same reason every other mutation here is. */
+            await _sendersLoad();
+            if (_discover.error) notify(_discover.error, 'error');
+            else if (_senders.pending.length) {
+                notify(_senders.pending.length + ' sender'
+                    + (_senders.pending.length === 1 ? '' : 's') + ' waiting for you to decide', 'success');
+            } else {
+                notify('No senders found that you have not already decided about', 'info');
+            }
+            renderSenderList();
+        }
+        window.runSenderDiscovery = runSenderDiscovery;
+
         async function _sendersCall(method, body) {
             if (!currentUser || typeof currentUser.getIdToken !== 'function') return null;
             let token;
@@ -22329,19 +23854,42 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + (rows || '<div class="wf-sender-empty">' + empty + '</div>')
                 + '</div>';
 
+            /* THE BUTTON THAT ANSWERS "WHY ARE ONLY THREE OF MY TEN BANKS
+             * HERE?" — offered on the screen where the question is asked,
+             * rather than on another one the owner has to find. It says what it
+             * will do and what it will not: it looks, it does not file. */
+            const finding = _discover.stage === 'running';
+            const discoverBar =
+                '<div class="wf-sender-find">'
+                + '<div class="wf-sender-find-txt">'
+                +   '<b>Missing a bank?</b> Search the last ' + DISCOVERY_MONTHS + ' months for anyone who has '
+                +   'sent you a statement and list them here to approve. Nothing is filed by this — mail from '
+                +   'a sender you have not approved is refused before it is even downloaded.'
+                + '</div>'
+                + '<button class="btn btn-secondary btn-sm" id="_sl_find"' + (finding ? ' disabled' : '') + '>'
+                +   (window.WFIcon && WFIcon.has('scan') ? WFIcon('scan') : '')
+                +   (finding ? ' Searching' + (_discover.label ? ' ' + _wfEsc(_discover.label) : '') + '…' : ' Find my banks')
+                + '</button>'
+                + '</div>';
+
             host.innerHTML =
                 (_senders.error ? '<div class="wf-sender-err">' + _wfEsc(_senders.error) + '</div>' : '')
+                + discoverBar
                 + section(
                     'Waiting for you to decide' + (_senders.pending.length ? ' (' + _senders.pending.length + ')' : ''),
                     'Senders that have mailed you a PDF. Nothing from these is filed until you say so.',
                     pending,
-                    'Nothing new. Senders show up here as your mailbox is scanned.')
+                    'Nothing new. Senders show up here as your mailbox is scanned — or press '
+                        + '<b>Find my banks</b> above to go and look now.')
                 + section(
                     'Your statement senders' + (_senders.approved.length ? ' (' + _senders.approved.length + ')' : ''),
                     'Only these are searched for. Everything else is left alone.',
                     approved,
                     'None yet — until you approve one, WealthFlow has to guess, which is how bills and receipts got in.')
                 + (_senders.blocked.length ? section('Blocked', 'Refused before anything else is considered.', blocked, '') : '');
+
+            const find = host.querySelector('#_sl_find');
+            if (find) find.onclick = () => { try { triggerHaptic('light'); } catch (_) {} runSenderDiscovery(); };
 
             host.querySelectorAll('[data-sact]').forEach((b) => {
                 b.onclick = () => {
@@ -22369,9 +23917,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                 +   '<button class="md-x" aria-label="Close" id="_sl_x"><i data-wfi="x"></i></button>'
                 + '</div>'
                 + '<div style="font-size:12.5px;color:var(--text3);line-height:1.65;margin:2px 0 14px;">'
-                +   'WealthFlow searches your mailbox for these senders only. Add the address your bank '
-                +   'sends statements from — or just its domain, like <b>hnb.lk</b> — and everything else '
-                +   'stays out, including bills and receipts.'
+                +   'WealthFlow searches your mailbox for these senders only — everything else '
+                +   'stays out, including bills and receipts. Add the address your bank sends '
+                +   'statements from, or just its domain, like <b>hnb.lk</b>.'
+                + '</div>'
+                /* SAID OUT LOUD, because it is the difference between a bank
+                 * whose statements arrive and one whose do not. Banks change the
+                 * address they send from — statements@, estatement@, no-reply@ —
+                 * and an exact-address search misses every one it does not name.
+                 * So the search covers the whole domain while the list still
+                 * decides: a different address there is offered, not filed. */
+                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:0 0 14px;">'
+                +   'Adding one address searches its whole domain, because banks change which '
+                +   'address they send from. Anything from a different address there is shown '
+                +   'here for you to accept — it is never filed on its own.'
                 + '</div>'
                 + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">'
                 +   '<div style="flex:1;min-width:170px;">'
@@ -22483,6 +24042,19 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             if (!window.WFMailIntake) return finish('Statement intake module is not loaded.');
 
+            /* GO AND LOOK, THEN LIST. Before this, a check listed the store and
+             * nothing else — so a statement the push never delivered (a lapsed
+             * watch, an aged-out history bookmark, a failed delivery) was
+             * invisible no matter how many times the button was pressed. See
+             * _recentSweep. */
+            _mailSyncState.sweeping = true;
+            renderMailSync();
+            const swept = await _recentSweep(false);
+            _mailSyncState.sweeping = false;
+            if (swept > 0) {
+                notify(String(swept) + ' new statement' + (swept === 1 ? '' : 's') + ' found in your mailbox', 'success');
+            }
+
             /* Through the server, not Firestore. wf-mail is sealed to clients
              * by firestore.rules, so the direct query this replaced was denied
              * every time — the sync could never have fetched anything. */
@@ -22499,6 +24071,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * an empty list because everything is done look identical, and
                  * the owner has already been burnt by that distinction. */
                 _mailSyncState.filed = Number(r.body.filed) || 0;
+                /* Whether the sender verdicts on these rows mean anything: the
+                 * server answers false when the owner has approved nobody, and
+                 * when it could not read the list at all. Either way the rows
+                 * fall back to the flag stored with them. */
+                _mailSyncState.decided = r.body.decided === true;
             } catch (e) {
                 return finish('Could not read the mailbox store: ' + (e && e.message || 'unknown error'));
             }
@@ -22521,7 +24098,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * `!== false` on purpose: every document written before this
                  * has no such field, and an absent one must not turn a filed
                  * statement into an accusation. */
-                known: !(d.manifest && d.manifest.known === false),
+                /* AND DECIDED AGAINST THE LIST AS IT IS NOW. Reading only the
+                 * stored flag left the owner's actual complaint untouched:
+                 * every bill and receipt collected before the sender list
+                 * existed carries no flag at all, so it drew — and was opened,
+                 * parsed and offered for filing — exactly like a confirmed
+                 * bank's statement. See _mailKnownNow. */
+                known: _mailKnownNow(d, _mailSyncState.decided),
+                verdict: _mailVerdict(d, _mailSyncState.decided),
                 from: (d.manifest && d.manifest.from) || '',
             }));
             renderMailSync();
@@ -22553,6 +24137,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             /* Statements whose rows are parsed and waiting for the owner to file
              * them. Filled by the loop, drained after it. */
             const _ready = [];
+
+            /* HOW MANY WERE HELD FOR A PASSWORD, counted rather than merely
+             * shown per row. A statement that could not be opened is a
+             * statement that will never be filed, and the fix — unlock the
+             * vault — is one action for all of them, not one per row. */
+            _mailSyncState.locked = 0;
 
             for (let i = 0; i < docs.length; i += 1) {
                 const d = docs[i];
@@ -22656,7 +24246,25 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * two shapes of "expense" end up in one array. */
                     const rows = (_parsed && Array.isArray(_parsed.rows)) ? _parsed.rows : [];
                     if (!rows.length) {
-                        set(i, { stage: 'held', reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60) });
+                        /* THE CODE, NOT ONLY THE SENTENCE. The card printed a
+                         * human message and threw the reason away, so "none of
+                         * your saved keys opened it" and "the layout yielded no
+                         * rows" were the same kind of dead end on screen —
+                         * though one of them is fixed by one tap and the other
+                         * is not. */
+                        const stmtCodes = (Array.isArray(res.quarantined) ? res.quarantined : [])
+                            .filter((q) => q && q.scope === 'statement')
+                            .map((q) => q.reason);
+                        const QK = (window.WFMailIntake && window.WFMailIntake.QUARANTINE) || {};
+                        const lockedOut = stmtCodes.some(
+                            (c) => c === QK.PASSWORD_FAILED || c === QK.NO_VAULT_KEYS);
+                        if (lockedOut) _mailSyncState.locked += 1;
+                        set(i, {
+                            stage: 'held',
+                            why: stmtCodes[0] || null,
+                            locked: lockedOut,
+                            reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60),
+                        });
                     } else {
                         set(i, {
                             stage: 'ready',
@@ -23769,6 +25377,11 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.renderRunwayCard = renderRunwayCard;
 
         function renderDash() {
+            /* The display preferences that live on the document rather than in
+             * a number: compact spacing, privacy shading. Applied here because
+             * this runs on boot and on every return to the dashboard, so the
+             * classes can never be one reload behind the settings. */
+            try { _applyDisplaySettings(); } catch (_) {}
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
             const incData = [], expData = [], netData = [];
@@ -23860,6 +25473,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (window.WFInsights) window.WFInsights.renderInto('wfBrief', window.WFInsights.brief(5), { title: 'Needs your attention', allClear: true });
             } catch (_) {}
             try { renderRunwayCard(); } catch (_) {}
+            /* The queue of due-but-unconfirmed money, drawn every time the
+             * dashboard draws. Wired HERE and not next to a handler that runs
+             * only on some other action — that mistake put the Statement Sync
+             * card inside wfSweepRecord() and it never appeared on boot. */
+            try { renderVerifyQueue(); } catch (_) {}
             /* Statement Sync, drawn every time the dashboard draws.
              *
              * The first version of this call was placed next to the sweeper
@@ -23894,7 +25512,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
         <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
-        <div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>
+        ${DB.getObj('settings', {}).showSavingsRate === false ? '' : `<div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>`}
     `;
 
 
@@ -24695,7 +26313,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             if (s.lastBackupAttempt && !s.lastBackupAttempt.success) {
                                 return `${(window.WFIcon ? WFIcon('alert') : '')} <span style="color:var(--red);font-weight:700;">Last attempt failed</span> — ${s.lastBackupAttempt.reason || 'will retry automatically'}`;
                             }
-                            return `${(window.WFIcon ? WFIcon('refresh') : '')} ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? _ic('clock') + ' Auto: ' + s.autoBackupFreq : _ic('clock') + ' Auto-backup off'}`;
+                            return `${(window.WFIcon ? WFIcon('refresh') : '')} Real-time sync ON · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? _ic('clock') + ' Auto: ' + s.autoBackupFreq : _ic('clock') + ' Auto-backup off'}`;
                         })()}
                     </div>
                 </div>
@@ -24710,13 +26328,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <option value="monthly" ${(s.autoBackupFreq || 'off') === 'monthly' ? 'selected' : ''}>Monthly (End)</option>
                 </select>
             </div>
+            <!-- CLOUD SYNC FREQUENCY — REMOVED, AND THAT IS THE HONEST FIX.
+                 It offered Real-time, Every 1 Hour and Wi-Fi Only. Nothing read
+                 the value: WealthFlow syncs through a live Firestore listener
+                 and always has, so all three settings did the same thing while
+                 the screen claimed otherwise.
+                 Building the other two would mean throttling the sync engine —
+                 the one that lost data until this week — and "Wi-Fi only"
+                 cannot be told from mobile data in a browser on iOS at all. A
+                 switch that pretends to control something is worse than no
+                 switch, so the row states what actually happens instead. -->
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Cloud Sync Frequency</div><div class="setting-desc">How often data syncs to cloud in the background.</div></div>
-                <select class="fi" style="width:140px;" onchange="toggleSetting('syncFreq', this.value)">
-                    <option value="realtime" ${(s.syncFreq || 'realtime') === 'realtime' ? 'selected' : ''}>Real-time</option>
-                    <option value="hourly" ${(s.syncFreq || 'realtime') === 'hourly' ? 'selected' : ''}>Every 1 Hour</option>
-                    <option value="wifi" ${(s.syncFreq || 'realtime') === 'wifi' ? 'selected' : ''}>Wi-Fi Only</option>
-                </select>
+                <div class="setting-info"><div class="setting-label">Cloud Sync</div><div class="setting-desc">Changes sync the moment you make them, on every signed-in device.</div></div>
+                <div style="font-size:12px;font-weight:700;color:var(--green);">Real-time</div>
             </div>
             ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? `<div class="backup-schedule">${(window.WFIcon ? WFIcon('clock') : '')} Next auto-backup: ${getNextBackupTime(s.autoBackupFreq)}</div>` : ''}
         </div>
@@ -25057,6 +26681,22 @@ table.amort tbody tr { page-break-inside: avoid; }
             resetAutoLockTimer();
         }
 
+        /**
+         * Put the display settings on the document.
+         *
+         * Called from toggleSetting AND at boot. The boot half is the half that
+         * was missing: a body class applied only when the switch is flipped is
+         * a setting that works until the page is reloaded, which is
+         * indistinguishable from one that forgot itself.
+         */
+        function _applyDisplaySettings() {
+            try {
+                const s = DB.getObj('settings', {});
+                document.body.classList.toggle('wf-compact', !!s.compactMode);
+            } catch (_) { /* never block a render on a preference */ }
+        }
+        window._applyDisplaySettings = _applyDisplaySettings;
+
         function toggleSetting(key, val) {
             const s = DB.getObj('settings', {});
             // ── v7.39.0 — fix the "dancing"/scroll-jump bug ────────────────
@@ -25119,6 +26759,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const DISPLAY_KEYS = ['roundAmounts', 'privacyMode', 'hideSensitive', 'weekStart',
                                    'dashPeriod', 'showSavingsRate', 'currency', 'compactMode'];
             if (DISPLAY_KEYS.includes(key)) {
+                _applyDisplaySettings();
                 document.body.classList.toggle('privacy-mode-on',
                     !!(DB.getObj('settings', {}).privacyMode || DB.getObj('settings', {}).hideSensitive));
                 try { if (typeof renderDash === 'function') renderDash(); } catch (e) {}
@@ -26049,11 +27690,32 @@ table.amort tbody tr { page-break-inside: avoid; }
             const dismissedToday = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
 
             // INCOME REMINDERS — for each active source whose payment day is today
-            const incomes = DB.get('income') || [];
+            /* GATED BY THE SWITCH THAT NAMES IT. "Salary / Payday Alerts —
+             * confirm receipt on each scheduled payday" sat in Settings doing
+             * nothing: this banner fired whether it was on or off, because
+             * nothing read the field. The loan reminder two functions down has
+             * always been gated by notifLoan; this is the same line, missing. */
+            const incomes = (s.notifPayday === false) ? [] : (DB.get('income') || []);
             incomes.forEach(src => {
                 if (!src.day) return;
                 const payDay = parseInt(String(src.day).slice(-2)) || parseInt(src.day);
                 if (now.getDate() !== payDay) return;
+                /* THE CADENCE, WHICH THIS LOOP NEVER READ.
+                 *
+                 * `income` records carry `freq` — monthly, quarterly or annual
+                 * — and saveIncome stores the PER-PAYOUT figure in a field
+                 * called `monthly` for all three. Asking on the pay day of
+                 * every month therefore asked twelve times a year about money
+                 * that arrives once, and a reminder that is wrong eleven times
+                 * out of twelve is a reminder nobody reads.
+                 *
+                 * The rule is imported, not restated: the verification queue
+                 * asks the same question about the same records. Without the
+                 * module the old behaviour stands rather than the reminder
+                 * disappearing. */
+                try {
+                    if (window.WFVerify && !window.WFVerify.paysInMonth(src, now.getFullYear(), now.getMonth())) return;
+                } catch (_) { /* ask, as it always did */ }
                 const recvKey = src.id + '_' + curMonthStr;
                 if (incomeRecv[recvKey]) return; // already confirmed
                 const id = `income_${src.id}_${curMonthStr.replace('-', '')}`;
@@ -26350,6 +28012,73 @@ table.amort tbody tr { page-break-inside: avoid; }
                         }
                     });
                 });
+            }
+
+            /* ── 5. SUBSCRIPTION ANOMALY ─────────────────────────────────────
+             *
+             * "Detect unusually high or duplicate subscription charges." Also a
+             * switch with nothing behind it. The data was already there: the
+             * per-month editor records what each bill ACTUALLY came to, beside
+             * the expected figure.
+             *
+             * It fires only on a month the owner has typed a real number into,
+             * so it can never guess: a bill nobody has recorded raises nothing,
+             * which is the honest behaviour for a warning about a charge. */
+            if (s.notifAnomaly !== false) {
+                const ym = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+                (DB.get('subscriptions') || []).forEach((sub) => {
+                    if (!sub || !sub.id || sub.anomalyDetect === false) return;
+                    const expected = Number(sub.amount) || 0;
+                    const actual = sub.monthOverrides ? sub.monthOverrides[ym] : undefined;
+                    if (!(expected > 0) || typeof actual !== 'number') return;
+                    if (actual <= expected * 1.25) return;
+                    const k = 'anom:' + sub.id + ':' + ym;
+                    if (seen.ids.includes(k)) return;
+                    sendOSNotification(
+                        'A bill came in higher than usual',
+                        `${userName}, ${_wfEsc(sub.name || 'a subscription')} is ${fmt(actual)} this month against `
+                        + `${fmt(expected)} usually — ${Math.round((actual / expected - 1) * 100)}% more.`,
+                        'wf-anom-' + sub.id,
+                    );
+                    seen.ids.push(k);
+                });
+            }
+
+            /* ── 6. THE FRIDAY TIP ───────────────────────────────────────────
+             *
+             * "Weekly Financial Tips — get a personalized financial tip every
+             * Friday evening." There was no such tip anywhere in the app; the
+             * switch turned nothing on or off.
+             *
+             * It is not written from scratch either. WFInsights already ranks
+             * everything worth saying about this ledger by severity and then by
+             * money at stake, and the dashboard shows the top five. The tip is
+             * the top ONE, sent on a Friday evening — a second engine inventing
+             * its own advice would disagree with the strip on the dashboard,
+             * and the owner would be right to trust neither. */
+            if (s.notifWeeklyTip !== false && now.getDay() === 5) {
+                const hour = now.getHours();
+                if (hour >= 17 && hour <= 21) {
+                    const k = 'tip:' + todayStr;
+                    if (!seen.ids.includes(k)) {
+                        let top = null;
+                        try {
+                            const items = (window.WFInsights && window.WFInsights.brief) ? window.WFInsights.brief(1) : [];
+                            top = (Array.isArray(items) && items.length) ? items[0] : null;
+                        } catch (_) { top = null; }
+                        /* Nothing to say is a real answer. A weekly tip that
+                         * invents filler when the ledger is healthy is how a
+                         * notification channel gets muted for good. */
+                        if (top && top.title) {
+                            sendOSNotification(
+                                'This week: ' + String(top.title).slice(0, 60),
+                                `${userName}, ${String(top.body || top.action || '').slice(0, 160)}`,
+                                'wf-tip-' + todayStr,
+                            );
+                            seen.ids.push(k);
+                        }
+                    }
+                }
             }
 
             _persistLocal('wf_alerted_today', seen);
@@ -28943,7 +30672,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             return out;
         }
 
-        async function openBankVault() {
+        /**
+         * The statement-password vault.
+         *
+         * `onClose` exists for one caller and one reason: the mailbox card can
+         * hold statements it could not open, and sending the owner here to
+         * unlock the vault is only half an answer if they must then remember to
+         * press Check now again. See _mailSyncState.locked.
+         */
+        async function openBankVault(opts = {}) {
             if (!window.WFVault) { notify('Secure vault module not loaded', 'error'); return; }
             if (!(window.crypto && window.crypto.subtle)) {
                 notify('This browser cannot store passwords securely (no Web Crypto)', 'error');
@@ -28966,6 +30703,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const close = () => {
                 overlay.classList.remove('open');
                 setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+                try { if (typeof opts.onClose === 'function') opts.onClose(); } catch (_) { /* the modal still closes */ }
             };
             overlay.querySelector('#_bv_close').onclick = close;
             const body = overlay.querySelector('#_bv_body');
@@ -29911,6 +31649,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
                 cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
                 cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
+                incomeDelayed: {}, billPaid: {}, billDelayed: {}, pawns: [], debtors: [],
                 cribAnalyses: {}, balance: { total: 0, flows: [] }, sweeps: [],
                 _tomb: {}, _kut: {}, _wipedAck: _wipeStamp, _wipedAt: _wipeStamp,
                 settings: currentSettings

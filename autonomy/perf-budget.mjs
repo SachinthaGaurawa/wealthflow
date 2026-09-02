@@ -140,7 +140,19 @@ export const BUDGETS = {
      *
      * Roughly 2.5 KB on 1.75 MB, for the trigger, the once-only marker, and the
      * comments explaining why an automatic Gmail read is bounded and runs once. */
-    htmlBytes: 1_807_000,        // measured 1,802,512 — the intake's row doubts reach the screen
+    /* Raised for the sweep that clears what the keyword search left behind:
+     * the card's strip, the confirmation that names every sender and count
+     * before anything is deleted, the chunked delete, and the header parser
+     * that stops a display name being read as the address. Roughly 5 KB on
+     * 1.81 MB — all of it on a path that deletes documents, where the comment
+     * explaining WHY a key is named explicitly is worth its bytes. */
+    /* Raised for the settings that did nothing. Eight switches were writing a
+     * value nothing read; four of them now gate a feature that already existed
+     * and three raise the alert their own label promises. Most of these bytes
+     * are the comments recording WHICH switch was dead and why the fix is where
+     * it is — the audit is the expensive part, and it should not have to be
+     * done twice. */
+    htmlBytes: 1_912_000,        // measured 1,904,998 — the dead settings
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -245,7 +257,15 @@ export const BUDGETS = {
     // RAISED for wealthflow-vault.js, the PIN-derived bank-password store, plus
     // the window global added to wealthflow-statement-router.js so the page can
     // reach classifyStatement. Moves ONCE, to the measured figure, ~1% headroom.
-    totalJsBytes: 1_523_000,     // measured 1,507,140 across 56 modules
+    /* Raised for two modules the owner asked for by name, both of which are
+     * arithmetic rather than UI: wealthflow-verify-matrix.js (which payouts and
+     * bills are due, confirmed, late or flagged — the rule that a static
+     * calendar must never post money) and wealthflow-liquidity.js (pawn
+     * interest and a debtor ledger that survives partial repayments and
+     * top-ups). Both are pure, both are tested without a browser, and both
+     * replace arithmetic that would otherwise have been written inline in
+     * index.html where nothing could test it. */
+    totalJsBytes: 1_545_000,     // measured 1,533,906 across 58 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -301,7 +321,7 @@ export const BUDGETS = {
     // one quietly becomes the one that matters. It also has to be unit-testable:
     // wealthflow-intelligence.js is an IIFE with no exports and consequently no
     // test file, and crypto holding bank passwords cannot ship untested.
-    moduleCount: 56,   // measured 56
+    moduleCount: 58,   // measured 58 — the verification matrix and the liquidity hub
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -344,7 +364,7 @@ export const BUDGETS = {
     // already shipped actually run. The device half of the mail pipeline could
     // not execute at all without the second, which is the defect this change
     // exists to fix.
-    scriptTags: 63,              // measured 63
+    scriptTags: 65,              // measured 65 — two new ESM modules, both deferred by type=module
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

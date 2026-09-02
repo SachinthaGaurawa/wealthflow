@@ -30,7 +30,7 @@
 import { describe, it, expect } from 'vitest';
 import G, {
     BANKS, REJECT, REJECT_TEXT, SINGLE_MAX, CHUNK_SIZE, MAX_BASE64, MAX_ATTACHMENTS,
-    domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
+    addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
     itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement,
 } from '../wealthflow-mail-ingest.mjs';
 
@@ -61,6 +61,41 @@ describe('the sender domain', () => {
         ['', ''],
     ])('reads %s as %s', (from, want) => {
         expect(domainOf(from)).toBe(want);
+    });
+
+    /* ── A DISPLAY NAME IS NOT AN ADDRESS ────────────────────────────────
+     *
+     * The header is `display-name <addr-spec>`, and the display name may be a
+     * quoted string holding anything at all — including something shaped
+     * exactly like an address in angle brackets. Every reader here took the
+     * FIRST angled group, which is the one the sender wrote inside the quotes.
+     *
+     * Downstream that meant a signature checked against a domain the message
+     * never claimed — a real statement refused — and, on the mailbox card, a
+     * row attributed to somebody who never sent it: a row the owner can
+     * approve, block or delete by mistake. */
+    it.each([
+        ['HNB <statements@hnb.lk>', 'statements@hnb.lk'],
+        ['statements@hnb.lk', 'statements@hnb.lk'],
+        ['<statements@hnb.lk>', 'statements@hnb.lk'],
+        ['mailto:statements@hnb.lk', 'statements@hnb.lk'],
+        ['  HNB  <STATEMENTS@HNB.LK> ,', 'statements@hnb.lk'],
+        /* The quoted display name names one address; the real one is last. */
+        ['"Statements <first@display.example>" <real@hnb.lk>', 'real@hnb.lk'],
+        /* An escaped quote does not end the display name early. */
+        ['"a\\" <first@display.example>" <real@hnb.lk>', 'real@hnb.lk'],
+        /* An unterminated quote matches nothing, so the brackets still decide
+         * rather than the whole header being swallowed. */
+        ['"unterminated <real@hnb.lk>', 'real@hnb.lk'],
+        ['', ''],
+    ])('takes the address out of %s', (from, want) => {
+        expect(addressOf(from)).toBe(want);
+    });
+
+    it('the domain follows the address, so the two cannot name different people', () => {
+        const from = '"Statements <first@display.example>" <real@hnb.lk>';
+        expect(domainOf(from)).toBe('hnb.lk');
+        expect(addressOf(from).endsWith('@' + domainOf(from))).toBe(true);
     });
 
     it('anchors a suffix match to a label boundary', () => {

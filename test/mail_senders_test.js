@@ -164,6 +164,24 @@ describe('normalizeSender refuses what should never become a rule', () => {
 /* ═══════════════════════════════════════════════════════════════════════════
  * WHOSE RULE WINS
  * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a raw From header is what the Add button hands in', () => {
+    /* The mailbox card's "Add sender" passes it.from — the header as it
+     * arrived, display name and all — straight into addSender. So this parser
+     * takes attacker-shaped input, not only what the owner types. */
+    it('adds the real address, not one quoted in the display name', () => {
+        const r = addSender([], '"Statements <statements@hnb.lk>" <someone@elsewhere.example>', { now: 1 });
+        expect(r.ok).toBe(true);
+        expect(r.entry.id).toBe('someone@elsewhere.example');
+        expect(r.entry.domain).toBe('elsewhere.example');
+    });
+
+    it('the ordinary shapes are unchanged', () => {
+        expect(addSender([], 'HNB <statements@hnb.lk>', { now: 1 }).entry.id).toBe('statements@hnb.lk');
+        expect(addSender([], 'hnb.lk', { now: 1 }).entry.id).toBe('hnb.lk');
+        expect(addSender([], '@hnb.lk', { now: 1 }).entry.id).toBe('hnb.lk');
+    });
+});
+
 describe('matchSender: most specific wins, and a block wins a tie', () => {
     const list = normalizeList([
         { id: 'hnb.lk', status: STATUS.APPROVED },
@@ -207,6 +225,33 @@ describe('matchSender: most specific wins, and a block wins a tie', () => {
 
     it('an undecided entry decides nothing', () => {
         expect(matchSender([{ id: 'seen.lk', status: STATUS.NEW }], 'a@seen.lk').verdict).toBe(STATUS.NEW);
+    });
+
+    /* ── THE DISPLAY NAME DOES NOT GET A VOTE ────────────────────────────
+     *
+     * A quoted display name can carry angle brackets around anything, and this
+     * function used to read the FIRST angled group. Two consequences, both on
+     * screens where the owner acts: a message from a stranger could be matched
+     * against an approved address it merely quoted, and a real bank's statement
+     * could be attributed to a name the sender chose. */
+    it('matches on the real address, not one quoted in the display name', () => {
+        const l = normalizeList([
+            { id: 'statements@hnb.lk', status: STATUS.APPROVED },
+            { id: 'hnb.lk', status: STATUS.APPROVED },
+        ]);
+        const forged = '"Statements <statements@hnb.lk>" <someone@elsewhere.example>';
+        expect(matchSender(l, forged).verdict).toBe(STATUS.NEW);
+        expect(matchSender(l, forged).address).toBe('someone@elsewhere.example');
+        /* And the genuine shape still matches, including the address rule. */
+        expect(matchSender(l, 'HNB <statements@hnb.lk>').verdict).toBe(STATUS.APPROVED);
+    });
+
+    it('a blocked address is not escaped by quoting an approved one', () => {
+        const l = normalizeList([
+            { id: 'promo@hnb.lk', status: STATUS.BLOCKED },
+            { id: 'hnb.lk', status: STATUS.APPROVED },
+        ]);
+        expect(matchSender(l, '"HNB <statements@hnb.lk>" <promo@hnb.lk>').verdict).toBe(STATUS.BLOCKED);
     });
 
     it('answers `new`, never throws, for a From it cannot parse', () => {
@@ -347,9 +392,38 @@ describe('the approved list becomes the question, not a filter after it', () => 
         expect(approvedClauses(list)).toEqual([]);
     });
 
-    it('an address entry asks for the address, a domain entry for the domain', () => {
+    it('an address entry asks for its DOMAIN — fetch wide, decide narrow', () => {
+        /* THIS TEST USED TO PIN THE BUG. It asserted `from:statements@hnb.lk`,
+         * an exact-address query — so when the bank sent the next statement
+         * from `estatement@hnb.lk`, it was never asked for. Not filtered out,
+         * not held: invisible. The owner had done everything right.
+         *
+         * Widening the QUERY cannot file anything, which is what makes it safe;
+         * the policy below still decides. */
         const l = addSender(addSender([], 'statements@hnb.lk', { now: NOW }).list, 'dfcc.lk', { now: NOW }).list;
-        expect(approvedClauses(l).sort()).toEqual(['from:dfcc.lk', 'from:statements@hnb.lk']);
+        expect(approvedClauses(l).sort()).toEqual(['from:dfcc.lk', 'from:hnb.lk']);
+    });
+
+    it('and the POLICY is still the address, not the domain', () => {
+        /* The half that makes widening safe. Another address at an approved
+         * domain must arrive as a decision, never as a filed statement. */
+        const l = addSender([], 'statements@hnb.lk', { now: NOW }).list;
+        expect(matchSender(l, 'statements@hnb.lk').verdict).toBe(STATUS.APPROVED);
+        expect(matchSender(l, 'estatement@hnb.lk').verdict).toBe(STATUS.NEW);
+        expect(policyFrom(l).curated).toBe(true);
+    });
+
+    it('two addresses at one domain make ONE clause', () => {
+        let l = addSender([], 'statements@hnb.lk', { now: NOW }).list;
+        l = addSender(l, 'alerts@hnb.lk', { now: NOW }).list;
+        expect(approvedClauses(l)).toEqual(['from:hnb.lk']);
+    });
+
+    it('a blocked address does not drag its domain into the query', () => {
+        /* Blocking `promo@hnb.lk` while `hnb.lk` is approved must not remove
+         * the domain — and blocking the only entry at a domain must not add it. */
+        const only = setStatus(addSender([], 'promo@ceb.lk', { now: NOW }).list, 'promo@ceb.lk', STATUS.BLOCKED).list;
+        expect(approvedClauses(only)).toEqual([]);
     });
 });
 
