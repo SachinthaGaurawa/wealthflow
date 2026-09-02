@@ -58,6 +58,13 @@ import {
 export const ITEMS_SCAN_MAX = 400;
 export const ITEMS_RETURN_MAX = 200;
 
+/* How many statements one delete request may name. Bounded because each one is
+ * a document read plus several deletes inside a function with a deadline, and
+ * because an unbounded delete list is the shape of request that empties a
+ * store by accident. It is comfortably above ITEMS_RETURN_MAX so "remove
+ * everything I can see" is always one call. */
+export const ITEMS_DELETE_MAX = 250;
+
 function j(res, code, body) {
     res.statusCode = code;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -196,6 +203,100 @@ export default async function handler(req, res) {
         return j(res, 200, { ok: true, senders: result.list, ...groupForDisplay(result.list) });
     }
 
+    /* ── REMOVING WHAT IS ALREADY STORED ─────────────────────────────────────
+     *
+     * #167 stopped unapproved senders being FETCHED. It removed none of what
+     * was already in the store, so the bills and receipts the owner complained
+     * about were still on their screen after a fix that claimed to address
+     * them. That is the same shape as #164 and #165 — a change to future
+     * writes, presented as a repair of what is on the screen — and it is the
+     * third time, so it is being closed rather than noted.
+     *
+     * DELETION IS THE ONE ACTION HERE THAT CANNOT BE UNDONE. Everything else in
+     * this file collapses, hides or refuses; this erases a document. So it is
+     * done ONLY against keys the caller names, one explicit list, never by a
+     * rule this endpoint evaluates for itself. "Delete everything matching a
+     * pattern" is a sentence that, with one bad pattern, ends someone's
+     * statement history — and no reading of the owner's request requires it. */
+    if (method === 'POST' && /[?&]items=1/.test(String(req.url || ''))) {
+        const body = await readBody(req);
+        const action = String((body && body.action) || '');
+        if (action !== 'delete' && action !== 'filed') {
+            return j(res, 400, { ok: false, error: 'action must be delete or filed' });
+        }
+        const keys = Array.isArray(body.keys) ? body.keys : [];
+        const wanted = [...new Set(keys.map((k) => String(k || '').trim()).filter(Boolean))]
+            .slice(0, ITEMS_DELETE_MAX);
+        if (!wanted.length) return j(res, 400, { ok: false, error: 'name at least one statement' });
+
+        /* ── DONE, NOT DELETED ───────────────────────────────────────────────
+         *
+         * Nothing marked a statement as dealt with, so every press of Check now
+         * re-listed, re-decrypted and re-parsed every statement ever stored.
+         * The owner saw the same statements forever and the phone paid for it
+         * each time.
+         *
+         * The obvious fix — delete the item once it is filed — is WRONG, and
+         * quietly so. The existence check on this document is the only thing
+         * stopping the push hook and the scanner re-fetching the same
+         * attachment; delete it and the next scan stores it again, so the
+         * statement returns and the duplicate bug it was meant to end comes
+         * back worse. So the manifest STAYS as the record that this attachment
+         * has been dealt with, and only the parts — the base64 payload, which
+         * is essentially all of the bytes — are dropped.
+         *
+         * ORDER MATTERS AND IS THE OPPOSITE OF THE DELETE BELOW. The flag is
+         * written FIRST and the parts dropped after. The other way round, a
+         * failure between the two leaves a statement with no parts and no flag:
+         * it would be listed forever, fail to assemble every time, and look
+         * like a corrupt statement rather than a finished one. */
+        if (action === 'filed') {
+            let marked = 0;
+            const missed = [];
+            for (const key of wanted) {
+                const itemRef = ref.collection('items').doc(key);
+                try {
+                    await withDeadline(itemRef.set({ filed: true, filedMs: Date.now() }, { merge: true }), 8000, 'item');
+                    marked += 1;
+                    try {
+                        const ps = await withDeadline(itemRef.collection('parts').get(), 8000, 'parts');
+                        for (const part of (ps && ps.docs) || []) await part.ref.delete();
+                    } catch (_) {
+                        /* The flag landed, so the statement will not be offered
+                         * again. Parts left behind cost storage and nothing
+                         * else — never correctness. */
+                    }
+                } catch (_) { missed.push(key); }
+            }
+            return j(res, 200, { ok: true, marked, missed });
+        }
+
+        let deleted = 0;
+        const failed = [];
+        for (const key of wanted) {
+            const itemRef = ref.collection('items').doc(key);
+            try {
+                /* PARTS FIRST, MANIFEST LAST — the reverse of the write order,
+                 * and for the same reason. A reader treats the manifest as the
+                 * proof every part landed, so deleting the manifest first would
+                 * leave orphaned parts that no longer belong to anything; this
+                 * way an interrupted delete leaves a manifest whose parts are
+                 * short, which the device already handles as an unreadable
+                 * statement rather than as a wrong one. */
+                const ps = await withDeadline(itemRef.collection('parts').get(), 8000, 'parts');
+                for (const part of (ps && ps.docs) || []) await part.ref.delete();
+                await withDeadline(itemRef.delete(), 8000, 'item');
+                deleted += 1;
+            } catch (_) {
+                /* Named rather than swallowed: a delete that silently did
+                 * nothing is how the row comes back on the next refresh and the
+                 * owner concludes the button is broken. */
+                failed.push(key);
+            }
+        }
+        return j(res, 200, { ok: true, deleted, failed });
+    }
+
     if (method === 'GET' && /[?&]items=1/.test(String(req.url || ''))) {
         /* The pending statements, assembled parts and all.
          *
@@ -222,7 +323,17 @@ export default async function handler(req, res) {
             /* Collapsed BEFORE the parts are read. Assembling every copy of a
              * statement only to throw all but one away is the same work done
              * several times over, on a phone, for nothing. */
-            const keep = dedupeStored(rows).slice(0, ITEMS_RETURN_MAX);
+            const collapsed = dedupeStored(rows);
+
+            /* AND THEN THE FINISHED ONES ARE DROPPED — after the collapse, not
+             * before. A statement stored several times may have been marked on
+             * any one of those copies; filtering first would let an unmarked
+             * copy survive the collapse and be offered again, which is the
+             * duplicate the owner reported wearing a different hat. */
+            const done = collapsed.filter((r) => r.manifest && r.manifest.filed === true).length;
+            const keep = collapsed
+                .filter((r) => !(r.manifest && r.manifest.filed === true))
+                .slice(0, ITEMS_RETURN_MAX);
 
             const items = [];
             for (const row of keep) {
@@ -237,7 +348,15 @@ export default async function handler(req, res) {
              * the same statements kept appearing, and a number they can watch
              * fall to zero is a better answer than a list that quietly got
              * shorter. */
-            return j(res, 200, { ok: true, items, scanned: rows.length, duplicates: rows.length - dedupeStored(rows).length });
+            return j(res, 200, {
+                ok: true, items, scanned: rows.length,
+                duplicates: rows.length - collapsed.length,
+                /* Reported, not hidden: "12 already filed" is the sentence that
+                 * tells the owner an empty list means finished rather than
+                 * broken. Computed from the same collapse the list came from,
+                 * so the numbers on the card always add up. */
+                filed: done,
+            });
         } catch (_) {
             return j(res, 503, { ok: false, error: 'items unreadable' });
         }
