@@ -22549,9 +22549,20 @@ table.amort tbody tr { page-break-inside: avoid; }
                 +   '<button class="md-x" aria-label="Close" id="_sl_x"><i data-wfi="x"></i></button>'
                 + '</div>'
                 + '<div style="font-size:12.5px;color:var(--text3);line-height:1.65;margin:2px 0 14px;">'
-                +   'WealthFlow searches your mailbox for these senders only. Add the address your bank '
-                +   'sends statements from — or just its domain, like <b>hnb.lk</b> — and everything else '
-                +   'stays out, including bills and receipts.'
+                +   'WealthFlow searches your mailbox for these senders only — everything else '
+                +   'stays out, including bills and receipts. Add the address your bank sends '
+                +   'statements from, or just its domain, like <b>hnb.lk</b>.'
+                + '</div>'
+                /* SAID OUT LOUD, because it is the difference between a bank
+                 * whose statements arrive and one whose do not. Banks change the
+                 * address they send from — statements@, estatement@, no-reply@ —
+                 * and an exact-address search misses every one it does not name.
+                 * So the search covers the whole domain while the list still
+                 * decides: a different address there is offered, not filed. */
+                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:0 0 14px;">'
+                +   'Adding one address searches its whole domain, because banks change which '
+                +   'address they send from. Anything from a different address there is shown '
+                +   'here for you to accept — it is never filed on its own.'
                 + '</div>'
                 + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">'
                 +   '<div style="flex:1;min-width:170px;">'

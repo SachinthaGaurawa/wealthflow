@@ -347,9 +347,38 @@ describe('the approved list becomes the question, not a filter after it', () => 
         expect(approvedClauses(list)).toEqual([]);
     });
 
-    it('an address entry asks for the address, a domain entry for the domain', () => {
+    it('an address entry asks for its DOMAIN — fetch wide, decide narrow', () => {
+        /* THIS TEST USED TO PIN THE BUG. It asserted `from:statements@hnb.lk`,
+         * an exact-address query — so when the bank sent the next statement
+         * from `estatement@hnb.lk`, it was never asked for. Not filtered out,
+         * not held: invisible. The owner had done everything right.
+         *
+         * Widening the QUERY cannot file anything, which is what makes it safe;
+         * the policy below still decides. */
         const l = addSender(addSender([], 'statements@hnb.lk', { now: NOW }).list, 'dfcc.lk', { now: NOW }).list;
-        expect(approvedClauses(l).sort()).toEqual(['from:dfcc.lk', 'from:statements@hnb.lk']);
+        expect(approvedClauses(l).sort()).toEqual(['from:dfcc.lk', 'from:hnb.lk']);
+    });
+
+    it('and the POLICY is still the address, not the domain', () => {
+        /* The half that makes widening safe. Another address at an approved
+         * domain must arrive as a decision, never as a filed statement. */
+        const l = addSender([], 'statements@hnb.lk', { now: NOW }).list;
+        expect(matchSender(l, 'statements@hnb.lk').verdict).toBe(STATUS.APPROVED);
+        expect(matchSender(l, 'estatement@hnb.lk').verdict).toBe(STATUS.NEW);
+        expect(policyFrom(l).curated).toBe(true);
+    });
+
+    it('two addresses at one domain make ONE clause', () => {
+        let l = addSender([], 'statements@hnb.lk', { now: NOW }).list;
+        l = addSender(l, 'alerts@hnb.lk', { now: NOW }).list;
+        expect(approvedClauses(l)).toEqual(['from:hnb.lk']);
+    });
+
+    it('a blocked address does not drag its domain into the query', () => {
+        /* Blocking `promo@hnb.lk` while `hnb.lk` is approved must not remove
+         * the domain — and blocking the only entry at a domain must not add it. */
+        const only = setStatus(addSender([], 'promo@ceb.lk', { now: NOW }).list, 'promo@ceb.lk', STATUS.BLOCKED).list;
+        expect(approvedClauses(only)).toEqual([]);
     });
 });
 

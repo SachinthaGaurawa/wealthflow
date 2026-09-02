@@ -344,10 +344,33 @@ export function recordSighting(list, { from = '', subject = '', now = 0 } = {}) 
  * which costs no quota, no attachment download and no row on a screen.
  */
 export function approvedClauses(list) {
+    /* FETCH BY DOMAIN, DECIDE BY ADDRESS.
+     *
+     * This used to emit `from:statements@hnb.lk` for an address entry — an
+     * EXACT-address query. The owner adds the address printed on the statement
+     * they are looking at; the bank then sends the next one from
+     * `estatement@hnb.lk`, or `no-reply@`, or `alerts@`, and it is never
+     * fetched. Not filtered out, not held for review: never asked for. The
+     * owner had done everything right and the statement was invisible, which is
+     * exactly what they reported.
+     *
+     * So the QUERY widens to the domain while the POLICY stays where they put
+     * it. matchSender is untouched, so only the address they approved is filed
+     * automatically; another address at the same domain arrives as a sender
+     * waiting for a decision, with one tap to accept it. Widening what is
+     * FETCHED cannot file anything — that is what makes this safe — and it is
+     * the only way a bank's second address can ever become visible.
+     *
+     * De-duplicated: two approved addresses at one domain are one clause, not
+     * two identical ones. */
+    const seen = new Set();
     const out = [];
     for (const e of normalizeList(list)) {
         if (e.status !== STATUS.APPROVED) continue;
-        out.push(e.kind === 'address' ? `from:${e.id}` : `from:${e.domain}`);
+        const clause = `from:${e.domain}`;
+        if (seen.has(clause)) continue;
+        seen.add(clause);
+        out.push(clause);
     }
     return out;
 }
