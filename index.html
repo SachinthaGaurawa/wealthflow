@@ -1523,8 +1523,21 @@
             height: 22px;
         }
 
-        .spin-once svg {
-            animation: trueSpin 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+        /* ── THE SPIN IS THE WORK, NOT A GESTURE ─────────────────────────────
+         *
+         * This was `spin-once`: a 0.7s one-shot added on click and never
+         * removed. Measured against a 1.5s pull, the icon stopped turning
+         * 800ms BEFORE the data arrived — and on a slow connection it stops
+         * within the first second of a five-second sync. That is exactly the
+         * "it looks like it refreshes" the owner reported: the animation was
+         * never connected to anything.
+         *
+         * It now runs INFINITE while a refresh is in flight, and the class is
+         * removed in a finally block when the whole cycle — pull, merge,
+         * re-render — has finished. Linear, because a spinner that eases is
+         * pretending to be a progress bar; this one only says "still working". */
+        .is-refreshing svg {
+            animation: trueSpin 0.8s linear infinite;
         }
 
         @keyframes trueSpin {
@@ -8869,9 +8882,22 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         }
 
         // Force re-read from Firestore server (bypass cache)
+        /**
+         * Pull the whole document from the SERVER and merge it in.
+         *
+         * ONE DOCUMENT IS EVERY COLLECTION. WealthFlow keeps income, expenses,
+         * loans, cards, cheques, targets, subscriptions, settings and the rest
+         * as fields of a single Firestore document, so `{ source: 'server' }`
+         * here is a complete re-read of all of them — not a per-collection
+         * loop, which would be several round trips for the same bytes.
+         *
+         * It returns whether anything was actually there, and it no longer
+         * paints: the caller repaints every surface once this resolves.
+         */
         async function forceSyncFromCloud() {
-            if (!userDocRef) { notify('Not connected to cloud.', 'error'); return; }
+            if (!userDocRef) { notify('Not connected to cloud.', 'error'); return { ok: false, pulled: false }; }
             setSyncStatus('syncing');
+            let pulled = false;
             try {
                 const doc = await userDocRef.get({ source: 'server' });
                 if (doc.exists) {
@@ -8905,19 +8931,22 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setSyncStatus('online');
                     lastSyncTime = Date.now();
                     console.log('[SYNC] ✅ Force-pulled from cloud');
-                    notify('Data synced from cloud! ☁️', 'success');
-                    try {
-                        if ($('app').classList.contains('show')) {
-                            const active = document.querySelector('.page.active');
-                            if (active) renderPage(active.id.replace('page-', ''));
-                            updateCCOTBadge();
-                            updateChequeBadge();
-                        }
-                    } catch (renderErr) {
-                        // Data is safe and we ARE online — this is purely a view issue.
-                        console.error('[SYNC] Re-render after sync failed (data safe, connection fine):', renderErr);
-                        try { _wfLogClientError('render-after-sync', renderErr); } catch (_) {}
-                    }
+                    notify('Synced — showing the latest from all your devices', 'success');
+                    /* THE RE-RENDER USED TO LIVE HERE, and it covered the active
+                     * page and two badges. It has moved to refreshAllSurfaces(),
+                     * which the only caller runs after this resolves: this
+                     * function pulls and merges, that one paints. Doing both
+                     * here made "everything on screen is current" depend on
+                     * which of them somebody remembered to extend. */
+                    pulled = true;
+                } else {
+                    /* NO CLOUD DOCUMENT YET — a brand-new account, or one whose
+                     * first push has not landed. The old code fell straight out
+                     * of the `if`, leaving the badge on "Syncing…" for the rest
+                     * of the session with nothing coming. There is nothing to
+                     * pull, and saying so is the honest end of the cycle. */
+                    setSyncStatus(navigator.onLine ? 'online' : 'offline');
+                    notify('Nothing in the cloud for this account yet — this device is the source.', 'info');
                 }
             } catch (err) {
                 console.error('[SYNC] ❌ Force pull failed:', err);
@@ -8931,7 +8960,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setSyncStatus('offline');
                     notify('Offline — changes will sync automatically when you reconnect.', 'error');
                 }
+                return { ok: false, pulled: false };
             }
+            return { ok: true, pulled };
         }
 
         function setSyncStatus(state) {
@@ -16350,25 +16381,112 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
-        function refreshApp(btn) {
-            if (btn) {
-                btn.classList.remove('spin-once');
-                void btn.offsetWidth;
-                btn.classList.add('spin-once');
-            }
+        /* One refresh at a time. Without this, three taps on a slow connection
+         * start three server reads whose merges race each other — and the
+         * button gave no sign that the first was still running, so tapping
+         * again was the natural thing to do. */
+        let _refreshInFlight = false;
 
-            if (navigator.onLine && userDocRef) {
-                // Force pull latest data from cloud FIRST, then re-render
-                forceSyncFromCloud();
-            } else {
-                // Offline — just re-render with current local data
-                const active = document.querySelector('.page.active');
-                if (active) renderPage(active.id.replace('page-', ''));
-                updateCCOTBadge();
-                updateChequeBadge();
-                notify('Offline: Will sync when connection is restored.', 'warn');
+        /* A full turn of the icon. If the pull comes back in 40ms the spinner
+         * would otherwise flash and vanish, which reads as "nothing happened"
+         * — the very impression this whole change exists to remove. The floor
+         * never DELAYS the data: the render is already done and on screen; only
+         * the animation is held to one rotation. */
+        const REFRESH_MIN_SPIN_MS = 800;
+
+        /**
+         * The Refresh button, end to end.
+         *
+         * WHAT IT USED TO DO. It added a 0.7-second one-shot animation and
+         * called forceSyncFromCloud() WITHOUT awaiting it. The pull is a
+         * network round trip — measured at 1.5s against a stubbed slow
+         * connection — so the icon finished turning long before the data
+         * arrived, and nothing on screen changed at the moment it did. The data
+         * pull itself worked; the feedback was fiction, and the re-render
+         * afterwards covered one page and two badges.
+         *
+         * Now the click owns the whole cycle: pull, merge, repaint every
+         * surface, and only then stop the spinner. Everything below is awaited,
+         * and the spin comes off in a finally so a failure cannot leave the
+         * icon turning forever.
+         */
+        async function refreshApp(btn) {
+            if (_refreshInFlight) return;
+            _refreshInFlight = true;
+            const started = Date.now();
+            if (btn) {
+                btn.classList.add('is-refreshing');
+                btn.setAttribute('aria-busy', 'true');
+                btn.disabled = true;
+            }
+            try {
+                if (navigator.onLine && userDocRef) {
+                    /* AWAITED. This one word is most of the bug. */
+                    await forceSyncFromCloud();
+                } else {
+                    notify('Offline — showing what is on this device. It will sync when you reconnect.', 'warn');
+                }
+                /* REPAINTED WHETHER OR NOT THE PULL FOUND ANYTHING NEW. A
+                 * refresh that only repaints when the cloud differs is a
+                 * refresh that does nothing on the day the owner most wants
+                 * reassurance that the screen is current. */
+                refreshAllSurfaces();
+            } catch (e) {
+                console.error('[REFRESH] failed:', e);
+                notify('Could not refresh — your data is safe on this device.', 'error');
+            } finally {
+                const spent = Date.now() - started;
+                const rest = Math.max(0, REFRESH_MIN_SPIN_MS - spent);
+                setTimeout(() => {
+                    if (btn) {
+                        btn.classList.remove('is-refreshing');
+                        btn.removeAttribute('aria-busy');
+                        btn.disabled = false;
+                    }
+                    _refreshInFlight = false;
+                }, rest);
             }
         }
+        window.refreshApp = refreshApp;
+
+        /**
+         * Repaint everything the screen shows, not just the page in front.
+         *
+         * The old refresh re-rendered `renderPage(active)` plus two badges.
+         * Everything else kept whatever it had: the sidebar counts, the date,
+         * the balance figures, the DSCR numbers, and the whole dashboard when
+         * the owner happened to be standing on another page. Data pulled from
+         * the cloud was correct in `appData` and stale on screen, which is
+         * indistinguishable from a refresh that did not fetch.
+         *
+         * Every step is guarded on its own. One malformed record must not stop
+         * the other eight surfaces from repainting — this file has already been
+         * burnt once by a render error being reported as a lost connection.
+         */
+        function refreshAllSurfaces() {
+            const active = document.querySelector('.page.active');
+            const activeId = active ? active.id.replace('page-', '') : '';
+            const step = (what, run) => {
+                try { run(); } catch (e) {
+                    console.error('[REFRESH] ' + what + ' did not repaint (data is safe):', e && e.message);
+                }
+            };
+
+            step('display settings', () => _applyDisplaySettings());
+            step('date', () => updateDateTime());
+            step('cc one-time badge', () => updateCCOTBadge());
+            step('cheque badge', () => updateChequeBadge());
+            step('install badge', () => updatePWAStatusBadge());
+            step('balances', () => renderBalance());
+            step('dscr', () => renderDSCR());
+            /* The dashboard is repainted even when it is not in front, because
+             * its figures are the ones the owner checks first on returning to
+             * it — and skipped when it IS in front, since renderPage below
+             * would then draw it twice. */
+            if (activeId !== 'dashboard') step('dashboard', () => renderDash());
+            step('the page you are on', () => { if (activeId) renderPage(activeId); });
+        }
+        window.refreshAllSurfaces = refreshAllSurfaces;
 
         // ==================== LUXURY HAPTIC FEEDBACK ENGINE v3 ====================
         // Android: Real vibration via navigator.vibrate (when truly supported)
