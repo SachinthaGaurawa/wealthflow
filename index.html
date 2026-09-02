@@ -21584,7 +21584,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return String(email || '').replace(/[^a-z0-9]/g, '_');
         }
 
-        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null };
+        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0 };
 
         /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
          * inherits the chip's own colour through stroke="currentColor", so each
@@ -21598,6 +21598,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                 unlocking:  ['lock',        'Unlocking',    'var(--blue)'],
                 reading:    ['fileText',    'Reading',      'var(--blue)'],
                 filed:      ['checkCircle', 'Filed',        'var(--green)'],
+                /* Parsed and waiting for the owner. Distinct from `filed`
+                 * because it is the state the card used to LIE about: it said
+                 * filed while nothing had been written. */
+                ready:      ['fileText',    'Ready to check', 'var(--blue)'],
                 held:       ['alert',       'Needs review', 'var(--amber, #f59e0b)'],
                 failed:     ['x',           'Failed',       'var(--red)'],
             };
@@ -21662,6 +21666,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ${!it.known && it.from ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
                         ${(window.WFIcon ? WFIcon('plus') : '')} Add sender
                     </button>` : ''}
+                    <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-msdel="${_wfEsc(String(i))}"
+                        aria-label="Remove this statement" title="Remove this statement">
+                        ${(window.WFIcon ? WFIcon('trash') : 'Remove')}
+                    </button>
                 </div>`).join('');
 
             /* The honest empty states. Each names the ONE thing that is missing,
@@ -21726,7 +21734,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             } else if (!st.items.length && !_firstScanDone()) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Your mailbox has not been scanned yet — this happens automatically on the next check.</div>`;
             } else if (!st.items.length) {
-                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Nothing waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}. Use <b>Scan historical statements</b> to search further back.</div>`;
+                banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Nothing waiting${st.lastRun ? ' — last checked ' + new Date(st.lastRun).toLocaleTimeString() : ''}.${st.filed ? ' ' + _wfEsc(String(st.filed)) + ' statement' + (st.filed === 1 ? '' : 's') + ' already checked in.' : ''} Use <b>Scan historical statements</b> to search further back.</div>`;
             }
 
             host.innerHTML = `
@@ -21780,6 +21788,57 @@ table.amort tbody tr { page-break-inside: avoid; }
             /* The decision offered where the confusion is. Seeing an unfamiliar
              * row and being sent to another screen to find it again is how a
              * queue stops being read. */
+            /* REMOVING A STATEMENT IS THE ONE ACTION HERE THAT CANNOT BE UNDONE,
+             * so it asks first and says exactly what it will do. The bills and
+             * receipts already in the store are what this is for: #167 stopped
+             * new ones arriving and removed none of the old, and there was no
+             * way to clear them at all. */
+            host.querySelectorAll('[data-msdel]').forEach((btn) => {
+                btn.onclick = () => {
+                    const it = st.items[Number(btn.getAttribute('data-msdel'))];
+                    if (!it) return;
+                    const who = it.from ? _mailFromLabel(it.from) : (it.bank || 'this sender');
+                    /* The icon KEY, not rendered markup: _wfSetIcon looks the
+                     * name up and falls back to printing whatever it was given
+                     * as text — hand it an SVG string and the confirmation
+                     * shows the markup.
+                     *
+                     * And the detail is NOT escaped. showConfirm assigns it
+                     * with textContent, so an escaped string prints "&amp;" at
+                     * any payee with an ampersand. This file already documents
+                     * that trap for notification bodies; it is the same one. */
+                    showConfirm(
+                        'trash',
+                        'Remove this statement?',
+                        /* THE WARNING COMES SECOND, not last. It was the final
+                         * clause of a three-clause sentence, which is where a
+                         * consequence goes to be missed — and removing a
+                         * statement without blocking its sender is a footgun:
+                         * the next scan fetches it straight back, and it looks
+                         * as though the Remove button did nothing. What it
+                         * does, then what to watch out for, then the
+                         * reassurances. */
+                        'This removes ' + (it.filename || it.bank || 'the statement')
+                            + ' from WealthFlow\'s mailbox store. It will come back on the next scan '
+                            + 'unless you also block ' + who + ' in Senders. '
+                            + 'Nothing already filed in your ledger changes, and the original stays in your Gmail.',
+                        'btn-danger', 'Remove',
+                        async () => {
+                            btn.disabled = true;
+                            try {
+                                const r = await _gmailLink('POST', { action: 'delete', keys: [it.key] }, '?items=1');
+                                if (!r || !r.body || r.body.ok !== true) {
+                                    notify((r && r.body && r.body.error) || 'could not remove it', 'error');
+                                } else {
+                                    notify('Removed', 'success');
+                                }
+                            } catch (_) { notify('could not remove it', 'error'); }
+                            _mailSyncState.stage = 'idle';
+                            runMailSync();
+                        },
+                    );
+                };
+            });
             host.querySelectorAll('[data-msadd]').forEach((btn) => {
                 btn.onclick = async () => {
                     const it = st.items[Number(btn.getAttribute('data-msadd'))];
@@ -22440,6 +22499,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                         + (r && r.body && r.body.error ? ': ' + r.body.error : '.'));
                 }
                 docs = Array.isArray(r.body.items) ? r.body.items : [];
+                /* How many the store holds that are already dealt with. The
+                 * card says it, because an empty list with no explanation and
+                 * an empty list because everything is done look identical, and
+                 * the owner has already been burnt by that distinction. */
+                _mailSyncState.filed = Number(r.body.filed) || 0;
             } catch (e) {
                 return finish('Could not read the mailbox store: ' + (e && e.message || 'unknown error'));
             }
@@ -22491,8 +22555,23 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (window.WFBackfill) ledgerHashes = await window.WFBackfill.ledgerHashes(appData);
             } catch (_) { /* an empty set means "nothing known duplicate", never a crash */ }
 
+            /* Statements whose rows are parsed and waiting for the owner to file
+             * them. Filled by the loop, drained after it. */
+            const _ready = [];
+
             for (let i = 0; i < docs.length; i += 1) {
                 const d = docs[i];
+                /* A SENDER NOBODY HAS APPROVED IS NOT OPENED.
+                 *
+                 * #167 stored `known` and drew it on the row, but the loop went
+                 * on to unlock, parse and route the attachment anyway — so an
+                 * unapproved sender's PDF was still being read and its rows
+                 * still offered for filing. "Held for review" has to mean the
+                 * statement is not processed, or it means nothing at all. */
+                if (_mailSyncState.items[i] && _mailSyncState.items[i].known === false) {
+                    set(i, { stage: 'held', reason: 'waiting for you to add this sender' });
+                    continue;
+                }
                 try {
                     set(i, { stage: 'assembling' });
                     // The parts arrive with the manifest; the server reads the
@@ -22507,6 +22586,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * inside them reports what is actually happening rather than a
                      * timer pretending to. */
                     const bank = (d.manifest && d.manifest.bank) || '';
+                    let _parsed = null;
                     const res = await window.WFMailIntake.intakeStatement(
                         { id: d.id, bank, manifest: d.manifest, parts },
                         {
@@ -22535,7 +22615,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * error, which is why it survived a reading of the diff
                              * and was caught only by running a real statement
                              * through the real parser in a browser. */
-                            parse: (text) => window.WFStatementParser.parseStatement(text),
+                            /* Captured on the way past. The review screen wants
+                             * the PARSER's rows — description, direction, the
+                             * balance-confirmed flags — not the router's
+                             * summary of them, and this is the only place they
+                             * exist. Returning the value unchanged keeps
+                             * intakeStatement's own behaviour identical. */
+                            parse: (text) => {
+                                const out = window.WFStatementParser.parseStatement(text);
+                                _parsed = out;
+                                return out;
+                            },
                             /* existingHashes is the ledger-wide dedup. classifyStatement
                              * has accepted it since it was written and NO caller had
                              * ever passed one, so every import was deduplicated only
@@ -22547,23 +22637,185 @@ table.amort tbody tr { page-break-inside: avoid; }
                         {},
                     );
                     const summary = window.WFMailIntake.summarise(res);
-                    if (summary.quarantined > 0 && summary.applied === 0) {
-                        set(i, { stage: 'held', reason: (summary.messages[0] || '').slice(0, 60) });
+
+                    /* THE SENTENCE THIS REPLACES SAID "N transactions filed"
+                     * AND NOTHING HAD BEEN FILED.
+                     *
+                     * intakeStatement RETURNS `applied` and `quarantined`; it
+                     * writes neither. Its one caller — here — read only
+                     * summarise() to print a count and threw the rows away. So
+                     * every mail statement was opened, decrypted, parsed and
+                     * routed, the card reported the transactions as filed, and
+                     * the ledger never received one of them. wealthflow-
+                     * quarantine.js had no caller at all, and the tile that was
+                     * meant to show held rows was never written — the call to
+                     * it sat inside a try/catch that swallowed the
+                     * ReferenceError.
+                     *
+                     * The rows now go to the SAME review screen an uploaded
+                     * statement goes to. That screen is proven, it records an
+                     * undoable batch, it de-duplicates against what is already
+                     * stored, and it lets the owner correct a destination
+                     * before anything is written — which is the control they
+                     * asked for. A second writer for the same records is how
+                     * two shapes of "expense" end up in one array. */
+                    const rows = (_parsed && Array.isArray(_parsed.rows)) ? _parsed.rows : [];
+                    if (!rows.length) {
+                        set(i, { stage: 'held', reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60) });
                     } else {
                         set(i, {
-                            stage: 'filed',
-                            note: `${summary.applied} transaction${summary.applied === 1 ? '' : 's'} filed`
-                                + (summary.quarantined ? `, ${summary.quarantined} held for review` : ''),
+                            stage: 'ready',
+                            note: `${rows.length} transaction${rows.length === 1 ? '' : 's'} ready for you to check`,
                         });
+                        _ready.push({ key: d.id, bank, rows, last4: (d.manifest && d.manifest.card_last4) || '' });
                     }
                 } catch (e) {
                     set(i, { stage: 'failed', reason: (e && e.message || 'error').slice(0, 60) });
                 }
             }
+
+            /* Opened AFTER the loop, so the owner is not interrupted between
+             * statements while the rest are still being decrypted. */
+            if (_ready.length) _reviewMailStatements(_ready);
             try { renderDash(); renderQuarantineTile && renderQuarantineTile(); } catch (_) {}
             finish(null);
         }
         window.runMailSync = runMailSync;
+
+        /**
+         * Tell the store these statements have been dealt with.
+         *
+         * The manifest STAYS — only the parts are dropped, server-side. The
+         * existence of that document is the only thing stopping the push hook
+         * and the scanner re-fetching the same attachment, so deleting it would
+         * bring the statement back on the next scan and with it the duplicate
+         * the owner reported. See gmail-link.js.
+         */
+        async function _markMailFiled(keys) {
+            const list = (Array.isArray(keys) ? keys : []).filter(Boolean);
+            if (!list.length) return 0;
+            try {
+                const r = await _gmailLink('POST', { action: 'filed', keys: list }, '?items=1');
+                if (!r || !r.body || r.body.ok !== true) {
+                    /* Said out loud. A statement that was filed but not marked
+                     * comes back on the next check, and the owner has no way to
+                     * know it is a bookkeeping failure rather than a duplicate
+                     * import — which is exactly the confusion being fixed. */
+                    notify('Filed, but these statements may be offered again — the mailbox could not be updated.', 'warn');
+                    return 0;
+                }
+                return Number(r.body.marked) || 0;
+            } catch (_) {
+                notify('Filed, but these statements may be offered again — the mailbox could not be updated.', 'warn');
+                return 0;
+            }
+        }
+
+        /**
+         * A parsed row, in the shape the review screen reads.
+         *
+         * THE TWO SIDES USE DIFFERENT NAMES AND NEITHER IS WRONG.
+         * wealthflow-statement-parser.js emits `narration`; the review screen —
+         * written years earlier for uploaded files — reads `description`. Hand
+         * it a parser row unchanged and `desc` is empty, so its own guard
+         * `if (!desc || !amount) { skipped++; return; }` skips EVERY row: the
+         * screen opens, the rows are listed, the owner presses Save, and
+         * nothing at all is written. Caught in a browser, where the ledger was
+         * still empty after a successful-looking file.
+         *
+         * This repository has hit the same shape before — the router read
+         * `description` from a producer emitting `narration`, and
+         * parseStatementText returned a bare array where parseStatement's
+         * `.rows` was expected. Both failed as plausible emptiness rather than
+         * as an error. Hence a named function with a test, not a spread.
+         *
+         * `_needsReview` and `_directionSource` carry the parser's own doubt
+         * across: a row whose direction was assumed from wording, rather than
+         * confirmed by the statement's running balance, must arrive flagged or
+         * it looks exactly as trustworthy as one the bank's arithmetic proved.
+         */
+        function _mailRowForReview(r) {
+            const row = r || {};
+            return {
+                date: row.date || '',
+                description: row.description || row.narration || '',
+                /* Unsigned: `direction` carries in-versus-out, and the screen
+                 * and the router both take the magnitude. A signed amount here
+                 * would be negated twice for a debit. */
+                amount: Math.abs(Number(row.amount) || 0),
+                direction: row.direction || '',
+                balance: row.balance,
+                ref: row.ref || '',
+                _needsReview: row.needsReview === true,
+                _directionSource: row.directionSource || '',
+            };
+        }
+        window._mailRowForReview = _mailRowForReview;
+
+        /**
+         * Hand parsed statements to the review screen, one bank at a time.
+         *
+         * ONE BANK PER SCREEN, and not for tidiness. That screen decides
+         * credit-card-versus-bank-account for the whole batch and pre-routes
+         * every row from it; mixing two banks would pre-route one of them
+         * wrongly, and a wrong default that someone has to notice is worse than
+         * a second screen.
+         *
+         * NOT A CHAIN OF AWAITS. The screen has no "closed without filing"
+         * signal — deliberately, since only a real commit may mark a statement
+         * done — so awaiting each one in a loop would hang forever the moment
+         * someone closed one. Instead the first group is offered, and filing it
+         * runs the sync again, which offers the next. Closing simply leaves
+         * everything pending, which is the honest outcome.
+         */
+        function _reviewMailStatements(ready) {
+            const groups = new Map();
+            for (const r of (Array.isArray(ready) ? ready : [])) {
+                const bank = r.bank || 'Statement';
+                if (!groups.has(bank)) groups.set(bank, { bank, keys: [], rows: [], last4: r.last4 || '' });
+                const g = groups.get(bank);
+                g.keys.push(r.key);
+                g.rows.push(...(Array.isArray(r.rows) ? r.rows : []).map(_mailRowForReview));
+                if (!g.last4 && r.last4) g.last4 = r.last4;
+            }
+            const first = groups.values().next().value;
+            if (!first || !first.rows.length) return;
+            const more = groups.size - 1;
+
+            if (typeof window._showCCReviewModal !== 'function') {
+                notify('The statement review screen is not loaded', 'error');
+                return;
+            }
+            /* Concatenated, not a template literal. test/resilience_test.js
+             * forbids a bare record field inside `${...}` ANYWHERE in this
+             * file, with no exceptions — because a template that is a
+             * notification body today becomes an innerHTML template tomorrow,
+             * and the field would then be markup. notify() is a textContent
+             * sink, so the value must NOT be escaped either; concatenation
+             * satisfies both. */
+            notify(String(first.rows.length) + ' transaction' + (first.rows.length === 1 ? '' : 's')
+                + ' from ' + first.bank + ' are ready to check', 'info');
+            window._showCCReviewModal(
+                {
+                    transactions: first.rows,
+                    fileName: first.bank + ' statement' + (first.keys.length === 1 ? '' : 's'),
+                    card_last4: first.last4 || '',
+                },
+                first.bank,
+                async () => {
+                    await _markMailFiled(first.keys);
+                    /* Re-run either way. With another bank pending it offers
+                     * the next screen; with none it redraws a card that should
+                     * now be one statement shorter — which is also the proof
+                     * that the marking worked, since a statement that was
+                     * marked does not come back. */
+                    if (more > 0) notify(`${more} more bank${more === 1 ? '' : 's'} to check`, 'info');
+                    _mailSyncState.stage = 'idle';
+                    runMailSync();
+                },
+            );
+        }
+        window._reviewMailStatements = _reviewMailStatements;
 
         /* ── CONNECTING THE MAILBOX ────────────────────────────────────────────
          *
@@ -29896,7 +30148,18 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 return null;
             } catch (_) { return null; }
         }
-        function _showCCReviewModal(parsed, bank) {
+        /**
+         * The review-and-file screen for a parsed statement.
+         *
+         * `onFiled` is called ONLY after the rows have actually been written and
+         * the batch committed — never when the screen is merely closed. The mail
+         * pipeline uses it to mark a statement as dealt with, and marking one
+         * that was not filed would hide a statement whose transactions never
+         * landed. Closing without filing must therefore leave it pending, which
+         * is what happens: the callback lives at the end of the file action and
+         * nowhere else.
+         */
+        function _showCCReviewModal(parsed, bank, onFiled) {
             const txns = parsed.transactions.map((t, i) => ({
                 ...t,
                 _i: i,
@@ -30403,6 +30666,26 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const tail = (skipped ? (' · skipped ' + skipped) : '') + (dup ? (' · ' + dup + ' duplicate' + (dup > 1 ? 's' : '') + ' ignored') : '');
                 if (parts.length) { notify('✅ Filed ' + parts.join(' · ') + tail, 'success'); triggerHaptic('success'); }
                 else { notify('Nothing added' + (dup ? (' · ' + dup + ' duplicate(s) ignored') : '') + (skipped ? (' · ' + skipped + ' skipped') : ''), 'warn'); }
+
+                /* Written and committed above, so this is the first point at
+                 * which "these rows are in the ledger" is true. A caller that
+                 * marks a statement done on anything earlier — the screen
+                 * opening, the screen closing — marks statements whose rows
+                 * were never written, and those statements are then never
+                 * offered again. The counts go with it so the caller can say
+                 * what landed rather than guessing.
+                 *
+                 * `dup` counts rows already in the ledger. Those make a
+                 * statement DONE just as surely as newly filed ones do: there
+                 * is nothing left to import from it. Offering it again forever
+                 * because everything in it was already known is the exact loop
+                 * the owner reported. */
+                try {
+                    if (typeof onFiled === 'function') {
+                        onFiled({ cc, ccPay, exp, inc, sub, loanCnt, chq, dup, skipped,
+                            total: cc + ccPay + exp + inc + sub + loanCnt + chq });
+                    }
+                } catch (_) { /* a caller's bookkeeping must not undo a good import */ }
             };
             overlay.addEventListener('click', (ev) => { if (ev.target === overlay) closeOvl(); });
         }

@@ -140,7 +140,7 @@ export const BUDGETS = {
      *
      * Roughly 2.5 KB on 1.75 MB, for the trigger, the once-only marker, and the
      * comments explaining why an automatic Gmail read is bounded and runs once. */
-    htmlBytes: 1_783_000,        // measured 1,778,072 — the statement-sender screen
+    htmlBytes: 1_800_000,        // measured 1,794,851 — mail statements reach the review screen
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

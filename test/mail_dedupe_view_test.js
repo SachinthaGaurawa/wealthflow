@@ -124,9 +124,21 @@ describe('the listing endpoint uses it, and says how many it collapsed', () => {
     it('collapses before assembling parts', () => {
         /* Reading every copy's parts only to discard all but one is the same
          * work several times over, on a phone. */
-        const i = SRC.indexOf('dedupeStored(rows)');
-        const j = SRC.indexOf("collection('parts')");
+        /* SCOPED TO THE LISTING BLOCK. Both anchors are now ambiguous
+         * file-wide: the delete and mark-filed routes also reach into
+         * `collection('parts')`, and they sit ABOVE this block — so a naive
+         * first-index comparison compared the listing's dedupe against a
+         * different route's parts and reported the order inverted. The
+         * assertion was right and its anchors had gone stale, which is the
+         * failure mode worth naming: a guard that breaks when unrelated code
+         * moves is a guard that will one day be deleted rather than fixed. */
+        const at = SRC.indexOf("method === 'GET' && /[?&]items=1/");
+        expect(at, 'the listing route is gone').toBeGreaterThan(-1);
+        const block = SRC.slice(at);
+        const i = block.indexOf('dedupeStored(rows)');
+        const j = block.indexOf("collection('parts')");
         expect(i, 'the listing no longer collapses duplicates').toBeGreaterThan(-1);
+        expect(j, 'the listing no longer assembles parts').toBeGreaterThan(-1);
         expect(i, 'parts are assembled before duplicates are collapsed').toBeLessThan(j);
     });
 
