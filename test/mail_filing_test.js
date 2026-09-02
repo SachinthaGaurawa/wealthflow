@@ -45,6 +45,38 @@ function fn(name) {
     return next < 0 ? html.slice(m.index) : html.slice(m.index, m.index + m[0].length + next);
 }
 
+/**
+ * The bodies of every `max-width` media block at or below `px`, brace-matched.
+ *
+ * The first version of this sliced with `([\s\S]*?)\n        \}` and the
+ * non-greedy capture ran straight past the end of a block that contained nested
+ * rules — so a "what is inside the mobile blocks" check was reading top-level
+ * rules that follow them, and reported the base .g5 rule as a mobile override.
+ */
+function mediaBlocksUpTo(px, source) {
+    /* COMMENTS OUT FIRST. A comment inside a media block that MENTIONS `.g5`
+     * (for instance, one explaining why the override that used to be there was
+     * removed) is matched by any selector regex, and the scan then runs on to
+     * the next real declaration and reports it under the wrong selector. A
+     * guard that a comment can trip is a guard that gets weakened to shut it
+     * up. Rules only. */
+    const css = String(source).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    const out = [];
+    const re = /@media[^{]*max-width:\s*(\d+)px[^{]*\{/g;
+    let m;
+    while ((m = re.exec(css)) !== null) {
+        if (Number(m[1]) > px) continue;
+        let depth = 1;
+        let i = m.index + m[0].length;
+        for (; i < css.length && depth > 0; i += 1) {
+            if (css[i] === '{') depth += 1;
+            else if (css[i] === '}') depth -= 1;
+        }
+        out.push(css.slice(m.index + m[0].length, i - 1));
+    }
+    return out.join('\n');
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * THE ONE THAT MATTERS
  * ═══════════════════════════════════════════════════════════════════════════*/
@@ -503,13 +535,55 @@ describe('wide content scrolls, decoration is clipped', () => {
         /* The owner asked for this by name: the user, time and date must stay
          * visible on a phone. A display:none inside a max-width media query is
          * the lazy way to stop an overflow, and it removes what they asked to
-         * keep. */
-        const mobileBlocks = [...css.matchAll(/@media[^{]*max-width:\s*(\d+)px[^{]*\{([\s\S]*?)\n        \}/g)]
-            .filter((m) => Number(m[1]) <= 768)
-            .map((m) => m[2]).join('\n');
-        for (const banned of ['.user-name', '#wfClock', '.footer-date']) {
-            expect(mobileBlocks, `${banned} is hidden on small screens`)
-                .not.toMatch(new RegExp(banned.replace('.', '\\.') + '[^{]*\\{[^}]*display:\\s*none'));
+         * keep.
+         *
+         * THE FIRST VERSION OF THIS GUARD NAMED SELECTORS THIS APP DOES NOT
+         * HAVE — `.user-name`, `#wfClock`, `.footer-date`. None of the three is
+         * in index.html, so it asserted that three non-existent things were not
+         * hidden and passed for free. It was written from the owner's words
+         * rather than from the markup, which is exactly the defect this
+         * repository keeps producing in another form: a guard wired to nothing.
+         * The names below are the real ones, and the existence check underneath
+         * is what stops it going vacuous again. */
+        const REAL = ['.sb-user-name', '.sb-user', '#sbDate', '.sb-footer'];
+        for (const sel of REAL) {
+            const token = sel.startsWith('#') ? `id="${sel.slice(1)}"` : `class="${sel.slice(1)}`;
+            expect(html.includes(token) || html.includes(sel.slice(1)),
+                `${sel} is not in the markup — this guard would pass vacuously`).toBe(true);
         }
+        const mobileBlocks = mediaBlocksUpTo(768, css);
+        for (const banned of REAL) {
+            expect(mobileBlocks, `${banned} is hidden on small screens`)
+                .not.toMatch(new RegExp(banned.replace(/[.#]/g, '\\$&') + '[^{]*\\{[^}]*display:\\s*none'));
+        }
+    });
+
+    it('AND THE GRIDS SCALE INSTEAD OF STEPPING', () => {
+        /* The owner asked for fluid layout by name: no hardcoded column counts,
+         * minmax() grids that scale to any screen. A fixed `repeat(4, 1fr)`
+         * holds four columns from 1024px to 1025px and then jumps. */
+        for (const g of ['.g2', '.g3', '.g4', '.g5']) {
+            const rule = new RegExp(g.replace('.', '\\.') + '\\s*\\{[^}]*grid-template-columns:\\s*([^;]+);');
+            const m = rule.exec(css);
+            expect(m, `${g} is gone from the stylesheet — retarget this test`).toBeTruthy();
+            expect(m[1], `${g} still has a hardcoded column count`).toContain('auto-fit');
+            /* min(100%, N) and not a bare N: a track wider than its container
+             * is what pushes a grid past the viewport edge, and no amount of
+             * media queries below it can pull it back. */
+            expect(m[1], `${g} can force a track wider than its container`).toContain('min(100%');
+        }
+    });
+
+    it('and the step-downs that would override them are gone', () => {
+        /* A media query setting a FIXED count would put the step straight back
+         * where the fluid rule removed it. Read as "any column count declared
+         * for .g* inside a small-screen block that is not auto-fit", so a rule
+         * that legitimately keeps something at one column still has to say so
+         * fluidly. */
+        const blocks = mediaBlocksUpTo(1024, css);
+        const fixed = [...blocks.matchAll(/\.g[2-5][^{]*\{[^}]*grid-template-columns:\s*([^;]+);/g)]
+            .map((m) => m[1].trim())
+            .filter((v) => !v.includes('auto-fit'));
+        expect(fixed, 'a media query re-imposes a fixed column count').toEqual([]);
     });
 });

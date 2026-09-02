@@ -1402,7 +1402,7 @@
         }
 
         .pg-title {
-            font-size: 17px;
+            font-size: clamp(15px, 4vw, 17px);
             font-weight: 700;
         }
 
@@ -1734,7 +1734,9 @@
             background: var(--card);
             border: 1px solid var(--border);
             border-radius: var(--r);
-            padding: 16px 20px;
+            /* 40px of horizontal padding out of a 156px card is a quarter of
+             * it. Fluid, capped at the desktop figure. */
+            padding: clamp(12px, 3.4vw, 16px) clamp(13px, 4.2vw, 20px);
             position: relative;
             overflow: hidden;
             transition: all .2s;
@@ -1789,7 +1791,12 @@
         }
 
         .stat-val {
-            font-size: 21px;
+            /* FLUID, AND CAPPED AT WHAT IT ALWAYS WAS. A money figure is the
+             * longest string on these cards and the one that must not wrap or
+             * clip; 21px in a 156px card is where it starts to. The clamp only
+             * ever makes it smaller, so every screen wide enough today looks
+             * exactly as it did. */
+            font-size: clamp(16px, 4.2vw, 21px);
             font-weight: 800;
             font-family: var(--mono);
             margin: 5px 0 3px;
@@ -1874,27 +1881,49 @@
         }
 
         /* ================== GRID ================== */
+        /* ── THE GRIDS SCALE, THEY DO NOT STEP ───────────────────────────────
+         *
+         * These were fixed column counts — 5, 4, 3, 2 — with two media queries
+         * stepping them down to 2 and then to 1. Between those steps nothing
+         * responded to anything: a 5-column row held its five columns from
+         * 1024px all the way to 1025px and then jumped, and a 700px tablet got
+         * the same two columns as a 420px phone.
+         *
+         * `auto-fit` with a minimum makes the count fall out of the width
+         * instead. The number in each minmax() is the narrowest that content
+         * stays readable at; below it a column drops out on its own, at
+         * whatever width that happens to be on the device in front of the
+         * owner rather than at a breakpoint guessed here.
+         *
+         * `min(100%, N)` is load-bearing and not decoration: a bare minmax(N,
+         * 1fr) forces a track N wide even when the container is narrower, and
+         * that — not the content — is what pushes a grid past the viewport
+         * edge. With min() the track can never be wider than what holds it.
+         *
+         * The desktop layout is unchanged: auto-fit collapses the tracks it
+         * cannot fill, so five cards in a wide container still sit five
+         * across. */
         .g2 {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
             gap: 16px;
         }
 
         .g3 {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
             gap: 16px;
         }
 
         .g4 {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
             gap: 16px;
         }
 
         .g5 {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 158px), 1fr));
             gap: 16px;
         }
 
@@ -4120,18 +4149,10 @@
                 display: flex;
             }
 
-            .g5 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .g4 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .g3 {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
+            /* .g5, .g4 and .g3 used to be forced to two columns here. They
+             * are auto-fit now, so the column count already follows the width
+             * — and re-imposing a count would put the step back exactly where
+             * this removed it. */
             .dash-chart-row {
                 grid-template-columns: 1fr;
             }
@@ -4154,10 +4175,10 @@
 
         @media(max-width:540px) {
 
-            .g5,
-            .g4,
-            .g3,
-            .g2,
+            /* Only .fr is pinned to one column here. The .g* grids are
+             * auto-fit and reach one column on their own when the container
+             * cannot hold two — which on a 320px phone happens without this
+             * rule, and on a 430px one correctly does not. */
             .fr {
                 grid-template-columns: 1fr;
             }
