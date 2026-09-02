@@ -8,15 +8,22 @@
  * GET  /api/gmail-watch → { ok, watching, expiresAt, daysLeft, needsRenewal, missing[] }
  * POST /api/gmail-watch → registers or renews, then reports the same shape
  *
- * ── WHY IT IS A USER-AUTHENTICATED ENDPOINT AND NOT A CRON ──────────────────
+ * ── WHY IT IS A USER-AUTHENTICATED ENDPOINT ─────────────────────────────────
  *
  * A watch is registered with an access token minted from ONE mailbox's refresh
- * token, so it is inherently per-account work. Renewal is driven by the page
- * on a six-day margin against a seven-day lifetime: no new secret, no scheduled
- * runner, nothing added to the Actions budget. The trade is that it renews when
- * the owner opens the app — which is why the expiry is reported to the card
- * rather than kept here. A pipeline that stops must say so on screen; the
- * failure this whole change exists to fix was silence.
+ * token, so it is inherently per-account work, and this endpoint does it for
+ * the account whose ID token it holds. Renewal is driven by the page on a
+ * six-day margin against a seven-day lifetime: no new secret, and it happens
+ * while the owner is looking at the result.
+ *
+ * THAT WAS THE WHOLE STORY, AND IT HAD A HOLE. It renews when the app is
+ * opened, so a week in which nobody opens it is a week the watch lapses —
+ * Gmail then publishes nothing, the hook is never invoked, and the card still
+ * says "Connected", because the mailbox is. Statements stop with nothing
+ * looking broken, which is exactly the silence this pipeline keeps producing.
+ * /api/gmail-renew now renews the same way on a schedule, for every connected
+ * mailbox, as a backstop for the week nobody looks. The page renewal here is
+ * unchanged; the two are triggers on one mechanism, not two mechanisms.
  *
  * ── THE BOUNDARY IS identify(), AS IT IS NEXT DOOR ──────────────────────────
  *
@@ -59,6 +66,18 @@ function report(res, code, record, env, extra) {
         needsRenewal: needsRenewal(record),
         connected: !!(record && record.refresh_token),
         missing: missingWatchConfig(env),
+        /* WHY THE LAST SCHEDULED RENEWAL FAILED, IF ONE DID.
+         *
+         * The scheduled run cannot talk to anybody — it has no screen and its
+         * response goes to a deployment log — so it writes the reason on the
+         * mailbox's own document and this is where the owner reads it. Without
+         * it, a revoked token means the watch quietly stops being renewed and
+         * the card shows "not watching" with no cause, which is the same
+         * unexplained silence one level further in.
+         *
+         * Cleared on the next successful renewal, so it can never describe a
+         * mailbox that is working. */
+        ...(record && record.renewError ? { error: String(record.renewError).slice(0, 200) } : {}),
         ...(extra || {}),
     });
 }

@@ -22233,13 +22233,19 @@ table.amort tbody tr { page-break-inside: avoid; }
         /**
          * Register the watch, or renew one close to expiring.
          *
-         * Renewal is driven from here rather than from a scheduled job because
-         * a watch belongs to ONE mailbox and is registered with that mailbox's
-         * own credential — so it needs no new secret and nothing on the Actions
-         * budget. The cost is that it renews when the app is opened, on a
-         * six-day margin against a seven-day life. That is why the expiry is
-         * shown on the card: a pipeline that stops must say so, and silence is
-         * the exact failure this whole change exists to end.
+         * Driven from here because a watch belongs to ONE mailbox and is
+         * registered with that mailbox's own credential — so it needs no new
+         * secret, and it happens while the owner is looking at the result. On a
+         * six-day margin against a seven-day life, an app opened weekly never
+         * lapses.
+         *
+         * IT USED TO BE THE ONLY RENEWAL, AND THAT WAS THE HOLE. A week nobody
+         * opens the app is a week the watch expires: Gmail publishes nothing,
+         * the hook is never invoked, and this card says "Connected" — because
+         * the mailbox is. /api/gmail-renew now does the same renewal on a
+         * schedule for every connected mailbox. This one stays because it is
+         * the one that runs when the owner is present to see it fail; the
+         * expiry is still shown here for the same reason.
          */
         async function _ensureMailWatch({ force = false } = {}) {
             const seen = await _gmailWatch('GET');
