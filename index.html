@@ -2582,6 +2582,28 @@
         /* The hub's sub-navigation. A flex row that WRAPS rather than
          * shrinking: two tabs on a 320px phone stay legible by dropping to two
          * lines, where a shrink-to-fit row truncates both labels. */
+        /* ── COMPACT MODE, WHICH USED TO BE A SWITCH THAT DID NOTHING ────────
+         *
+         * The row is labelled "Reduce spacing for smaller screens and faster
+         * scanning." It wrote `compactMode` to settings, the value synced, the
+         * toggle stayed on across reloads — and not one pixel moved, because
+         * nothing in the app ever read it. A switch that saves a value and
+         * changes nothing is exactly what "the options are not working" means,
+         * and calling it wired because it reached DB.set was answering the
+         * wrong question.
+         *
+         * Spacing is the promise, so spacing is what it changes. Padding only:
+         * no font sizes, no hidden rows, nothing removed from the screen — the
+         * owner asked for density, not for less. */
+        body.wf-compact { --r: 12px; }
+        body.wf-compact .card { padding: 13px; }
+        body.wf-compact .stat-card { padding: clamp(9px, 2.6vw, 12px) clamp(10px, 3.2vw, 14px); }
+        body.wf-compact .content { padding: 10px 12px; padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+        body.wf-compact .setting-row { padding-top: 10px; padding-bottom: 10px; }
+        body.wf-compact .liq-row { padding: 9px 0; }
+        body.wf-compact .g2, body.wf-compact .g3,
+        body.wf-compact .g4, body.wf-compact .g5 { gap: 10px; }
+
         .liq-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
         .liq-tab {
             display: inline-flex; align-items: center; gap: 7px;
@@ -12231,6 +12253,14 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
 
         function checkAndSendAIReminders() {
             if (Notification.permission !== 'granted') return;
+            /* "AI Auto-Notifications — AI proactively sends smart financial
+             * reminders and insights." That switch is what THIS function is,
+             * and nothing read it: turning it off changed nothing at all.
+             * Read before anything is sent, and read from storage rather than
+             * from a cached copy, so switching it off takes effect on the next
+             * sweep rather than on the next reload. */
+            const _aiPrefs = DB.getObj('settings', {});
+            if (_aiPrefs.aiNotifications === false) return;
             const now = new Date();
             const day = now.getDate();
             const hour = now.getHours();
@@ -12272,12 +12302,24 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
                 }
             });
 
-            // Monthly budget check (15th of month)
-            if (day === 15) {
+            /* Monthly budget check.
+             *
+             * THREE THINGS WERE WRONG WITH IT, and all three are the same kind
+             * of wrong: the code and the switch beside it disagreed.
+             *
+             *   - `notifBudget` — "Budget Alerts" in Settings — was read by
+             *     nothing, so the switch could not turn this off.
+             *   - the row promises "exceeds 50% of income by mid-month" and the
+             *     code used 60%. The label is what the owner reads, so the code
+             *     now matches it rather than the other way round.
+             *   - it fired only on the 15th. A phone not opened that day never
+             *     got it, and the alert simply vanished for that month. The
+             *     window is four days; the per-month key still keeps it to one. */
+            if (day >= 14 && day <= 17 && _aiPrefs.notifBudget !== false) {
                 const notifKey = `wf_notif_budget_${curMonth}`;
                 if (!localStorage.getItem(notifKey) && ctx.totalMonthlyIncome > 0) {
                     const spentPct = Math.round((ctx.thisMonthExpenses / ctx.totalMonthlyIncome) * 100);
-                    if (spentPct > 60) {
+                    if (spentPct > 50) {
                         sendSmartNotification('📊 Mid-Month Budget Alert', `You've spent ${spentPct}% of income. LKR ${ctx.netMonthlyCashFlow.toLocaleString()} remaining. Review your expenses!`, null);
                         _persistRaw(notifKey, '1');
                     }
@@ -16802,6 +16844,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // Auto-detect category from expense description
         async function autoDetectCategory(desc) {
             if (!desc || desc.length < 3) return;
+            /* "Smart Expense Suggestions — AI suggests expense categories as
+             * you type descriptions." This function IS that feature, and the
+             * switch that names it was read by nothing: turning it off left the
+             * category still moving under the owner's hands. Read live, so it
+             * takes effect on the next keystroke rather than the next reload. */
+            try { if (DB.getObj('settings', {}).smartExpenseSuggest === false) return; } catch (_) {}
             const cat = await autoCategorizeExpense(desc);
             if (cat) {
                 const sel = $('e_cat');
@@ -18043,6 +18091,25 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const calc = calcEMI(amount, rate, dur);
                 monthly = override || Math.round(calc);
             }
+            /* THE THRESHOLD THAT WARNED NOBODY.
+             *
+             * Settings carries "Loan Interest Alert Threshold — warn when a
+             * new loan rate exceeds this percentage", with a 8%–25% picker.
+             * Every mention of that value in this file was in the picker's own
+             * markup: it was stored, synced, remembered across reloads and read
+             * by nothing. This is the moment its label names — a loan being
+             * saved — so this is where it speaks.
+             *
+             * It WARNS. It does not refuse: the rate is a fact about a loan the
+             * owner has already taken, and a form that would not accept it
+             * would just lose the record. */
+            try {
+                const _lim = Number(DB.getObj('settings', {}).loanAlertPct) || 15;
+                if (rate > _lim) {
+                    notify(`${name} is at ${rate}% — above your ${_lim}% alert threshold`, 'warning');
+                }
+            } catch (_) { /* a preference must never block a save */ }
+
             const rec = {
                 id: editMode || uid(), name, bank, amount, rate, duration: dur, monthly, start,
                 paymentMethod,
@@ -25192,6 +25259,11 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.renderRunwayCard = renderRunwayCard;
 
         function renderDash() {
+            /* The display preferences that live on the document rather than in
+             * a number: compact spacing, privacy shading. Applied here because
+             * this runs on boot and on every return to the dashboard, so the
+             * classes can never be one reload behind the settings. */
+            try { _applyDisplaySettings(); } catch (_) {}
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
             const incData = [], expData = [], netData = [];
@@ -25322,7 +25394,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
         <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
-        <div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>
+        ${DB.getObj('settings', {}).showSavingsRate === false ? '' : `<div class="stat-card sc-cyan"><div class="stat-label">Savings Rate</div><div class="stat-val">${yrInc > 0 ? Math.round((yrInc - yrExp) / yrInc * 100) : 0}%</div></div>`}
     `;
 
 
@@ -26123,7 +26195,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             if (s.lastBackupAttempt && !s.lastBackupAttempt.success) {
                                 return `${(window.WFIcon ? WFIcon('alert') : '')} <span style="color:var(--red);font-weight:700;">Last attempt failed</span> — ${s.lastBackupAttempt.reason || 'will retry automatically'}`;
                             }
-                            return `${(window.WFIcon ? WFIcon('refresh') : '')} ${(s.syncFreq || 'realtime') === 'realtime' ? 'Real-time sync ON' : (s.syncFreq || 'realtime')} · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? _ic('clock') + ' Auto: ' + s.autoBackupFreq : _ic('clock') + ' Auto-backup off'}`;
+                            return `${(window.WFIcon ? WFIcon('refresh') : '')} Real-time sync ON · ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? _ic('clock') + ' Auto: ' + s.autoBackupFreq : _ic('clock') + ' Auto-backup off'}`;
                         })()}
                     </div>
                 </div>
@@ -26138,13 +26210,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <option value="monthly" ${(s.autoBackupFreq || 'off') === 'monthly' ? 'selected' : ''}>Monthly (End)</option>
                 </select>
             </div>
+            <!-- CLOUD SYNC FREQUENCY — REMOVED, AND THAT IS THE HONEST FIX.
+                 It offered Real-time, Every 1 Hour and Wi-Fi Only. Nothing read
+                 the value: WealthFlow syncs through a live Firestore listener
+                 and always has, so all three settings did the same thing while
+                 the screen claimed otherwise.
+                 Building the other two would mean throttling the sync engine —
+                 the one that lost data until this week — and "Wi-Fi only"
+                 cannot be told from mobile data in a browser on iOS at all. A
+                 switch that pretends to control something is worse than no
+                 switch, so the row states what actually happens instead. -->
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Cloud Sync Frequency</div><div class="setting-desc">How often data syncs to cloud in the background.</div></div>
-                <select class="fi" style="width:140px;" onchange="toggleSetting('syncFreq', this.value)">
-                    <option value="realtime" ${(s.syncFreq || 'realtime') === 'realtime' ? 'selected' : ''}>Real-time</option>
-                    <option value="hourly" ${(s.syncFreq || 'realtime') === 'hourly' ? 'selected' : ''}>Every 1 Hour</option>
-                    <option value="wifi" ${(s.syncFreq || 'realtime') === 'wifi' ? 'selected' : ''}>Wi-Fi Only</option>
-                </select>
+                <div class="setting-info"><div class="setting-label">Cloud Sync</div><div class="setting-desc">Changes sync the moment you make them, on every signed-in device.</div></div>
+                <div style="font-size:12px;font-weight:700;color:var(--green);">Real-time</div>
             </div>
             ${s.autoBackupFreq && s.autoBackupFreq !== 'off' ? `<div class="backup-schedule">${(window.WFIcon ? WFIcon('clock') : '')} Next auto-backup: ${getNextBackupTime(s.autoBackupFreq)}</div>` : ''}
         </div>
@@ -26485,6 +26563,22 @@ table.amort tbody tr { page-break-inside: avoid; }
             resetAutoLockTimer();
         }
 
+        /**
+         * Put the display settings on the document.
+         *
+         * Called from toggleSetting AND at boot. The boot half is the half that
+         * was missing: a body class applied only when the switch is flipped is
+         * a setting that works until the page is reloaded, which is
+         * indistinguishable from one that forgot itself.
+         */
+        function _applyDisplaySettings() {
+            try {
+                const s = DB.getObj('settings', {});
+                document.body.classList.toggle('wf-compact', !!s.compactMode);
+            } catch (_) { /* never block a render on a preference */ }
+        }
+        window._applyDisplaySettings = _applyDisplaySettings;
+
         function toggleSetting(key, val) {
             const s = DB.getObj('settings', {});
             // ── v7.39.0 — fix the "dancing"/scroll-jump bug ────────────────
@@ -26547,6 +26641,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const DISPLAY_KEYS = ['roundAmounts', 'privacyMode', 'hideSensitive', 'weekStart',
                                    'dashPeriod', 'showSavingsRate', 'currency', 'compactMode'];
             if (DISPLAY_KEYS.includes(key)) {
+                _applyDisplaySettings();
                 document.body.classList.toggle('privacy-mode-on',
                     !!(DB.getObj('settings', {}).privacyMode || DB.getObj('settings', {}).hideSensitive));
                 try { if (typeof renderDash === 'function') renderDash(); } catch (e) {}
@@ -27477,7 +27572,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             const dismissedToday = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
 
             // INCOME REMINDERS — for each active source whose payment day is today
-            const incomes = DB.get('income') || [];
+            /* GATED BY THE SWITCH THAT NAMES IT. "Salary / Payday Alerts —
+             * confirm receipt on each scheduled payday" sat in Settings doing
+             * nothing: this banner fired whether it was on or off, because
+             * nothing read the field. The loan reminder two functions down has
+             * always been gated by notifLoan; this is the same line, missing. */
+            const incomes = (s.notifPayday === false) ? [] : (DB.get('income') || []);
             incomes.forEach(src => {
                 if (!src.day) return;
                 const payDay = parseInt(String(src.day).slice(-2)) || parseInt(src.day);
@@ -27794,6 +27894,73 @@ table.amort tbody tr { page-break-inside: avoid; }
                         }
                     });
                 });
+            }
+
+            /* ── 5. SUBSCRIPTION ANOMALY ─────────────────────────────────────
+             *
+             * "Detect unusually high or duplicate subscription charges." Also a
+             * switch with nothing behind it. The data was already there: the
+             * per-month editor records what each bill ACTUALLY came to, beside
+             * the expected figure.
+             *
+             * It fires only on a month the owner has typed a real number into,
+             * so it can never guess: a bill nobody has recorded raises nothing,
+             * which is the honest behaviour for a warning about a charge. */
+            if (s.notifAnomaly !== false) {
+                const ym = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
+                (DB.get('subscriptions') || []).forEach((sub) => {
+                    if (!sub || !sub.id || sub.anomalyDetect === false) return;
+                    const expected = Number(sub.amount) || 0;
+                    const actual = sub.monthOverrides ? sub.monthOverrides[ym] : undefined;
+                    if (!(expected > 0) || typeof actual !== 'number') return;
+                    if (actual <= expected * 1.25) return;
+                    const k = 'anom:' + sub.id + ':' + ym;
+                    if (seen.ids.includes(k)) return;
+                    sendOSNotification(
+                        'A bill came in higher than usual',
+                        `${userName}, ${_wfEsc(sub.name || 'a subscription')} is ${fmt(actual)} this month against `
+                        + `${fmt(expected)} usually — ${Math.round((actual / expected - 1) * 100)}% more.`,
+                        'wf-anom-' + sub.id,
+                    );
+                    seen.ids.push(k);
+                });
+            }
+
+            /* ── 6. THE FRIDAY TIP ───────────────────────────────────────────
+             *
+             * "Weekly Financial Tips — get a personalized financial tip every
+             * Friday evening." There was no such tip anywhere in the app; the
+             * switch turned nothing on or off.
+             *
+             * It is not written from scratch either. WFInsights already ranks
+             * everything worth saying about this ledger by severity and then by
+             * money at stake, and the dashboard shows the top five. The tip is
+             * the top ONE, sent on a Friday evening — a second engine inventing
+             * its own advice would disagree with the strip on the dashboard,
+             * and the owner would be right to trust neither. */
+            if (s.notifWeeklyTip !== false && now.getDay() === 5) {
+                const hour = now.getHours();
+                if (hour >= 17 && hour <= 21) {
+                    const k = 'tip:' + todayStr;
+                    if (!seen.ids.includes(k)) {
+                        let top = null;
+                        try {
+                            const items = (window.WFInsights && window.WFInsights.brief) ? window.WFInsights.brief(1) : [];
+                            top = (Array.isArray(items) && items.length) ? items[0] : null;
+                        } catch (_) { top = null; }
+                        /* Nothing to say is a real answer. A weekly tip that
+                         * invents filler when the ledger is healthy is how a
+                         * notification channel gets muted for good. */
+                        if (top && top.title) {
+                            sendOSNotification(
+                                'This week: ' + String(top.title).slice(0, 60),
+                                `${userName}, ${String(top.body || top.action || '').slice(0, 160)}`,
+                                'wf-tip-' + todayStr,
+                            );
+                            seen.ids.push(k);
+                        }
+                    }
+                }
             }
 
             _persistLocal('wf_alerted_today', seen);
