@@ -265,7 +265,17 @@ export const BUDGETS = {
      * top-ups). Both are pure, both are tested without a browser, and both
      * replace arithmetic that would otherwise have been written inline in
      * index.html where nothing could test it. */
-    totalJsBytes: 1_545_000,     // measured 1,533,906 across 58 modules
+    /* Raised for Phase 2: wealthflow-whatif.js, plus applyOverrides() in
+     * wealthflow-cashflow-engine.js. Both are arithmetic, not interface — a
+     * scenario is compiled into projection options and the projection is walked
+     * day by day, exactly as the baseline is. Writing either inline in
+     * index.html would cost no module and no request, and would make the one
+     * rule that decides whether a scenario is safer — the trough, never the
+     * closing balance — untestable in isolation, which is the trade this file
+     * has now recorded a dozen times.
+     *
+     * Moves ONCE, to just above the measured figure. */
+    totalJsBytes: 1_556_000,     // measured 1,555,013 across 58 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
