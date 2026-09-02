@@ -21746,7 +21746,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return String(email || '').replace(/[^a-z0-9]/g, '_');
         }
 
-        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false };
+        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false, locked: 0 };
 
         /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
          * inherits the chip's own colour through stroke="currentColor", so each
@@ -22048,6 +22048,33 @@ table.amort tbody tr { page-break-inside: avoid; }
              * on something. It is a statement of fact first — these are held,
              * nothing from them has been filed — and an offer second, because
              * the safe outcome for someone who ignores it is the current one. */
+            /* ── THE STATEMENTS THAT ARRIVED AND COULD NOT BE OPENED ─────────
+             *
+             * Sri Lankan banks lock statement PDFs, and the vault that holds
+             * those passwords is locked itself until the owner enters their
+             * PIN. So the honest sequence is: the statement arrived, it was
+             * fetched, and it is sitting there unread — which is a different
+             * thing from a missing statement and needs a different sentence.
+             *
+             * One action for all of them, offered where they are. The vault
+             * modal calls back on close, so unlocking and re-checking is one
+             * decision rather than two. */
+            const vaultLocked = !!(window.WFVault && window.WFVault.isSet() && !window.WFVault.isUnlocked());
+            const lockedCount = Number(_mailSyncState.locked) || 0;
+            const lockStrip = lockedCount ? `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;
+                            background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.26);border-radius:10px;">
+                    <div style="flex:1;min-width:190px;font-size:12.5px;color:var(--text2);line-height:1.6;">
+                        <b>${_wfEsc(String(lockedCount))} statement${lockedCount === 1 ? ' is' : 's are'} password-protected and could not be opened.</b>
+                        ${vaultLocked
+                            ? 'Your statement vault is locked, so none of your saved passwords were tried.'
+                            : 'None of your saved passwords opened ' + (lockedCount === 1 ? 'it' : 'them') + ' — add the one your bank uses.'}
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="_ms_vault" style="flex-shrink:0;">
+                        ${(window.WFIcon ? WFIcon('lock') : '')} ${vaultLocked ? 'Unlock vault' : 'Add a password'}
+                    </button>
+                </div>` : '';
+
             const sweep = _mailSweepable();
             const sweepStrip = sweep.length ? `
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;
@@ -22097,6 +22124,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         </div>
                     </div>
                     ${banner}
+                    ${lockStrip}
                     ${sweepStrip}
                     ${rows}
                     ${_scan.stage === 'running' ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">
@@ -22115,6 +22143,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (sn) sn.onclick = () => { try { triggerHaptic('light'); } catch (_) {} openSenderList(); };
             const sw = host.querySelector('#_ms_sweep');
             if (sw) sw.onclick = () => { try { triggerHaptic('light'); } catch (_) {} _mailSweepUnapproved(); };
+            const vb = host.querySelector('#_ms_vault');
+            if (vb) vb.onclick = () => {
+                try { triggerHaptic('light'); } catch (_) {}
+                /* RE-READ ON CLOSE, not "now press Check now again". The
+                 * statements are already in the store; the only thing that was
+                 * missing is the key, and once it is there the retry is not a
+                 * second decision the owner should have to make. */
+                openBankVault({
+                    onClose: () => {
+                        if (window.WFVault && window.WFVault.isUnlocked() && _mailSyncState.stage !== 'running') {
+                            runMailSync();
+                        }
+                    },
+                });
+            };
             /* The decision offered where the confusion is. Seeing an unfamiliar
              * row and being sent to another screen to find it again is how a
              * queue stops being read. */
@@ -23097,6 +23140,12 @@ table.amort tbody tr { page-break-inside: avoid; }
              * them. Filled by the loop, drained after it. */
             const _ready = [];
 
+            /* HOW MANY WERE HELD FOR A PASSWORD, counted rather than merely
+             * shown per row. A statement that could not be opened is a
+             * statement that will never be filed, and the fix — unlock the
+             * vault — is one action for all of them, not one per row. */
+            _mailSyncState.locked = 0;
+
             for (let i = 0; i < docs.length; i += 1) {
                 const d = docs[i];
                 /* A SENDER NOBODY HAS APPROVED IS NOT OPENED.
@@ -23199,7 +23248,25 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * two shapes of "expense" end up in one array. */
                     const rows = (_parsed && Array.isArray(_parsed.rows)) ? _parsed.rows : [];
                     if (!rows.length) {
-                        set(i, { stage: 'held', reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60) });
+                        /* THE CODE, NOT ONLY THE SENTENCE. The card printed a
+                         * human message and threw the reason away, so "none of
+                         * your saved keys opened it" and "the layout yielded no
+                         * rows" were the same kind of dead end on screen —
+                         * though one of them is fixed by one tap and the other
+                         * is not. */
+                        const stmtCodes = (Array.isArray(res.quarantined) ? res.quarantined : [])
+                            .filter((q) => q && q.scope === 'statement')
+                            .map((q) => q.reason);
+                        const QK = (window.WFMailIntake && window.WFMailIntake.QUARANTINE) || {};
+                        const lockedOut = stmtCodes.some(
+                            (c) => c === QK.PASSWORD_FAILED || c === QK.NO_VAULT_KEYS);
+                        if (lockedOut) _mailSyncState.locked += 1;
+                        set(i, {
+                            stage: 'held',
+                            why: stmtCodes[0] || null,
+                            locked: lockedOut,
+                            reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60),
+                        });
                     } else {
                         set(i, {
                             stage: 'ready',
@@ -29486,7 +29553,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             return out;
         }
 
-        async function openBankVault() {
+        /**
+         * The statement-password vault.
+         *
+         * `onClose` exists for one caller and one reason: the mailbox card can
+         * hold statements it could not open, and sending the owner here to
+         * unlock the vault is only half an answer if they must then remember to
+         * press Check now again. See _mailSyncState.locked.
+         */
+        async function openBankVault(opts = {}) {
             if (!window.WFVault) { notify('Secure vault module not loaded', 'error'); return; }
             if (!(window.crypto && window.crypto.subtle)) {
                 notify('This browser cannot store passwords securely (no Web Crypto)', 'error');
@@ -29509,6 +29584,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             const close = () => {
                 overlay.classList.remove('open');
                 setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+                try { if (typeof opts.onClose === 'function') opts.onClose(); } catch (_) { /* the modal still closes */ }
             };
             overlay.querySelector('#_bv_close').onclick = close;
             const body = overlay.querySelector('#_bv_body');

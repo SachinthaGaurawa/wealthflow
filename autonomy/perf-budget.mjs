@@ -146,7 +146,7 @@ export const BUDGETS = {
      * that stops a display name being read as the address. Roughly 5 KB on
      * 1.81 MB — all of it on a path that deletes documents, where the comment
      * explaining WHY a key is named explicitly is worth its bytes. */
-    htmlBytes: 1_841_000,        // measured 1,835,047 — sender discovery
+    htmlBytes: 1_845_000,        // measured 1,839,470 — the locked-statement retry
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

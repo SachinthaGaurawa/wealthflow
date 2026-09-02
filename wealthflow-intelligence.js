@@ -253,12 +253,12 @@
 
             if (match.type === 'goal') {
                 if (!allocateToGoal(match.id, amount, date, 'Auto-allocated · matched "' + match.name + '"')) return null;
-                _notify('🎯 Auto-funded goal "' + match.name + '" with ' + _money(amount), 'success');
-                return { ok: true, module: 'goal', label: '🎯 ' + match.name };
+                _notify('Auto-funded goal "' + match.name + '" with ' + _money(amount), 'success');
+                return { ok: true, module: 'goal', label: match.name };
             }
             if (!allocateToLoan(match.id, amount, date, 'Auto-detected loan payment · "' + match.name + '"')) return null;
-            _notify('🏦 Auto-recorded loan payment for "' + match.name + '" · ' + _money(amount), 'success');
-            return { ok: true, module: 'loan', label: '🏦 ' + match.name };
+            _notify('Auto-recorded loan payment for "' + match.name + '" · ' + _money(amount), 'success');
+            return { ok: true, module: 'loan', label: match.name };
         } catch (e) {
             console.warn('[' + V + '] semantic allocate error:', e && e.message);
             return null;
@@ -266,128 +266,46 @@
     }
 
     /* =========================================================================
-     * C. QUARANTINE ZONE  ("Needs Review")
+     * C. THE SECOND "NEEDS REVIEW" QUEUE — DELETED, NOT MOVED
+     * =========================================================================
+     *
+     * There was a whole quarantine zone here: a localStorage store
+     * (`wf_quarantine`), an adder exported as window.wfQuarantineAdd, a tile
+     * renderer, and six chips to file a held transaction to expenses, income,
+     * subscriptions, a card, a goal or a loan.
+     *
+     * NONE OF IT HAD EVER RUN.
+     *
+     *   - `qAdd` had NO CALLER anywhere in the app. The comment beside its
+     *     export said "consumed by wealthflow-autonomous.js"; that file does
+     *     not mention it. So the store was always empty.
+     *   - `renderQuarantineTile()` looked up `#quarantineTile`, and no HTML in
+     *     this repository contains that id. It returned on its first line,
+     *     every time, silently.
+     *
+     * So the owner's "Interactive Quarantine Zone" existed twice: here, dead,
+     * and in wealthflow-review.js — which is wired, visible, persisted
+     * encrypted, raises its own banner, and is fed by the queue, the SMS paste
+     * and the statement flows. The mail pipeline sends its held rows to the
+     * statement review screen for the same reason: that one writes an undoable
+     * batch and de-duplicates against the ledger.
+     *
+     * Wiring this one up would have made a THIRD path that writes financial
+     * records, with its own store and its own idea of what a filed row is.
+     * That is how two shapes of "expense" end up in one array. It is deleted
+     * rather than repaired; wealthflow-review.js is the one that answers the
+     * requirement, and test/mail_filing_test.js pins that the mail path reaches
+     * the review screen rather than inventing a second writer.
      * ========================================================================= */
-    function qList() { try { return JSON.parse(localStorage.getItem('wf_quarantine') || '[]'); } catch (_) { return []; } }
-    function qSave(arr) { try { localStorage.setItem('wf_quarantine', JSON.stringify(arr)); } catch (_) {} }
 
-    function qAdd(brain, reason) {
-        if (!brain) return;
-        var arr = qList();
-        if (brain.hash && arr.some(function (x) { return x.brain && x.brain.hash === brain.hash; })) return; // no dupes
-        arr.unshift({ id: _uid(), brain: brain, reason: reason || 'Needs review', ts: Date.now() });
-        if (arr.length > 50) arr = arr.slice(0, 50);
-        qSave(arr);
-        try { renderQuarantineTile(); } catch (_) {}
-    }
-
-    function qRemove(id) { qSave(qList().filter(function (x) { return x.id !== id; })); try { renderQuarantineTile(); } catch (_) {} }
-
-    function qResolve(id, module) {
-        var it = qList().find(function (x) { return x.id === id; });
-        if (!it) return;
-        if (typeof window.wfApplyBrainResult !== 'function') { _notify('Automation engine not loaded', 'error'); return; }
-        window.wfApplyBrainResult(it.brain, { forceModule: module, skipDedup: true, skipIntel: true }).then(function (r) {
-            if (r && r.ok) {
-                qRemove(id);
-                _notify('✅ Filed to ' + module, 'success');
-                _refreshAll();
-            } else {
-                _notify('Could not file: ' + ((r && r.reason) || 'error'), 'error');
-            }
-        }).catch(function (e) { _notify('Error: ' + (e && e.message), 'error'); });
-    }
-
-    function qResolveGoalLoan(id, type) {
-        // Show a sub-picker of the user's goals/loans, then allocate.
-        var it = qList().find(function (x) { return x.id === id; });
-        if (!it) return;
-        var list = type === 'goal' ? _get('targets') : _get('loans');
-        if (!list.length) { _notify('No ' + (type === 'goal' ? 'savings goals' : 'loans') + ' exist yet', 'warn'); return; }
-        var f = (it.brain.routed && it.brain.routed.suggested_fields) || {};
-        var amount = Number(f.amount) || 0;
-        var date = f.date ? new Date(f.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
-        var opts = list.map(function (x) { return '<option value="' + _esc(x.id) + '">' + _esc(x.name) + '</option>'; }).join('');
-        var overlay = _overlay(
-            (type === 'goal' ? '🎯 Assign to which goal?' : '🏦 Assign to which loan?'),
-            '<div style="font-size:13px;color:var(--text2);margin-bottom:10px;">' + _money(amount) + ' on ' + _esc(date) + '</div>' +
-            '<select id="_qglPick" class="fi" style="width:100%;margin-bottom:14px;">' + opts + '</select>' +
-            '<button class="btn btn-primary" style="width:100%;" id="_qglGo">Assign</button>'
-        );
-        overlay.querySelector('#_qglGo').onclick = function () {
-            var pid = overlay.querySelector('#_qglPick').value;
-            var ok = type === 'goal'
-                ? allocateToGoal(pid, amount, date, 'Filed from Needs-Review')
-                : allocateToLoan(pid, amount, date, 'Filed from Needs-Review');
-            if (ok) { qRemove(id); _notify('✅ Assigned', 'success'); _refreshAll(); }
-            else _notify('Assignment failed', 'error');
-            overlay.remove();
-        };
-    }
-
-    function qDismiss(id) { qRemove(id); _notify('Dismissed', 'info'); }
-    function qClearAll() { qSave([]); try { renderQuarantineTile(); } catch (_) {} _notify('Needs-Review cleared', 'info'); }
-
-    function _refreshAll() {
-        ['renderDash', 'renderExpenses', 'renderSubscriptions', 'renderTargets', 'renderLoans', 'renderCCOneTime', 'renderIncome'].forEach(function (fn) {
-            try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {}
-        });
-    }
-
-    function renderQuarantineTile() {
-        var host = document.getElementById('quarantineTile');
-        if (!host) return;
-        var items = qList();
-        if (!items.length) { host.innerHTML = ''; host.style.display = 'none'; return; }
-        host.style.display = '';
-
-        var rows = items.map(function (it) {
-            var b = it.brain || {};
-            var f = (b.routed && b.routed.suggested_fields) || {};
-            var m = b.resolved_merchant || {};
-            var amt = Number(f.amount) || 0;
-            var when = f.date ? new Date(f.date).toLocaleDateString() : '';
-            var merchant = m.name || f.desc || f.source || f.name || 'Unknown transaction';
-            var conf = b.routed && b.routed.confidence != null ? Math.round(b.routed.confidence * 100) : null;
-            return '' +
-                '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:13px;margin-bottom:10px;">' +
-                  '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
-                    '<div style="min-width:0;flex:1;">' +
-                      '<div style="font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(merchant) + '</div>' +
-                      '<div style="font-size:12px;color:var(--text3);margin-top:2px;">' + _esc(when) + (conf != null ? ' · AI ' + conf + '% sure' : '') + '</div>' +
-                    '</div>' +
-                    '<div style="font-weight:800;font-size:15px;color:var(--accent);flex-shrink:0;">' + _money(amt) + '</div>' +
-                  '</div>' +
-                  '<div style="font-size:12px;color:var(--text2);margin:8px 0 10px;line-height:1.5;">' +
-                    '🤔 ' + _esc(it.reason) + ' — where should this go?' +
-                  '</div>' +
-                  '<div style="display:flex;flex-wrap:wrap;gap:7px;">' +
-                    _chip(it.id, 'expenses', '💸 Expense') +
-                    _chip(it.id, 'income', '💰 Income') +
-                    _chip(it.id, 'subscriptions', '🔁 Subscription') +
-                    _chip(it.id, 'cconetime', '💳 Credit Card') +
-                    _chipGL(it.id, 'goal', '🎯 Goal') +
-                    _chipGL(it.id, 'loan', '🏦 Loan') +
-                    '<button onclick="wfQ.dismiss(\'' + it.id + '\')" style="background:transparent;border:1px solid var(--border);color:var(--text3);border-radius:9px;padding:7px 11px;font-size:12px;cursor:pointer;">✕ Dismiss</button>' +
-                  '</div>' +
-                '</div>';
-        }).join('');
-
-        host.innerHTML = '' +
-            '<div style="background:linear-gradient(145deg, rgba(245,158,11,0.10), var(--card));border:1px solid rgba(245,158,11,0.45);border-radius:16px;padding:15px;">' +
-              '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
-                '<div style="font-weight:800;font-size:15px;color:#f59e0b;">🛟 Needs Review <span style="background:#f59e0b;color:#1a1a1a;border-radius:20px;padding:1px 9px;font-size:12px;margin-left:4px;">' + items.length + '</span></div>' +
-                (items.length > 1 ? '<button onclick="wfQ.clearAll()" style="background:transparent;border:none;color:var(--text3);font-size:12px;cursor:pointer;text-decoration:underline;">Clear all</button>' : '') +
-              '</div>' +
-              rows +
-            '</div>';
-    }
-
-    function _chip(id, module, label) {
-        return '<button onclick="wfQ.resolve(\'' + id + '\',\'' + module + '\')" style="background:var(--bg);border:1px solid var(--border2);color:var(--text);border-radius:9px;padding:7px 11px;font-size:12px;cursor:pointer;font-weight:600;">' + label + '</button>';
-    }
-    function _chipGL(id, type, label) {
-        return '<button onclick="wfQ.resolveGoalLoan(\'' + id + '\',\'' + type + '\')" style="background:var(--bg);border:1px solid var(--border2);color:var(--text);border-radius:9px;padding:7px 11px;font-size:12px;cursor:pointer;font-weight:600;">' + label + '</button>';
+    /* The icon system's lock, or nothing. NEVER an emoji: a system-font glyph
+     * is a fixed colour that cannot follow the theme, and this app's rule is
+     * inline SVG that inherits currentColor. Falls back to empty rather than to
+     * a character, because a missing icon is invisible and a stray glyph is
+     * the thing being removed. */
+    function _lockIcon() {
+        try { return (window.WFIcon && window.WFIcon.has && window.WFIcon.has('lock')) ? window.WFIcon('lock') : ''; }
+        catch (_) { return ''; }
     }
 
     /* tiny modal overlay helper (self-contained; does not depend on app modals) */
@@ -422,9 +340,9 @@
             '<input id="_vNic" class="fi" style="width:100%;margin:4px 0 12px;" placeholder="200012345678 or 921234567V" value="' + _esc(v && v.nic || '') + '">' +
             '<label style="font-size:12px;color:var(--text3);">Date of birth</label>' +
             '<input id="_vDob" type="date" class="fi" style="width:100%;margin:4px 0 16px;" value="' + _esc(v && v.dob || '') + '">' +
-            '<button class="btn btn-primary" id="_vSave" style="width:100%;margin-bottom:8px;">🔐 Save securely</button>' +
+            '<button class="btn btn-primary" id="_vSave" style="width:100%;margin-bottom:8px;">' + _lockIcon() + ' Save securely</button>' +
             (vaultExists() ? '<button class="btn btn-secondary" id="_vClear" style="width:100%;background:transparent;border:1px solid var(--border);color:var(--text3);">Clear vault</button>' : '');
-        var o = _overlay('🔐 Security Vault', html);
+        var o = _overlay(_lockIcon() + ' Security Vault', html);
         o.querySelector('#_vSave').onclick = async function () {
             try {
                 await vaultSave({
@@ -432,7 +350,7 @@
                     nic: o.querySelector('#_vNic').value,
                     dob: o.querySelector('#_vDob').value
                 });
-                _notify('🔐 Vault saved & encrypted on this device', 'success');
+                _notify('Vault saved and encrypted on this device', 'success');
                 o.remove();
             } catch (e) { _notify('Save failed: ' + (e && e.message), 'error'); }
         };
@@ -448,19 +366,11 @@
     window.wfVaultPdfPasswords = vaultPdfPasswords;     // consumed by wealthflow-ai-v4.js PDF loader
     window.wfTrySemanticAllocate = trySemanticAllocate;  // consumed by wealthflow-autonomous.js
     window.wfMatchGoalOrLoan = matchGoalOrLoan;
-    window.wfQuarantineAdd = qAdd;                       // consumed by wealthflow-autonomous.js
-    window.wfQ = {
-        list: qList, add: qAdd, resolve: qResolve, resolveGoalLoan: qResolveGoalLoan,
-        dismiss: qDismiss, clearAll: qClearAll, render: renderQuarantineTile
-    };
-    window.renderQuarantineTile = renderQuarantineTile;
+    /* window.wfQuarantineAdd, window.wfQ and window.renderQuarantineTile are
+     * gone with the code above, along with the timer that rendered a tile into
+     * an element no page has. Nothing called any of them: the only reference in
+     * the repository was index.html's own call to renderQuarantineTile(), which
+     * has already been removed. window.wfReview is the review queue. */
 
-    // first render once the DOM is ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function () { setTimeout(renderQuarantineTile, 1500); });
-    } else {
-        setTimeout(renderQuarantineTile, 1500);
-    }
-
-    console.log('[' + V + '] Intelligence layer ready — Vault · Semantic Allocation · Quarantine Zone');
+    console.log('[' + V + '] Intelligence layer ready — Vault · Semantic Allocation');
 })();

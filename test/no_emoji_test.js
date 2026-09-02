@@ -93,13 +93,49 @@ function countIn(src) {
 function bodyIn(src, name) {
     const at = src.search(new RegExp(`\\n\\s*(?:async\\s+)?function ${name}\\s*\\(`));
     if (at < 0) return '';
+
+    /* PAST THE PARAMETER LIST FIRST, AND THIS IS NOT A DETAIL.
+     *
+     * `function f(opts = {})` has a brace before the body. Matching from the
+     * first `{` after the name therefore returned the SIGNATURE and nothing
+     * else — an empty body, which passes an emoji check by containing no
+     * content at all. Every screen function with a defaulted object parameter
+     * was silently exempt from the rule this file exists to enforce, and the
+     * only reason it surfaced is that one case also asserts a positive. */
+    let i = src.indexOf('(', at);
     let depth = 0;
-    for (let j = src.indexOf('{', at); j < src.length; j += 1) {
+    for (; i < src.length; i += 1) {
+        if (src[i] === '(') depth += 1;
+        else if (src[i] === ')') { depth -= 1; if (depth === 0) { i += 1; break; } }
+    }
+
+    depth = 0;
+    for (let j = src.indexOf('{', i); j < src.length; j += 1) {
         if (src[j] === '{') depth += 1;
         else if (src[j] === '}') { depth -= 1; if (depth === 0) return src.slice(at, j + 1); }
     }
     return src.slice(at);
 }
+
+/* The extractor's own regression. A body that comes back empty is a check that
+ * passes for the wrong reason, and this file is nothing but checks over
+ * extracted bodies. */
+describe('the extractor these checks depend on', () => {
+    it('returns a real body for a function with a defaulted object parameter', () => {
+        const src = '\nfunction sample(opts = {}) {\n  const x = 1;\n}\n';
+        const body = bodyIn(src, 'sample');
+        expect(body).toContain('const x = 1;');
+        expect(body.trim().endsWith('}')).toBe(true);
+    });
+
+    it('still handles a plain signature', () => {
+        expect(bodyIn('\nfunction plain(a, b) {\n  return a;\n}\n', 'plain')).toContain('return a;');
+    });
+
+    it('answers empty for a name that is not there, rather than the whole file', () => {
+        expect(bodyIn('\nfunction other() {}\n', 'missing')).toBe('');
+    });
+});
 
 /** The body of `function NAME(` in index.html. */
 function fn(name) { return bodyIn(html, name); }
@@ -136,6 +172,33 @@ describe('the screens built under this rule carry no emoji at all', () => {
             const found = body.match(EMOJI) || [];
             expect(found, `emoji in ${where}: ${found.join(' ')}`).toEqual([]);
         }
+    });
+
+    /* THE SURFACES THAT LIVE ONLY IN A MODULE. fn() reads index.html, so a
+     * screen defined in a sibling file was never covered by the list above at
+     * all — and the settings vault is a screen the owner opens. */
+    it.each([
+        ['wealthflow-intelligence.js', 'openVaultModal', 'the NIC/DOB security vault'],
+        ['wealthflow-intelligence.js', 'trySemanticAllocate', 'the goal/loan auto-allocation toasts'],
+    ])('%s: %s (%s) carries no emoji', (file, name) => {
+        const body = bodyIn(read(file), name);
+        expect(body, `${name} not found in ${file} — this guard would pass vacuously`).toBeTruthy();
+        const found = body.match(EMOJI) || [];
+        expect(found, `emoji in ${name}: ${found.join(' ')}`).toEqual([]);
+    });
+
+    it('the second Needs-Review queue is gone, not merely quiet', () => {
+        /* It had no producer and rendered into an element no page contains, so
+         * it was invisible either way. Wiring it would have made a THIRD writer
+         * of financial records; wealthflow-review.js is the one that is wired,
+         * visible and fed. */
+        const intel = read('wealthflow-intelligence.js');
+        for (const gone of ['window.wfQuarantineAdd = qAdd', 'window.wfQ = {', 'function renderQuarantineTile(', "getElementById('quarantineTile')"]) {
+            expect(intel, `${gone} came back`).not.toContain(gone);
+        }
+        /* And the live one is still exported, because that is what answers the
+         * requirement. */
+        expect(read('wealthflow-review.js')).toContain('window.wfReview = {');
     });
 
     it('the override map is really finding overrides', () => {
@@ -239,7 +302,7 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * handleAIScan at 27, renderDebtDemolisher at 25 and appendAIMessage at 21.
  * What is left is a long tail: no single function now holds more than a
  * handful. */
-const EMOJI_CEILING = 1175;
+const EMOJI_CEILING = 1160;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {
