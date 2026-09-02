@@ -3828,11 +3828,25 @@
 
         /* ================== SETTINGS ================== */
         .settings-section {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--r);
-            padding: 20px;
-            margin-bottom: 14px;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: var(--r); padding: 20px; margin-bottom: 14px;
+            /* CLIPPED, like .stat-card, and for the same reason. Each of these
+             * sections carries a decorative 80px watermark positioned at
+             * top:-20px; right:-20px — deliberately hanging outside so it reads
+             * as a corner flourish. .stat-card has overflow:hidden and turns it
+             * into one; this did not, so on a 360px screen the watermark stood
+             * 3px past the viewport edge.
+             *
+             * Three pixels in Chromium. On a browser whose viewport arithmetic
+             * differs — iOS Safari, or any device with a different scrollbar
+             * model — a decoration hanging 20px outside an unclipped box is
+             * exactly what produces a stray horizontal scroll and elements that
+             * look like they are sticking off the screen.
+             *
+             * Checked before adding: the watermark is the ONLY absolutely
+             * positioned descendant across all 16 sections, so nothing here
+             * relies on escaping the box. */
+            overflow: hidden;
         }
 
         .settings-title {

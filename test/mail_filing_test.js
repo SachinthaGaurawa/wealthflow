@@ -454,3 +454,62 @@ describe('the origins used on every load are pre-connected', () => {
         expect(hints).toBeLessThanOrEqual(7);
     });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * LAYOUT: THE CONTRACT THAT KEEPS PAGES INSIDE THE VIEWPORT
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('wide content scrolls, decoration is clipped', () => {
+    /* Audited across five viewports (360, 390, 768, 1280, 1920) and nine
+     * screens with seeded records, plus every md* modal at the three narrow
+     * widths. Result: no page scrolls sideways and nothing paints off-screen.
+     *
+     * Two things I nearly "fixed" and must not: the CC tables reported as 621px
+     * over at 360px are inside .tbl-wrap and are SUPPOSED to extend — that is
+     * what horizontal scrolling is; and .stat-card's 20px is a decorative
+     * circle placed at right:-20px and clipped on purpose. A detector that
+     * counts either as breakage sends someone to break working CSS. */
+    const css = html.slice(0, html.indexOf('</style>') + 8);
+
+    it('wide tables scroll rather than clip', () => {
+        expect(css).toMatch(/\.tbl-wrap\s*\{[^}]*overflow-x:\s*auto/);
+        expect(css, 'the min-width that makes the wrapper slide is gone')
+            .toMatch(/\.tbl-wrap table\s*\{[^}]*min-width:\s*600px/);
+    });
+
+    it('and the scroll is usable on a phone', () => {
+        /* Momentum scrolling, and a swipe that stays in the table instead of
+         * triggering the browser's back gesture. */
+        const block = css.slice(css.indexOf('.tbl-wrap {'), css.indexOf('.tbl-wrap {') + 700);
+        expect(block).toMatch(/-webkit-overflow-scrolling:\s*touch/);
+        expect(block).toMatch(/overscroll-behavior-x:\s*contain/);
+    });
+
+    it('the first column stays put while the rest slides', () => {
+        expect(css).toMatch(/\.tbl-wrap table th:first-child[^{]*\{[^}]*position:\s*sticky/);
+    });
+
+    it('a section carrying a bleed decoration clips it', () => {
+        /* .settings-section holds an 80px watermark at top:-20px; right:-20px.
+         * .stat-card has always clipped its equivalent; this one did not, and
+         * stood 3px past the viewport at 360px. Three pixels in Chromium — but
+         * a decoration hanging 20px outside an unclipped box is exactly what
+         * produces a stray horizontal scroll on a browser whose viewport
+         * arithmetic differs. */
+        expect(css).toMatch(/\.settings-section\s*\{[\s\S]*?overflow:\s*hidden/);
+        expect(css).toMatch(/\.stat-card\s*\{[^}]*overflow:\s*hidden/);
+    });
+
+    it('nothing is hidden on mobile just to save room', () => {
+        /* The owner asked for this by name: the user, time and date must stay
+         * visible on a phone. A display:none inside a max-width media query is
+         * the lazy way to stop an overflow, and it removes what they asked to
+         * keep. */
+        const mobileBlocks = [...css.matchAll(/@media[^{]*max-width:\s*(\d+)px[^{]*\{([\s\S]*?)\n        \}/g)]
+            .filter((m) => Number(m[1]) <= 768)
+            .map((m) => m[2]).join('\n');
+        for (const banned of ['.user-name', '#wfClock', '.footer-date']) {
+            expect(mobileBlocks, `${banned} is hidden on small screens`)
+                .not.toMatch(new RegExp(banned.replace('.', '\\.') + '[^{]*\\{[^}]*display:\\s*none'));
+        }
+    });
+});
