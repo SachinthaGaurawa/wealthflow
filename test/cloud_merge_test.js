@@ -434,6 +434,32 @@ describe('a deletion is never lost in silence', () => {
             + 'stamp (100) and lose to the cloud (500)').toBe(true);
     });
 
+    it('a field map WITHOUT the field means "never touched", not "use the key stamp"', () => {
+        /* THE HOLE IN MY OWN FIRST FIX, and it passed every other test here.
+         *
+         * The fallback read the KEY stamp whenever a field had no stamp of its
+         * own. So a stale device that HAS been stamping fields — just never this
+         * one — still won it through its key stamp, which is the entire bug
+         * wearing the fix as a hat. Only driving the real toggleSetting in a
+         * browser exposed it; DB.set alone passed.
+         *
+         * No field map at all still falls back to the key stamp: that is a
+         * document written before field stamps existed, and it must keep a real
+         * claim rather than lose everything. */
+        const { api } = loadMerge();
+        const local = { notifications: false, currency: 'LKR' };
+        const cloud = { notifications: true, currency: 'LKR' };
+
+        // Cloud stamps fields, but never `notifications`, and carries a huge KEY stamp.
+        const held = api._wfMergeKeyed(local, cloud, 1, 9e12, { notifications: 1000 }, { currency: 1 });
+        expect(held.notifications, 'a device that never stamped this field still won it '
+            + 'through its key stamp').toBe(false);
+
+        // No field map at all — legacy document — DOES fall back to the key stamp.
+        const legacy = api._wfMergeKeyed(local, cloud, 1, 9e12, { notifications: 1000 }, null);
+        expect(legacy.notifications, 'a pre-field-stamp document lost its claim entirely').toBe(true);
+    });
+
     it('the write path actually stamps the key it just wrote', () => {
         // The merge only has a clock because DB.set sets one. Extracting
         // _wfMergeKeyed and driving it directly proves the merge; it does not

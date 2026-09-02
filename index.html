@@ -7835,9 +7835,22 @@
                 const names = {};
                 Object.keys(localVal).forEach((n) => { names[n] = 1; });
                 Object.keys(cloudVal).forEach((n) => { names[n] = 1; });
+                /* NO FIELD MAP AT ALL means a document written before field
+                 * stamps existed: fall back to the key stamp, so it keeps a real
+                 * claim instead of losing everything.
+                 *
+                 * A field map that simply LACKS THIS FIELD means the opposite —
+                 * that device has been stamping fields and never stamped this
+                 * one, so it has not touched it. Reading the key stamp there was
+                 * a hole straight back into the bug: a stale device with a huge
+                 * key stamp would win a field it never edited, which is the
+                 * whole complaint. Caught by driving the real toggleSetting
+                 * rather than DB.set — the version of this that only tested
+                 * DB.set passed. */
                 const at = (m, n, fallback) => {
-                    const v = m && m[n];
-                    return (typeof v === 'number' && isFinite(v)) ? v : fallback;
+                    if (!m) return fallback;
+                    const v = m[n];
+                    return (typeof v === 'number' && isFinite(v)) ? v : 0;
                 };
                 for (const n of Object.keys(names)) {
                     const inL = Object.prototype.hasOwnProperty.call(localVal, n);
