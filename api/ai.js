@@ -22,7 +22,21 @@ export const config = {
 // ----- Embedded fallback Ollama key (project key supplied by the project owner)
 // This is intentionally low-trust: it works for low-volume use, but if you want
 // production-grade limits, set OLLAMA_API_KEY in Vercel and it'll take precedence.
-const OLLAMA_FALLBACK_KEY = 'f2e8db440e7e4028a40a0aefbf8dbec5.7efl7SycTPjEwR645yJmxTs1';
+/* THE KEY THAT USED TO SIT HERE IS GONE, AND IT MUST BE REVOKED.
+ *
+ * A literal Ollama Cloud key was hardcoded at this line as a "low-trust
+ * fallback" so the engine worked without configuration. This repository is
+ * PUBLIC. A credential in a public file is a credential everyone has, and no
+ * amount of low-trust framing changes that — the owner's standing instruction
+ * is that keys are never to be exposed.
+ *
+ * Removing it from HEAD does not remove it from git history, so the key that
+ * was here has to be revoked at the provider. That is the owner's action; this
+ * change only stops the file handing it out.
+ *
+ * The engine now reads OLLAMA_API_KEY from the environment and nothing else.
+ * Unset, it is simply not in the fan-out — there are fifteen other engines, and
+ * a missing one costs a vote rather than an answer. */
 
 // Helper: fetch with timeout — prevents one slow provider from blocking the chain
 async function fetchWithTimeout(url, options, timeoutMs = 22000) {
@@ -51,7 +65,7 @@ export default async function handler(req, res) {
     const geminiKey   = process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY;
     const deepseekKey = process.env.DEEPSEEK_API_KEY;
     const groqKey     = process.env.GROQ_API_KEY;
-    const ollamaKey   = process.env.OLLAMA_API_KEY || OLLAMA_FALLBACK_KEY;
+    const ollamaKey   = process.env.OLLAMA_API_KEY;
     const hfKey       = process.env.HUGGINGFACE_API_KEY || process.env.HF_API_KEY || process.env.HF_TOKEN;
     // v7.24 — every additional provider the owner has configured in Vercel.
     const anthropicKey  = process.env.ANTHROPIC_API_KEY;

@@ -36,6 +36,9 @@ const SAMPLES = {
     cohere: 'cohere_' + 'a1B2c3D4e5'.repeat(4),
     cerebras: 'csk-' + 'a1b2c3d4e5'.repeat(5),
     aws: 'AKIA' + 'ABCDEFGHIJKLMNOP',
+    /* 32 hex, a dot, an opaque tail. Assembled, like every sample here, so
+     * this file does not trip the scanner it is testing. */
+    ollama: 'abcdef0123'.repeat(3) + 'ab' + '.' + 'A1b2C3d4E5'.repeat(3),
     'private-key': '-----' + 'BEGIN RSA PRIVATE KEY' + '-----',
 };
 

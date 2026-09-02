@@ -48,6 +48,20 @@ export const SECRET_PATTERNS = [
     { id: 'mindsdb', label: 'MindsDB key', re: /\bmdb_[A-Za-z0-9]{8}\.[A-Za-z0-9]{20,}\b/g },
     { id: 'aws', label: 'AWS access key id', re: /\bAKIA[0-9A-Z]{16}\b/g },
     { id: 'slack', label: 'Slack token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g },
+    /* THE SHAPE THIS SCANNER DID NOT KNOW, AND MISSED FOR MONTHS.
+     *
+     * An Ollama Cloud key is 32 hex characters, a dot, then an opaque suffix —
+     * a shape no pattern above matches. One was hardcoded in api/ai.js and
+     * api/vision-scan.js as a "low-trust fallback", in a PUBLIC repository,
+     * while this scanner ran green on every commit and the CI check reported
+     * "No committed credentials".
+     *
+     * A scanner that reports clean because it was never taught the shape is
+     * worse than no scanner: it converts an absence of knowledge into a
+     * statement of safety. The pattern is added here rather than the key being
+     * quietly deleted, because the deletion fixes one file and this fixes the
+     * next one nobody has written yet. */
+    { id: 'ollama', label: 'Ollama Cloud key', re: /\b[0-9a-f]{32}\.[A-Za-z0-9]{20,}\b/g },
     { id: 'private-key', label: 'Private key block', re: /-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----/g },
 ];
 
