@@ -58,6 +58,11 @@
 // can live outside index.html.
 // =============================================================================
 
+/* The cadence rule, shared with the verification queue. One answer to "does
+ * this source pay in this month", used by the projection and by the screen that
+ * asks the owner to confirm the payout — they must not be able to disagree. */
+import { paysInMonth } from './wealthflow-verify-matrix.js';
+
 /* ── date helpers, all UTC-normalised to a day boundary ───────────────────── */
 
 const DAY_MS = 86400000;
@@ -259,6 +264,24 @@ export function commitments(appData, from, to) {
     // ── investment income on its nominal pay day ───────────────────────────
     // 'expected', not 'committed': `day` is a nominal pay day, and a payout can
     // land a day or two either side. The amount is known; the date is soft.
+    //
+    // AND THE CADENCE IS READ, WHICH IT WAS NOT. `income` records carry `freq`
+    // — monthly, quarterly or annual — and saveIncome puts the PER-PAYOUT
+    // figure in a field called `monthly` for all three:
+    //
+    //     monthly:   amount * rate / 100 / 12
+    //     quarterly: amount * rate / 100 / 4
+    //     annual:    amount * rate / 100
+    //
+    // This loop read that field and pushed it in EVERY month, so an annual
+    // payout was projected twelve times — the whole year's interest counted
+    // once a month, every month. On a projection whose entire purpose is
+    // "which day do I run out of money", that overstates income by 12x on any
+    // annual holding and 4x on a quarterly one.
+    //
+    // paysInMonth is imported rather than reimplemented: the verification queue
+    // asks the same question about the same records, and two answers to "does
+    // this pay in September" is how a screen and a projection disagree.
     for (const i of arr(A.income)) {
         if (!i) continue;
         const monthly = num(i.monthly);
@@ -272,6 +295,7 @@ export function commitments(appData, from, to) {
             if (d < from) continue;
             if (begins && d < begins) continue;
             if (ends && d > ends) continue;
+            if (!paysInMonth(i, from.getUTCFullYear(), from.getUTCMonth() + k)) continue;
             push(d, 'in', monthly, (i.name || 'Investment income'), 'income', 'expected', i.id);
         }
     }

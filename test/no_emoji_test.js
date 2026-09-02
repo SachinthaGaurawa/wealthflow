@@ -153,6 +153,8 @@ describe('the screens built under this rule carry no emoji at all', () => {
     it.each([
         ['openBankVault', 'the bank password vault'],
         ['renderMailSync', 'the Statement Sync card'],
+        ['renderVerifyQueue', 'the pending-confirmation queue'],
+        ['_verifyConfirm', 'the one-tap confirmation'],
         ['_mailStageChip', 'the pipeline stage chips'],
         ['runMailSync', 'the pipeline runner'],
         ['checkSweepNudge', 'the idle-cash notification'],

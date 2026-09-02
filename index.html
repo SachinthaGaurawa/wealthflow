@@ -438,6 +438,13 @@
          and the ledger-wide dedup that nothing had ever passed a hash set to.
          window.WFBackfill -->
     <script type="module" src="wealthflow-backfill.js"></script>
+    <!-- v7.67.0 — The verification matrix. A due date is a QUESTION, not an
+         answer: it decides which payouts and bills are due, which have been
+         confirmed, which are late and which the owner has flagged, and the
+         dashboard queue draws that. Nothing here writes a ledger row — the
+         owner's rule is that a static calendar must never post money that may
+         not have arrived. ESM, so type="module" is load-bearing; window.WFVerify. -->
+    <script type="module" src="wealthflow-verify-matrix.js"></script>
     <!-- Dynamic amortization — how many payments are actually left after an
          over- or underpayment, which the fixed l.duration could never answer.
          window.WFAmortize -->
@@ -5574,6 +5581,13 @@
 
                 <div class="page active" id="page-dashboard">
                     <div id="wfBrief" style="margin-bottom:16px;"></div>
+                    <!-- The Pending Inflow Queue. A date arriving is not evidence
+                         that money arrived, so a due payout produces a QUESTION
+                         here and nothing else moves until it is answered.
+                         Rendered by renderVerifyQueue() from WFVerify; hidden
+                         when there is nothing to answer, because an empty box
+                         asking nothing is noise on the page the app opens on. -->
+                    <div id="wfVerifyQueue" style="margin-bottom:16px; display:none;"></div>
                     <!-- Committed cash flow runway. Rendered by renderRunwayCard()
                          from WFCashflow; hidden until there is something to say, so
                          a new account with an empty ledger is not shown a scary
@@ -7520,6 +7534,15 @@
             auth: {}, income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
             cheques: [], expenses: [], targets: [], subscriptions: [], subMerchantMap: {},
             incomeReceived: {}, sessions: [], importBatches: [], balance: { total: 0, flows: [] },
+            /* The verification queue's three answers. `incomeReceived` was
+             * already the "yes" for money in; these are the "not yet" for money
+             * in, and the same pair for money out.
+             *
+             * THEY MUST BE DECLARED HERE. The hydration loops iterate appData's
+             * OWN keys, so a key missing from this object is a key that is
+             * never read back from disk or from the cloud — the same defect
+             * that once dropped incomeRecv and subscriptions. */
+            incomeDelayed: {}, billPaid: {}, billDelayed: {},
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the
@@ -21942,6 +21965,193 @@ table.amort tbody tr { page-break-inside: avoid; }
             return Number.isFinite(n) && n > 0 ? ' (' + n + ')' : '';
         }
 
+        /* ═══════════════════════════════════════════════════════════════════
+         * THE PENDING INFLOW QUEUE — a due date is a question, not an answer
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * The owner's rule, in their words: "The system must NEVER
+         * automatically post or mark income as Received based on a static
+         * calendar. If a transaction fails to arrive in the bank, blind
+         * automation will corrupt the balance sheet."
+         *
+         * The app already asked the question — a banner on the pay day — and
+         * that banner is a MOMENT. Close the app that day and the question is
+         * gone while the money is still unconfirmed, with nothing on any screen
+         * saying so. This is the queue that keeps asking: every payout whose
+         * date has passed and which nobody has answered, in one place, with one
+         * tap to answer it.
+         *
+         * NOTHING HERE WRITES A LEDGER ROW. Approving an inflow records the
+         * answer in `incomeReceived`, which is the same field the existing
+         * confirmation writes and the same field the dashboard already reads.
+         * Approving a bill records `billPaid` and NOTHING else: the
+         * subscription record is already the commitment and is already counted,
+         * so creating an expense here would double every premium the moment
+         * this screen was used — the exact corruption the rule above exists to
+         * prevent.
+         *
+         * The decisions live in wealthflow-verify-matrix.js, which has no DOM,
+         * no storage and no clock. This function draws what that module says.
+         */
+        function renderVerifyQueue() {
+            const host = $('wfVerifyQueue');
+            if (!host) return;
+            if (!window.WFVerify) { host.style.display = 'none'; return; }
+
+            let rows = [];
+            try {
+                const now = new Date();
+                rows = window.WFVerify.pendingInflows(appData, now)
+                    .concat(window.WFVerify.pendingOutflows(appData, now));
+            } catch (_) { rows = []; }
+
+            if (!rows.length) {
+                /* Hidden, not "All clear!". The dashboard already carries a
+                 * brief that says what needs attention; a second empty box
+                 * congratulating the owner is noise on the page the app opens
+                 * on. */
+                host.style.display = 'none';
+                host.innerHTML = '';
+                return;
+            }
+            host.style.display = '';
+
+            const t = window.WFVerify.queueTotals(rows);
+            const V = window.WFVerify.VERIFY;
+            /* Capped so a six-month gap does not produce a wall. The count in
+             * the header is the true number, so the cap can never hide how much
+             * is waiting. */
+            const shown = rows.slice(0, 8);
+
+            const chip = (r) => {
+                if (r.state === V.DELAYED) {
+                    return '<span style="font-size:10.5px;font-weight:800;letter-spacing:.4px;color:var(--amber,#f59e0b);'
+                        + 'background:rgba(245,158,11,0.12);border-radius:20px;padding:3px 9px;">FLAGGED LATE</span>';
+                }
+                if (r.late) {
+                    return '<span style="font-size:10.5px;font-weight:800;letter-spacing:.4px;color:var(--red);'
+                        + 'background:rgba(239,68,68,0.12);border-radius:20px;padding:3px 9px;">'
+                        + _wfEsc(String(r.daysLate)) + ' DAYS LATE</span>';
+                }
+                return '<span style="font-size:10.5px;font-weight:800;letter-spacing:.4px;color:var(--text3);'
+                    + 'background:rgba(127,127,127,0.12);border-radius:20px;padding:3px 9px;">PENDING</span>';
+            };
+
+            const body = shown.map((r, i) => `
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 0;border-top:1px solid var(--border);">
+                    <div style="flex:1;min-width:170px;">
+                        <div style="font-size:13.5px;font-weight:700;color:var(--text);overflow-wrap:anywhere;">
+                            ${_wfEsc(r.name)}${r.company ? ' <span style="color:var(--text3);font-weight:400;">· ' + _wfEsc(r.company) + '</span>' : ''}
+                        </div>
+                        <div style="font-size:11.5px;color:var(--text3);margin-top:2px;">
+                            ${r.kind === 'outflow' ? 'Due' : 'Expected'} ${_wfEsc(r.dueISO)} · ${_wfEsc(r.monthKey)}
+                        </div>
+                    </div>
+                    <div style="font-weight:800;font-size:14px;flex-shrink:0;color:${r.kind === 'outflow' ? 'var(--red)' : 'var(--green)'};">
+                        ${r.kind === 'outflow' ? '-' : '+'}${_wfEsc(fmtS(r.amount))}
+                    </div>
+                    ${chip(r)}
+                    <div style="display:flex;gap:7px;flex-shrink:0;">
+                        <button class="btn btn-primary btn-sm" data-vq-ok="${_wfEsc(String(i))}">
+                            ${(window.WFIcon ? WFIcon('check') : '')} ${r.kind === 'outflow' ? 'Paid' : 'Received'}
+                        </button>
+                        <button class="btn btn-secondary btn-sm" data-vq-late="${_wfEsc(String(i))}">
+                            ${r.state === V.DELAYED ? 'Clear flag' : 'Not yet'}
+                        </button>
+                    </div>
+                </div>`).join('');
+
+            host.innerHTML = `
+                <div class="card" style="padding:16px;">
+                    <div class="card-hdr-row">
+                        <div style="font-size:20px;display:flex;align-items:center;color:var(--accent);flex-shrink:0;">${(window.WFIcon && WFIcon.has('checkCircle')) ? WFIcon('checkCircle') : ''}</div>
+                        <div class="card-hdr-main">
+                            <div style="font-weight:800;font-size:14.5px;color:var(--text);">Awaiting your confirmation</div>
+                            <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
+                                ${_wfEsc(String(t.count))} due${t.late ? ' · ' + _wfEsc(String(t.late)) + ' late' : ''}${t.delayed ? ' · ' + _wfEsc(String(t.delayed)) + ' flagged' : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <div style="font-size:12px;color:var(--text3);line-height:1.6;margin:2px 0 4px;">
+                        ${t.inflow ? _wfEsc(fmtS(t.inflow)) + ' expected in' : ''}${t.inflow && t.outflow ? ' · ' : ''}${t.outflow ? _wfEsc(fmtS(t.outflow)) + ' expected out' : ''}.
+                        <b>Nothing here has been added to your balance.</b> These are dates that have passed —
+                        confirm the ones that actually happened.
+                    </div>
+                    ${body}
+                    ${rows.length > shown.length ? `<div style="font-size:11.5px;color:var(--text3);padding-top:10px;">
+                        ${_wfEsc(String(rows.length - shown.length))} more waiting — confirm these and the rest appear.
+                    </div>` : ''}
+                </div>`;
+
+            host.querySelectorAll('[data-vq-ok]').forEach((b) => {
+                b.onclick = () => {
+                    const r = shown[Number(b.getAttribute('data-vq-ok'))];
+                    if (!r) return;
+                    try { triggerHaptic('success'); } catch (_) {}
+                    b.disabled = true;
+                    _verifyConfirm(r);
+                };
+            });
+            host.querySelectorAll('[data-vq-late]').forEach((b) => {
+                b.onclick = () => {
+                    const r = shown[Number(b.getAttribute('data-vq-late'))];
+                    if (!r) return;
+                    try { triggerHaptic('light'); } catch (_) {}
+                    _verifyFlagLate(r);
+                };
+            });
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(host); } catch (_) {}
+        }
+        window.renderVerifyQueue = renderVerifyQueue;
+
+        /**
+         * One tap: this one happened.
+         *
+         * The EXPECTED figure is recorded, because one tap is what was asked
+         * for and the expected figure is right almost every time. The toast
+         * says which number went in and where to change it — a prompt on every
+         * confirmation is how a queue of eight becomes something nobody
+         * finishes.
+         */
+        function _verifyConfirm(row) {
+            const now = Date.now();
+            if (row.kind === 'outflow') {
+                const paid = DB.getObj('billPaid', {});
+                paid[row.key] = { confirmedAt: now, month: row.monthKey, amount: row.amount, via: 'queue' };
+                DB.set('billPaid', paid);
+                const flagged = DB.getObj('billDelayed', {});
+                if (flagged[row.key]) { delete flagged[row.key]; DB.set('billDelayed', flagged); }
+            } else {
+                const got = DB.getObj('incomeReceived', {});
+                got[row.key] = { confirmedAt: now, month: row.monthKey, amount: row.amount, via: 'queue' };
+                DB.set('incomeReceived', got);
+                const flagged = DB.getObj('incomeDelayed', {});
+                if (flagged[row.key]) { delete flagged[row.key]; DB.set('incomeDelayed', flagged); }
+            }
+            notify(fmtS(row.amount) + ' confirmed for ' + row.monthKey
+                + ' · open ' + (row.kind === 'outflow' ? 'Subscriptions' : 'Income') + ' to change the figure', 'success');
+            renderVerifyQueue();
+            try { renderDash(); } catch (_) {}
+        }
+
+        /**
+         * Not yet — and it stays in the queue.
+         *
+         * A delayed payout is not a dismissed one. The flag changes what the
+         * row SAYS, so the owner can tell "I know about this one" from "I have
+         * not looked", and the row keeps asking until it is confirmed. Nothing
+         * about the ledger changes either way, which is the point: a late
+         * deposit must never be able to move a balance.
+         */
+        function _verifyFlagLate(row) {
+            const field = row.kind === 'outflow' ? 'billDelayed' : 'incomeDelayed';
+            const map = DB.getObj(field, {});
+            if (map[row.key]) delete map[row.key];
+            else map[row.key] = { at: Date.now(), month: row.monthKey, due: row.dueISO };
+            DB.set(field, map);
+            renderVerifyQueue();
+        }
+
         function renderMailSync() {
             const host = $('wfMailSync');
             if (!host) return;
@@ -24470,6 +24680,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (window.WFInsights) window.WFInsights.renderInto('wfBrief', window.WFInsights.brief(5), { title: 'Needs your attention', allClear: true });
             } catch (_) {}
             try { renderRunwayCard(); } catch (_) {}
+            /* The queue of due-but-unconfirmed money, drawn every time the
+             * dashboard draws. Wired HERE and not next to a handler that runs
+             * only on some other action — that mistake put the Statement Sync
+             * card inside wfSweepRecord() and it never appeared on boot. */
+            try { renderVerifyQueue(); } catch (_) {}
             /* Statement Sync, drawn every time the dashboard draws.
              *
              * The first version of this call was placed next to the sweeper
@@ -26664,6 +26879,22 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (!src.day) return;
                 const payDay = parseInt(String(src.day).slice(-2)) || parseInt(src.day);
                 if (now.getDate() !== payDay) return;
+                /* THE CADENCE, WHICH THIS LOOP NEVER READ.
+                 *
+                 * `income` records carry `freq` — monthly, quarterly or annual
+                 * — and saveIncome stores the PER-PAYOUT figure in a field
+                 * called `monthly` for all three. Asking on the pay day of
+                 * every month therefore asked twelve times a year about money
+                 * that arrives once, and a reminder that is wrong eleven times
+                 * out of twelve is a reminder nobody reads.
+                 *
+                 * The rule is imported, not restated: the verification queue
+                 * asks the same question about the same records. Without the
+                 * module the old behaviour stands rather than the reminder
+                 * disappearing. */
+                try {
+                    if (window.WFVerify && !window.WFVerify.paysInMonth(src, now.getFullYear(), now.getMonth())) return;
+                } catch (_) { /* ask, as it always did */ }
                 const recvKey = src.id + '_' + curMonthStr;
                 if (incomeRecv[recvKey]) return; // already confirmed
                 const id = `income_${src.id}_${curMonthStr.replace('-', '')}`;
@@ -30530,6 +30761,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
                 cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
                 cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
+                incomeDelayed: {}, billPaid: {}, billDelayed: {},
                 cribAnalyses: {}, balance: { total: 0, flows: [] }, sweeps: [],
                 _tomb: {}, _kut: {}, _wipedAck: _wipeStamp, _wipedAt: _wipeStamp,
                 settings: currentSettings
