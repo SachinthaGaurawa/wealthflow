@@ -445,6 +445,12 @@
          owner's rule is that a static calendar must never post money that may
          not have arrived. ESM, so type="module" is load-bearing; window.WFVerify. -->
     <script type="module" src="wealthflow-verify-matrix.js"></script>
+    <!-- v7.67.0 — Liquidity & Credit Hub. Pawned collateral (what it costs to
+         redeem today, and how long is left before the broker can sell it) and
+         money lent to people (partial repayments, further advances, settlement).
+         Pure arithmetic, no DOM: the page draws what it says, and no event moves
+         a balance until it is confirmed. ESM; window.WFLiquidity. -->
+    <script type="module" src="wealthflow-liquidity.js"></script>
     <!-- Dynamic amortization — how many payments are actually left after an
          over- or underpayment, which the fixed l.duration could never answer.
          window.WFAmortize -->
@@ -2544,6 +2550,42 @@
         /* Wraps rather than shrinks: on a narrow phone the sentence takes the
          * width and the button drops beneath it, which is the one arrangement
          * that never truncates either. */
+        /* The hub's sub-navigation. A flex row that WRAPS rather than
+         * shrinking: two tabs on a 320px phone stay legible by dropping to two
+         * lines, where a shrink-to-fit row truncates both labels. */
+        .liq-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+        .liq-tab {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 9px 15px; border-radius: 11px; cursor: pointer;
+            font-size: 13px; font-weight: 700; letter-spacing: .2px;
+            color: var(--text3); background: var(--card);
+            border: 1px solid var(--border);
+            transition: color .15s ease, border-color .15s ease, background .15s ease;
+        }
+        .liq-tab:hover { color: var(--text); }
+        .liq-tab.active { color: var(--accent); border-color: var(--accent); background: rgba(212,175,55,0.08); }
+        .liq-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        .liq-row { border-top: 1px solid var(--border); padding: 12px 0; }
+        .liq-row:first-child { border-top: 0; }
+        .liq-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+        .liq-name { font-size: 14px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+        .liq-sub { font-size: 11.5px; color: var(--text3); }
+        .liq-acts { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 9px; }
+        .liq-chip {
+            font-size: 10.5px; font-weight: 800; letter-spacing: .4px;
+            border-radius: 20px; padding: 3px 9px; white-space: nowrap;
+        }
+        /* The timeline of a debtor's history. The rail is drawn with a border on
+         * the container rather than a pseudo-element per row, so a long history
+         * costs one paint instead of forty. */
+        .liq-tl { margin: 10px 0 0 6px; padding-left: 14px; border-left: 2px solid var(--border); }
+        .liq-tl-item { position: relative; padding: 7px 0; font-size: 12.5px; color: var(--text2); }
+        .liq-tl-item::before {
+            content: ''; position: absolute; left: -19px; top: 13px;
+            width: 8px; height: 8px; border-radius: 50%; background: var(--border2, var(--border));
+        }
+        .liq-tl-item.is-in::before { background: var(--green); }
+        .liq-tl-item.is-out::before { background: var(--red); }
         .wf-sender-find {
             display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
             padding: 11px 12px; margin: 0 0 14px;
@@ -5502,6 +5544,8 @@
                 </div>
                 <div class="nav-item" onclick="showPage('cheques',this)"><span class="nav-icon"><i data-wfi="cheque"></i></span> Cheques <span
                         class="nb" id="nb-chq" style="display:none">!</span></div>
+                <div class="nav-item" onclick="showPage('liquidity',this)"><span class="nav-icon"><i data-wfi="gem"></i></span> Liquidity &
+                    Credit</div>
                 <div class="sb-group">Tracking</div>
                 <div class="nav-item" onclick="showPage('expenses',this)"><span class="nav-icon"><i data-wfi="receipt"></i></span> Monthly
                     Expenses</div>
@@ -5833,6 +5877,22 @@
                     </div>
                 </div>
 
+                <!-- ═══ LIQUIDITY & CREDIT HUB ═══════════════════════════════
+                     Two ledgers with nowhere else to live: collateral pawned for
+                     cash, and money lent to people who repay when they can.
+                     Both are drawn by renderLiquidity() from WFLiquidity, and
+                     NEITHER moves a balance on its own — every event waits for
+                     the same confirmation the income queue asks for. -->
+                <div class="page" id="page-liquidity">
+                    <div class="liq-tabs" role="tablist">
+                        <button class="liq-tab active" id="liqTabPawn" role="tab" onclick="setLiquidityTab('pawn')">
+                            <i data-wfi="gem"></i> Pawned assets</button>
+                        <button class="liq-tab" id="liqTabDebt" role="tab" onclick="setLiquidityTab('debt')">
+                            <i data-wfi="user"></i> Debtors</button>
+                    </div>
+                    <div class="g4" id="liqStats" style="margin-bottom:16px;"></div>
+                    <div id="liqBody"></div>
+                </div>
                 <div class="page" id="page-expenses">
                     <div class="sh">
                         <div class="sh-title">Monthly Expenses</div>
@@ -7543,6 +7603,10 @@
              * never read back from disk or from the cloud — the same defect
              * that once dropped incomeRecv and subscriptions. */
             incomeDelayed: {}, billPaid: {}, billDelayed: {},
+            /* Pawned collateral, and money lent to people. Records with ids,
+             * so they sit in _WF_RECORD_KEYS and merge per record across
+             * devices like every other ledger here. */
+            pawns: [], debtors: [],
             cribReports: [], cribAnalyses: {},
             // Money moved out of the current account into a deposit or savings.
             // A record here is NOT a second subtraction from the balance — the
@@ -7599,7 +7663,7 @@
         // by recency (newest wins) with tombstones removing deleted rows. This merge
         // is commutative + idempotent, so every device converges to the union of the
         // newest records — no whole-document clobber, deletes included.
-        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps'];
+        const _WF_RECORD_KEYS = ['income', 'incomeRecv', 'loans', 'ccinstall', 'cconetime', 'ccPayments', 'cheques', 'expenses', 'targets', 'subscriptions', 'importBatches', 'cribReports', 'sessions', 'sweeps', 'pawns', 'debtors'];
         const _WF_TOMB_TTL = 100 * 24 * 3600 * 1000;   // keep tombstones ~100 days, then prune
 
         // A record's effective update time: explicit _ut, else parsed createdAt, else 0.
@@ -16852,7 +16916,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         // ==================== SIDEBAR ====================
-        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Installments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions' };
+        const pgTitles = { dashboard: '<i data-wfi="dashboard"></i> Dashboard', monthly: '<i data-wfi="calendar"></i> Monthly Plan', income: '<i data-wfi="chartLine"></i> Investments', incRecv: '<i data-wfi="wallet"></i> Income', loans: '<i data-wfi="bank"></i> Bank Loans', ccinstall: '<i data-wfi="card"></i> CC Installments', cconetime: '<i data-wfi="clock"></i> CC One-Time Payments', cheques: '<i data-wfi="cheque"></i> Cheque Tracker', expenses: '<i data-wfi="receipt"></i> Monthly Expenses', targets: '<i data-wfi="target"></i> Targets & Savings', dscr: '<i data-wfi="ruler"></i> DSCR Calculator', settings: '<i data-wfi="settings"></i> System Settings', ai: '<i data-wfi="bot"></i> <span style="color:var(--accent)">AI Advisor</span>', score: '<i data-wfi="trophy"></i> WealthFlow Score', subscriptions: '<i data-wfi="bell"></i> Subscriptions', debtdemo: '<i data-wfi="bomb"></i> Debt Demolisher', montecarlo: '<i data-wfi="crystal"></i> Wealth Simulator', cashflow3d: '<i data-wfi="globe"></i> 3D Cash Flow', sessions: '<i data-wfi="devices"></i> Active Sessions', liquidity: '<i data-wfi="gem"></i> Liquidity &amp; Credit Hub' };
 
         function showPage(name, navEl) {
             // RESTORED v6.9.2: biometric guard for sensitive zones
@@ -16916,7 +16980,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function renderPage(name) {
             // _wfCapMore needs to know which page to repaint.
             window._wfActivePage = name;
-            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv, crib: () => { try { if (window.WFCrib) window.WFCrib.render(); } catch (_) {} } };
+            const fn = { dashboard: renderDash, monthly: renderMonthly, income: renderIncome, loans: renderLoans, ccinstall: renderCCI, cconetime: renderCCOT, cheques: renderCheques, expenses: renderExpenses, targets: renderTargets, dscr: renderDSCR, settings: renderSettings, score: renderWFScore, subscriptions: renderSubscriptions, debtdemo: renderDebtDemolisher, montecarlo: renderMonteCarlo, cashflow3d: renderCashFlow3D, sessions: renderSessions, incRecv: renderIncRecv, liquidity: renderLiquidity, crib: () => { try { if (window.WFCrib) window.WFCrib.render(); } catch (_) {} } };
             if (fn[name]) fn[name]();
             // v7.69.0 — ONE hook for every screen. Whatever page you open, its intelligence
             // strip is painted at the top. Pages with nothing to say render nothing at all.
@@ -21966,6 +22030,474 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         /* ═══════════════════════════════════════════════════════════════════
+         * LIQUIDITY & CREDIT HUB — pawned collateral, and money lent to people
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * Two ledgers the app had nowhere to put. They share a screen because
+         * they answer one question — what is my cash tied up in, and when does
+         * it come back — and they share a rule with everything else here:
+         * NOTHING MOVES A BALANCE ON ITS OWN. A repayment logged is a claim
+         * until somebody says they saw it in the bank, and until then it is
+         * counted separately and shown as pending.
+         *
+         * The arithmetic lives in wealthflow-liquidity.js, which has no DOM and
+         * no clock. This draws what it says.
+         */
+        let _liqTab = 'pawn';
+
+        function setLiquidityTab(tab) {
+            _liqTab = (tab === 'debt') ? 'debt' : 'pawn';
+            try { triggerHaptic('light'); } catch (_) {}
+            const p = $('liqTabPawn');
+            const d = $('liqTabDebt');
+            if (p) p.classList.toggle('active', _liqTab === 'pawn');
+            if (d) d.classList.toggle('active', _liqTab === 'debt');
+            renderLiquidity();
+        }
+        window.setLiquidityTab = setLiquidityTab;
+
+        /** A chip, in the colour its state has earned. */
+        function _liqChip(text, colour, tint) {
+            return '<span class="liq-chip" style="color:' + colour + ';background:' + tint + ';">'
+                + _wfEsc(text) + '</span>';
+        }
+
+        function renderLiquidity() {
+            const host = $('liqBody');
+            const stats = $('liqStats');
+            if (!host || !stats) return;
+            if (!window.WFLiquidity) {
+                host.innerHTML = '<div class="card" style="padding:16px;font-size:12.5px;color:var(--text3);">'
+                    + 'The liquidity module did not load, so nothing here can be calculated. '
+                    + 'Reload the app; if it persists, the file wealthflow-liquidity.js is missing from the deploy.'
+                    + '</div>';
+                stats.innerHTML = '';
+                return;
+            }
+            const L = window.WFLiquidity;
+            const now = new Date();
+            const pawns = DB.get('pawns') || [];
+            const debtors = DB.get('debtors') || [];
+
+            if (_liqTab === 'pawn') {
+                const t = L.pawnTotals(pawns, now);
+                stats.innerHTML = `
+                    <div class="stat-card sc-gold"><div class="stat-label">Advanced</div><div class="stat-val">${fmtS(t.principal)}</div></div>
+                    <div class="stat-card sc-red"><div class="stat-label">Interest so far</div><div class="stat-val">${fmtS(t.interest)}</div></div>
+                    <div class="stat-card sc-blue"><div class="stat-label">To redeem all</div><div class="stat-val">${fmtS(t.payable)}</div></div>
+                    <div class="stat-card ${t.overdue ? 'sc-red' : 'sc-green'}"><div class="stat-label">Active tickets</div><div class="stat-val">${t.active}${t.overdue ? ' · ' + t.overdue + ' overdue' : ''}</div></div>`;
+
+                const rows = pawns.map((p, i) => {
+                    const st = L.pawnStatus(p, now);
+                    const chip = st.state === L.PAWN_STATE.REDEEMED
+                        ? _liqChip('REDEEMED', 'var(--green)', 'rgba(34,197,94,0.12)')
+                        : st.state === L.PAWN_STATE.OVERDUE
+                            ? _liqChip('OVERDUE', 'var(--red)', 'rgba(239,68,68,0.12)')
+                            : st.warn
+                                ? _liqChip(st.daysToMaturity + ' DAYS LEFT', 'var(--amber,#f59e0b)', 'rgba(245,158,11,0.12)')
+                                : _liqChip('ACTIVE', 'var(--text3)', 'rgba(127,127,127,0.12)');
+                    return `
+                    <div class="liq-row">
+                        <div class="liq-head">
+                            <div class="liq-name" style="flex:1;min-width:150px;">${_wfEsc(p.item || 'Pawned item')}</div>
+                            ${chip}
+                            <div style="font-weight:800;font-size:14px;color:var(--accent);">${fmtS(st.payable)}</div>
+                        </div>
+                        <div class="liq-sub" style="margin-top:3px;">
+                            ${p.ticket ? 'Ticket ' + _wfEsc(p.ticket) + ' · ' : ''}${_wfEsc(p.pawnDate || '')}${p.maturity ? ' → ' + _wfEsc(p.maturity) : ''}
+                            · ${fmtS(st.principal)} advanced at ${_wfEsc(String(p.rate || 0))}%/month
+                            ${p.interestMode === 'compound' ? ' compounded' : ''}
+                        </div>
+                        <div class="liq-sub" style="margin-top:2px;">
+                            ${st.state === L.PAWN_STATE.REDEEMED
+                                ? 'Redeemed ' + _wfEsc(String(p.redeemedAt || '').slice(0, 10)) + ' · interest paid ' + fmtS(st.interest)
+                                : st.months + ' month' + (st.months === 1 ? '' : 's') + ' of interest so far: ' + fmtS(st.interest)}
+                        </div>
+                        <div class="liq-acts">
+                            ${st.state !== L.PAWN_STATE.REDEEMED
+                                ? `<button class="btn btn-primary btn-sm" data-liq-redeem="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('check') : '')} Redeemed</button>` : ''}
+                            <button class="btn btn-secondary btn-sm" data-liq-pedit="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('edit') : '')} Edit</button>
+                            <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-liq-pdel="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('trash') : 'Delete')}</button>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                host.innerHTML = `
+                    <div class="card" style="padding:16px;">
+                        <div class="card-hdr-row">
+                            <div class="card-hdr-main">
+                                <div style="font-weight:800;font-size:14.5px;color:var(--text);">Pawned assets ledger</div>
+                                <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
+                                    Interest is charged per month and a part month counts as a whole one — the same way the counter bills it.
+                                </div>
+                            </div>
+                            <div class="card-hdr-actions">
+                                <button class="btn btn-primary btn-sm" id="_liq_addp">${(window.WFIcon ? WFIcon('plus') : '')} Add ticket</button>
+                            </div>
+                        </div>
+                        ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nothing pawned. Add a ticket and this tracks what it costs to redeem, and warns you before the maturity date passes.</div>'}
+                    </div>`;
+
+                const add = host.querySelector('#_liq_addp');
+                if (add) add.onclick = () => openPawnModal(null);
+                host.querySelectorAll('[data-liq-pedit]').forEach((b) => {
+                    b.onclick = () => openPawnModal(pawns[Number(b.getAttribute('data-liq-pedit'))]);
+                });
+                host.querySelectorAll('[data-liq-redeem]').forEach((b) => {
+                    b.onclick = () => _redeemPawn(pawns[Number(b.getAttribute('data-liq-redeem'))]);
+                });
+                host.querySelectorAll('[data-liq-pdel]').forEach((b) => {
+                    b.onclick = () => _deletePawn(pawns[Number(b.getAttribute('data-liq-pdel'))]);
+                });
+            } else {
+                const t = L.debtorTotals(debtors, now);
+                stats.innerHTML = `
+                    <div class="stat-card sc-gold"><div class="stat-label">Owed to you</div><div class="stat-val">${fmtS(t.outstanding)}</div></div>
+                    <div class="stat-card sc-blue"><div class="stat-label">Lent in total</div><div class="stat-val">${fmtS(t.lent)}</div></div>
+                    <div class="stat-card sc-green"><div class="stat-label">Repaid</div><div class="stat-val">${fmtS(t.repaid)}</div></div>
+                    <div class="stat-card ${t.pending ? 'sc-red' : 'sc-green'}"><div class="stat-label">Open debtors</div><div class="stat-val">${t.open}${t.pending ? ' · ' + t.pending + ' unconfirmed' : ''}</div></div>`;
+
+                const rows = debtors.map((d, i) => {
+                    const su = L.debtorSummary(d, now);
+                    const open = su.state === L.DEBT_STATE.OPEN;
+                    const chip = open
+                        ? _liqChip('OPEN', 'var(--accent)', 'rgba(212,175,55,0.12)')
+                        : _liqChip('SETTLED', 'var(--green)', 'rgba(34,197,94,0.12)');
+                    const tl = su.events.slice(-6).reverse().map((e) => {
+                        const isIn = e.kind === L.EVENT.REPAYMENT;
+                        return `<div class="liq-tl-item ${isIn ? 'is-in' : 'is-out'}">
+                            <b style="color:${isIn ? 'var(--green)' : 'var(--red)'};">${isIn ? '+' : '-'}${fmtS(e.amount)}</b>
+                            · ${_wfEsc(e.date || '')} · ${_wfEsc(e.kind === L.EVENT.TOPUP ? 'further capital' : e.kind)}
+                            ${e.confirmed ? '' : ' · <span style="color:var(--amber,#f59e0b);font-weight:700;">waiting for your confirmation</span>'}
+                            ${e.note ? '<div style="color:var(--text3);font-size:11.5px;">' + _wfEsc(e.note) + '</div>' : ''}
+                        </div>`;
+                    }).join('');
+                    return `
+                    <div class="liq-row">
+                        <div class="liq-head">
+                            <div class="liq-name" style="flex:1;min-width:150px;">${_wfEsc(d.name || 'Debtor')}</div>
+                            ${chip}
+                            <div style="font-weight:800;font-size:14px;color:${open ? 'var(--accent)' : 'var(--text3)'};">${fmtS(su.outstanding)}</div>
+                        </div>
+                        <div class="liq-sub" style="margin-top:3px;">
+                            ${fmtS(su.lent)} lent · ${fmtS(su.repaid)} repaid${d.note ? ' · ' + _wfEsc(d.note) : ''}
+                            ${su.pending ? ' · <b style="color:var(--amber,#f59e0b);">' + su.pending + ' unconfirmed, not counted above</b>' : ''}
+                        </div>
+                        ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
+                        <div class="liq-acts">
+                            <button class="btn btn-primary btn-sm" data-liq-pay="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('coins') : '')} Log repayment</button>
+                            <button class="btn btn-secondary btn-sm" data-liq-top="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('plus') : '')} Lend more</button>
+                            ${su.outstanding > 0 ? `<button class="btn btn-secondary btn-sm" data-liq-settle="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('checkCircle') : '')} Settle in full</button>` : ''}
+                            <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-liq-ddel="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('trash') : 'Delete')}</button>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                host.innerHTML = `
+                    <div class="card" style="padding:16px;">
+                        <div class="card-hdr-row">
+                            <div class="card-hdr-main">
+                                <div style="font-weight:800;font-size:14.5px;color:var(--text);">Debtor directory</div>
+                                <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
+                                    Every repayment and every further advance waits for your confirmation before it counts.
+                                </div>
+                            </div>
+                            <div class="card-hdr-actions">
+                                <button class="btn btn-primary btn-sm" id="_liq_addd">${(window.WFIcon ? WFIcon('plus') : '')} Add debtor</button>
+                            </div>
+                        </div>
+                        ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nobody owes you anything here yet. Add a debtor to track partial repayments, further advances and what is still outstanding.</div>'}
+                    </div>`;
+
+                const add = host.querySelector('#_liq_addd');
+                if (add) add.onclick = () => openDebtorModal(null);
+                host.querySelectorAll('[data-liq-pay]').forEach((b) => {
+                    b.onclick = () => openDebtorEvent(debtors[Number(b.getAttribute('data-liq-pay'))], 'repayment');
+                });
+                host.querySelectorAll('[data-liq-top]').forEach((b) => {
+                    b.onclick = () => openDebtorEvent(debtors[Number(b.getAttribute('data-liq-top'))], 'topup');
+                });
+                host.querySelectorAll('[data-liq-settle]').forEach((b) => {
+                    b.onclick = () => _settleDebtor(debtors[Number(b.getAttribute('data-liq-settle'))]);
+                });
+                host.querySelectorAll('[data-liq-ddel]').forEach((b) => {
+                    b.onclick = () => _deleteDebtor(debtors[Number(b.getAttribute('data-liq-ddel'))]);
+                });
+            }
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(host); } catch (_) {}
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(stats); } catch (_) {}
+        }
+        window.renderLiquidity = renderLiquidity;
+
+        /* A small overlay, built the way openSenderList builds its own: the
+         * static modal markup in this file is already long, and these three
+         * forms are only ever opened from this screen. */
+        function _liqOverlay(title, bodyHtml, onOpen) {
+            const overlay = document.createElement('div');
+            overlay.className = 'mo';
+            overlay.innerHTML = '<div class="md" style="max-width:460px;">'
+                + '<div class="md-hdr"><div class="md-title">' + title + '</div>'
+                + '<button class="md-x" aria-label="Close" id="_liq_x"><i data-wfi="x"></i></button></div>'
+                + bodyHtml + '</div>';
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => overlay.classList.add('open'));
+            const close = () => {
+                overlay.classList.remove('open');
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 230);
+            };
+            overlay.querySelector('#_liq_x').onclick = close;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+            try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(overlay); } catch (_) {}
+            try { initMoneyInputs(); } catch (_) {}
+            if (typeof onOpen === 'function') onOpen(overlay, close);
+            return overlay;
+        }
+
+        const _liqToday = () => new Date().toISOString().slice(0, 10);
+
+        function openPawnModal(existing) {
+            const p = existing || {};
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('gem') : '') + (existing ? ' Edit ticket' : ' Add pawned item'),
+                '<div class="fg"><label class="fl" for="_pw_item">Item</label>'
+                + '<input class="fi" id="_pw_item" placeholder="Gold chain, 2 pav" value="' + _wfEsc(p.item || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_ticket">Ticket number</label>'
+                + '<input class="fi" id="_pw_ticket" placeholder="A-4471" value="' + _wfEsc(p.ticket || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_principal">Amount advanced</label>'
+                + '<input class="fi" id="_pw_principal" inputmode="decimal" value="' + _wfEsc(String(p.principal || '')) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_rate">Interest, % per month</label>'
+                + '<input class="fi" id="_pw_rate" inputmode="decimal" placeholder="2.2" value="' + _wfEsc(String(p.rate || '')) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_mode">How it is charged</label>'
+                + '<select class="fi" id="_pw_mode">'
+                + '<option value="simple"' + (p.interestMode === 'compound' ? '' : ' selected') + '>Simple — on the amount advanced</option>'
+                + '<option value="compound"' + (p.interestMode === 'compound' ? ' selected' : '') + '>Compound — monthly</option>'
+                + '</select></div>'
+                + '<div class="fg"><label class="fl" for="_pw_date">Pawn date</label>'
+                + '<input class="fi" id="_pw_date" type="date" value="' + _wfEsc(p.pawnDate || _liqToday()) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_maturity">Maturity date</label>'
+                + '<input class="fi" id="_pw_maturity" type="date" value="' + _wfEsc(p.maturity || '') + '"></div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_pw_save" style="width:100%;">Save</button></div>',
+                (ov, close) => {
+                    ov.querySelector('#_pw_save').onclick = () => {
+                        const item = (ov.querySelector('#_pw_item').value || '').trim();
+                        const principal = parseMoney(ov.querySelector('#_pw_principal').value);
+                        const rate = parseFloat(ov.querySelector('#_pw_rate').value) || 0;
+                        if (!item || !principal) { notify('Name the item and the amount advanced', 'error'); return; }
+                        const arrp = (DB.get('pawns') || []).slice();
+                        const rec = {
+                            id: (existing && existing.id) || uid(),
+                            createdAt: (existing && existing.createdAt) || new Date().toISOString(),
+                            item, ticket: (ov.querySelector('#_pw_ticket').value || '').trim(),
+                            principal, rate,
+                            interestMode: ov.querySelector('#_pw_mode').value,
+                            pawnDate: ov.querySelector('#_pw_date').value || _liqToday(),
+                            maturity: ov.querySelector('#_pw_maturity').value || '',
+                            ...(existing && existing.redeemedAt ? { redeemedAt: existing.redeemedAt, state: existing.state } : {}),
+                        };
+                        const at = arrp.findIndex((x) => x && x.id === rec.id);
+                        if (at > -1) arrp[at] = rec; else arrp.push(rec);
+                        DB.set('pawns', arrp);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(existing ? 'Ticket updated' : 'Ticket added', 'success');
+                        close();
+                        renderLiquidity();
+                    };
+                },
+            );
+        }
+        window.openPawnModal = openPawnModal;
+
+        /* Redeeming is a fact, not a calculation, so it asks for the date it
+         * actually happened — interest stops there, not on the day the owner
+         * got round to recording it. */
+        function _redeemPawn(p) {
+            if (!p) return;
+            const st = window.WFLiquidity.pawnStatus(p, new Date());
+            showConfirm(
+                'checkCircle',
+                'Mark this ticket redeemed?',
+                'This records ' + (p.item || 'the item') + ' as redeemed today for ' + fmtS(st.payable)
+                    + ' (' + fmtS(st.principal) + ' advanced plus ' + fmtS(st.interest) + ' interest). '
+                    + 'Interest stops accruing on that date. Nothing is deducted from any balance — record the payment '
+                    + 'as an expense yourself if you track it there.',
+                'btn-primary', 'Redeemed',
+                () => {
+                    const arrp = (DB.get('pawns') || []).slice();
+                    const at = arrp.findIndex((x) => x && x.id === p.id);
+                    if (at < 0) return;
+                    arrp[at] = { ...arrp[at], redeemedAt: _liqToday(), state: 'REDEEMED', redeemedFor: st.payable };
+                    DB.set('pawns', arrp);
+                    try { triggerHaptic('success'); } catch (_) {}
+                    notify('Redeemed', 'success');
+                    renderLiquidity();
+                },
+            );
+        }
+
+        function _deletePawn(p) {
+            if (!p) return;
+            showConfirm(
+                'trash', 'Delete this ticket?',
+                'This removes ' + (p.item || 'the ticket') + ' and its interest history from WealthFlow. It cannot be undone.',
+                'btn-danger', 'Delete',
+                () => {
+                    DB.set('pawns', (DB.get('pawns') || []).filter((x) => x && x.id !== p.id));
+                    notify('Deleted', 'success');
+                    renderLiquidity();
+                },
+            );
+        }
+
+        function openDebtorModal(existing) {
+            const d = existing || {};
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('user') : '') + (existing ? ' Edit debtor' : ' Add debtor'),
+                '<div class="fg"><label class="fl" for="_db_name">Name</label>'
+                + '<input class="fi" id="_db_name" placeholder="Nimal" value="' + _wfEsc(d.name || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_db_amount">Amount lent</label>'
+                + '<input class="fi" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
+                + '<div class="fg"><label class="fl" for="_db_date">Date lent</label>'
+                + '<input class="fi" id="_db_date" type="date" value="' + _liqToday() + '"></div>'
+                + '<div class="fg"><label class="fl" for="_db_note">Note</label>'
+                + '<input class="fi" id="_db_note" maxlength="200" placeholder="For the shop renovation" value="' + _wfEsc(d.note || '') + '"></div>'
+                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;">'
+                + 'The first advance is recorded as an event, so the timeline shows it beside every repayment and every further advance.'
+                + '</div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_db_save" style="width:100%;">Save</button></div>',
+                (ov, close) => {
+                    ov.querySelector('#_db_save').onclick = () => {
+                        const name = (ov.querySelector('#_db_name').value || '').trim();
+                        const amount = parseMoney(ov.querySelector('#_db_amount').value);
+                        if (!name) { notify('Name the debtor', 'error'); return; }
+                        if (!existing && !amount) { notify('How much was lent?', 'error'); return; }
+                        const list = (DB.get('debtors') || []).slice();
+                        let rec = {
+                            id: (existing && existing.id) || uid(),
+                            createdAt: (existing && existing.createdAt) || new Date().toISOString(),
+                            name, note: (ov.querySelector('#_db_note').value || '').trim(),
+                            events: (existing && Array.isArray(existing.events)) ? existing.events.slice() : [],
+                            ...(existing && existing.closedAt ? { closedAt: existing.closedAt } : {}),
+                        };
+                        if (amount) {
+                            /* CONFIRMED on the spot. Handing somebody cash is
+                             * something the owner just did — asking them to
+                             * verify their own action a second time is the
+                             * ceremony this app is trying to remove. What waits
+                             * for confirmation is money moving in the OTHER
+                             * direction, which is a claim about the bank. */
+                            const r = window.WFLiquidity.addEvent(rec, {
+                                kind: 'lent', amount, date: ov.querySelector('#_db_date').value || _liqToday(),
+                                id: uid(), now: Date.now(), confirmed: true,
+                            });
+                            if (r.ok) rec = r.debtor;
+                        }
+                        const at = list.findIndex((x) => x && x.id === rec.id);
+                        if (at > -1) list[at] = rec; else list.push(rec);
+                        DB.set('debtors', list);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(existing ? 'Debtor updated' : 'Debtor added', 'success');
+                        close();
+                        renderLiquidity();
+                    };
+                },
+            );
+        }
+        window.openDebtorModal = openDebtorModal;
+
+        /**
+         * Log a repayment or a further advance.
+         *
+         * A repayment arrives UNCONFIRMED: it is a claim that money reached the
+         * bank, which is exactly the kind of claim the owner said must never
+         * post itself. A further advance is money they just handed over, so it
+         * is confirmed as it is written.
+         */
+        function openDebtorEvent(d, kind) {
+            if (!d) return;
+            const isPay = kind === 'repayment';
+            _liqOverlay(
+                (window.WFIcon ? WFIcon(isPay ? 'coins' : 'plus') : '')
+                    + (isPay ? ' Repayment from ' : ' Lend more to ') + _wfEsc(d.name || 'debtor'),
+                '<div class="fg"><label class="fl" for="_ev_amount">Amount</label>'
+                + '<input class="fi" id="_ev_amount" inputmode="decimal"></div>'
+                + '<div class="fg"><label class="fl" for="_ev_date">Date</label>'
+                + '<input class="fi" id="_ev_date" type="date" value="' + _liqToday() + '"></div>'
+                + '<div class="fg"><label class="fl" for="_ev_note">Note</label>'
+                + '<input class="fi" id="_ev_note" maxlength="200"></div>'
+                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;">'
+                + (isPay
+                    ? 'This is logged as waiting for your confirmation — it will not reduce what is outstanding until you confirm it on the dashboard.'
+                    : 'Money you have handed over is recorded straight away, and the outstanding balance rises by it.')
+                + '</div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_ev_save" style="width:100%;">Save</button></div>',
+                (ov, close) => {
+                    ov.querySelector('#_ev_save').onclick = () => {
+                        const amount = parseMoney(ov.querySelector('#_ev_amount').value);
+                        if (!amount) { notify('How much?', 'error'); return; }
+                        const list = (DB.get('debtors') || []).slice();
+                        const at = list.findIndex((x) => x && x.id === d.id);
+                        if (at < 0) return;
+                        const r = window.WFLiquidity.addEvent(list[at], {
+                            kind: isPay ? 'repayment' : 'topup',
+                            amount,
+                            date: ov.querySelector('#_ev_date').value || _liqToday(),
+                            note: (ov.querySelector('#_ev_note').value || '').trim(),
+                            id: uid(), now: Date.now(),
+                            confirmed: !isPay,
+                        });
+                        if (!r.ok) { notify('That could not be recorded', 'error'); return; }
+                        list[at] = r.debtor;
+                        DB.set('debtors', list);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(isPay ? 'Logged — confirm it on the dashboard once it is in the bank' : 'Recorded', 'success');
+                        close();
+                        renderLiquidity();
+                        try { renderVerifyQueue(); } catch (_) {}
+                    };
+                },
+            );
+        }
+        window.openDebtorEvent = openDebtorEvent;
+
+        function _settleDebtor(d) {
+            if (!d) return;
+            const su = window.WFLiquidity.debtorSummary(d, new Date());
+            showConfirm(
+                'checkCircle', 'Settle in full?',
+                'This records a final repayment of ' + fmtS(su.outstanding) + ' from ' + (d.name || 'this debtor')
+                    + ' and closes them. It waits for your confirmation on the dashboard before it counts, '
+                    + 'so nothing changes until you have seen the money.',
+                'btn-primary', 'Settle',
+                () => {
+                    const list = (DB.get('debtors') || []).slice();
+                    const at = list.findIndex((x) => x && x.id === d.id);
+                    if (at < 0) return;
+                    const r = window.WFLiquidity.settleInFull(list[at], { date: _liqToday(), id: uid(), now: Date.now() });
+                    if (!r.ok) { notify('There is nothing outstanding to settle', 'info'); return; }
+                    list[at] = r.debtor;
+                    DB.set('debtors', list);
+                    notify('Recorded — confirm it on the dashboard once the money is in', 'success');
+                    renderLiquidity();
+                    try { renderVerifyQueue(); } catch (_) {}
+                },
+            );
+        }
+
+        function _deleteDebtor(d) {
+            if (!d) return;
+            showConfirm(
+                'trash', 'Delete this debtor?',
+                'This removes ' + (d.name || 'the debtor') + ' and their whole repayment history from WealthFlow. It cannot be undone.',
+                'btn-danger', 'Delete',
+                () => {
+                    DB.set('debtors', (DB.get('debtors') || []).filter((x) => x && x.id !== d.id));
+                    notify('Deleted', 'success');
+                    renderLiquidity();
+                },
+            );
+        }
+
+        /* ═══════════════════════════════════════════════════════════════════
          * THE PENDING INFLOW QUEUE — a due date is a question, not an answer
          * ═══════════════════════════════════════════════════════════════════
          *
@@ -22003,6 +22535,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const now = new Date();
                 rows = window.WFVerify.pendingInflows(appData, now)
                     .concat(window.WFVerify.pendingOutflows(appData, now));
+                /* And the money lent to people. A repayment logged but not yet
+                 * seen in the bank is the same kind of claim as a salary that
+                 * was due yesterday, so it belongs in the same queue rather
+                 * than in a second one on another screen. */
+                if (window.WFLiquidity) {
+                    rows = rows.concat(window.WFLiquidity.pendingLiquidity(appData, now));
+                }
             } catch (_) { rows = []; }
 
             if (!rows.length) {
@@ -22056,7 +22595,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                             ${(window.WFIcon ? WFIcon('check') : '')} ${r.kind === 'outflow' ? 'Paid' : 'Received'}
                         </button>
                         <button class="btn btn-secondary btn-sm" data-vq-late="${_wfEsc(String(i))}">
-                            ${r.state === V.DELAYED ? 'Clear flag' : 'Not yet'}
+                            ${r.source === 'debtor' ? 'Remove' : (r.state === V.DELAYED ? 'Clear flag' : 'Not yet')}
                         </button>
                     </div>
                 </div>`).join('');
@@ -22115,6 +22654,24 @@ table.amort tbody tr { page-break-inside: avoid; }
          */
         function _verifyConfirm(row) {
             const now = Date.now();
+            /* A debtor's event is not a monthly slot — it is one entry in that
+             * person's ledger, and confirming it belongs to the module that
+             * owns the arithmetic. Handled first so it can never fall through
+             * to a map keyed by month. */
+            if (row.source === 'debtor') {
+                const list = (DB.get('debtors') || []).slice();
+                const at = list.findIndex((x) => x && x.id === row.sourceId);
+                if (at < 0) return;
+                const r = window.WFLiquidity.confirmEvent(list[at], row.eventId, { now });
+                if (!r.ok) { notify('That entry is no longer there', 'info'); renderVerifyQueue(); return; }
+                list[at] = r.debtor;
+                DB.set('debtors', list);
+                notify(fmtS(row.amount) + ' confirmed for ' + (row.name || 'this debtor'), 'success');
+                renderVerifyQueue();
+                try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
+                try { renderDash(); } catch (_) {}
+                return;
+            }
             if (row.kind === 'outflow') {
                 const paid = DB.getObj('billPaid', {});
                 paid[row.key] = { confirmedAt: now, month: row.monthKey, amount: row.amount, via: 'queue' };
@@ -22144,6 +22701,31 @@ table.amort tbody tr { page-break-inside: avoid; }
          * deposit must never be able to move a balance.
          */
         function _verifyFlagLate(row) {
+            /* For a debtor's event there is nothing to flag: the row IS the
+             * "not yet". What the owner might need instead is to take back an
+             * entry they logged by mistake, which is otherwise unreachable —
+             * an unconfirmed repayment with a typo in it would sit in the queue
+             * for good. */
+            if (row.source === 'debtor') {
+                showConfirm(
+                    'trash', 'Remove this entry?',
+                    'This deletes the ' + fmtS(row.amount) + ' entry from ' + (row.name || 'this debtor')
+                        + "'s history. Nothing else changes — it was never counted, because it was never confirmed.",
+                    'btn-danger', 'Remove',
+                    () => {
+                        const list = (DB.get('debtors') || []).slice();
+                        const at = list.findIndex((x) => x && x.id === row.sourceId);
+                        if (at < 0) return;
+                        const events = (list[at].events || []).filter((e) => !(e && e.id === row.eventId && e.confirmed === false));
+                        list[at] = { ...list[at], events };
+                        DB.set('debtors', list);
+                        notify('Removed', 'success');
+                        renderVerifyQueue();
+                        try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
+                    },
+                );
+                return;
+            }
             const field = row.kind === 'outflow' ? 'billDelayed' : 'incomeDelayed';
             const map = DB.getObj(field, {});
             if (map[row.key]) delete map[row.key];
@@ -30761,7 +31343,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 income: [], incomeRecv: [], loans: [], ccinstall: [], cconetime: [], ccPayments: [],
                 cheques: [], expenses: [], targets: [], subscriptions: [], importBatches: [],
                 cribReports: [], sessions: [], subMerchantMap: {}, incomeReceived: {},
-                incomeDelayed: {}, billPaid: {}, billDelayed: {},
+                incomeDelayed: {}, billPaid: {}, billDelayed: {}, pawns: [], debtors: [],
                 cribAnalyses: {}, balance: { total: 0, flows: [] }, sweeps: [],
                 _tomb: {}, _kut: {}, _wipedAck: _wipeStamp, _wipedAt: _wipeStamp,
                 settings: currentSettings
