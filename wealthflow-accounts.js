@@ -317,7 +317,7 @@ export const MATCH_TEXT = {
 
 const API = {
     CREDIT_CARD, BANK_ACCOUNT, MATCH, MATCH_TEXT, CONFIDENT,
-    last4Of, derive, kindFromText, last4InText, matchAccount, score, resolve,
+    last4Of, derive, kindFromText, last4InText, matchAccount, score, resolve, bankNamesMatch,
 };
 
 if (typeof window !== 'undefined') window.WFAccounts = API;

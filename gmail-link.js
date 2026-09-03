@@ -42,7 +42,7 @@ import {
     MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
     SENDERS_FIELD, sendersOf,
 } from './gmail-link.mjs';
-import { dedupeStored } from './wealthflow-mail-ingest.mjs';
+import { dedupeStored, BANKS } from './wealthflow-mail-ingest.mjs';
 import {
     addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
     matchSender, hasApproved,
@@ -150,6 +150,17 @@ export default async function handler(req, res) {
      * normalisation, the ceilings and the refusals live. This handler does not
      * parse an address, decide what is a domain, or trim a list: a second copy
      * of those rules is a second set of answers, and the two would drift. */
+    /* THE BANKS THIS PIPELINE ALREADY RECOGNISES, SERVED RATHER THAN COPIED.
+     *
+     * The device needs this to answer "which of my banks can actually send me a
+     * statement" — the question behind "ten accounts, three syncing". It could
+     * keep its own copy of the list; it must not. There are already two lists
+     * of Sri Lankan banks in this repository (the picker in index.html and the
+     * domain allowlist here) and the gap between them is the defect being
+     * fixed. A third copy on the device would be the same mistake, made while
+     * repairing it. Names only: the domains are the server's business. */
+    const knownBanks = [...new Set(BANKS.map((b) => b && b.name).filter(Boolean))];
+
     if (/[?&]senders=1/.test(String(req.url || ''))) {
         if (method === 'DELETE') return j(res, 405, { ok: false, error: 'use POST with an action' });
 
@@ -162,7 +173,7 @@ export default async function handler(req, res) {
         const current = normalizeList(sendersOf(snap && snap.exists ? snap.data() : null));
 
         if (method === 'GET') {
-            return j(res, 200, { ok: true, senders: current, ...groupForDisplay(current) });
+            return j(res, 200, { ok: true, senders: current, knownBanks, ...groupForDisplay(current) });
         }
 
         const body = await readBody(req);
@@ -201,7 +212,7 @@ export default async function handler(req, res) {
         } catch (_) {
             return j(res, 503, { ok: false, error: 'could not save the sender list' });
         }
-        return j(res, 200, { ok: true, senders: result.list, ...groupForDisplay(result.list) });
+        return j(res, 200, { ok: true, senders: result.list, knownBanks, ...groupForDisplay(result.list) });
     }
 
     /* ── REMOVING WHAT IS ALREADY STORED ─────────────────────────────────────

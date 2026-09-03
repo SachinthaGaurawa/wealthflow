@@ -152,7 +152,12 @@ export const BUDGETS = {
      * are the comments recording WHICH switch was dead and why the fix is where
      * it is — the audit is the expensive part, and it should not have to be
      * done twice. */
-    htmlBytes: 1_912_000,        // measured 1,904,998 — the dead settings
+    /* Raised for the sender-coverage strip: the panel that answers "which of my
+     * banks can actually send me a statement", which is the question behind
+     * "ten accounts, three syncing". It is markup and a short reader over the
+     * account registry, and it belongs on the screen where the owner asks —
+     * a report they have to go and find is a report nobody reads. */
+    htmlBytes: 1_918_000,        // measured 1,916,800 — the sender-coverage strip
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -275,7 +280,7 @@ export const BUDGETS = {
      * has now recorded a dozen times.
      *
      * Moves ONCE, to just above the measured figure. */
-    totalJsBytes: 1_556_000,     // measured 1,555,013 across 58 modules
+    totalJsBytes: 1_557_000,     // measured 1,556,004 — bankNamesMatch, shared rather than copied
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

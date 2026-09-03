@@ -272,3 +272,79 @@ describe('one matching rule, not three copies of one', () => {
             .toEqual(['Seylan Bank']);
     });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE STRIP IS ON THE SCREEN, AND THE LIST IS NOT COPIED ONTO THE DEVICE
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the coverage report has a caller', () => {
+    // senderCoverage() and the strip are worth nothing unrendered. A reporting
+    // function nothing calls is the exact defect this file was written about,
+    // committed while repairing it.
+    const APP = HTML;
+    const LINK = fs.readFileSync(path.join(ROOT, 'gmail-link.js'), 'utf8');
+
+    it('the sender screen computes coverage and renders it', () => {
+        expect(APP).toContain('function _senderCoverage()');
+        expect(APP).toContain('function _coverageStrip()');
+        expect(APP).toContain('+ _coverageStrip()');
+    });
+
+    it('the strip is rendered ABOVE the discovery bar, where the question is asked', () => {
+        const i = APP.indexOf('+ _coverageStrip()');
+        const j = APP.indexOf('+ discoverBar');
+        expect(i).toBeGreaterThan(-1);
+        expect(j).toBeGreaterThan(i);
+    });
+
+    it('the device keeps NO list of banks of its own', () => {
+        // Three copies would be worse than the two this whole change is about.
+        // The names come from the endpoint; the matching rule is imported.
+        expect(APP).toContain('_senders.knownBanks');
+        expect(APP).toContain('r.body.knownBanks');
+        expect(APP).toContain('A.bankNamesMatch(');
+        for (const bank of NO_DEFAULT_DOMAIN) {
+            const inCoverageCode = APP.slice(APP.indexOf('function _senderCoverage()'), APP.indexOf('function renderSenderList'));
+            expect(inCoverageCode, `${bank} is hardcoded into the coverage screen`).not.toContain(bank);
+        }
+    });
+
+    it('the endpoint serves the names, from the one list', () => {
+        expect(LINK).toMatch(/import \{[^}]*BANKS[^}]*\} from '\.\/wealthflow-mail-ingest\.mjs'/);
+        expect(LINK).toContain('const knownBanks = [...new Set(BANKS.map(');
+        // Both responses — the read and every mutation — or the screen would go
+        // blank the moment the owner approved something.
+        expect((LINK.match(/knownBanks,/g) || []).length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('serves names only — the domains are the server\'s business', () => {
+        expect(LINK).toContain('BANKS.map((b) => b && b.name)');
+        expect(LINK).not.toContain('BANKS.map((b) => b && b.domain)');
+    });
+
+    it('reads the account registry the way derive() actually returns it', () => {
+        // derive() returns a FLAT ARRAY. The first version of the screen read
+        // reg.cards / reg.banks and would have found nothing, silently, for
+        // ever — this app's most repeated defect, reproduced inside the screen
+        // written to report it.
+        const code = APP.slice(APP.indexOf('function _senderCoverage()'), APP.indexOf('function _coverageStrip()'));
+        expect(code).toContain('Array.isArray(reg) ? reg : []');
+        // Comments stripped first. The block above EXPLAINS the mistake, and an
+        // assertion that reads prose as code fails on the explanation — which
+        // is the same class of error as the emoji rule that brace-matched a
+        // defaulted parameter and then scanned nothing.
+        const noComments = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+        expect(noComments).not.toContain('reg.cards');
+    });
+
+    it('says nothing rather than "0 of 0 banks" when there is nothing to say', () => {
+        const code = APP.slice(APP.indexOf('function _coverageStrip()'), APP.indexOf('function renderSenderList'));
+        expect(code).toContain("if (!c) return '';");
+    });
+
+    it('derive() really does return an array (the assumption above, checked)', async () => {
+        const { derive } = await import('../wealthflow-accounts.js');
+        const out = derive({ cconetime: [{ bank: 'Sampath Bank', card_last4: '4321' }] });
+        expect(Array.isArray(out)).toBe(true);
+        expect(out[0].bank).toBe('Sampath Bank');
+    });
+});
