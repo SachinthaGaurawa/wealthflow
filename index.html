@@ -5696,7 +5696,7 @@
         <div class="main">
             <header class="topbar">
                 <div class="tb-left">
-                    <button class="mobile-btn" onclick="openSb()"><i data-wfi="menu"></i></button>
+                    <button aria-label="Open the menu" class="mobile-btn" onclick="openSb()"><i data-wfi="menu"></i></button>
                     <div class="pg-title" id="pgTitle"><i data-wfi="dashboard"></i> <span>Dashboard</span></div>
                 </div>
                 <div class="tb-right">
@@ -6280,7 +6280,7 @@
                                         <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ai_chat_scan" style="display:none;" onchange="_aiChatFilePicked(event)">
                                     </label>
                                 </div>
-                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;"><i data-wfi="send"></i></button>
+                                <button aria-label="Send message" id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;"><i data-wfi="send"></i></button>
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
                                 <div id="aiTypingIndicator" style="font-size:11px;color:var(--text3);display:none;">
@@ -6506,7 +6506,7 @@
             aria-label="Close AI bar"><i data-wfi="x"></i></button>
         <input class="floating-ai-input" id="floatingAIInput" placeholder="Ask AI anything..."
             onkeydown="if(event.key==='Enter'){sendFloatingAI();event.preventDefault();}">
-        <button class="floating-ai-send" onclick="sendFloatingAI()"><i data-wfi="send"></i></button>
+        <button aria-label="Send message" class="floating-ai-send" onclick="sendFloatingAI()"><i data-wfi="send"></i></button>
     </div>
 
     <div id="notifs"></div>
@@ -7381,7 +7381,7 @@
         <div class="ai-lang-modal-content">
             <div class="ai-lang-modal-hdr">
                 <div class="ai-lang-modal-title">🌐 AI Response Language</div>
-                <button class="ai-lang-modal-close" onclick="closeLangModal()"><i data-wfi="x"></i></button>
+                <button aria-label="Close" class="ai-lang-modal-close" onclick="closeLangModal()"><i data-wfi="x"></i></button>
             </div>
             <div class="ai-lang-search">
                 <input type="text" id="aiLangModalSearch" placeholder="Search languages..." oninput="_filterLangModal()">
@@ -17110,7 +17110,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     filtered.map(v => `<div class="ac-item" onclick="acSelect('${_wfJsAttr(inputId)}','${_wfJsAttr(v)}')">
                         <span style="font-size:14px;">${icon}</span>
                         <span class="ac-item-text">${v}</span>
-                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
+                        <button aria-label="Remove this account" class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
                     </div>`).join('');
                 drop.classList.add('show');
                 _openDropdowns.add(inputId);
@@ -17139,7 +17139,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             drop.innerHTML = `<div class="ac-sep">💡 Previous Entries</div>` +
                 items.map(v => `<div class="ac-item" onclick="acSelect('${_wfJsAttr(inputId)}','${_wfJsAttr(v)}')">
                     <span class="ac-item-text">${v}</span>
-                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
+                    <button aria-label="Remove this account" class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
                 </div>`).join('');
             triggerHaptic('delete');
             notify('Entry removed from suggestions', 'info');
@@ -17816,7 +17816,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div><div style="font-size:15px;font-weight:700;">${_wfEsc(source.name)}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${_wfEsc(source.company)} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
                     <div style="text-align:right;"><div style="font-size:21px;font-weight:800;font-family:var(--mono);color:var(--green);">${fmt(source.monthly)}</div><div style="font-size:11px;color:var(--text3);">${freqL}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editIncome('${_wfJsAttr(source.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteIncome('${_wfJsAttr(source.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button aria-label="Edit this income source" class="ib e" onclick="editIncome('${_wfJsAttr(source.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this income source" class="ib d" onclick="deleteIncome('${_wfJsAttr(source.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -19086,7 +19086,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div><div class="loan-name">${_wfEsc(l.name)}</div><div class="loan-bank">🏦 ${_wfEsc(l.bank)}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="loan-monthly">${fmt(displayMonthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div>${monthlyHint}<div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editLoan('${_wfJsAttr(l.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteLoan('${_wfJsAttr(l.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button aria-label="Edit this loan" class="ib e" onclick="editLoan('${_wfJsAttr(l.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this loan" class="ib d" onclick="deleteLoan('${_wfJsAttr(l.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
             <div class="pb" style="margin-bottom:6px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${prog.pct}%"></div></div>
@@ -19362,8 +19362,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (m.isPartial) payCell += '<div style="font-size:10px;color:var(--red);margin-top:1px;">' + fmt(m.diff) + ' short</div>';
 
                     const actionBtn = m.paid
-                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="eye"></i></button>`
-                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="coins"></i></button>`;
+                        ? `<button aria-label="View this instalment" class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="eye"></i></button>`
+                        : `<button aria-label="Mark this instalment paid" class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="coins"></i></button>`;
 
                     let row = '<tr ' + (isCurrent ? 'data-current-row="1" ' : '') + 'style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer;" ';
                     row += 'onclick="_payLoanInstallmentFromTable(\'' + l.id + '\',\'' + m.month + '\')" ';
@@ -20906,8 +20906,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td style="min-width:110px;"><div class="pb" style="margin-bottom:3px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${Math.min(100, prog.pct)}%"></div></div><div style="font-size:10px;color:var(--text3);">${prog.paid}/${prog.total} (${prog.pct}%)</div></td>
             <td>${item.completed ? '<span class="badge bg-gr">Done</span>' : isActive ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-r">Overdue</span>'}</td>
             <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${_wfJsAttr(item.id)}')" title="Mark Complete"><i data-wfi="check"></i></button>` : ''}
-                <button class="ib e" onclick="editCCI('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
-                <button class="ib d" onclick="deleteCCI('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button></div></td>
+                <button aria-label="Edit this instalment plan" class="ib e" onclick="editCCI('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
+                <button aria-label="Delete this instalment plan" class="ib d" onclick="deleteCCI('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
             }).join('') + _cap.row;
         }
@@ -21475,8 +21475,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${_wfEsc(item.notes || '')}</td>
             <td><div class="act-btns">
                 ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${_wfJsAttr(item.id)}')" title="Clear"><i data-wfi="check"></i></button><button class="ib d" onclick="markChequeBounced('${_wfJsAttr(item.id)}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
-                <button class="ib e" onclick="editCheque('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
-                <button class="ib d" onclick="deleteCheque('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button>
+                <button aria-label="Edit this cheque" class="ib e" onclick="editCheque('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
+                <button aria-label="Delete this cheque" class="ib d" onclick="deleteCheque('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button>
             </div></td>
         </tr>`;
             }).join('') + _cap.row;
@@ -21973,7 +21973,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <span style="color:var(--text2);">${s.date}${s.note ? ' · ' + _wfEsc(s.note) : ''}</span>
         <div style="display:flex;align-items:center;gap:8px;">
             <span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span>
-            <button class="ib d" onclick="deleteSaving('${_wfJsAttr(tid)}','${_wfJsAttr(s.id)}')"><i data-wfi="x"></i></button>
+            <button aria-label="Delete this saving" class="ib d" onclick="deleteSaving('${_wfJsAttr(tid)}','${_wfJsAttr(s.id)}')"><i data-wfi="x"></i></button>
         </div>
     </div>`).join('') : '<div class="empty" style="padding:20px;"><div class="empty-sub">No saving entries yet</div></div>';
             openModal('mdSavHistory');
@@ -25502,7 +25502,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div><div class="tgt-name">${done ? '🏆 ' : ''} ${_wfEsc(t.name)}</div><div class="tgt-dates">📅 ${fmtDatePretty(t.start)} → ${fmtDatePretty(t.end)}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="tgt-big">${fmtS(t.amount)}</div><div style="font-size:11px;color:var(--text3);">Target · ${fmt(t.amount)}</div><div class="tgt-rem">${fmtS(remain)}</div><div style="font-size:11px;color:var(--text3);">Remaining</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editTarget('${_wfJsAttr(t.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteTarget('${_wfJsAttr(t.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button aria-label="Edit this target" class="ib e" onclick="editTarget('${_wfJsAttr(t.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this target" class="ib d" onclick="deleteTarget('${_wfJsAttr(t.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -25687,7 +25687,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div class="flow-dot ${f.type === 'set' ? 'in' : f.type}">${dot}</div>
                     <div class="flow-info"><div class="flow-name">${_wfEsc(f.company)}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + _wfEsc(f.notes) : ''}</div></div>
                     <div class="flow-right"><div class="flow-amt ${f.type === 'out' ? 'out' : 'in'}">${f.type === 'out' ? '-' : '+'}${fmt(f.amount)}</div><div><span class="badge ${cls}">${lbl}</span></div></div>
-                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="edit"></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button aria-label="Edit this balance flow" class="ib e" onclick="editBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="edit"></i></button>` : ''}<button aria-label="Delete this balance flow" class="ib d" onclick="deleteBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>`;
             }).join('');
 

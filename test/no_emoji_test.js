@@ -85,8 +85,27 @@ function overrideMap() {
 }
 const OVERRIDES = overrideMap();
 
-function countIn(src) {
-    return (String(src).match(EMOJI) || []).length;
+/* THE TRANSLATION TABLE IS THE CURE, NOT THE DISEASE.
+ *
+ * wealthflow-icons.js holds `var MAP = { '📊':'chartLine', ... }` — the table
+ * replaceIn() uses to swap emoji for real icons in the LIVE DOM. Every entry in
+ * it deletes a glyph from every screen that has one, and no entry ever renders.
+ *
+ * Counting it made the ratchet fight itself: adding twenty-eight entries after a
+ * runtime sweep removed twenty-eight pictographs from the visible UI and pushed
+ * this number UP by thirty-eight, so the gate went red for an improvement. A
+ * gate that punishes the fix teaches people to stop fixing.
+ *
+ * The exclusion is exactly that one object literal in exactly that one file —
+ * the keys of the map and nothing else. Everything else in wealthflow-icons.js
+ * is still counted, and the test below proves the hole is that narrow by
+ * checking a glyph placed outside the table is still seen. */
+const MAP_BLOCK = /(\bvar MAP\s*=\s*\{)[\s\S]*?(\n\s*\};)/;
+
+function countIn(src, file) {
+    let text = String(src);
+    if (file === 'wealthflow-icons.js') text = text.replace(MAP_BLOCK, '$1$2');
+    return (text.match(EMOJI) || []).length;
 }
 
 /** The body of a top-level `function NAME(` in a given source. */
@@ -304,7 +323,28 @@ describe('the screens built under this rule carry no emoji at all', () => {
  * handleAIScan at 27, renderDebtDemolisher at 25 and appendAIMessage at 21.
  * What is left is a long tail: no single function now holds more than a
  * handful. */
-const EMOJI_CEILING = 1160;
+/* 1160 -> 1065. Two different things, and they should be read separately.
+ *
+ * The REAL removal came from a runtime sweep rather than a source grep: a
+ * browser was driven through all twenty-one screens and every visible text node
+ * read back, which answers "what does a person actually SEE" instead of "what is
+ * in the source". It found twenty-eight pictographs the icon table did not know
+ * — 🚪 📡 📭 📲 🖥 💻 🐧 🌍 💚 💧 🎭 ⚖ 🖼 🏷 🧹 🏗 🖱 🚫 🌅 📎 ⏱ among them —
+ * spread over Settings, Sessions, Score, DSCR, Cash-flow 3D and the AI screen.
+ * They are now in MAP, so replaceIn() swaps them everywhere at once, and the
+ * measured count of visible emoji strings went from 44 to 16 — of which eight
+ * are typographic arrows (← → ↑ ↓ ↳ ✓), which are punctuation, not pictographs.
+ *
+ * The rest of the drop is this file admitting a mistake in its own counting: see
+ * countIn(). The table that DELETES emoji from every screen was itself being
+ * counted as emoji, so the improvement above scored as a regression of +38.
+ *
+ * STILL THERE ON PURPOSE: the six AI-persona faces (😊 👨‍💼 🔥 🔬 🚀 🌌). They
+ * are choices the owner picks between, and this icon set has no six distinct
+ * glyphs for warm / professional / aggressive / analytical / visionary. Mapping
+ * them would make six personas look identical — worse than the emoji. They need
+ * drawn icons, which is a design task, not a substitution. */
+const EMOJI_CEILING = 1065;
 
 describe('the rest of the app can only get less emoji, never more', () => {
     it('is at or below the ceiling', () => {
@@ -315,13 +355,32 @@ describe('the rest of the app can only get less emoji, never more', () => {
         for (const f of files) {
             let src;
             try { src = read(f); } catch (_) { continue; }
-            const n = countIn(src);
+            const n = countIn(src, f);
             if (n) { per[f] = n; total += n; }
         }
         const worst = Object.entries(per).sort((a, b) => b[1] - a[1]).slice(0, 5)
             .map(([f, n]) => `${f}=${n}`).join(' ');
         expect(total, `emoji count rose to ${total} (ceiling ${EMOJI_CEILING}). Worst: ${worst}`)
             .toBeLessThanOrEqual(EMOJI_CEILING);
+    });
+
+    it('the icons-table exclusion is exactly that table, and nothing else', () => {
+        /* An exemption is a hole. This one has to be small enough to see through:
+         * the keys of MAP in wealthflow-icons.js, and not one character more. A
+         * glyph written anywhere else in that file is still counted. */
+        const real = read('wealthflow-icons.js');
+        expect(countIn(real, 'wealthflow-icons.js')).toBeLessThan(countIn(real));
+
+        const smuggled = real.replace(
+            /window\.WFIconStripEmoji = replaceIn;/,
+            "window.WFIconStripEmoji = replaceIn; var sneaky = '\u{1F600}\u{1F601}\u{1F602}';");
+        expect(smuggled).not.toBe(real);                       // the anchor still exists
+        expect(countIn(smuggled, 'wealthflow-icons.js'))
+            .toBe(countIn(real, 'wealthflow-icons.js') + 3);
+
+        // And the exemption applies to that file only.
+        const asOther = countIn(real, 'index.html');
+        expect(asOther).toBeGreaterThan(countIn(real, 'wealthflow-icons.js'));
     });
 
     it('keeps the ceiling honest by failing if it is set above the real count', () => {
@@ -331,7 +390,7 @@ describe('the rest of the app can only get less emoji, never more', () => {
         const files = ['index.html', 'sw.js']
             .concat(fs.readdirSync(ROOT).filter((f) => /^wealthflow-.*\.js$/.test(f)));
         const total = files.reduce((t, f) => {
-            try { return t + countIn(read(f)); } catch (_) { return t; }
+            try { return t + countIn(read(f), f); } catch (_) { return t; }
         }, 0);
         expect(EMOJI_CEILING - total, 'the ceiling has drifted above the measurement — lower it')
             .toBeLessThanOrEqual(Math.ceil(total * 0.05));

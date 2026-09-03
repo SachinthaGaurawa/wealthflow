@@ -190,7 +190,30 @@
         '🔗':'globe','📐':'ruler','🏆':'trophy','💣':'bomb','🔮':'crystal','⚙️':'settings','⛽':'coins','💸':'coins',
         '👍':'thumbsUp','👎':'thumbsDown','👁️':'eye','👁':'eye','💎':'gem','🎁':'gift','⬇️':'download','⬆️':'upload',
         '📦':'receipt','💵':'wallet','💴':'wallet','💶':'wallet','💷':'wallet','🟢':'checkCircle','🔴':'alert','🟡':'alert',
-        '↩️':'undo','↩':'undo','🏛️':'bank','🏛':'bank','📜':'fileText','📷':'scan'
+        '↩️':'undo','↩':'undo','🏛️':'bank','🏛':'bank','📜':'fileText','📷':'scan',
+        /* ── Added from a RUNTIME sweep, not a source grep ────────────────────
+         *
+         * A browser was driven through all twenty-one screens and every visible
+         * text node was read back, which is a different question from "which
+         * emoji are in the source": it finds only the glyphs a person actually
+         * sees, and it found twenty-eight pictographs that this table did not
+         * know. Because replaceIn() walks the live DOM, adding them here removes
+         * them from every screen at once — no call site has to be touched, and a
+         * screen written tomorrow that reaches for one of them is covered too.
+         *
+         * DELIBERATELY ABSENT: the AI-persona faces (😊 👨‍💼 🔥 🔬 🚀 🌌). They
+         * are a set of CHOICES the owner picks between, and this icon set has no
+         * six distinct glyphs for warm / professional / aggressive / analytical /
+         * visionary. Mapping them would make six different personas look
+         * identical, which is worse than the emoji — the same lesson
+         * test/debt_demolisher_icons_test.js records about icon choice mattering
+         * more than the count. They need drawn icons, not a substitution. */
+        '🚪':'lock','📡':'globe','📭':'mail','📲':'devices','🖥️':'devices','🖥':'devices',
+        '💻':'devices','🐧':'devices','🌍':'globe','🌏':'globe','🌎':'globe',
+        '💚':'wallet','💧':'coins','🎭':'user','⚖️':'ruler','⚖':'ruler',
+        '🖼️':'camera','🖼':'camera','🏷️':'folder','🏷':'folder','🧹':'trash',
+        '🏗️':'bank','🏗':'bank','🖱️':'pointer','🖱':'pointer','🚫':'x',
+        '🌅':'sun','🌄':'sun','📎':'link','⏱️':'clock','⏱':'clock','⌛':'clock'
     };
     // Build one regex of all emoji keys (longest first to match VS16 variants)
     var keys = Object.keys(MAP).sort(function (a, b) { return b.length - a.length; });
