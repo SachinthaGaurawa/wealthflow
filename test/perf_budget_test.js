@@ -162,22 +162,40 @@ describe('the gate can actually fail', () => {
 describe('Chart.js loading and resilience', () => {
     const html = () => fs.readFileSync('index.html', 'utf8');
 
-    it('is deferred, so it no longer blocks the first paint', () => {
-        const tag = /<script\b[^>]*chart\.umd\.min\.js[^>]*>/i.exec(html());
-        expect(tag, 'the Chart.js script tag has moved or been renamed').toBeTruthy();
-        expect(tag[0]).toMatch(/\bdefer\b/);
+    /* THESE TWO ASSERTIONS USED TO SAY "deferred, and above the app modules".
+     *
+     * Both were protecting the same thing — that Chart.js is present by the time
+     * something draws — through the mechanism of the day, a `defer` tag ordered
+     * before the modules. That mechanism is gone: the library is fetched on
+     * demand, because it was ~70 KB gzipped and a whole CDN connection spent on
+     * every startup for a screen the owner may never open. See
+     * test/startup_payload_test.js for the measurement.
+     *
+     * What replaces them is not weaker, it is the same guarantee stated at the
+     * level that now carries it: there is no tag at all, and every site that
+     * draws says what to redraw once the library lands. The guard assertion
+     * below is untouched and matters MORE than it did, because "Chart is
+     * missing" is now the normal first state rather than a CDN accident. */
+    it('is not fetched at startup at all any more', () => {
+        expect(html()).not.toMatch(/<script\b[^>]*chart\.umd\.min\.js/i);
     });
 
-    it('still loads before every app module, so ordering is unchanged', () => {
-        // `defer` preserves document order, so this only holds while the Chart tag
-        // sits above the deferred wealthflow-*.js tags. If someone moves it below
-        // them, Chart would execute after the code that uses it.
+    it('is fetched on demand instead, once, and remembered', () => {
         const t = html();
-        const chartAt = t.search(/<script\b[^>]*chart\.umd\.min\.js/i);
-        const firstDeferredApp = t.search(/<script\s+src="wealthflow-[^"]*"\s+defer/i);
-        expect(chartAt).toBeGreaterThan(0);
-        expect(firstDeferredApp).toBeGreaterThan(0);
-        expect(chartAt).toBeLessThan(firstDeferredApp);
+        expect(t).toContain('window.ensureChart = function');
+        expect(t).toContain("_wfLazyScript('chartjs'");
+        // _wfLazyScript caches the promise per key, so N screens cost one fetch.
+        expect(t).toMatch(/function _wfLazyScript\(key, src\)[\s\S]{0,160}window\._wfLoadedLibs\[key\]/);
+    });
+
+    it('and every screen that skipped its chart now asks to be redrawn', () => {
+        /* Without this the change is a REGRESSION that looks like a success: each
+         * site guards on `typeof Chart` and draws nothing, so the charts would
+         * simply vanish while the page rendered perfectly. */
+        const t = html();
+        expect(t).toContain('window._wfChartThen(renderDebtDemolisher)');
+        expect(t).toContain('window._wfChartThen(renderMonteCarlo)');
+        expect(t).toMatch(/_wfWarmCharts[\s\S]{0,900}'renderDash'/);
     });
 
     it('guards EVERY construction site against Chart being absent', () => {
