@@ -51,7 +51,8 @@
  * or reads a clock it was not handed.
  * ===========================================================================*/
 
-import { addressOf, domainOf, isUnder, nameFromDomain, CONSUMER_MAIL } from './wealthflow-mail-ingest.mjs';
+import { addressOf, domainOf, isUnder, nameFromDomain, CONSUMER_MAIL, BANKS } from './wealthflow-mail-ingest.mjs';
+import { bankNamesMatch } from './wealthflow-accounts.js';
 
 const lower = (s) => String(s == null ? '' : s).toLowerCase().trim();
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -410,6 +411,82 @@ export function groupForDisplay(list) {
  * decides, because someone who has approved nothing needs a way to find out
  * what to approve.
  */
+/**
+ * Which of the owner's banks can actually deliver a statement, and which cannot.
+ *
+ * ── THE COMPLAINT THIS ANSWERS ──────────────────────────────────────────────
+ *
+ * "Over 10 bank accounts, only 3 or 4 syncing." Both halves were true, and the
+ * app said nothing about either.
+ *
+ * There are two lists of Sri Lankan banks in this repository. The picker in
+ * index.html offers FOURTEEN institutions, and every card charge the owner
+ * saves is filed under one of them. The mail pipeline's built-in domain list
+ * knows FOUR. Nothing has ever compared them, so an owner who banks with
+ * Sampath or Seylan or BOC has accounts the fetcher has never heard of — and
+ * the only symptom is statements that never arrive.
+ *
+ * Nothing was broken, which is why it survived. Each list is correct about its
+ * own job. The failure is in the space between them, and space between two
+ * lists is exactly where nothing in CI ever looks.
+ *
+ * ── WHY THIS REPORTS RATHER THAN FIXES ──────────────────────────────────────
+ *
+ * The obvious repair is to add the nine missing domains. It is the wrong one to
+ * make from here: that list is a TRUST ALLOWLIST for financial documents — a
+ * domain on it is a domain whose DKIM-signed mail gets filed as the owner's
+ * bank statement. Nine plausible guesses are nine entries nobody verified, and
+ * one wrong guess allowlists a stranger.
+ *
+ * So this names the gap instead, per bank, in the owner's own terms. They can
+ * read the sending address off a statement they already have and approve it in
+ * one tap, or let the discovery flow offer it the next time one arrives. Both
+ * end with a domain someone actually checked.
+ *
+ * `banks` is the institution list derived from their own records — the same
+ * one wealthflow-accounts.js builds — so this describes the banks they really
+ * use rather than every bank that exists.
+ */
+export function senderCoverage(banks, list) {
+    const entries = normalizeList(list);
+    const approved = entries.filter((e) => e.status === STATUS.APPROVED);
+
+    const rows = [];
+    const seen = new Set();
+    for (const raw of arr(banks)) {
+        const bank = String(raw == null ? '' : raw).trim();
+        if (!bank) continue;
+        const key = lower(bank);
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        /* An approved sender the owner named after this bank beats the built-in
+         * list: they chose it, and it is the address their statements actually
+         * come from. */
+        const own = approved.find((e) => e.name && bankNamesMatch(bank, e.name));
+        const builtin = BANKS.find((b) => bankNamesMatch(bank, b.name));
+
+        rows.push({
+            bank,
+            covered: Boolean(own || builtin),
+            via: own ? own.id : builtin ? builtin.domain : null,
+            source: own ? 'approved' : builtin ? 'built-in' : null,
+        });
+    }
+
+    const uncovered = rows.filter((r) => !r.covered);
+    return {
+        rows,
+        uncovered: uncovered.map((r) => r.bank),
+        covered: rows.length - uncovered.length,
+        of: rows.length,
+        /* True when every bank the owner uses has a way in. The point of a
+         * single boolean is that a screen can say "3 of 11 banks can send you
+         * statements" without deciding for itself what counts. */
+        complete: rows.length > 0 && uncovered.length === 0,
+    };
+}
+
 export function policyFrom(list) {
     const entries = normalizeList(list);
     return {
@@ -433,6 +510,7 @@ export const REASON_TEXT = {
 const API = {
     STATUS, REASON, REASON_TEXT, MAX_DECIDED, MAX_NEW,
     normalizeSender, normalizeList, matchSender, addSender, setStatus, removeSender,
+    senderCoverage,
     recordSighting, approvedClauses, hasApproved, groupForDisplay, policyFrom,
 };
 

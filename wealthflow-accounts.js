@@ -73,6 +73,28 @@ const arr = (v) => (Array.isArray(v) ? v : []);
 const s = (v) => String(v == null ? '' : v).trim();
 const norm = (v) => s(v).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
+/**
+ * Do two bank names refer to the same institution?
+ *
+ * "HNB" and "Hatton National Bank (HNB)" are the same bank written by two
+ * different parts of this app: the picker in index.html stores the long form on
+ * every card charge, while a DKIM-verified sender or an approved mail entry
+ * carries whatever short name it was given. Containment either way, on the
+ * normalised strings, is what connects them.
+ *
+ * EXPORTED BECAUSE THERE MUST BE ONE COPY. This rule was written inline inside
+ * matchAccount(), and the moment a second caller needed it — the mail sender
+ * coverage report, which answers "which of my banks can actually deliver a
+ * statement" — the choice was to copy four lines or to share them. Two copies
+ * of a matching rule is how the picker and the mail pipeline came to disagree
+ * about which banks exist in the first place.
+ */
+export function bankNamesMatch(a, b) {
+    const x = norm(a), y = norm(b);
+    if (!x || !y) return false;
+    return x.includes(y) || y.includes(x);
+}
+
 /** The last four digits of anything, or '' — never a partial or padded guess. */
 export function last4Of(v) {
     const digits = s(v).replace(/\D/g, '');
@@ -196,7 +218,7 @@ export function matchAccount(statement, accounts) {
 
     /* The bank narrows it, when we have one. A DKIM-verified sender is strong
      * evidence, so an account whose bank contradicts it is not a candidate. */
-    const bankMatches = (a) => !bank || norm(a.bank).includes(norm(bank)) || norm(bank).includes(norm(a.bank));
+    const bankMatches = (a) => !bank || bankNamesMatch(a.bank, bank);
     const narrowed = hits.filter(bankMatches);
     if (bank && !narrowed.length) {
         return {
@@ -295,7 +317,7 @@ export const MATCH_TEXT = {
 
 const API = {
     CREDIT_CARD, BANK_ACCOUNT, MATCH, MATCH_TEXT, CONFIDENT,
-    last4Of, derive, kindFromText, last4InText, matchAccount, score, resolve,
+    last4Of, derive, kindFromText, last4InText, matchAccount, score, resolve, bankNamesMatch,
 };
 
 if (typeof window !== 'undefined') window.WFAccounts = API;

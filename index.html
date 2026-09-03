@@ -2657,6 +2657,23 @@
             background: var(--bg2, rgba(127,127,127,0.06));
         }
         .wf-sender-find-txt { flex: 1; min-width: 190px; font-size: 12px; color: var(--text3); line-height: 1.6; }
+        .wf-sender-cover {
+            border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+            font-size: 12.5px; line-height: 1.65; display: flex; flex-direction: column; gap: 8px;
+        }
+        .wf-sender-cover.ok {
+            background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.28); color: var(--text2);
+        }
+        .wf-sender-cover.warn {
+            background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.30); color: var(--text2);
+        }
+        .wf-sender-cover-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .wf-cover-chip {
+            display: inline-block; padding: 3px 9px; border-radius: 999px;
+            background: var(--card2, rgba(127,127,127,0.10)); border: 1px solid var(--border, rgba(127,127,127,0.22));
+            font-size: 11.5px; color: var(--text2); white-space: nowrap;
+        }
+        .wf-sender-cover-how { font-size: 11.5px; color: var(--text3); }
         .wf-sender-lbl { display: block; font-size: 11px; font-weight: 700; color: var(--text3);
             margin-bottom: 4px; letter-spacing: .02em; }
         .wf-sender-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
@@ -23673,7 +23690,7 @@ table.amort tbody tr { page-break-inside: avoid; }
          * the token, because the two things that consult it — the push hook and
          * the scan endpoint — have no browser in front of them. A webhook fired
          * by Google has no client to ask. */
-        let _senders = { stage: 'idle', approved: [], blocked: [], pending: [], error: null, busy: '' };
+        let _senders = { stage: 'idle', approved: [], blocked: [], pending: [], error: null, busy: '', knownBanks: [] };
 
         /* ── FINDING THE BANKS THE OWNER HAS NOT APPROVED YET ────────────────
          *
@@ -23773,6 +23790,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             _senders.approved = Array.isArray(r.body.approved) ? r.body.approved : [];
             _senders.blocked = Array.isArray(r.body.blocked) ? r.body.blocked : [];
             _senders.pending = Array.isArray(r.body.pending) ? r.body.pending : [];
+            /* Served by the endpoint, never kept here. A third copy of the bank
+             * list on the device would be the same defect this screen exists to
+             * report. Absent means unknown, which shows as no strip at all. */
+            _senders.knownBanks = Array.isArray(r.body.knownBanks) ? r.body.knownBanks : [];
             _senders.error = null;
             return true;
         }
@@ -23828,6 +23849,74 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + '</button>';
         }
 
+        /**
+         * WHICH OF THE OWNER'S BANKS CAN ACTUALLY SEND THEM A STATEMENT.
+         *
+         * The complaint was "over ten accounts, only three or four syncing",
+         * and the honest part of it was that nothing anywhere said why. The
+         * banks come from their own records — the same derive() the statement
+         * router matches against — and the answer is either a built-in sender
+         * the pipeline already knows or one they approved themselves.
+         *
+         * Both halves are read, never stored here: the bank list is derived on
+         * demand and the known-sender list is served by the endpoint. This
+         * screen holds no list of its own, which is the whole point of it.
+         */
+        function _senderCoverage() {
+            const A = window.WFAccounts;
+            if (!A || typeof A.derive !== 'function' || typeof A.bankNamesMatch !== 'function') return null;
+            let banks = [];
+            try {
+                /* derive() returns a FLAT ARRAY of accounts, not a grouped
+                 * object. The first version of this read reg.cards/reg.banks
+                 * and would have found nothing, silently, for ever — the
+                 * failure this app keeps producing, reproduced inside the
+                 * screen written to report it. */
+                const reg = A.derive(appData);
+                const all = Array.isArray(reg) ? reg : [];
+                const seen = new Set();
+                for (const a of all) {
+                    const b = String((a && a.bank) || '').trim();
+                    if (!b || seen.has(b.toLowerCase())) continue;
+                    seen.add(b.toLowerCase());
+                    banks.push(b);
+                }
+            } catch (_) { return null; }
+            if (!banks.length) return null;
+
+            const known = Array.isArray(_senders.knownBanks) ? _senders.knownBanks : [];
+            const approved = Array.isArray(_senders.approved) ? _senders.approved : [];
+            const uncovered = banks.filter((bank) => {
+                const byOwn = approved.some((e) => e && e.name && A.bankNamesMatch(bank, e.name));
+                const byBuiltIn = known.some((n) => A.bankNamesMatch(bank, n));
+                return !byOwn && !byBuiltIn;
+            });
+            return { of: banks.length, covered: banks.length - uncovered.length, uncovered };
+        }
+
+        function _coverageStrip() {
+            const c = _senderCoverage();
+            /* No records yet, or the module did not load: say nothing rather
+             * than "0 of 0 banks", which reads as a fault. */
+            if (!c) return '';
+            if (!c.uncovered.length) {
+                return '<div class="wf-sender-cover ok">'
+                    + (window.WFIcon && WFIcon.has('check') ? WFIcon('check') : '')
+                    + ' <b>All ' + c.of + ' of your banks</b> can send you statements.'
+                    + '</div>';
+            }
+            return '<div class="wf-sender-cover warn">'
+                + '<div><b>' + c.covered + ' of your ' + c.of + ' banks</b> can send you statements. '
+                + 'These cannot yet:</div>'
+                + '<div class="wf-sender-cover-list">'
+                + c.uncovered.map((b) => '<span class="wf-cover-chip">' + _wfEsc(b) + '</span>').join('')
+                + '</div>'
+                + '<div class="wf-sender-cover-how">Open a statement from one of them and add the address it '
+                + 'came from below, or press <b>Find my banks</b> to go and look. Nothing is filed until you '
+                + 'approve the sender.</div>'
+                + '</div>';
+        }
+
         function renderSenderList() {
             const host = document.getElementById('_sl_body');
             if (!host) return;
@@ -23874,6 +23963,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             host.innerHTML =
                 (_senders.error ? '<div class="wf-sender-err">' + _wfEsc(_senders.error) + '</div>' : '')
+                + _coverageStrip()
                 + discoverBar
                 + section(
                     'Waiting for you to decide' + (_senders.pending.length ? ' (' + _senders.pending.length + ')' : ''),
