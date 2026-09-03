@@ -43,6 +43,8 @@ import {
 } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom, relatedApproval } from '../wealthflow-mail-senders.mjs';
 import { mergeHeld, heldOf, HELD_FIELD } from '../gmail-link.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const pdf = (name) => ({ mimeType: 'application/pdf', filename: name, body: { size: 120000, attachmentId: 'ATT1' } });
 
@@ -271,7 +273,11 @@ describe('the held list is bounded, de-duplicated and honestly timestamped', () 
 describe('the push hook and the scan endpoint both hold', () => {
     // A rule kept in one of this pair and not the other is this repository's
     // most repeated defect, and these two files have already drifted once.
-    const read = (f) => require('node:fs').readFileSync(require('node:path').resolve(import.meta.dirname, '..', f), 'utf8');
+    // ESM imports, not require(). test/esm_require_test.js bans `require` in
+    // these files because it throws ReferenceError at runtime — and it caught
+    // this one in CI while the local run passed, because that guard reads
+    // `git ls-files` and the file was not staged yet when I ran the suite.
+    const read = (f) => fs.readFileSync(path.resolve(import.meta.dirname, '..', f), 'utf8');
 
     it.each(['gmail-hook.js', 'gmail-scan.js'])('%s holds a refusal instead of dropping it', (file) => {
         const src = read(file);
