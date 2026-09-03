@@ -49,6 +49,19 @@ export const SCAN = {
     /** Gmail pages at 500; this is about how much one invocation can fetch and
      *  store inside the function's deadline, not about what Gmail will give. */
     MAX_MESSAGES_PER_CALL: 25,
+    /* A DISCOVERY CALL READS HEADERS AND STORES NOTHING, SO IT IS NOT THE SAME
+     * WORK AND MUST NOT CARRY THE SAME CEILING.
+     *
+     * 25 is sized for a full message fetch plus attachment downloads plus
+     * Firestore writes. A discovery call does none of those: `format=metadata`
+     * returns three headers, and the only write is one sender list at the end.
+     *
+     * The old ceiling made the search silently incomplete rather than slow. A
+     * month with three hundred attachment emails was read twenty-five at a
+     * time, and a run that budgets thirty calls across six months never
+     * reached the older ones — so a bank whose mail sat in the unread tail
+     * simply did not exist, and the screen said "no senders found". */
+    MAX_DISCOVERY_PER_CALL: 100,
     /** How far back the UI may ask to go. Ten years is planWindows' own ceiling. */
     MAX_MONTHS: 120,
 };
@@ -67,7 +80,7 @@ export function scanSenders() {
  * on the first of a month would otherwise silently shift every window by one,
  * re-reading one month and skipping another.
  */
-export function windowFor({ months, index, now, senders = null, discover = null } = {}) {
+export function windowFor({ months, index, now, senders = null, discover = null, banks = null } = {}) {
     const m = Math.max(1, Math.min(SCAN.MAX_MONTHS, Math.floor(Number(months)) || 0));
     /* STRICT. `Number(null)` is 0 and `Number('')` is 0, so a lenient parse
      * turns a client that forgot to send an index into a request for window
@@ -106,21 +119,54 @@ export function windowFor({ months, index, now, senders = null, discover = null 
      * can do is put that sender's address on the list for the owner to decide
      * about. The default is unchanged for every existing caller. */
     const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();
-    const wide = discover === null ? !(Array.isArray(senders) && senders.length) : discover === true;
-    const windows = planWindows({ months: m, now: at, senders: chosen, discover: wide });
+    /* ── ONLY AN EXPLICIT REQUEST IS A DISCOVERY RUN ──────────────────────
+     *
+     * This used to read `discover === null ? !senders.length : discover === true`
+     * — so an owner who had approved nothing got the wide branch on every
+     * ordinary scan. That was harmless while "wide" only meant "add the
+     * vocabulary to the query". It is NOT harmless now: a discovery window
+     * reads headers only and stores nothing, so a first-time owner would have
+     * scanned their mailbox and imported not one statement, and the screen
+     * would have said the scan finished.
+     *
+     * A discovery run is now exactly what the owner asked for and nothing else.
+     * The empty-sender case is handled inside planWindows(), which keeps the
+     * statement vocabulary while there is nobody approved to narrow to — the
+     * behaviour that was always meant by it. */
+    const owns = Array.isArray(senders) && senders.length > 0;
+    const windows = planWindows({
+        months: m, now: at, senders: chosen,
+        discover: discover === true,
+        /* Picker names, not a query. tokensFor() resolves them against the
+         * canonical institution list and drops anything not on it, so the one
+         * rule this endpoint has always kept still holds: no caller-shaped text
+         * reaches a Gmail query built on a credential that can read a whole
+         * mailbox. */
+        banks: Array.isArray(banks) ? banks.slice(0, 40).map((b) => String(b || '').slice(0, 80)) : [],
+        /* Someone who has approved nobody gets the statement vocabulary as well
+         * as the built-in domains, so their first scan is not limited to the
+         * four banks this pipeline happens to ship with. Someone who HAS
+         * curated a list gets exactly that list and no guessing. */
+        includeTerms: !owns,
+    });
     return windows[i] || null;
 }
 
 /** How many messages this call may fetch. */
-export function boundedMax(v) {
+export function boundedMax(v, discovery = false) {
+    const cap = discovery ? SCAN.MAX_DISCOVERY_PER_CALL : SCAN.MAX_MESSAGES_PER_CALL;
     const n = Math.floor(Number(v));
-    if (!Number.isFinite(n) || n <= 0) return SCAN.MAX_MESSAGES_PER_CALL;
-    return Math.min(SCAN.MAX_MESSAGES_PER_CALL, n);
+    if (!Number.isFinite(n) || n <= 0) return cap;
+    return Math.min(cap, n);
 }
 
 /** Gmail's list URL for one window. Never built from caller-supplied text. */
 export function listUrl(base, window, pageToken, max) {
-    const q = new URLSearchParams({ q: String((window && window.query) || ''), maxResults: String(boundedMax(max)) });
+    const discovery = Boolean(window && window.discovery);
+    const q = new URLSearchParams({
+        q: String((window && window.query) || ''),
+        maxResults: String(boundedMax(max, discovery)),
+    });
     if (pageToken) q.set('pageToken', String(pageToken));
     return `${base}/messages?${q.toString()}`;
 }

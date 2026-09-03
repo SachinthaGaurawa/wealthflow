@@ -48,6 +48,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BANKS as MAIL_BANKS, CONSUMER_MAIL } from '../wealthflow-mail-ingest.mjs';
 import { senderCoverage } from '../wealthflow-mail-senders.mjs';
+import { INSTITUTIONS } from '../wealthflow-institutions.js';
 import { bankNamesMatch } from '../wealthflow-accounts.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -73,25 +74,21 @@ function coveredBy(pickerName, mailBanks) {
     });
 }
 
-/* THE GAP, PINNED. Every name here is an institution the app offers and the
- * mail pipeline has no default sending domain for. Closing one means adding a
- * VERIFIED domain to wealthflow-mail-ingest.mjs and deleting the line here.
+/* THE GAP, DERIVED — AND NO LONGER A LIST OF ITS OWN.
  *
- * Until then these are not unreachable: the owner can approve the sender the
- * first time a statement from it is seen, and the approved sender is then
- * filed under the name they gave it. What they lose is the default — the bank
- * working on day one without being told about it. */
-const NO_DEFAULT_DOMAIN = [
-    'Bank of Ceylon (BOC)',
-    'Commercial Bank',
-    'National Development Bank (NDB)',
-    'Pan Asia Bank',
-    'Peoples Bank',
-    'Sampath Bank',
-    'Seylan Bank',
-    'Standard Chartered',
-    'Union Bank',
-];
+ * This used to be nine bank names typed out here, which made three copies of
+ * one fact where the whole complaint was that there were two. It now comes from
+ * wealthflow-institutions.js, the single description of a bank: an institution
+ * with no VERIFIED sending domain is one the pipeline has no default for.
+ *
+ * Closing one means adding a domain someone actually checked to that file. The
+ * list here then shrinks on its own, and the change says so in the diff.
+ *
+ * These are not unreachable in the meantime — the named hunt asks the owner's
+ * own mailbox which address each of these banks writes from, and one tap files
+ * the answer. What they lack is a DEFAULT: the bank working on day one without
+ * anyone being asked. */
+const NO_DEFAULT_DOMAIN = INSTITUTIONS.filter((i) => !i.domains.length).map((i) => i.name);
 
 describe('the two bank lists are compared, at last', () => {
     it('finds both lists (guards against a vacuous pass)', () => {
@@ -129,9 +126,22 @@ describe('the two bank lists are compared, at last', () => {
 
     it('records the size of the gap, so shrinking it is visible in a diff', () => {
         // Not a target and not a ceiling — a measurement. When a verified domain
-        // is added this number goes down and the change says so out loud.
+        // is added to wealthflow-institutions.js this number goes down on its
+        // own and the change says so out loud.
         expect(NO_DEFAULT_DOMAIN).toHaveLength(9);
         expect(pickerBanks()).toHaveLength(14);
+        expect(INSTITUTIONS).toHaveLength(14);
+    });
+
+    it('and the gap is now derived, not a third copy of the bank list', () => {
+        // The complaint was two lists of banks that nobody compared. Typing the
+        // uncovered ones out here would have made three.
+        const src = fs.readFileSync(path.join(ROOT, 'test', 'bank_coverage_test.js'), 'utf8');
+        expect(src).toContain('INSTITUTIONS.filter((i) => !i.domains.length)');
+        for (const name of NO_DEFAULT_DOMAIN) {
+            const hardcoded = new RegExp(`const NO_DEFAULT_DOMAIN[\\s\\S]{0,400}'${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`);
+            expect(hardcoded.test(src), `${name} is typed out rather than derived`).toBe(false);
+        }
     });
 });
 
@@ -326,14 +336,16 @@ describe('the coverage report has a caller', () => {
         // reg.cards / reg.banks and would have found nothing, silently, for
         // ever — this app's most repeated defect, reproduced inside the screen
         // written to report it.
-        const code = APP.slice(APP.indexOf('function _senderCoverage()'), APP.indexOf('function _coverageStrip()'));
-        expect(code).toContain('Array.isArray(reg) ? reg : []');
-        // Comments stripped first. The block above EXPLAINS the mistake, and an
-        // assertion that reads prose as code fails on the explanation — which
-        // is the same class of error as the emoji rule that brace-matched a
-        // defaulted parameter and then scanned nothing.
-        const noComments = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+        // derive() returns a FLAT ARRAY, and exactly one function in the app
+        // reads it — _ownedBanks(), shared by the coverage strip and the bank
+        // hunt. A second reader is how the two bank lists this change merges
+        // came about in the first place.
+        const reader = APP.slice(APP.indexOf('function _ownedBanks()'), APP.indexOf('function _bankHuntPanel()'));
+        expect(reader).toContain('Array.isArray(reg) ? reg : []');
+        const noComments = reader.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
         expect(noComments).not.toContain('reg.cards');
+        expect((APP.match(/A\.derive\(appData\)/g) || []).length,
+            'more than one reader of the account registry').toBe(1);
     });
 
     it('says nothing rather than "0 of 0 banks" when there is nothing to say', () => {

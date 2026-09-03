@@ -61,15 +61,17 @@
  * satisfies `amex.com`, but only downward — `amex.com.attacker.net` does not,
  * because the match is anchored to a label boundary at the end.
  */
+import { BANK_DOMAINS } from './wealthflow-institutions.js';
 import { STATEMENT_TERMS } from './wealthflow-backfill.js';
 
-export const BANKS = [
-    { domain: 'hnb.lk', name: 'HNB' },
-    { domain: 'dfcc.lk', name: 'DFCC' },
-    { domain: 'nationstrust.com', name: 'Nations Trust' },
-    { domain: 'americanexpress.com', name: 'American Express' },
-    { domain: 'amex.com', name: 'American Express' },
-];
+/* DERIVED, NOT DECLARED. This used to be a hand-written list of four
+ * institutions while index.html's picker offered fourteen, and nothing compared
+ * them — so an owner banking with Sampath or Seylan or BOC had accounts this
+ * pipeline had never heard of, and the only symptom was statements that never
+ * arrived. Both now come from wealthflow-institutions.js, which is the single
+ * place a bank is described. Two copies of a classifier is one more than can be
+ * kept in step, and this file is where that cost was paid. */
+export const BANKS = BANK_DOMAINS.map((b) => ({ domain: b.domain, name: b.name }));
 
 /* Mailboxes people own, rather than institutions that send statements.
  *

@@ -438,6 +438,20 @@
          and the ledger-wide dedup that nothing had ever passed a hash set to.
          window.WFBackfill -->
     <script type="module" src="wealthflow-backfill.js"></script>
+
+    <!-- Ranks the senders a discovery run turned up, and says WHY each one
+         looks like a bank. The old discovery narrowed inside the Gmail query
+         with `filename:pdf` and six English phrases, which decided in silence:
+         a bank sending a ZIP, or one whose subject reads "Monthly Account
+         Summary", was not ranked low but absent. The narrowing lives here now,
+         where the reasons can be put on the screen. ESM; window.WFDiscovery. -->
+    <!-- THE ONE DESCRIPTION OF A BANK. The picker, the mail pipeline's domain
+         allowlist and the words a mailbox is searched for all come from here.
+         They used to be separate lists — fourteen institutions in the picker,
+         four in the pipeline, nothing comparing them — which is why an owner
+         with ten accounts watched three of them sync. ESM; window.WFInstitutions. -->
+    <script type="module" src="wealthflow-institutions.js"></script>
+    <script type="module" src="wealthflow-sender-discovery.js"></script>
     <!-- v7.67.0 — The verification matrix. A due date is a QUESTION, not an
          answer: it decides which payouts and bills are due, which have been
          confirmed, which are late and which the owner has flagged, and the
@@ -2674,6 +2688,19 @@
             font-size: 11.5px; color: var(--text2); white-space: nowrap;
         }
         .wf-sender-cover-how { font-size: 11.5px; color: var(--text3); }
+        .wf-sender-why { font-size: 11px; color: var(--text3); margin-top: 3px; line-height: 1.55; }
+        .wf-sender-why.likely { color: var(--text2); }
+        .wf-sender-find-more { flex-basis: 100%; font-size: 11.5px; color: var(--text3); margin-top: 6px; }
+        .wf-hunt { margin: 14px 0 4px; }
+        .wf-hunt-row {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            padding: 9px 0; border-bottom: 1px solid var(--border, rgba(127,127,127,0.16));
+        }
+        .wf-hunt-bank { flex: 1; min-width: 190px; font-size: 12.5px; }
+        .wf-hunt-addr { font-size: 11.5px; color: var(--text2); word-break: break-all; margin-top: 2px; }
+        .wf-hunt-why { font-size: 11px; color: var(--text3); margin-top: 2px; }
+        .wf-hunt-none { font-size: 11.5px; color: var(--text3); margin-top: 2px; }
+        .wf-hunt-row.empty { opacity: 0.72; }
         .wf-sender-lbl { display: block; font-size: 11px; font-weight: 700; color: var(--text3);
             margin-bottom: 4px; letter-spacing: .02em; }
         .wf-sender-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
@@ -23709,23 +23736,38 @@ table.amort tbody tr { page-break-inside: avoid; }
          * attachment is fetched, and the run's only lasting effect is that the
          * sender appears here, for the owner to decide about. */
         const DISCOVERY_MONTHS = 6;
+        /* Survives between presses so a bounded run can be continued rather
+         * than restarted. Not persisted: a fresh page load starting from the
+         * newest month again is the right default, because the newest month is
+         * where a bank that has just started writing will be. */
+        let _discoverCursor = null;
         /* One call per window, plus paging room. Bounded because this is
          * somebody's Gmail quota and a cursor that fails to advance would
          * otherwise spend all of it. */
         const DISCOVERY_MAX_CALLS = 30;
-        let _discover = { stage: 'idle', label: '', found: 0, error: null };
+        let _discover = { stage: 'idle', label: '', found: 0, error: null, truncated: false };
 
         async function runSenderDiscovery(months = DISCOVERY_MONTHS) {
             if (_discover.stage === 'running') return;
             if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
-            _discover = { stage: 'running', label: '', found: 0, error: null };
+            _discover = { stage: 'running', label: '', found: 0, error: null, truncated: false };
             renderSenderList();
 
-            /* ITS OWN CURSOR, AND DELIBERATELY NOT SAVED. The historical scan's
-             * cursor is a position in a long job the owner can resume; writing
-             * this six-month walk over it would send that job back to the
-             * month this one happened to reach. */
-            let cursor = window.WFBackfill.startCursor({ months, now: Date.now() });
+            /* ITS OWN CURSOR, STILL NOT WRITTEN OVER THE HISTORICAL SCAN'S —
+             * that one is a position in a long import job, and dropping this
+             * six-month walk on top of it would send that job back to whichever
+             * month this one happened to reach.
+             *
+             * BUT IT IS NO LONGER THROWN AWAY. A run is bounded by
+             * DISCOVERY_MAX_CALLS, and the old code started from scratch every
+             * time: a mailbox big enough to exhaust the budget could be
+             * searched a hundred times and never see past the same first few
+             * months. Pressing the button again now CONTINUES — which is the
+             * difference between a search that is bounded and one that is
+             * simply incomplete. */
+            let cursor = _discoverCursor && !_discoverCursor.done
+                ? _discoverCursor
+                : window.WFBackfill.startCursor({ months, now: Date.now() });
             let calls = 0;
             while (calls < DISCOVERY_MAX_CALLS) {
                 const step = window.WFBackfill.nextStep(cursor);
@@ -23740,6 +23782,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                     pageToken: step.pageToken || undefined,
                     /* The one widening this endpoint accepts. */
                     discover: true,
+                    /* THE INSTITUTIONS THE OWNER ACTUALLY HOLDS, off their own
+                     * records. Names, not a query: the server resolves each
+                     * against the canonical institution list and drops anything
+                     * not on it, so nothing shaped here reaches Gmail.
+                     *
+                     * This is what turns the search around. Without it the run
+                     * enumerates a mailbox and asks of each sender "is this a
+                     * bank?". With it, it asks the answerable question —
+                     * WHICH ADDRESS DOES SAMPATH WRITE FROM? */
+                    banks: _ownedBanks(),
                 });
                 if (!r || r.status !== 200 || !r.body || r.body.ok !== true) {
                     _discover.error = (r && r.body && r.body.error) || 'the search could not be completed';
@@ -23751,17 +23803,34 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (Number.isFinite(Number(r.body.discovered))) _discover.found = Number(r.body.discovered);
             }
 
+            /* Kept so the next press continues. `done` is what stops it being
+             * resumed for ever: once the walk finishes, the following press
+             * starts a fresh one at today's date. */
+            _discoverCursor = cursor;
+            _discover.truncated = !cursor.done && !_discover.error;
             _discover.stage = 'idle';
             _discover.label = '';
             /* The list is re-read from the server rather than patched, for the
              * same reason every other mutation here is. */
             await _sendersLoad();
+            /* A SEARCH THAT STOPPED EARLY MUST SAY SO.
+             *
+             * "No senders found" after a run that never reached half the
+             * mailbox is not a result, it is a false statement — and it is the
+             * exact sentence that made the owner believe their other banks did
+             * not send statements at all. */
             if (_discover.error) notify(_discover.error, 'error');
-            else if (_senders.pending.length) {
+            else if (_discover.truncated) {
+                notify('Searched as far as this run goes'
+                    + (_senders.pending.length ? ' — ' + _senders.pending.length + ' sender'
+                        + (_senders.pending.length === 1 ? '' : 's') + ' so far' : '')
+                    + '. Press Find my banks again to carry on from ' + (cursor.windows[cursor.index] || {}).label + '.',
+                    'warn');
+            } else if (_senders.pending.length) {
                 notify(_senders.pending.length + ' sender'
                     + (_senders.pending.length === 1 ? '' : 's') + ' waiting for you to decide', 'success');
             } else {
-                notify('No senders found that you have not already decided about', 'info');
+                notify('Searched every month. No senders found that you have not already decided about', 'info');
             }
             renderSenderList();
         }
@@ -23827,7 +23896,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             renderSenderList();
         }
 
-        function _senderRow(e, buttons) {
+        function _senderRow(e, buttons, scored) {
             const seen = Number(e.seenCount) || 0;
             return '<div class="wf-sender-row">'
                 + '<div class="wf-sender-id">'
@@ -23836,6 +23905,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 +     (seen ? ' &middot; seen ' + seen + (seen === 1 ? ' time' : ' times') : '')
                 +   '</div>'
                 +   (e.lastSubject ? '<div class="wf-sender-sub">' + _wfEsc(e.lastSubject) + '</div>' : '')
+                +   (scored && scored.why && scored.why.length
+                        ? '<div class="wf-sender-why' + (scored.likely ? ' likely' : '') + '">'
+                            + (scored.likely ? '<b>Looks like one of your banks</b> &middot; ' : '')
+                            + _wfEsc(scored.why.join(' &middot; ').replace(/&middot;/g, '\u00b7'))
+                          + '</div>'
+                        : '')
                 + '</div>'
                 + '<div class="wf-sender-acts">' + buttons + '</div>'
                 + '</div>';
@@ -23862,26 +23937,79 @@ table.amort tbody tr { page-break-inside: avoid; }
          * demand and the known-sender list is served by the endpoint. This
          * screen holds no list of its own, which is the whole point of it.
          */
-        function _senderCoverage() {
+        /** The institutions on the owner's own records, by picker name. */
+        function _ownedBanks() {
             const A = window.WFAccounts;
-            if (!A || typeof A.derive !== 'function' || typeof A.bankNamesMatch !== 'function') return null;
-            let banks = [];
+            if (!A || typeof A.derive !== 'function') return [];
             try {
-                /* derive() returns a FLAT ARRAY of accounts, not a grouped
-                 * object. The first version of this read reg.cards/reg.banks
-                 * and would have found nothing, silently, for ever — the
-                 * failure this app keeps producing, reproduced inside the
-                 * screen written to report it. */
                 const reg = A.derive(appData);
                 const all = Array.isArray(reg) ? reg : [];
+                const out = [];
                 const seen = new Set();
                 for (const a of all) {
                     const b = String((a && a.bank) || '').trim();
                     if (!b || seen.has(b.toLowerCase())) continue;
                     seen.add(b.toLowerCase());
-                    banks.push(b);
+                    out.push(b);
                 }
-            } catch (_) { return null; }
+                return out;
+            } catch (_) { return []; }
+        }
+
+        /**
+         * THE ANSWER, BANK BY BANK.
+         *
+         * A ranked list of forty domains hands the owner back the problem they
+         * started with. This is the row they asked for: their bank, the address
+         * it writes from, and one tap to accept it — with the sender saved
+         * under the EXACT picker name, so every later match against their card
+         * records is an equality rather than a hopeful substring.
+         */
+        function _bankHuntPanel() {
+            const D = window.WFDiscovery;
+            if (!D || typeof D.bankHunt !== 'function') return '';
+            const banks = _ownedBanks();
+            if (!banks.length) return '';
+            let hunt;
+            try { hunt = D.bankHunt(banks, _senders.pending); } catch (_) { return ''; }
+            if (!hunt || !hunt.rows.length) return '';
+
+            const rows = hunt.rows.map((r) => {
+                const found = r.best
+                    ? '<div class="wf-hunt-addr">' + _wfEsc(r.best.address) + '</div>'
+                        + (r.best.why && r.best.why.length
+                            ? '<div class="wf-hunt-why">' + _wfEsc(r.best.why.join(' \u00b7 ')) + '</div>' : '')
+                    : '<div class="wf-hunt-none">not found in the months searched so far</div>';
+                const act = r.best
+                    ? '<button class="btn btn-primary btn-sm" data-hact="add"'
+                        + ' data-haddr="' + _wfEsc(r.best.address) + '"'
+                        + ' data-hbank="' + _wfEsc(r.bank) + '">'
+                        + (window.WFIcon && WFIcon.has('check') ? WFIcon('check') : '') + ' Yes, that is it</button>'
+                    : '';
+                return '<div class="wf-hunt-row' + (r.best ? '' : ' empty') + '">'
+                    + '<div class="wf-hunt-bank"><b>' + _wfEsc(r.bank) + '</b>' + found + '</div>'
+                    + '<div class="wf-sender-acts">' + act + '</div>'
+                    + '</div>';
+            }).join('');
+
+            return '<div class="wf-hunt">'
+                + '<div class="wf-sender-h">Your banks, and where they write from</div>'
+                + '<div class="wf-sender-note">'
+                +   _wfEsc(hunt.matched + ' of your ' + hunt.of + ' banks matched to an address so far.')
+                +   ' Accepting one saves it under that bank\u2019s own name, so its statements file themselves.'
+                + '</div>'
+                + rows
+                + '</div>';
+        }
+
+        function _senderCoverage() {
+            const A = window.WFAccounts;
+            if (!A || typeof A.bankNamesMatch !== 'function') return null;
+            /* ONE reader of the account registry, shared with the hunt above.
+             * This function had its own copy for about ten minutes, which is
+             * exactly how the two bank lists this whole change exists to merge
+             * came about in the first place. */
+            const banks = _ownedBanks();
             if (!banks.length) return null;
 
             const known = Array.isArray(_senders.knownBanks) ? _senders.knownBanks : [];
@@ -23925,9 +24053,27 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return;
             }
 
-            const pending = _senders.pending.map((e) => _senderRow(e,
+            /* RANKED, AND WITH THE REASONS SHOWN.
+             *
+             * An unordered list of every domain that has ever attached a file
+             * is not an answer to "which of these are my banks" — it is the
+             * same question again, with more rows. WFDiscovery scores each on
+             * evidence (a monthly rhythm, an automated address, how often it
+             * writes) and every reason it used is printed beside the row, so
+             * the ordering is something the owner can check rather than trust.
+             *
+             * If the module has not loaded, the plain list is still rendered.
+             * A ranking helper that fails should cost the ranking, never the
+             * ability to approve a sender. */
+            const report = (window.WFDiscovery && typeof WFDiscovery.discoveryReport === 'function')
+                ? WFDiscovery.discoveryReport(_senders.pending) : null;
+            const byId = new Map(_senders.pending.map((e) => [String(e.id).toLowerCase(), e]));
+            const rowFor = (e, scored) => _senderRow(e,
                 _senderBtn('approve', e.id, 'This is my bank', 'check', 'primary')
-                + _senderBtn('block', e.id, 'Never', 'x', 'secondary'))).join('');
+                + _senderBtn('block', e.id, 'Never', 'x', 'secondary'), scored);
+            const pending = report
+                ? report.ranked.map((r) => rowFor(byId.get(r.id) || { id: r.id, name: r.name }, r)).join('')
+                : _senders.pending.map((e) => rowFor(e, null)).join('');
 
             const approved = _senders.approved.map((e) => _senderRow(e,
                 _senderBtn('block', e.id, 'Block', 'x', 'secondary')
@@ -23957,20 +24103,35 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + '</div>'
                 + '<button class="btn btn-secondary btn-sm" id="_sl_find"' + (finding ? ' disabled' : '') + '>'
                 +   (window.WFIcon && WFIcon.has('scan') ? WFIcon('scan') : '')
-                +   (finding ? ' Searching' + (_discover.label ? ' ' + _wfEsc(_discover.label) : '') + '…' : ' Find my banks')
+                +   (finding ? ' Searching' + (_discover.label ? ' ' + _wfEsc(_discover.label) : '') + '…'
+                        : (_discover.truncated ? ' Keep looking' : ' Find my banks'))
                 + '</button>'
+                + (_discover.truncated
+                    /* A toast scrolls away; the state that says the search is
+                     * unfinished must not. This is the sentence that stops
+                     * "no senders found" being read as "you have no other
+                     * banks". */
+                    ? '<div class="wf-sender-find-more">This run reached as far as it goes. '
+                        + 'Press again to carry on further back.</div>'
+                    : '')
                 + '</div>';
 
             host.innerHTML =
                 (_senders.error ? '<div class="wf-sender-err">' + _wfEsc(_senders.error) + '</div>' : '')
                 + _coverageStrip()
                 + discoverBar
+                + _bankHuntPanel()
                 + section(
                     'Waiting for you to decide' + (_senders.pending.length ? ' (' + _senders.pending.length + ')' : ''),
                     'Senders that have mailed you a PDF. Nothing from these is filed until you say so.',
                     pending,
                     'Nothing new. Senders show up here as your mailbox is scanned — or press '
                         + '<b>Find my banks</b> above to go and look now.')
+                + (report && report.found
+                    ? '<div class="wf-sender-note">Ranked by evidence, not by guesswork. '
+                        + _wfEsc(report.cannotFind.charAt(0).toUpperCase() + report.cannotFind.slice(1))
+                        + ' — add those by hand.</div>'
+                    : '')
                 + section(
                     'Your statement senders' + (_senders.approved.length ? ' (' + _senders.approved.length + ')' : ''),
                     'Only these are searched for. Everything else is left alone.',
@@ -23980,6 +24141,21 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const find = host.querySelector('#_sl_find');
             if (find) find.onclick = () => { try { triggerHaptic('light'); } catch (_) {} runSenderDiscovery(); };
+
+            host.querySelectorAll('[data-hact]').forEach((b) => {
+                b.onclick = () => {
+                    try { triggerHaptic('light'); } catch (_) {}
+                    /* Saved with the bank's PICKER NAME, which is the whole
+                     * point of asking the question this way round: the sender
+                     * is labelled with the exact string every card charge
+                     * already carries, so nothing downstream has to guess that
+                     * "Sampath" and "Sampath Bank" are the same institution. */
+                    _sendersDo('add', b.getAttribute('data-haddr'), {
+                        status: 'approved',
+                        name: b.getAttribute('data-hbank'),
+                    });
+                };
+            });
 
             host.querySelectorAll('[data-sact]').forEach((b) => {
                 b.onclick = () => {

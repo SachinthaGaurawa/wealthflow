@@ -1,0 +1,628 @@
+/* =============================================================================
+ * test/sender_discovery_test.js — finding the banks, instead of asking for them
+ * -----------------------------------------------------------------------------
+ * THE REQUEST: "I cannot find the statement emails for all my banks. Make
+ * WealthFlow able to add those emails itself."
+ *
+ * The old discovery asked Gmail for
+ *
+ *     has:attachment filename:pdf … ("statement" OR "e-statement" OR …)
+ *
+ * and both of those gates are fatal AND invisible. A bank sending a
+ * password-protected ZIP is not in `filename:pdf`. A subject reading "Monthly
+ * Account Summary" matches none of the six phrases. Neither is ranked low —
+ * both are ABSENT, and the screen reports the silence as "nothing found".
+ *
+ * These tests pin the new question and the evidence that narrows it, and they
+ * pin the three cases that must NOT change: a curated owner still gets exactly
+ * their own senders, a first-time owner still gets the vocabulary, and a
+ * discovery run still stores nothing.
+ * ===========================================================================*/
+
+import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
+import { runs } from './fuzz-config.js';
+import {
+    SIGNAL, WEIGHT, SUBJECT_TERMS, LIKELY,
+    wideQuery, looksAutomated, saysStatement, monthKey,
+    scoreSender, rankCandidates, discoveryReport,
+} from '../wealthflow-sender-discovery.js';
+import { recordSighting, normalizeList } from '../wealthflow-mail-senders.mjs';
+import { planWindows } from '../wealthflow-backfill.js';
+import { windowFor } from '../gmail-scan.mjs';
+import { CONSUMER_MAIL } from '../wealthflow-mail-ingest.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const AUG = Date.UTC(2026, 7, 1);
+const SEP = Date.UTC(2026, 8, 1);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE QUESTION
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the wide query asks something every bank can answer', () => {
+    const q = wideQuery({ after: AUG, before: SEP });
+
+    it('drops the file-type gate that hid every non-PDF statement', () => {
+        // A password-protected ZIP, an .htm attachment, or a PDF whose filename
+        // carries no extension. None of these are in `filename:pdf`, and the
+        // owner is never told a filter removed them.
+        expect(q).not.toContain('filename:pdf');
+        expect(q).toContain('has:attachment');
+    });
+
+    it('drops the vocabulary gate that hid every differently-worded bank', () => {
+        for (const term of SUBJECT_TERMS) expect(q).not.toContain(`"${term}"`);
+        expect(q).not.toContain('statement');
+    });
+
+    it('excludes personal mailboxes IN THE QUERY, using the list that already decides that', () => {
+        // Cheaper than fetching them and refusing them, and it is the same rule
+        // either way — so there is no second definition of "this is a person".
+        for (const d of ['gmail.com', 'yahoo.com', 'outlook.com', 'icloud.com']) {
+            expect(CONSUMER_MAIL.has(d)).toBe(true);
+            expect(q).toContain(`-from:${d}`);
+        }
+    });
+
+    it('stays inside the window it was given', () => {
+        expect(q).toContain('after:2026/08/01');
+        expect(q).toContain('before:2026/09/01');
+    });
+
+    it('is deterministic — the same window twice is the same string', () => {
+        // A cursor carries the query it is resuming. An undecided ordering of
+        // the exclusion list would make two runs of one scan incomparable.
+        expect(wideQuery({ after: AUG, before: SEP })).toBe(q);
+    });
+
+    it('refuses a window that is not one', () => {
+        expect(wideQuery({ after: 0, before: SEP })).toBe('');
+        expect(wideQuery({ after: SEP, before: AUG })).toBe('');
+        expect(wideQuery({})).toBe('');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * WHAT MUST NOT CHANGE
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the routine scan is untouched', () => {
+    const base = { months: 6, index: 0, now: Date.UTC(2026, 8, 3) };
+
+    it('a curated owner still gets exactly their own senders and no guessing', () => {
+        const q = windowFor({ ...base, senders: ['from:hnb.lk'] }).query;
+        expect(q).toContain('filename:pdf');
+        expect(q).toContain('from:hnb.lk');
+        expect(q).not.toContain('"statement"');
+        expect(q).not.toContain('-from:gmail.com');
+    });
+
+    it('a first-time owner still gets the vocabulary, not just the four built-ins', () => {
+        // THE REGRESSION THIS CATCHES: the caller substitutes the built-in bank
+        // domains when nobody is approved, so `fromClauses` is never empty and
+        // a naive "use terms when there are no senders" test would silently
+        // limit a first scan to the four banks this pipeline ships with.
+        const q = windowFor({ ...base }).query;
+        expect(q).toContain('"statement"');
+        expect(q).toContain('from:hnb.lk');
+        expect(q).toContain('filename:pdf');
+    });
+
+    it('an ordinary scan is NEVER a discovery run', () => {
+        // A discovery window reads headers only and stores nothing. If an
+        // ordinary scan became one, a first-time owner would scan their whole
+        // mailbox, import not one statement, and be told the scan finished.
+        expect(windowFor({ ...base }).discovery).toBeUndefined();
+        expect(windowFor({ ...base, senders: ['from:hnb.lk'] }).discovery).toBeUndefined();
+        expect(windowFor({ ...base, discover: null }).discovery).toBeUndefined();
+    });
+
+    it('only an explicit request is a discovery run, and it is marked as one', () => {
+        const w = windowFor({ ...base, discover: true });
+        expect(w.discovery).toBe(true);
+        expect(w.query).toContain('has:attachment');
+        expect(w.query).not.toContain('filename:pdf');
+    });
+
+    it('a bad index or clock is still refused, discovery or not', () => {
+        expect(windowFor({ months: 6, index: null, now: SEP, discover: true })).toBe(null);
+        expect(windowFor({ months: 6, index: 0, now: 0, discover: true })).toBe(null);
+    });
+
+    it('planWindows still walks newest-first and covers each month', () => {
+        // Two windows per month now — one per pass — so the labels repeat in
+        // pairs. What must hold is the ORDER and the coverage: newest first,
+        // every month present, none skipped.
+        const w = planWindows({ months: 3, now: Date.UTC(2026, 8, 15), discover: true });
+        expect([...new Set(w.map((x) => x.label))]).toEqual(['2026-09', '2026-08', '2026-07']);
+        expect(w).toHaveLength(6);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE EVIDENCE
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('recurrence is the signal nothing was recording', () => {
+    it('the sender list now remembers WHICH MONTHS a sender wrote in', () => {
+        let l = recordSighting([], { from: 'x@sampath.lk', subject: 'a', now: 1, month: '2026-08' });
+        l = recordSighting(l, { from: 'x@sampath.lk', subject: 'b', now: 2, month: '2026-07' });
+        expect(l[0].months.sort()).toEqual(['2026-07', '2026-08']);
+    });
+
+    it('merges months rather than replacing — a scan walks NEWEST first', () => {
+        // The later call carries the OLDER month. Overwriting would leave one
+        // month recorded however many the sender has written in, and the
+        // recurrence signal would never fire for anybody.
+        let l = recordSighting([], { from: 'x@boc.lk', now: 1, month: '2026-09' });
+        for (const m of ['2026-08', '2026-07', '2026-06']) {
+            l = recordSighting(l, { from: 'x@boc.lk', now: 2, month: m });
+        }
+        expect(l[0].months).toHaveLength(4);
+    });
+
+    it('counts a month once however many statements arrived in it', () => {
+        let l = [];
+        for (let i = 0; i < 5; i++) l = recordSighting(l, { from: 'x@seylan.lk', now: i, month: '2026-08' });
+        expect(l[0].months).toEqual(['2026-08']);
+        expect(l[0].seenCount).toBe(5);
+    });
+
+    it('keeps the full address, because noreply@ is evidence a domain cannot show', () => {
+        const l = recordSighting([], { from: '"BOC" <eStatement@boc.lk>', now: 1, month: '2026-08' });
+        expect(l[0].id).toBe('boc.lk');
+        expect(l[0].lastFrom).toBe('estatement@boc.lk');
+    });
+
+    it('bounds the month list — this rides inside a stored document', () => {
+        let l = [];
+        for (let y = 2020; y < 2026; y++) {
+            for (let m = 1; m <= 12; m++) {
+                l = recordSighting(l, { from: 'x@ndbbank.com', now: 1, month: `${y}-${String(m).padStart(2, '0')}` });
+            }
+        }
+        expect(l[0].months.length).toBeLessThanOrEqual(12);
+    });
+
+    it('survives a stored record with a junk months field', () => {
+        const l = normalizeList([{ id: 'boc.lk', status: 'new', months: ['ok', 0, null, {}, 'x'] }]);
+        expect(Array.isArray(l[0].months)).toBe(true);
+        expect(l[0].months.every((m) => typeof m === 'string' && m)).toBe(true);
+    });
+
+    it('monthKey reads a timestamp, and refuses one that is not', () => {
+        expect(monthKey(Date.UTC(2026, 7, 31))).toBe('2026-08');
+        expect(monthKey(0)).toBe('');
+        expect(monthKey('nonsense')).toBe('');
+    });
+});
+
+describe('scoring says why, not just how much', () => {
+    const entry = (over) => ({ id: 'sampath.lk', domain: 'sampath.lk', status: 'new', ...over });
+
+    it('a monthly automated sender scores highest, and lists its reasons', () => {
+        const r = scoreSender(entry({
+            months: ['2026-08', '2026-07'], seenCount: 2,
+            lastFrom: 'estatement@sampath.lk', lastSubject: 'Your account summary',
+        }));
+        expect(r.likely).toBe(true);
+        expect(r.signals).toContain(SIGNAL.RECURRING);
+        expect(r.why).toContain('arrives about once a month');
+        expect(r.why.length).toBe(r.signals.length);
+    });
+
+    it('recurrence alone is worth more than vocabulary alone', () => {
+        // The whole correction: the old discovery relied on vocabulary and
+        // nothing else, which is exactly why differently-worded banks vanished.
+        expect(WEIGHT[SIGNAL.RECURRING]).toBeGreaterThan(WEIGHT[SIGNAL.VOCABULARY]);
+        const recurring = scoreSender(entry({ months: ['2026-08', '2026-07'], seenCount: 2 }));
+        const wordy = scoreSender(entry({ months: ['2026-08'], seenCount: 1, lastSubject: 'statement' }));
+        expect(recurring.score).toBeGreaterThan(wordy.score);
+    });
+
+    it('a bank that never says "statement" is still found', () => {
+        // The case the old search could not see at all.
+        const r = scoreSender(entry({
+            id: 'boc.lk', domain: 'boc.lk',
+            months: ['2026-08', '2026-07', '2026-06'], seenCount: 3,
+            lastFrom: 'noreply@boc.lk', lastSubject: 'Ref 88213/2026',
+        }));
+        expect(r.signals).not.toContain(SIGNAL.VOCABULARY);
+        expect(r.likely).toBe(true);
+    });
+
+    it('a one-off attachment from a company is not called a bank', () => {
+        const r = scoreSender(entry({
+            id: 'printshop.lk', domain: 'printshop.lk', months: ['2026-08'], seenCount: 1,
+            lastFrom: 'kamal@printshop.lk', lastSubject: 'Your order',
+        }));
+        expect(r.likely).toBe(false);
+        expect(r.score).toBeLessThan(LIKELY);
+    });
+
+    it('never exceeds one, whatever fires', () => {
+        const r = scoreSender(entry({
+            months: ['a', 'b', 'c'], seenCount: 40,
+            lastFrom: 'noreply@sampath.lk', lastSubject: 'e-statement',
+        }));
+        expect(r.score).toBeLessThanOrEqual(1);
+    });
+
+    it('reads an automated address, and does not call a person one', () => {
+        expect(looksAutomated('noreply@boc.lk')).toBe(true);
+        expect(looksAutomated('do-not-reply@combank.lk')).toBe(true);
+        expect(looksAutomated('eStatements@seylan.lk')).toBe(true);
+        expect(looksAutomated('kamal.perera@combank.lk')).toBe(false);
+        expect(looksAutomated('')).toBe(false);
+        expect(looksAutomated(null)).toBe(false);
+    });
+
+    it('reads a wider vocabulary than the old search, and still no bill or invoice', () => {
+        expect(saysStatement('Monthly Account Summary')).toBe(true);
+        expect(saysStatement('Your Card Statement is ready')).toBe(true);
+        expect(saysStatement('TRANSACTION ADVICE')).toBe(true);
+        // These describe every non-statement financial mail ever sent, and
+        // letting them back in is how a statements screen filled with receipts.
+        expect(SUBJECT_TERMS.join(' ')).not.toContain('bill');
+        expect(SUBJECT_TERMS.join(' ')).not.toContain('invoice');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE REPORT
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the report the owner is shown', () => {
+    const list = () => {
+        let l = [];
+        for (const m of ['2026-08', '2026-07', '2026-06']) {
+            l = recordSighting(l, { from: 'estatement@sampath.lk', subject: 'Account summary', now: 1, month: m });
+        }
+        for (const m of ['2026-08', '2026-07']) {
+            l = recordSighting(l, { from: 'noreply@boc.lk', subject: 'Ref 8821', now: 1, month: m });
+        }
+        l = recordSighting(l, { from: 'kamal@printshop.lk', subject: 'Your order', now: 1, month: '2026-08' });
+        return l;
+    };
+
+    it('puts the likely banks first, with their reasons', () => {
+        const r = discoveryReport(list());
+        expect(r.likely.map((x) => x.id)).toEqual(['sampath.lk', 'boc.lk']);
+        expect(r.rest.map((x) => x.id)).toEqual(['printshop.lk']);
+        for (const x of r.likely) expect(x.why.length).toBeGreaterThan(0);
+    });
+
+    it('never re-offers a sender the owner already decided about', () => {
+        // Re-offering something they blocked is how a helpful screen becomes
+        // one people stop reading.
+        const l = list().map((e) => (e.id === 'boc.lk' ? { ...e, status: 'blocked' } : e));
+        const withApproved = l.map((e) => (e.id === 'sampath.lk' ? { ...e, status: 'approved' } : e));
+        const ids = discoveryReport(withApproved).ranked.map((x) => x.id);
+        expect(ids).not.toContain('boc.lk');
+        expect(ids).not.toContain('sampath.lk');
+    });
+
+    it('names what it cannot find, rather than implying it found everything', () => {
+        const r = discoveryReport(list());
+        // The residue shrank when the wording pass was added: a bank that
+        // emails only a link IS now reachable, provided it says what the mail
+        // is — which a link-only mail has to, or its recipient could not tell
+        // either. What is left is the mail nobody could classify.
+        expect(r.cannotFind).toContain('attaches nothing');
+        expect(r.cannotFind).toContain('never uses the word statement');
+    });
+
+    it('an empty mailbox reports nothing found, not an error', () => {
+        const r = discoveryReport([]);
+        expect(r.found).toBe(0);
+        expect(r.likely).toEqual([]);
+    });
+
+    it('never throws on a list read back from storage', () => {
+        fc.assert(fc.property(fc.anything(), (junk) => {
+            expect(() => discoveryReport(junk)).not.toThrow();
+            expect(() => rankCandidates(junk)).not.toThrow();
+        }), { numRuns: runs(200) });
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE RANKING IS ON THE SCREEN
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the discovery report has a caller', () => {
+    // A ranking module nothing renders is this repository's most repeated
+    // defect. The evidence is worth nothing if the owner sees the same
+    // unordered list of domains they saw before.
+    const HTML = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+    const SCAN = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'gmail-scan.js'), 'utf8');
+
+    it('the module is loaded by the app, as ESM', () => {
+        expect(HTML).toMatch(/<script type="module" src="wealthflow-sender-discovery\.js">/);
+    });
+
+    it('the pending list is ranked, not printed in arrival order', () => {
+        expect(HTML).toContain('WFDiscovery.discoveryReport(_senders.pending)');
+        expect(HTML).toContain('report.ranked.map(');
+    });
+
+    it('every reason the ranking used is printed beside the row', () => {
+        expect(HTML).toContain('scored.why');
+        expect(HTML).toContain('wf-sender-why');
+        expect(HTML).toContain('Looks like one of your banks');
+    });
+
+    it('a missing ranking costs the ordering, never the ability to approve', () => {
+        // The fallback matters more than the feature: a helper that failed to
+        // load must not take the approve button with it.
+        expect(HTML).toContain("window.WFDiscovery && typeof WFDiscovery.discoveryReport === 'function'");
+        expect(HTML).toContain('_senders.pending.map((e) => rowFor(e, null))');
+    });
+
+    it('the screen says what discovery cannot find', () => {
+        expect(HTML).toContain('report.cannotFind');
+    });
+
+    it('the scan reads headers only on a discovery window, and says why', () => {
+        expect(SCAN).toContain('const discovering = window.discovery === true;');
+        expect(SCAN).toContain('format=metadata');
+        expect(SCAN).toContain('if (discovering) {');
+    });
+
+    it('a discovery sighting is stamped with the MESSAGE month, not today', () => {
+        // Recurrence is the strongest signal there is. Stamping every sighting
+        // with the date of the run would make every sender look like it had
+        // written exactly once, and the signal would never fire for anybody.
+        expect(SCAN).toContain('month: monthKey(Number(msg.internalDate)');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE THREE CEILINGS THAT MADE IT INCOMPLETE, SILENTLY
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the search reaches the whole mailbox, or says it did not', () => {
+    const HTML2 = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+
+    it('TWO PASSES per month, because one cannot reach every bank', async () => {
+        const { PASS } = await import('../wealthflow-sender-discovery.js');
+        const w = planWindows({ months: 2, now: Date.UTC(2026, 8, 3), discover: true });
+        expect(w).toHaveLength(4);
+        expect(w.map((x) => x.pass)).toEqual([
+            PASS.ATTACHMENTS, PASS.WORDING, PASS.ATTACHMENTS, PASS.WORDING,
+        ]);
+        expect(w.map((x) => x.label)).toEqual(['2026-09', '2026-09', '2026-08', '2026-08']);
+    });
+
+    it('the wording pass finds the bank that attaches NOTHING', async () => {
+        const { PASS, wideQuery } = await import('../wealthflow-sender-discovery.js');
+        const q = wideQuery({ after: AUG, before: SEP, pass: PASS.WORDING });
+        // The case the attachment pass cannot see by construction: a bank that
+        // emails "your statement is ready, log in to view it".
+        expect(q).not.toContain('has:attachment');
+        expect(q).toContain('"statement"');
+        expect(q).toContain('-from:gmail.com');
+        expect(q).toContain('after:2026/08/01');
+    });
+
+    it('a wording pass with no vocabulary asks nothing, rather than asking for everything', () => {
+        // The dangerous empty case: dropping the only filter would request the
+        // entire mailbox, month by month, from a credential that can read it.
+        return import('../wealthflow-sender-discovery.js').then(({ PASS, wideQuery }) => {
+            expect(wideQuery({ after: AUG, before: SEP, pass: PASS.WORDING, terms: [] })).toBe('');
+        });
+    });
+
+    it('a discovery call may read four times as many messages, because it stores none', async () => {
+        const { SCAN, boundedMax, listUrl, windowFor: wf } = await import('../gmail-scan.mjs');
+        expect(SCAN.MAX_DISCOVERY_PER_CALL).toBeGreaterThan(SCAN.MAX_MESSAGES_PER_CALL);
+        expect(boundedMax(undefined, true)).toBe(SCAN.MAX_DISCOVERY_PER_CALL);
+        expect(boundedMax(undefined, false)).toBe(SCAN.MAX_MESSAGES_PER_CALL);
+        // And it is the WINDOW that decides, not the caller: a routine window
+        // can never be talked into the higher ceiling.
+        const disc = wf({ months: 6, index: 0, now: SEP, discover: true });
+        const rout = wf({ months: 6, index: 0, now: SEP });
+        expect(listUrl('B', disc, null, 999)).toContain(`maxResults=${SCAN.MAX_DISCOVERY_PER_CALL}`);
+        expect(listUrl('B', rout, null, 999)).toContain(`maxResults=${SCAN.MAX_MESSAGES_PER_CALL}`);
+    });
+
+    it('the run is RESUMABLE — pressing again continues instead of restarting', () => {
+        // The old code built a fresh cursor every press. A mailbox big enough
+        // to exhaust the call budget could be searched a hundred times and
+        // never see past the same first few months.
+        expect(HTML2).toContain('let _discoverCursor = null;');
+        expect(HTML2).toContain('_discoverCursor && !_discoverCursor.done');
+        expect(HTML2).toContain('_discoverCursor = cursor;');
+    });
+
+    it('a search that stopped early SAYS so, on the screen and not only in a toast', () => {
+        // "No senders found" after a run that never reached half the mailbox is
+        // not a result, it is a false statement — and it is the sentence that
+        // made the owner believe their other banks send nothing.
+        expect(HTML2).toContain('_discover.truncated');
+        expect(HTML2).toContain('wf-sender-find-more');
+        expect(HTML2).toContain('Press again to carry on further back.');
+        expect(HTML2).toContain('Keep looking');
+        expect(HTML2).toContain('Searched every month. No senders found');
+    });
+
+    it('and it names the month it will carry on from', () => {
+        expect(HTML2).toContain('cursor.windows[cursor.index]');
+    });
+
+    it('the residue it still cannot reach is named honestly', () => {
+        const r = discoveryReport([]);
+        expect(r.cannotFind).toContain('attaches nothing');
+        expect(r.cannotFind).toContain('never uses the word statement');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE QUESTION ASKED THE RIGHT WAY ROUND
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the named pass: which address does Sampath write from?', () => {
+    const list = () => {
+        let l = [];
+        for (const m of ['2026-08', '2026-07', '2026-06']) {
+            l = recordSighting(l, { from: 'Sampath Bank <eStatement@sampath.lk>', subject: 'Ref 91', now: 1, month: m });
+        }
+        for (const m of ['2026-08', '2026-07']) {
+            l = recordSighting(l, { from: '"Seylan Bank" <noreply@mailer.example>', subject: 'Monthly summary', now: 1, month: m });
+        }
+        l = recordSighting(l, { from: 'kamal@printshop.lk', subject: 'Your order', now: 1, month: '2026-08' });
+        return l;
+    };
+
+    it('answers per bank, with an address', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Sampath Bank', 'Seylan Bank', 'Bank of Ceylon (BOC)'], list());
+        expect(r.of).toBe(3);
+        expect(r.matched).toBe(2);
+        expect(r.rows[0].best.address).toBe('estatement@sampath.lk');
+        expect(r.missing).toEqual(['Bank of Ceylon (BOC)']);
+    });
+
+    it('finds a bank that mails through a THIRD PARTY, by its display name', async () => {
+        // noreply@mailer.example says nothing. "Seylan Bank" says everything —
+        // and the domain-only reading this app had before could not see it.
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Seylan Bank'], list());
+        expect(r.rows[0].best.address).toBe('noreply@mailer.example');
+    });
+
+    it('never attributes a sender to a bank it does not name', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Sampath Bank'], list());
+        expect(r.unattributed.map((u) => u.id)).toContain('printshop.lk');
+        expect(r.rows[0].best.address).toBe('estatement@sampath.lk');
+    });
+
+    it('a bank with nothing found says so, rather than borrowing another\'s sender', async () => {
+        // The failure that would matter most: one tap here files money under
+        // the answer, so a wrong attribution is worse than an empty row.
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Bank of Ceylon (BOC)'], list());
+        expect(r.rows[0].best).toBeNull();
+        expect(r.rows[0].found).toBe(0);
+        expect(r.matched).toBe(0);
+    });
+
+    it('does not offer a sender the owner already decided about', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const decided = list().map((e) => (e.id === 'sampath.lk' ? { ...e, status: 'approved' } : e));
+        expect(bankHunt(['Sampath Bank'], decided).rows[0].best).toBeNull();
+    });
+
+    it('collapses the two NTB picker entries into one row', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Nations Trust Bank (NTB) — AMEX', 'Nations Trust Bank (NTB) — Visa/Mastercard'], []);
+        expect(r.of).toBe(1);
+    });
+
+    it('never throws on a list read back from storage', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        for (const junk of [null, undefined, 'x', [0], [{}], [{ id: 5 }]]) {
+            expect(() => bankHunt(['Sampath Bank'], junk)).not.toThrow();
+        }
+        expect(() => bankHunt(null, list())).not.toThrow();
+    });
+
+    it('THE NAMED PASS RUNS FIRST, so a truncated run has still answered', async () => {
+        const { PASS } = await import('../wealthflow-sender-discovery.js');
+        const w = planWindows({ months: 1, now: Date.UTC(2026, 8, 3), discover: true, banks: ['Sampath Bank'] });
+        expect(w.map((x) => x.pass)).toEqual([PASS.NAMED, PASS.ATTACHMENTS, PASS.WORDING]);
+    });
+
+    it('and is skipped entirely when the owner has no banks on record', () => {
+        // wideQuery returns '' for an empty token list, and a window with no
+        // query would ask Gmail for the entire month.
+        const w = planWindows({ months: 1, now: Date.UTC(2026, 8, 3), discover: true });
+        expect(w).toHaveLength(2);
+        expect(w.every((x) => x.query)).toBe(true);
+    });
+
+    it('an unknown bank name reaches no Gmail query', async () => {
+        const { PASS, wideQuery } = await import('../wealthflow-sender-discovery.js');
+        expect(wideQuery({ after: AUG, before: SEP, pass: PASS.NAMED, banks: ['from:evil.example'] })).toBe('');
+        const w = windowFor({ months: 6, index: 0, now: SEP, discover: true, banks: ['" OR from:x'] });
+        expect(w.query).not.toContain('evil');
+        expect(w.pass).not.toBe(PASS.NAMED);
+    });
+});
+
+describe('the per-bank answer is on the screen', () => {
+    const APP = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+
+    it('the panel is computed and rendered', () => {
+        expect(APP).toContain('function _bankHuntPanel()');
+        expect(APP).toContain('+ _bankHuntPanel()');
+        expect(APP).toContain('D.bankHunt(banks, _senders.pending)');
+    });
+
+    it('the owner\'s banks are SENT with the run', () => {
+        expect(APP).toContain('banks: _ownedBanks(),');
+    });
+
+    it('accepting one saves it under the bank\'s exact picker name', () => {
+        // The payoff of asking the question this way round: nothing downstream
+        // has to guess that "Sampath" and "Sampath Bank" are one institution.
+        expect(APP).toContain("data-hbank=");
+        expect(APP).toContain("name: b.getAttribute('data-hbank')");
+        expect(APP).toContain("status: 'approved'");
+    });
+
+    it('a bank with no match shows an empty row, not a borrowed address', () => {
+        expect(APP).toContain('not found in the months searched so far');
+    });
+
+    it('the institutions module is loaded by the app', () => {
+        expect(APP).toMatch(/<script type="module" src="wealthflow-institutions\.js">/);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * A FINDING FROM THE REVIEW BOARD, CHECKED RATHER THAN ARGUED WITH
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a second search cannot start on top of the first', () => {
+    /* The consensus board blocked a commit on this:
+     *
+     *   "the button is not disabled while the search is running, so the user
+     *    can press it again and start a second search on top of the first one"
+     *
+     * It is wrong on the facts — the disabled attribute is on the line above
+     * the one it cited, and a re-entrancy guard sits at the top of the function
+     * as well. But a bot finding is a bug report, and the answer to a bug
+     * report you disagree with is not a rebuttal, it is a test. If the claim
+     * ever becomes true, this goes red instead of someone re-arguing it.
+     *
+     * The concern is also worth guarding for its own sake: two concurrent runs
+     * would advance one cursor from two places and skip whole months between
+     * them — which is exactly the class of silent incompleteness this whole
+     * change exists to remove.
+     */
+    const APP = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+    /* Sliced FORWARD from the bar, not to the next `host.innerHTML =` — the
+     * loading branch earlier in renderSenderList assigns that too, so slicing
+     * between the two markers yielded an empty string and every assertion below
+     * failed against nothing. Caught by the test failing for the wrong reason,
+     * which is the only way that mistake ever announces itself. */
+    const bar = APP.slice(APP.indexOf('const discoverBar ='), APP.indexOf('const discoverBar =') + 2000);
+
+    it('the button carries `disabled` for as long as a run is going', () => {
+        expect(bar).toContain("id=\"_sl_find\"' + (finding ? ' disabled' : '')");
+        // `finding` is set just above the bar, not inside it.
+        expect(APP).toContain("const finding = _discover.stage === 'running';");
+    });
+
+    it('and the function refuses to start a second run even if it is called', () => {
+        // Belt and braces on purpose: a disabled attribute is a rendering
+        // detail, and window.runSenderDiscovery is exported on the global.
+        const fn = APP.slice(APP.indexOf('async function runSenderDiscovery'));
+        const head = fn.slice(0, fn.indexOf('let cursor'));
+        expect(head).toContain("if (_discover.stage === 'running') return;");
+    });
+
+    it('the label changes while the guard does not', () => {
+        // What the finding actually saw was the LABEL ternary, which is a
+        // different expression on a different line from the disabled one.
+        expect(bar).toContain("' Keep looking'");
+        expect(bar).toContain("' Find my banks'");
+        expect(bar).toContain("' Searching'");
+    });
+});

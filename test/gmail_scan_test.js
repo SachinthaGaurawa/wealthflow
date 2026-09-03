@@ -66,7 +66,11 @@ describe('the window is derived, never accepted', () => {
     it('the same inputs give the same window on both sides', async () => {
         const { planWindows } = await import('../wealthflow-backfill.js');
         const mine = windowFor({ months: 12, index: 4, now: NOW });
-        const theirs = planWindows({ months: 12, now: NOW, senders: scanSenders() })[4];
+        /* includeTerms mirrors what windowFor passes for an owner with nobody
+         * approved: the built-in domains AND the statement vocabulary. Leaving
+         * it out here would compare two different questions and call them
+         * equal. */
+        const theirs = planWindows({ months: 12, now: NOW, senders: scanSenders(), includeTerms: true })[4];
         expect(mine).toEqual(theirs);
     });
 

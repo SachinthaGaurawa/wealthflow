@@ -447,17 +447,36 @@ describe('the scan query catches an unlisted bank', () => {
     const NOW2 = Date.UTC(2026, 7, 15);
     const q = (opts) => planWindows({ months: 1, now: NOW2, ...opts })[0].query;
 
-    it('asks for statement wording as well as known senders', () => {
-        const query = q({ senders: ['hnb.lk'] });
+    /* THE VOCABULARY IS NOW ASKED FOR, NOT ASSUMED.
+     *
+     * These two used to pass `senders` and expect the statement wording to be
+     * there as well, because `discover` defaulted to true. It no longer does:
+     * `discover` used to mean "also match the vocabulary" and now selects a
+     * different question entirely — headers only, nothing downloaded — so
+     * defaulting to it would turn every caller that never heard of the flag
+     * into a run that imports nothing and reports success.
+     *
+     * The guarantee these tests protect is unchanged and still checked: someone
+     * who has approved nobody sees banks they have not listed. It is now
+     * requested by `includeTerms`, which gmail-scan.mjs sets exactly when the
+     * owner's approved list is empty. */
+    it('asks for statement wording as well as known senders, when asked to', () => {
+        const query = q({ senders: ['hnb.lk'], includeTerms: true });
         expect(query, 'a known sender must still match on WHO it is').toContain('from:hnb.lk');
         expect(query, 'and an unlisted bank on WHAT it calls itself').toContain('"statement"');
     });
 
     it('the two are OR-ed, so either alone qualifies', () => {
-        const query = q({ senders: ['hnb.lk'] });
+        const query = q({ senders: ['hnb.lk'], includeTerms: true });
         const group = query.slice(query.indexOf('('));
         expect(group).toMatch(/from:hnb\.lk OR /);
         expect(group).not.toMatch(/from:hnb\.lk AND /);
+    });
+
+    it('and a curated owner is asked about nobody else', () => {
+        const query = q({ senders: ['hnb.lk'] });
+        expect(query).toContain('from:hnb.lk');
+        expect(query).not.toContain('"statement"');
     });
 
     it('bounds the volume with filename:pdf rather than by sender', () => {
