@@ -90,7 +90,13 @@ describe('an unapproved sender is never asked for', () => {
          * became a parameter when a run had to be able to widen the QUESTION
          * without widening what is stored — so the flag is read here rather
          * than derived, and `chosen` is still what the query is made of. */
-        expect(scanPlan).toContain('planWindows({ months: m, now: at, senders: chosen, discover: wide })');
+        expect(scanPlan).toContain('senders: chosen,');
+        /* `discover` is read from the request and passed through, never
+         * derived: an ordinary scan must not become a discovery run by
+         * accident, because a discovery run reads headers only and imports
+         * nothing. `includeTerms` carries the separate uncurated case. */
+        expect(scanPlan).toContain('discover: discover === true,');
+        expect(scanPlan).toContain('includeTerms: !owns,');
         expect(scanPlan).toContain('const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();');
     });
 

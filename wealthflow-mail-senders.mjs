@@ -154,6 +154,9 @@ export function normalizeSender(input) {
     return { ok: true, kind: 'domain', id: domain, domain };
 }
 
+/** A year of month keys is enough to see a rhythm and small enough to store. */
+const MAX_MONTHS = 12;
+
 /** One stored entry, with every field defaulted so a partial record is safe. */
 function entryOf(e) {
     /* The object test is not decoration. `e && e.id` on the number 0 yields 0,
@@ -180,6 +183,22 @@ function entryOf(e) {
          * thing that lets them recognise what a domain actually is. Capped hard
          * because it is mail content being carried into a settings screen. */
         lastSubject: String(e.lastSubject || '').slice(0, 120),
+        /* THE MONTHS THIS SENDER HAS WRITTEN IN, newest first, capped.
+         *
+         * A bank statement is PERIODIC, and nothing here recorded that. Without
+         * it the only evidence discovery had was vocabulary — the signal that
+         * made banks with different wording invisible in the first place. Two
+         * sightings in two different months is a far stronger claim about what
+         * a sender is than any word in a subject line.
+         *
+         * Distinct keys only, so twelve statements in one month is one month.
+         * Capped at MAX_MONTHS because this rides inside a stored document and
+         * a set that grows without bound eventually stops being storable. */
+        months: [...new Set(arr(e.months).map((m) => String(m || '').slice(0, 7)).filter(Boolean))]
+            .sort().reverse().slice(0, MAX_MONTHS),
+        /* The last full address seen for this domain-level entry. Kept because
+         * `noreply@` is evidence and the domain alone cannot show it. */
+        lastFrom: String(e.lastFrom || '').slice(0, 120).toLowerCase(),
     };
 }
 
@@ -305,7 +324,7 @@ export function removeSender(list, id) {
  * changes a decision — an approved sender stays approved and a blocked one
  * stays blocked, and only the counters move.
  */
-export function recordSighting(list, { from = '', subject = '', now = 0 } = {}) {
+export function recordSighting(list, { from = '', subject = '', now = 0, month = '' } = {}) {
     const domain = domainOf(from);
     if (!domain) return normalizeList(list);
     /* Recorded at domain level. An address-level sighting would fill the screen
@@ -324,6 +343,12 @@ export function recordSighting(list, { from = '', subject = '', now = 0 } = {}) 
             lastSeenMs: Math.max(num(e.lastSeenMs), num(now)),
             seenCount: num(e.seenCount) + 1,
             lastSubject: e.status === STATUS.NEW ? String(subject || '').slice(0, 120) : e.lastSubject,
+            /* Merged, never replaced. A scan walks months newest-first, so the
+             * later call carries the OLDER month — overwriting would leave one
+             * month recorded no matter how many the sender has written in, and
+             * the recurrence signal would never fire. */
+            months: [...new Set([...arr(e.months), String(month || '')].filter(Boolean))],
+            lastFrom: addressOf(from) || e.lastFrom || '',
         };
         return normalizeList(entries.map((x, i) => (i === idx ? next : x)));
     }
@@ -338,6 +363,8 @@ export function recordSighting(list, { from = '', subject = '', now = 0 } = {}) 
         lastSeenMs: num(now),
         seenCount: 1,
         lastSubject: String(subject || '').slice(0, 120),
+        months: month ? [String(month)] : [],
+        lastFrom: addressOf(from) || '',
     }, ...entries]);
 }
 

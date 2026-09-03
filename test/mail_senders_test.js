@@ -383,7 +383,11 @@ describe('the approved list becomes the question, not a filter after it', () => 
     });
 
     it('an uncurated scan keeps the vocabulary, because there is no other way in', () => {
-        const q = planWindows({ months: 1, now: NOW, senders: [], discover: true })[0].query;
+        /* `discover` no longer means "also match the vocabulary" — it selects a
+         * headers-only run that stores nothing. What this test is really about
+         * is the UNCURATED case, which is `includeTerms`, and which
+         * gmail-scan.mjs sets exactly when the approved list is empty. */
+        const q = planWindows({ months: 1, now: NOW, senders: [] })[0].query;
         expect(q).toContain('"statement"');
     });
 

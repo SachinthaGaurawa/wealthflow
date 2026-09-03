@@ -438,6 +438,14 @@
          and the ledger-wide dedup that nothing had ever passed a hash set to.
          window.WFBackfill -->
     <script type="module" src="wealthflow-backfill.js"></script>
+
+    <!-- Ranks the senders a discovery run turned up, and says WHY each one
+         looks like a bank. The old discovery narrowed inside the Gmail query
+         with `filename:pdf` and six English phrases, which decided in silence:
+         a bank sending a ZIP, or one whose subject reads "Monthly Account
+         Summary", was not ranked low but absent. The narrowing lives here now,
+         where the reasons can be put on the screen. ESM; window.WFDiscovery. -->
+    <script type="module" src="wealthflow-sender-discovery.js"></script>
     <!-- v7.67.0 — The verification matrix. A due date is a QUESTION, not an
          answer: it decides which payouts and bills are due, which have been
          confirmed, which are late and which the owner has flagged, and the
@@ -2674,6 +2682,8 @@
             font-size: 11.5px; color: var(--text2); white-space: nowrap;
         }
         .wf-sender-cover-how { font-size: 11.5px; color: var(--text3); }
+        .wf-sender-why { font-size: 11px; color: var(--text3); margin-top: 3px; line-height: 1.55; }
+        .wf-sender-why.likely { color: var(--text2); }
         .wf-sender-lbl { display: block; font-size: 11px; font-weight: 700; color: var(--text3);
             margin-bottom: 4px; letter-spacing: .02em; }
         .wf-sender-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
@@ -23827,7 +23837,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             renderSenderList();
         }
 
-        function _senderRow(e, buttons) {
+        function _senderRow(e, buttons, scored) {
             const seen = Number(e.seenCount) || 0;
             return '<div class="wf-sender-row">'
                 + '<div class="wf-sender-id">'
@@ -23836,6 +23846,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                 +     (seen ? ' &middot; seen ' + seen + (seen === 1 ? ' time' : ' times') : '')
                 +   '</div>'
                 +   (e.lastSubject ? '<div class="wf-sender-sub">' + _wfEsc(e.lastSubject) + '</div>' : '')
+                +   (scored && scored.why && scored.why.length
+                        ? '<div class="wf-sender-why' + (scored.likely ? ' likely' : '') + '">'
+                            + (scored.likely ? '<b>Looks like one of your banks</b> &middot; ' : '')
+                            + _wfEsc(scored.why.join(' &middot; ').replace(/&middot;/g, '\u00b7'))
+                          + '</div>'
+                        : '')
                 + '</div>'
                 + '<div class="wf-sender-acts">' + buttons + '</div>'
                 + '</div>';
@@ -23925,9 +23941,27 @@ table.amort tbody tr { page-break-inside: avoid; }
                 return;
             }
 
-            const pending = _senders.pending.map((e) => _senderRow(e,
+            /* RANKED, AND WITH THE REASONS SHOWN.
+             *
+             * An unordered list of every domain that has ever attached a file
+             * is not an answer to "which of these are my banks" — it is the
+             * same question again, with more rows. WFDiscovery scores each on
+             * evidence (a monthly rhythm, an automated address, how often it
+             * writes) and every reason it used is printed beside the row, so
+             * the ordering is something the owner can check rather than trust.
+             *
+             * If the module has not loaded, the plain list is still rendered.
+             * A ranking helper that fails should cost the ranking, never the
+             * ability to approve a sender. */
+            const report = (window.WFDiscovery && typeof WFDiscovery.discoveryReport === 'function')
+                ? WFDiscovery.discoveryReport(_senders.pending) : null;
+            const byId = new Map(_senders.pending.map((e) => [String(e.id).toLowerCase(), e]));
+            const rowFor = (e, scored) => _senderRow(e,
                 _senderBtn('approve', e.id, 'This is my bank', 'check', 'primary')
-                + _senderBtn('block', e.id, 'Never', 'x', 'secondary'))).join('');
+                + _senderBtn('block', e.id, 'Never', 'x', 'secondary'), scored);
+            const pending = report
+                ? report.ranked.map((r) => rowFor(byId.get(r.id) || { id: r.id, name: r.name }, r)).join('')
+                : _senders.pending.map((e) => rowFor(e, null)).join('');
 
             const approved = _senders.approved.map((e) => _senderRow(e,
                 _senderBtn('block', e.id, 'Block', 'x', 'secondary')
@@ -23971,6 +24005,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                     pending,
                     'Nothing new. Senders show up here as your mailbox is scanned — or press '
                         + '<b>Find my banks</b> above to go and look now.')
+                + (report && report.found
+                    ? '<div class="wf-sender-note">Ranked by evidence, not by guesswork. '
+                        + _wfEsc(report.cannotFind.charAt(0).toUpperCase() + report.cannotFind.slice(1))
+                        + ' — add those by hand.</div>'
+                    : '')
                 + section(
                     'Your statement senders' + (_senders.approved.length ? ' (' + _senders.approved.length + ')' : ''),
                     'Only these are searched for. Everything else is left alone.',

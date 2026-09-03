@@ -49,16 +49,36 @@ describe('what a discovery window asks Gmail for', () => {
         for (const t of STATEMENT_TERMS) expect(q).not.toContain(`"${t}"`);
     });
 
-    it('a discovery scan asks about the approved senders AND the vocabulary', () => {
+    it('a discovery scan asks a DIFFERENT question, not a wider version of the same one', () => {
+        /* CHANGED DELIBERATELY, AND THIS TEST USED TO ASSERT THE OPPOSITE.
+         *
+         * It pinned `filename:pdf` and the statement vocabulary as still being
+         * present in a discovery run, on the reasoning that discovery widens
+         * WHO is asked about rather than how much of the mailbox is read. That
+         * reasoning was wrong about what those two clauses do:
+         *
+         *   filename:pdf   a bank sending a password-protected ZIP, an .htm
+         *                  attachment, or a PDF whose filename carries no
+         *                  extension is not in the answer at all
+         *   the vocabulary a subject reading "Monthly Account Summary" matches
+         *                  none of the six phrases
+         *
+         * Neither is ranked low. Both are ABSENT, and the screen reports the
+         * silence as "nothing found" — which is exactly the complaint that
+         * produced this change: banks that could never appear, for a reason
+         * nothing displayed. The narrowing moved to
+         * wealthflow-sender-discovery.js, where it is done on evidence that can
+         * be shown to the owner. */
         const q = windowFor({ ...base, senders: ['from:hnb.lk'], discover: true }).query;
-        expect(q).toContain('from:hnb.lk');
-        expect(q).toContain('"statement"');
-        /* Still bounded to PDFs inside the window — discovery widens who, not
-         * how much of the mailbox is read. */
         expect(q).toContain('has:attachment');
-        expect(q).toContain('filename:pdf');
         expect(q).toContain('after:');
         expect(q).toContain('before:');
+        expect(q).not.toContain('filename:pdf');
+        expect(q).not.toContain('"statement"');
+        /* Personal mailboxes are excluded in the query, using the same list
+         * that already decides a sender is a person rather than an institution.
+         * There is no second definition of that anywhere. */
+        expect(q).toContain('-from:gmail.com');
     });
 
     it('the vocabulary carries no bill and no invoice, even in discovery', () => {
@@ -198,22 +218,37 @@ describe('a discovery run lists the unknown bank without importing it', () => {
         expect(seen.body.discovered).toBeGreaterThan(0);
     });
 
-    it('AND NOTHING OF ITS MAIL IS STORED', async () => {
-        /* The half that matters. A discovery mode that also stored would
-         * re-import the bills and receipts the sweep just cleared, one press
-         * of a button after clearing them. */
+    it('AND NOTHING AT ALL IS STORED OR DOWNLOADED', async () => {
+        /* STRONGER THAN IT USED TO BE, AND THIS TEST USED TO ASSERT LESS.
+         *
+         * It checked that the UNAPPROVED sender's attachment was not fetched,
+         * while the approved one was imported by the same run. A discovery run
+         * now reads `format=metadata` — from, subject, date, and no body — so
+         * it cannot reach an attachment for anybody, approved or not. The old
+         * rule was a policy decision taken per message; this is a property of
+         * what was requested from Gmail.
+         *
+         * The cost is real and is stated rather than hidden: pressing "find my
+         * banks" no longer imports anything. Importing is what the ordinary
+         * scan does, and it does it with the sender list this run just filled
+         * in. */
         connectWithApproved();
         await scan({ months: 6, index: 0, now: NOW, discover: true }, byId);
-        const stored = itemKeys();
-        expect(stored.length).toBe(1);                       // the approved bank only
-        expect(calls.some((u) => /\/messages\/m2\/attachments\//.test(u)),
-            'the unapproved sender’s attachment was downloaded').toBe(false);
+        expect(itemKeys().length).toBe(0);
+        expect(calls.some((u) => /\/attachments\//.test(u)),
+            'a discovery run downloaded an attachment').toBe(false);
+        expect(calls.some((u) => /format=full/.test(u)),
+            'a discovery run asked for a message body').toBe(false);
+        expect(calls.some((u) => /format=metadata/.test(u)),
+            'a discovery run should read headers only').toBe(true);
     });
 
-    it('the approved bank is still imported by the same run', async () => {
+    it('and it still sees BOTH senders, which is the point of reading headers', async () => {
         connectWithApproved();
-        const seen = await scan({ months: 6, index: 0, now: NOW, discover: true }, byId);
-        expect(seen.body.statements).toBe(1);
+        await scan({ months: 6, index: 0, now: NOW, discover: true }, byId);
+        const ids = sendersOf().map((e) => e.id);
+        expect(ids).toContain('hnb.lk');
+        expect(ids).toContain('sampath.lk');
     });
 
     it('a routine scan does not even ask about the unknown bank', async () => {
@@ -235,7 +270,10 @@ describe('a discovery run lists the unknown bank without importing it', () => {
         });
         await scan({ months: 6, index: 0, now: NOW, discover: true }, byId);
         expect(sendersOf().find((e) => e.id === 'sampath.lk').status).toBe('blocked');
-        expect(itemKeys().length).toBe(1);
+        /* Nothing is stored by a discovery run at all now — see the test above.
+         * A blocked sender staying blocked is still the assertion that matters:
+         * a run that went looking must never undo a decision. */
+        expect(itemKeys().length).toBe(0);
     });
 
     it('the caller can widen the question and nothing else', async () => {

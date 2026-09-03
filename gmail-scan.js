@@ -41,6 +41,7 @@ import { identify, sendersOf, SENDERS_FIELD } from './gmail-link.mjs';
 import {
     normalizeList, approvedClauses, policyFrom, recordSighting,
 } from './wealthflow-mail-senders.mjs';
+import { monthKey } from './wealthflow-sender-discovery.js';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
 import { MAIL_ROOT, windowFor, listUrl, boundedMax, pageResult } from './gmail-scan.mjs';
@@ -119,14 +120,20 @@ export default async function handler(req, res, deps) {
         months: body.months, index: body.index, now: body.now,
         senders: approvedClauses(senderList),
         /* THE ONE THING THE CALLER MAY WIDEN, AND IT WIDENS NOTHING THAT GETS
-         * STORED. A discovery run asks Gmail about every PDF whose subject
-         * carries a statement word, so a bank the owner has never approved can
-         * finally appear on the screen that offers senders to approve. What
-         * comes back is still judged by the same policy: an unapproved sender
-         * is refused before an attachment is fetched, and the run's only
-         * lasting effect is a sighting. Anything else here would be a
-         * caller-shaped query against a credential that can read a whole
-         * mailbox. */
+         * STORED. A discovery run asks Gmail for every message with an
+         * attachment in the window, minus the personal mailboxes — no file-type
+         * gate and no vocabulary, because both of those made banks with
+         * different habits invisible rather than merely lower-ranked.
+         *
+         * It is also the run that reads LEAST: headers only, no body, no
+         * attachment. The old rule was that mail from an unapproved sender is
+         * refused before an attachment is fetched. This makes that structural
+         * instead of conditional — a discovery run over an entire mailbox
+         * cannot copy one document out of it, whatever the policy says.
+         *
+         * The query is still DERIVED here, never accepted, for the same reason
+         * as always: a caller-shaped query against a credential that can read a
+         * whole mailbox is a general mail-search proxy. */
         discover: body.discover === true ? true : null,
     });
     if (!window) {
@@ -160,13 +167,45 @@ export default async function handler(req, res, deps) {
     const stored = [];
     const skipped = [];
 
+    /* Headers only on a discovery window. `format=metadata` returns From,
+     * Subject and internalDate and NO body — so the loop below physically
+     * cannot reach an attachment, rather than choosing not to. */
+    const discovering = window.discovery === true;
+    const fmt = discovering
+        ? 'format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date'
+        : 'format=full';
+
     for (const id of ids.slice(0, boundedMax(body.max))) {
         let msg;
         try {
-            const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`, { headers: authed(token) });
+            const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?${fmt}`, { headers: authed(token) });
             if (!r.ok) continue;                       // one unreadable message is not a failed scan
             msg = await r.json();
         } catch (_) { continue; }
+
+        /* A DISCOVERY RUN ENDS HERE. It has the sender, the subject and the
+         * date, which is everything the ranking needs, and it has downloaded
+         * nothing. planMessage() below expects a full message and would find no
+         * parts in a metadata one — calling it anyway would report every sender
+         * as "no attachment" and quietly teach the owner the opposite of the
+         * truth. */
+        if (discovering) {
+            const hdrs = {};
+            for (const h of (msg && msg.payload && msg.payload.headers) || []) {
+                if (h && h.name) hdrs[String(h.name).toLowerCase()] = h.value;
+            }
+            seen = recordSighting(seen, {
+                from: hdrs.from || '',
+                subject: hdrs.subject || '',
+                now: Date.now(),
+                /* The month the MESSAGE landed in, not the month of the run.
+                 * Recurrence is the strongest signal discovery has, and
+                 * stamping every sighting with today would make every sender
+                 * look like it wrote once. */
+                month: monthKey(Number(msg.internalDate) || window.after),
+            });
+            continue;
+        }
 
         /* The SAME plan the live hook applies: allowlisted sender, DKIM held,
          * an attachment worth taking. A second copy of that judgement is a
@@ -179,7 +218,10 @@ export default async function handler(req, res, deps) {
          * matters MORE: a sender nobody has approved yet is exactly the one to
          * put in front of them. Without this the strict rule would be a wall —
          * "not on your list" with no way to get on it. */
-        seen = recordSighting(seen, { from: plan.from, subject: plan.subject, now: Date.now() });
+        seen = recordSighting(seen, {
+            from: plan.from, subject: plan.subject, now: Date.now(),
+            month: monthKey(Number(msg.internalDate) || window.after),
+        });
 
         if (!plan.ok) {
             if (isWorthTelling(plan)) {

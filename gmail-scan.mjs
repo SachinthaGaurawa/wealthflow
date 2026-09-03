@@ -106,8 +106,30 @@ export function windowFor({ months, index, now, senders = null, discover = null 
      * can do is put that sender's address on the list for the owner to decide
      * about. The default is unchanged for every existing caller. */
     const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();
-    const wide = discover === null ? !(Array.isArray(senders) && senders.length) : discover === true;
-    const windows = planWindows({ months: m, now: at, senders: chosen, discover: wide });
+    /* ── ONLY AN EXPLICIT REQUEST IS A DISCOVERY RUN ──────────────────────
+     *
+     * This used to read `discover === null ? !senders.length : discover === true`
+     * — so an owner who had approved nothing got the wide branch on every
+     * ordinary scan. That was harmless while "wide" only meant "add the
+     * vocabulary to the query". It is NOT harmless now: a discovery window
+     * reads headers only and stores nothing, so a first-time owner would have
+     * scanned their mailbox and imported not one statement, and the screen
+     * would have said the scan finished.
+     *
+     * A discovery run is now exactly what the owner asked for and nothing else.
+     * The empty-sender case is handled inside planWindows(), which keeps the
+     * statement vocabulary while there is nobody approved to narrow to — the
+     * behaviour that was always meant by it. */
+    const owns = Array.isArray(senders) && senders.length > 0;
+    const windows = planWindows({
+        months: m, now: at, senders: chosen,
+        discover: discover === true,
+        /* Someone who has approved nobody gets the statement vocabulary as well
+         * as the built-in domains, so their first scan is not limited to the
+         * four banks this pipeline happens to ship with. Someone who HAS
+         * curated a list gets exactly that list and no guessing. */
+        includeTerms: !owns,
+    });
     return windows[i] || null;
 }
 
