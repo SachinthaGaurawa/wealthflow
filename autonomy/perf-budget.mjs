@@ -293,7 +293,11 @@ export const BUDGETS = {
      * offered fourteen institutions while the mail pipeline knew four, and
      * nothing compared them, which is why an owner with ten accounts saw three
      * of them sync. A cross-check test pinned that gap; this deletes it. */
-    totalJsBytes: 1_592_000,     // measured 1,590,313 across 60 modules
+    /* Raised for the vault wiring in wealthflow-pdf-unlock.js: a locked PDF now
+     * tries every password the owner already saved before anyone is asked for
+     * one. The passwords, the derived guesses and the ordering all existed —
+     * this module was simply not calling them, while two other callers were. */
+    totalJsBytes: 1_597_000,     // measured 1,596,031 across 60 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

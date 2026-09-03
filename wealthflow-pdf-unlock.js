@@ -2,8 +2,10 @@
  *
  *  When a user uploads a PDF (Upload Statement, CC One-Time, any upload), this:
  *    1. Tries to open it normally.
- *    2. If — and ONLY if — the PDF is encrypted, shows a password prompt.
- *    3. Unlocks it with the user's password (re-prompts on a wrong password).
+ *    2. If — and ONLY if — the PDF is encrypted, tries every password the owner
+ *       has already saved in the vault (and the NIC/DOB-derived guesses),
+ *       most-likely-first, without asking them anything.
+ *    3. Only if all of those fail, shows a password prompt.
  *    4. Extracts the text layer as clean, line-structured text and hands it to
  *       WFStatementParser for high-accuracy, balance-verified parsing.
  *
@@ -57,25 +59,128 @@
      *  askPassword(isRetry) → Promise<string|null>  (null = user cancelled)
      *  Resolves the pdf document, or null if the user cancelled the password box.
      */
-    async function openPdf(arrayBuffer, askPassword) {
-        var lib = await ensurePdfJs();
-        var password;            // undefined on first try (unencrypted opens straight away)
-        var wasEncrypted = false;
-        for (var attempt = 0; attempt < 8; attempt++) {
+    /*  Is this pdf.js error "the password is wrong / missing"?
+     *  Anything else is a real error and must not be answered with a password.
+     */
+    function _isPasswordError(e) {
+        return !!(e && (e.name === 'PasswordException' || /password/i.test(e.message || '')));
+    }
+
+    /*  THE PASSWORDS THE OWNER ALREADY SAVED, TRIED BEFORE ANYONE IS ASKED.
+     *
+     *  ── THE DEFECT THIS CLOSES ──────────────────────────────────────────
+     *
+     *  The vault, the derived NIC/DOB guesses, and `candidatesFor()` — which
+     *  orders every saved password most-likely-first — have all existed for a
+     *  while. Two callers used them: the mail-statement path in index.html and
+     *  the loader in wealthflow-ai-v4.js.
+     *
+     *  THIS module did not, and this module is the one whose own header says it
+     *  handles "Upload Statement, CC One-Time, any upload". So a locked PDF
+     *  arriving through getStatementText() went straight to a password box and
+     *  asked the owner to type a password they had already saved — while a
+     *  locked PDF arriving through a different door opened itself.
+     *
+     *  A facility built and wired to some of its callers is this repository's
+     *  most repeated defect. It is fixed here rather than at the two call sites
+     *  because one place is the only arrangement that cannot drift.
+     *
+     *  ── WHAT IT DOES NOT DO ─────────────────────────────────────────────
+     *
+     *  Nothing leaves the device. The vault is decrypted in memory under a key
+     *  derived from the master PIN, pdf.js decrypts a local file, and no
+     *  password is logged, reported, or attached to the result — only WHICH
+     *  SOURCE opened it, so the interface can say "opened with a saved
+     *  password" without saying which.
+     */
+    async function _vaultCandidates(bank, getCandidates) {
+        var fn = getCandidates
+            || (typeof window !== 'undefined' && window.wfVaultPdfPasswords);
+        if (typeof fn !== 'function') return [];
+        try {
+            var list = await fn(bank || '');
+            if (!Array.isArray(list)) return [];
+            var out = [];
+            for (var i = 0; i < list.length; i++) {
+                var v = list[i] == null ? '' : String(list[i]);
+                if (v && out.indexOf(v) === -1) out.push(v);
+            }
+            return out;
+        } catch (_) {
+            /* A vault that will not open is not a reason to fail the upload —
+             * the password box below is still a real answer. */
+            return [];
+        }
+    }
+
+    /*  Try each candidate in turn. Returns the opened document, or null.
+     *  `open` is injected so this can be tested without pdf.js or a browser.
+     */
+    async function tryCandidates(open, bytes, candidates) {
+        for (var i = 0; i < candidates.length; i++) {
             try {
-                var pdf = await lib.getDocument({ data: _copy(arrayBuffer), password: password }).promise;
-                pdf.__wasEncrypted = wasEncrypted;
+                var doc = await open(candidates[i]);
+                if (doc) return { doc: doc, index: i };
+            } catch (e) {
+                /* A WRONG PASSWORD IS NOT A FAILURE — it is the next attempt.
+                 * Any other error is, and stops the loop: retrying a corrupt
+                 * file against forty passwords is forty ways to say the same
+                 * thing slowly. */
+                if (!_isPasswordError(e)) throw e;
+            }
+        }
+        return null;
+    }
+
+    /*  openPdf(arrayBuffer, askPassword, opts)
+     *  askPassword(isRetry) → Promise<string|null>  (null = user cancelled)
+     *  opts.bank            → orders the saved passwords, when the bank is known
+     *  opts.getCandidates   → injected for tests; defaults to the vault
+     *  Resolves the pdf document, or null if the user cancelled the password box.
+     */
+    async function openPdf(arrayBuffer, askPassword, opts) {
+        opts = opts || {};
+        var lib = await ensurePdfJs();
+        var open = function (pw) {
+            return lib.getDocument({ data: _copy(arrayBuffer), password: pw }).promise;
+        };
+
+        /* Unencrypted opens straight away and no vault is consulted: a normal
+         * PDF must never cause a password to be read out of storage. */
+        try {
+            var plain = await open(undefined);
+            plain.__wasEncrypted = false;
+            plain.__unlockedBy = null;
+            return plain;
+        } catch (e0) {
+            if (!_isPasswordError(e0)) throw e0;
+        }
+
+        var saved = await _vaultCandidates(opts.bank, opts.getCandidates);
+        var hit = await tryCandidates(open, arrayBuffer, saved);
+        if (hit) {
+            hit.doc.__wasEncrypted = true;
+            /* The SOURCE, never the password. */
+            hit.doc.__unlockedBy = 'vault';
+            hit.doc.__triedSaved = saved.length;
+            return hit.doc;
+        }
+
+        /* Only now is the owner asked, and only for what the vault did not
+         * already know. */
+        var password;
+        for (var attempt = 0; attempt < 8; attempt++) {
+            var incorrect = attempt > 0 || saved.length > 0;
+            password = await (askPassword || promptPassword)(incorrect);
+            if (password === null || password === undefined) return null;  // cancelled
+            try {
+                var pdf = await open(password);
+                pdf.__wasEncrypted = true;
+                pdf.__unlockedBy = 'typed';
+                pdf.__triedSaved = saved.length;
                 return pdf;
             } catch (e) {
-                // ONLY a password error triggers the prompt; anything else is a real error
-                if (e && (e.name === 'PasswordException' || /password/i.test(e.message || ''))) {
-                    wasEncrypted = true;
-                    var incorrect = (e.code === 2) || /incorrect/i.test(e.message || '');
-                    password = await (askPassword || promptPassword)(incorrect);
-                    if (password === null || password === undefined) return null;  // cancelled
-                    continue;
-                }
-                throw e;
+                if (!_isPasswordError(e)) throw e;
             }
         }
         return null;
@@ -110,12 +215,20 @@
         return out.join('\n');
     }
 
-    async function getStatementText(file, askPassword) {
+    async function getStatementText(file, askPassword, opts) {
         var buf = await file.arrayBuffer();
-        var pdf = await openPdf(buf, askPassword);
+        var pdf = await openPdf(buf, askPassword, opts);
         if (!pdf) return { cancelled: true, text: '', encrypted: true };
         var text = await extractText(pdf);
-        return { cancelled: false, text: text, encrypted: !!pdf.__wasEncrypted };
+        return {
+            cancelled: false, text: text, encrypted: !!pdf.__wasEncrypted,
+            /* 'vault' | 'typed' | null. The SOURCE, never the password — so a
+             * screen can say "opened with a saved password" without saying
+             * which one, and so a caller can tell whether the owner was made to
+             * do work the vault could have done. */
+            unlockedBy: pdf.__unlockedBy || null,
+            triedSaved: pdf.__triedSaved || 0,
+        };
     }
 
     // ── password prompt UI (dark-theme, matches the app) ─────────────────────────
@@ -144,6 +257,6 @@
         });
     }
 
-    window.WFPdfUnlock = { getStatementText: getStatementText, openPdf: openPdf, extractText: extractText, promptPassword: promptPassword, _itemsToLines: _itemsToLines };
+    window.WFPdfUnlock = { getStatementText: getStatementText, openPdf: openPdf, extractText: extractText, promptPassword: promptPassword, _itemsToLines: _itemsToLines, tryCandidates: tryCandidates, _isPasswordError: _isPasswordError };
     try { console.log('[WFPdfUnlock] ✓ encrypted-PDF unlock ready'); } catch (_) {}
 })();
