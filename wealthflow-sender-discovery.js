@@ -89,11 +89,34 @@ const ymd = (ms) => {
  * function pure and lets a test prove the exclusion is applied rather than
  * assumed.
  */
-export function wideQuery({ after, before, exclude = CONSUMER_MAIL } = {}) {
+export const PASS = {
+    /* Everything with an attachment. Catches a bank whatever it CALLS its
+     * mail — the pass that fixes "my bank never says the word statement". */
+    ATTACHMENTS: 'attachments',
+    /* Everything that SAYS statement, attachment or not. Catches the bank that
+     * emails "your statement is ready, log in to view it" and attaches
+     * nothing — the case the attachment pass cannot reach by construction.
+     *
+     * A mail with no attachment has to say what it is about, or the person
+     * receiving it would not know either. So the vocabulary, which is a weak
+     * signal when an attachment is present, is the only signal available when
+     * one is not — and here it is a filter rather than a ranking input. */
+    WORDING: 'wording',
+};
+
+export function wideQuery({ after, before, exclude = CONSUMER_MAIL, pass = PASS.ATTACHMENTS, terms = SUBJECT_TERMS } = {}) {
     const lo = num(after);
     const hi = num(before);
     if (!(lo > 0) || !(hi > lo)) return '';
-    const parts = ['has:attachment', `after:${ymd(lo)}`, `before:${ymd(hi)}`];
+    const parts = [];
+    if (pass === PASS.WORDING) {
+        const words = arr(terms).map(s).filter(Boolean).map((t) => `"${t.replace(/"/g, '')}"`);
+        if (!words.length) return '';
+        parts.push(`(${words.join(' OR ')})`);
+    } else {
+        parts.push('has:attachment');
+    }
+    parts.push(`after:${ymd(lo)}`, `before:${ymd(hi)}`);
     /* Sorted so the query is deterministic: an undecided ordering makes two
      * runs of the same scan produce two different strings, and a cursor that
      * carries a query cannot then be compared with the one it resumes. */
@@ -267,16 +290,21 @@ export function discoveryReport(list) {
         likely,
         rest: ranked.filter((r) => !r.likely),
         found: ranked.length,
-        /* Named so the screen can say it out loud. A bank that only ever emails
-         * a link to a portal carries no attachment, is therefore not in
-         * `has:attachment`, and cannot be discovered by any amount of ranking.
-         * Saying so is the difference between a limit and a bug. */
-        cannotFind: 'a bank that emails only a link, with no attachment, is not in this search',
+        /* WHAT IS LEFT, AFTER BOTH PASSES.
+         *
+         * The attachment pass finds a bank whatever it calls its mail. The
+         * wording pass finds a bank that attaches nothing but says what the
+         * mail is. What neither reaches is a bank that attaches nothing AND
+         * never uses any of the words — which would be a mail whose own
+         * recipient could not tell what it was either.
+         *
+         * Naming the residue is the difference between a limit and a bug. */
+        cannotFind: 'a bank that attaches nothing and never uses the word statement, or anything like it',
     };
 }
 
 const API = {
-    SIGNAL, SIGNAL_TEXT, WEIGHT, SUBJECT_TERMS, LIKELY,
+    SIGNAL, SIGNAL_TEXT, WEIGHT, SUBJECT_TERMS, LIKELY, PASS,
     wideQuery, looksAutomated, saysStatement, monthKey,
     scoreSender, rankCandidates, discoveryReport,
 };

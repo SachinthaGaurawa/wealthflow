@@ -175,7 +175,7 @@ export default async function handler(req, res, deps) {
         ? 'format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date'
         : 'format=full';
 
-    for (const id of ids.slice(0, boundedMax(body.max))) {
+    for (const id of ids.slice(0, boundedMax(body.max, discovering))) {
         let msg;
         try {
             const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?${fmt}`, { headers: authed(token) });

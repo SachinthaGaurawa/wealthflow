@@ -52,7 +52,7 @@
  * successful statements through it and asserts total silence.
  * ===========================================================================*/
 
-import { wideQuery } from './wealthflow-sender-discovery.js';
+import { wideQuery, PASS } from './wealthflow-sender-discovery.js';
 import { hashRow } from './wealthflow-statement-router.js';
 
 const s = (v) => (v == null ? '' : String(v)).trim();
@@ -261,22 +261,42 @@ export function planWindows({
      *
      * The ROUTINE path is untouched — approved senders, PDFs, no keywords. */
     if (discover) {
+        /* TWO PASSES PER MONTH, BECAUSE ONE CANNOT REACH EVERY BANK.
+         *
+         *   attachments  everything with a file attached, whatever the mail
+         *                CALLS itself. This is the pass that finds a bank whose
+         *                subject reads "Monthly Account Summary" or a bare
+         *                reference number.
+         *
+         *   wording      everything that SAYS statement, attached or not. This
+         *                is the pass that finds a bank which emails "your
+         *                statement is ready, log in to view it" and attaches
+         *                nothing — a mail the attachment pass cannot see by
+         *                construction, not by oversight.
+         *
+         * They are separate windows rather than one OR-ed query so each can be
+         * paged, resumed and reported on its own, and so a mailbox where one
+         * pass is enormous does not starve the other of the run's budget. */
         const out = [];
         const stop = new Date(now);
         for (let i = 0; i < depth; i++) {
             const hi = new Date(Date.UTC(stop.getUTCFullYear(), stop.getUTCMonth() - i + 1, 1));
             const lo = new Date(Date.UTC(stop.getUTCFullYear(), stop.getUTCMonth() - i, 1));
-            out.push({
-                label: `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`,
-                query: wideQuery({ after: lo.getTime(), before: hi.getTime() }),
-                after: lo.getTime(),
-                before: hi.getTime(),
-                /* The handler reads headers only for a discovery window and
-                 * never downloads an attachment. Carried on the window rather
-                 * than re-derived, so the plan and the fetch cannot disagree
-                 * about which kind of run this is. */
-                discovery: true,
-            });
+            const month = `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`;
+            for (const pass of [PASS.ATTACHMENTS, PASS.WORDING]) {
+                out.push({
+                    label: month,
+                    pass,
+                    query: wideQuery({ after: lo.getTime(), before: hi.getTime(), pass }),
+                    after: lo.getTime(),
+                    before: hi.getTime(),
+                    /* The handler reads headers only for a discovery window and
+                     * never downloads an attachment. Carried on the window
+                     * rather than re-derived, so the plan and the fetch cannot
+                     * disagree about which kind of run this is. */
+                    discovery: true,
+                });
+            }
         }
         return out;
     }

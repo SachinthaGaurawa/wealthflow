@@ -2684,6 +2684,7 @@
         .wf-sender-cover-how { font-size: 11.5px; color: var(--text3); }
         .wf-sender-why { font-size: 11px; color: var(--text3); margin-top: 3px; line-height: 1.55; }
         .wf-sender-why.likely { color: var(--text2); }
+        .wf-sender-find-more { flex-basis: 100%; font-size: 11.5px; color: var(--text3); margin-top: 6px; }
         .wf-sender-lbl { display: block; font-size: 11px; font-weight: 700; color: var(--text3);
             margin-bottom: 4px; letter-spacing: .02em; }
         .wf-sender-row { display: flex; align-items: center; gap: 10px; padding: 9px 0;
@@ -23719,23 +23720,38 @@ table.amort tbody tr { page-break-inside: avoid; }
          * attachment is fetched, and the run's only lasting effect is that the
          * sender appears here, for the owner to decide about. */
         const DISCOVERY_MONTHS = 6;
+        /* Survives between presses so a bounded run can be continued rather
+         * than restarted. Not persisted: a fresh page load starting from the
+         * newest month again is the right default, because the newest month is
+         * where a bank that has just started writing will be. */
+        let _discoverCursor = null;
         /* One call per window, plus paging room. Bounded because this is
          * somebody's Gmail quota and a cursor that fails to advance would
          * otherwise spend all of it. */
         const DISCOVERY_MAX_CALLS = 30;
-        let _discover = { stage: 'idle', label: '', found: 0, error: null };
+        let _discover = { stage: 'idle', label: '', found: 0, error: null, truncated: false };
 
         async function runSenderDiscovery(months = DISCOVERY_MONTHS) {
             if (_discover.stage === 'running') return;
             if (!window.WFBackfill) { notify('Backfill engine is not loaded', 'error'); return; }
-            _discover = { stage: 'running', label: '', found: 0, error: null };
+            _discover = { stage: 'running', label: '', found: 0, error: null, truncated: false };
             renderSenderList();
 
-            /* ITS OWN CURSOR, AND DELIBERATELY NOT SAVED. The historical scan's
-             * cursor is a position in a long job the owner can resume; writing
-             * this six-month walk over it would send that job back to the
-             * month this one happened to reach. */
-            let cursor = window.WFBackfill.startCursor({ months, now: Date.now() });
+            /* ITS OWN CURSOR, STILL NOT WRITTEN OVER THE HISTORICAL SCAN'S —
+             * that one is a position in a long import job, and dropping this
+             * six-month walk on top of it would send that job back to whichever
+             * month this one happened to reach.
+             *
+             * BUT IT IS NO LONGER THROWN AWAY. A run is bounded by
+             * DISCOVERY_MAX_CALLS, and the old code started from scratch every
+             * time: a mailbox big enough to exhaust the budget could be
+             * searched a hundred times and never see past the same first few
+             * months. Pressing the button again now CONTINUES — which is the
+             * difference between a search that is bounded and one that is
+             * simply incomplete. */
+            let cursor = _discoverCursor && !_discoverCursor.done
+                ? _discoverCursor
+                : window.WFBackfill.startCursor({ months, now: Date.now() });
             let calls = 0;
             while (calls < DISCOVERY_MAX_CALLS) {
                 const step = window.WFBackfill.nextStep(cursor);
@@ -23761,17 +23777,34 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (Number.isFinite(Number(r.body.discovered))) _discover.found = Number(r.body.discovered);
             }
 
+            /* Kept so the next press continues. `done` is what stops it being
+             * resumed for ever: once the walk finishes, the following press
+             * starts a fresh one at today's date. */
+            _discoverCursor = cursor;
+            _discover.truncated = !cursor.done && !_discover.error;
             _discover.stage = 'idle';
             _discover.label = '';
             /* The list is re-read from the server rather than patched, for the
              * same reason every other mutation here is. */
             await _sendersLoad();
+            /* A SEARCH THAT STOPPED EARLY MUST SAY SO.
+             *
+             * "No senders found" after a run that never reached half the
+             * mailbox is not a result, it is a false statement — and it is the
+             * exact sentence that made the owner believe their other banks did
+             * not send statements at all. */
             if (_discover.error) notify(_discover.error, 'error');
-            else if (_senders.pending.length) {
+            else if (_discover.truncated) {
+                notify('Searched as far as this run goes'
+                    + (_senders.pending.length ? ' — ' + _senders.pending.length + ' sender'
+                        + (_senders.pending.length === 1 ? '' : 's') + ' so far' : '')
+                    + '. Press Find my banks again to carry on from ' + (cursor.windows[cursor.index] || {}).label + '.',
+                    'warn');
+            } else if (_senders.pending.length) {
                 notify(_senders.pending.length + ' sender'
                     + (_senders.pending.length === 1 ? '' : 's') + ' waiting for you to decide', 'success');
             } else {
-                notify('No senders found that you have not already decided about', 'info');
+                notify('Searched every month. No senders found that you have not already decided about', 'info');
             }
             renderSenderList();
         }
@@ -23991,8 +24024,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + '</div>'
                 + '<button class="btn btn-secondary btn-sm" id="_sl_find"' + (finding ? ' disabled' : '') + '>'
                 +   (window.WFIcon && WFIcon.has('scan') ? WFIcon('scan') : '')
-                +   (finding ? ' Searching' + (_discover.label ? ' ' + _wfEsc(_discover.label) : '') + '…' : ' Find my banks')
+                +   (finding ? ' Searching' + (_discover.label ? ' ' + _wfEsc(_discover.label) : '') + '…'
+                        : (_discover.truncated ? ' Keep looking' : ' Find my banks'))
                 + '</button>'
+                + (_discover.truncated
+                    /* A toast scrolls away; the state that says the search is
+                     * unfinished must not. This is the sentence that stops
+                     * "no senders found" being read as "you have no other
+                     * banks". */
+                    ? '<div class="wf-sender-find-more">This run reached as far as it goes. '
+                        + 'Press again to carry on further back.</div>'
+                    : '')
                 + '</div>';
 
             host.innerHTML =

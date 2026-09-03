@@ -49,6 +49,19 @@ export const SCAN = {
     /** Gmail pages at 500; this is about how much one invocation can fetch and
      *  store inside the function's deadline, not about what Gmail will give. */
     MAX_MESSAGES_PER_CALL: 25,
+    /* A DISCOVERY CALL READS HEADERS AND STORES NOTHING, SO IT IS NOT THE SAME
+     * WORK AND MUST NOT CARRY THE SAME CEILING.
+     *
+     * 25 is sized for a full message fetch plus attachment downloads plus
+     * Firestore writes. A discovery call does none of those: `format=metadata`
+     * returns three headers, and the only write is one sender list at the end.
+     *
+     * The old ceiling made the search silently incomplete rather than slow. A
+     * month with three hundred attachment emails was read twenty-five at a
+     * time, and a run that budgets thirty calls across six months never
+     * reached the older ones — so a bank whose mail sat in the unread tail
+     * simply did not exist, and the screen said "no senders found". */
+    MAX_DISCOVERY_PER_CALL: 100,
     /** How far back the UI may ask to go. Ten years is planWindows' own ceiling. */
     MAX_MONTHS: 120,
 };
@@ -134,15 +147,20 @@ export function windowFor({ months, index, now, senders = null, discover = null 
 }
 
 /** How many messages this call may fetch. */
-export function boundedMax(v) {
+export function boundedMax(v, discovery = false) {
+    const cap = discovery ? SCAN.MAX_DISCOVERY_PER_CALL : SCAN.MAX_MESSAGES_PER_CALL;
     const n = Math.floor(Number(v));
-    if (!Number.isFinite(n) || n <= 0) return SCAN.MAX_MESSAGES_PER_CALL;
-    return Math.min(SCAN.MAX_MESSAGES_PER_CALL, n);
+    if (!Number.isFinite(n) || n <= 0) return cap;
+    return Math.min(cap, n);
 }
 
 /** Gmail's list URL for one window. Never built from caller-supplied text. */
 export function listUrl(base, window, pageToken, max) {
-    const q = new URLSearchParams({ q: String((window && window.query) || ''), maxResults: String(boundedMax(max)) });
+    const discovery = Boolean(window && window.discovery);
+    const q = new URLSearchParams({
+        q: String((window && window.query) || ''),
+        maxResults: String(boundedMax(max, discovery)),
+    });
     if (pageToken) q.set('pageToken', String(pageToken));
     return `${base}/messages?${q.toString()}`;
 }

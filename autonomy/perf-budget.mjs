@@ -157,7 +157,7 @@ export const BUDGETS = {
      * "ten accounts, three syncing". It is markup and a short reader over the
      * account registry, and it belongs on the screen where the owner asks —
      * a report they have to go and find is a report nobody reads. */
-    htmlBytes: 1_921_000,        // measured 1,919,485 — the ranked discovery list and its reasons
+    htmlBytes: 1_924_000,        // measured 1,922,547 — a resumable search that says when it stopped early
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -287,7 +287,7 @@ export const BUDGETS = {
      * ranked low but ABSENT. Moving that judgement into a module is what makes
      * it explainable on screen and testable here, and it is why the query got
      * simpler while the file count went up. */
-    totalJsBytes: 1_573_000,     // measured 1,571,879 across 59 modules
+    totalJsBytes: 1_576_000,     // measured 1,574,384 — the two-pass discovery query
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

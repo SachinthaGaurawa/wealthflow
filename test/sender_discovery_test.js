@@ -129,10 +129,13 @@ describe('the routine scan is untouched', () => {
         expect(windowFor({ months: 6, index: 0, now: 0, discover: true })).toBe(null);
     });
 
-    it('planWindows still walks newest-first and covers each month once', () => {
+    it('planWindows still walks newest-first and covers each month', () => {
+        // Two windows per month now — one per pass — so the labels repeat in
+        // pairs. What must hold is the ORDER and the coverage: newest first,
+        // every month present, none skipped.
         const w = planWindows({ months: 3, now: Date.UTC(2026, 8, 15), discover: true });
-        expect(w.map((x) => x.label)).toEqual(['2026-09', '2026-08', '2026-07']);
-        expect(new Set(w.map((x) => x.label)).size).toBe(3);
+        expect([...new Set(w.map((x) => x.label))]).toEqual(['2026-09', '2026-08', '2026-07']);
+        expect(w).toHaveLength(6);
     });
 });
 
@@ -299,8 +302,12 @@ describe('the report the owner is shown', () => {
 
     it('names what it cannot find, rather than implying it found everything', () => {
         const r = discoveryReport(list());
-        expect(r.cannotFind).toContain('link');
-        expect(r.cannotFind).toContain('no attachment');
+        // The residue shrank when the wording pass was added: a bank that
+        // emails only a link IS now reachable, provided it says what the mail
+        // is — which a link-only mail has to, or its recipient could not tell
+        // either. What is left is the mail nobody could classify.
+        expect(r.cannotFind).toContain('attaches nothing');
+        expect(r.cannotFind).toContain('never uses the word statement');
     });
 
     it('an empty mailbox reports nothing found, not an error', () => {
@@ -364,5 +371,84 @@ describe('the discovery report has a caller', () => {
         // with the date of the run would make every sender look like it had
         // written exactly once, and the signal would never fire for anybody.
         expect(SCAN).toContain('month: monthKey(Number(msg.internalDate)');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE THREE CEILINGS THAT MADE IT INCOMPLETE, SILENTLY
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the search reaches the whole mailbox, or says it did not', () => {
+    const HTML2 = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+
+    it('TWO PASSES per month, because one cannot reach every bank', async () => {
+        const { PASS } = await import('../wealthflow-sender-discovery.js');
+        const w = planWindows({ months: 2, now: Date.UTC(2026, 8, 3), discover: true });
+        expect(w).toHaveLength(4);
+        expect(w.map((x) => x.pass)).toEqual([
+            PASS.ATTACHMENTS, PASS.WORDING, PASS.ATTACHMENTS, PASS.WORDING,
+        ]);
+        expect(w.map((x) => x.label)).toEqual(['2026-09', '2026-09', '2026-08', '2026-08']);
+    });
+
+    it('the wording pass finds the bank that attaches NOTHING', async () => {
+        const { PASS, wideQuery } = await import('../wealthflow-sender-discovery.js');
+        const q = wideQuery({ after: AUG, before: SEP, pass: PASS.WORDING });
+        // The case the attachment pass cannot see by construction: a bank that
+        // emails "your statement is ready, log in to view it".
+        expect(q).not.toContain('has:attachment');
+        expect(q).toContain('"statement"');
+        expect(q).toContain('-from:gmail.com');
+        expect(q).toContain('after:2026/08/01');
+    });
+
+    it('a wording pass with no vocabulary asks nothing, rather than asking for everything', () => {
+        // The dangerous empty case: dropping the only filter would request the
+        // entire mailbox, month by month, from a credential that can read it.
+        return import('../wealthflow-sender-discovery.js').then(({ PASS, wideQuery }) => {
+            expect(wideQuery({ after: AUG, before: SEP, pass: PASS.WORDING, terms: [] })).toBe('');
+        });
+    });
+
+    it('a discovery call may read four times as many messages, because it stores none', async () => {
+        const { SCAN, boundedMax, listUrl, windowFor: wf } = await import('../gmail-scan.mjs');
+        expect(SCAN.MAX_DISCOVERY_PER_CALL).toBeGreaterThan(SCAN.MAX_MESSAGES_PER_CALL);
+        expect(boundedMax(undefined, true)).toBe(SCAN.MAX_DISCOVERY_PER_CALL);
+        expect(boundedMax(undefined, false)).toBe(SCAN.MAX_MESSAGES_PER_CALL);
+        // And it is the WINDOW that decides, not the caller: a routine window
+        // can never be talked into the higher ceiling.
+        const disc = wf({ months: 6, index: 0, now: SEP, discover: true });
+        const rout = wf({ months: 6, index: 0, now: SEP });
+        expect(listUrl('B', disc, null, 999)).toContain(`maxResults=${SCAN.MAX_DISCOVERY_PER_CALL}`);
+        expect(listUrl('B', rout, null, 999)).toContain(`maxResults=${SCAN.MAX_MESSAGES_PER_CALL}`);
+    });
+
+    it('the run is RESUMABLE — pressing again continues instead of restarting', () => {
+        // The old code built a fresh cursor every press. A mailbox big enough
+        // to exhaust the call budget could be searched a hundred times and
+        // never see past the same first few months.
+        expect(HTML2).toContain('let _discoverCursor = null;');
+        expect(HTML2).toContain('_discoverCursor && !_discoverCursor.done');
+        expect(HTML2).toContain('_discoverCursor = cursor;');
+    });
+
+    it('a search that stopped early SAYS so, on the screen and not only in a toast', () => {
+        // "No senders found" after a run that never reached half the mailbox is
+        // not a result, it is a false statement — and it is the sentence that
+        // made the owner believe their other banks send nothing.
+        expect(HTML2).toContain('_discover.truncated');
+        expect(HTML2).toContain('wf-sender-find-more');
+        expect(HTML2).toContain('Press again to carry on further back.');
+        expect(HTML2).toContain('Keep looking');
+        expect(HTML2).toContain('Searched every month. No senders found');
+    });
+
+    it('and it names the month it will carry on from', () => {
+        expect(HTML2).toContain('cursor.windows[cursor.index]');
+    });
+
+    it('the residue it still cannot reach is named honestly', () => {
+        const r = discoveryReport([]);
+        expect(r.cannotFind).toContain('attaches nothing');
+        expect(r.cannotFind).toContain('never uses the word statement');
     });
 });
