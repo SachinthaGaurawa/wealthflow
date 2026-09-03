@@ -49,9 +49,9 @@
  *      GOOGLE_OAUTH_CLIENT_SECRET, FIREBASE_SERVICE_ACCOUNT
  * ===========================================================================*/
 
-import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
+import { planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
 import { normalizeList, policyFrom, recordSighting } from './wealthflow-mail-senders.mjs';
-import { sendersOf, SENDERS_FIELD } from './gmail-link.mjs';
+import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 
@@ -213,6 +213,10 @@ export default async function handler(req, res) {
      * source and the same shape gmail-scan.js reads. A push has no client to
      * ask, which is the reason this list lives on the server at all. */
     const senderList = normalizeList(sendersOf(state));
+    /* References to messages refused for a sender reason. Written once, after
+     * the loop, for the same reason the sender list is: one write, not one per
+     * message. */
+    const held = [];
     const policy = policyFrom(senderList);
     let seen = senderList;
 
@@ -249,6 +253,14 @@ export default async function handler(req, res) {
             if (isWorthTelling(plan)) {
                 notable.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
             }
+            /* HELD, NOT DROPPED. A refusal about WHO SENT IT is one tap from
+             * being wrong, and this used to `continue` — the sighting was
+             * recorded so the sender appeared in the pending list, but the
+             * statement itself was gone, and approving the sender afterwards
+             * brought back nothing. A reference only: no attachment is fetched
+             * on the strength of a refusal. */
+            const hold = planHold(plan, msg);
+            if (hold) { held.push(hold); }
             continue;
         }
 
@@ -320,8 +332,12 @@ export default async function handler(req, res) {
              * costing a second one. Only when something actually changed, so a
              * quiet push does not rewrite the list for nothing. */
             ...(seen !== senderList ? { [SENDERS_FIELD]: seen } : {}),
+            /* Merged with what is already held, newest first, bounded. Folded
+             * into the write that was already happening rather than costing a
+             * second one. */
+            ...(held.length ? { [HELD_FIELD]: mergeHeld(state && state[HELD_FIELD], held) } : {}),
         }, { merge: true });
     } catch (_) { /* the statements landed; the bookmark can catch up next push */ }
 
-    return j(res, 200, { ok: true, stored: stored.length, notable: notable.length });
+    return j(res, 200, { ok: true, stored: stored.length, notable: notable.length, held: held.length });
 }

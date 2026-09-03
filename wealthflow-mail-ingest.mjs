@@ -99,6 +99,12 @@ export const REJECT = {
      * happened: "you have not decided about this one yet" is an invitation,
      * "nothing about it says statement" is a verdict. */
     NOT_ON_YOUR_LIST: 'sender-not-on-your-list',
+    /* A NEW ADDRESS AT A BANK THEY ALREADY APPROVED. Distinct from
+     * NOT_ON_YOUR_LIST because it is a different question to put to the owner:
+     * "is this Sampath too?" rather than "who is this?". It is still a refusal
+     * — approving one address is not approving a domain — but the mail is HELD
+     * rather than dropped, so one tap releases it. */
+    SENDER_SIBLING: 'a-new-address-at-a-bank-you-approved',
     NOT_A_STATEMENT: 'unrecognised-sender-and-nothing-says-statement',
     DKIM_FAILED: 'dkim-did-not-pass',
     DKIM_DOMAIN_MISMATCH: 'signed-by-a-different-domain',
@@ -328,6 +334,72 @@ export function identifyBank(headers, policy = {}) {
 
     if (hit) return { ok: true, bank: hit.name, domain: hit.domain, known: true };
     return { ok: true, bank: nameFromDomain(from), domain: from, known: false };
+}
+
+/* ── 1b. what to HOLD ─────────────────────────────────────────────────────── */
+
+/** Refusals that are about WHO SENT IT, and are therefore one tap from being wrong. */
+export const HOLDABLE = new Set([REJECT.NOT_ON_YOUR_LIST, REJECT.SENDER_SIBLING]);
+
+/** At most this many held references. A junk mailbox must not fill a database. */
+export const MAX_HELD = 200;
+
+/**
+ * A refused message, kept as a REFERENCE so approving the sender releases it.
+ *
+ * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+ *
+ * A refused message was dropped. `if (!plan.ok) { … continue; }`, in both the
+ * push hook and the scan endpoint. The sighting was recorded, so the sender
+ * appeared in the pending list — but the STATEMENT was gone. Approving the
+ * sender afterwards did not bring it back; only a backfill scan reaching that
+ * month would, and only if the owner thought to run one.
+ *
+ * That is the second half of the report: "I added the address and yesterday's
+ * statement still did not sync." Even once the sender is right, the message
+ * that arrived while it was wrong is not recoverable by any tap.
+ *
+ * ── WHY A REFERENCE AND NOT THE ATTACHMENT ──────────────────────────────────
+ *
+ * Storing the PDF would undo the rule that mail from an unapproved sender is
+ * refused before an attachment is fetched — the rule that stopped a review
+ * queue filling with receipts. So this keeps only what Gmail already told us in
+ * the headers: which message, from whom, when, and why it was refused. The
+ * bytes are fetched if and when the owner approves the sender, from the message
+ * id kept here. Nothing is downloaded on the strength of a refusal, and nothing
+ * is lost by one.
+ */
+export function planHold(plan, message) {
+    if (!plan || plan.ok !== false || !HOLDABLE.has(plan.reason)) return null;
+    const id = String((message && message.id) || '').trim();
+    if (!id) return null;
+    const received = Number(message && message.internalDate);
+    return {
+        key: id,
+        messageId: id,
+        from: String(plan.from || '').slice(0, 160),
+        subject: String(plan.subject || '').slice(0, 160),
+        bank: plan.bank || null,
+        reason: plan.reason,
+        /* The detail the screen needs to ask the right question: which address
+         * they already approved, and which one wrote this time. */
+        detail: plan.detail || null,
+        receivedMs: Number.isFinite(received) && received > 0 ? received : null,
+        heldMs: null,
+    };
+}
+
+/**
+ * Does approving this sender release this held message?
+ *
+ * The comparison is the same matchSender the live path uses, handed in rather
+ * than imported — wealthflow-mail-senders.mjs already imports this file, and
+ * the pair importing each other is how a module graph stops loading at all.
+ */
+export function releasedBy(held, decide) {
+    if (!held || typeof decide !== 'function') return false;
+    const verdict = decide(held.from) || {};
+    return verdict.verdict === 'approved';
 }
 
 /* ── 2. what to take ──────────────────────────────────────────────────────── */
@@ -566,6 +638,42 @@ export function planMessage(message, policy = {}) {
      * plenty of banks send `Statement_Aug2026.pdf` under a subject that says
      * nothing. A KNOWN bank skips this entirely — HNB may title its statement
      * whatever it likes. */
+    /* ── THE OWNER'S LIST IS THE AUTHORITY ───────────────────────────────
+     *
+     * THE BUG: this used to read `if (who.known === false)`, so the curated
+     * rule below applied only to senders the built-in BANKS list did not
+     * recognise. A message from hnb.lk, dfcc.lk, nationstrust.com,
+     * americanexpress.com or amex.com was `known: true` and skipped the check
+     * ENTIRELY — and skipped looksLikeStatement with it, on the reasoning that
+     * a known bank may title its statement whatever it likes.
+     *
+     * So every PDF those five domains ever sent was filed. Marketing flyers,
+     * card bills, insurance offers, promotional inserts — all of it, with no
+     * second line of defence, and with the owner's own list powerless over it.
+     * That is the reported complaint word for word: "I added the emails, but it
+     * only takes from those" is what was asked for, and unwanted receipts and
+     * bills is what arrived.
+     *
+     * A built-in list is a SUGGESTION about who a bank might be. It was never
+     * meant to outrank the owner saying which senders are theirs. Once they
+     * have curated anything, the list decides for EVERYONE — the built-ins
+     * included — and a built-in bank that is not on it is offered for one tap
+     * rather than assumed. */
+    const ownerApproved = who.approved === true;
+    if (policy.curated && !ownerApproved) {
+        const rel = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
+        return {
+            ok: false,
+            reason: rel ? REJECT.SENDER_SIBLING : REJECT.NOT_ON_YOUR_LIST,
+            bank: (rel && rel.name) || who.bank,
+            detail: rel
+                ? { from: who.domain, approvedAddress: rel.approvedAddress, sawAddress: rel.address }
+                : { from: who.domain, knownBank: who.known === true },
+            from: seenFrom,
+            subject: headers.subject || '',
+        };
+    }
+
     if (who.known === false) {
         /* ONCE THE OWNER HAS A LIST, THE LIST DECIDES.
          *
@@ -584,16 +692,10 @@ export function planMessage(message, policy = {}) {
          * The guess survives only for someone who has not curated anything yet,
          * where refusing everything would mean an empty screen and no way to
          * discover what to approve. */
-        if (policy.curated) {
-            return {
-                ok: false,
-                reason: REJECT.NOT_ON_YOUR_LIST,
-                bank: who.bank,
-                detail: { from: who.domain },
-                from: seenFrom,
-                subject: headers.subject || '',
-            };
-        }
+        /* The curated case is handled above, for every sender rather than only
+         * the unrecognised ones. What is left here is the owner who has
+         * approved nothing yet, where refusing everything would mean an empty
+         * screen and no way to discover what to approve. */
         const named = looksLikeStatement({
             subject: headers.subject || '',
             filenames: what.take.map((a) => a && a.filename).filter(Boolean),
@@ -674,6 +776,7 @@ export const REJECT_TEXT = {
     [REJECT.NOT_A_BANK]: 'the sender is not one of your banks',
     [REJECT.SENDER_BLOCKED]: 'you blocked this sender',
     [REJECT.NOT_ON_YOUR_LIST]: 'the sender is not on your statement-sender list',
+    [REJECT.SENDER_SIBLING]: 'a bank you approved wrote from a different address',
     [REJECT.NOT_A_STATEMENT]: 'the sender is not a bank you have confirmed, and nothing about the mail says statement',
     [REJECT.DKIM_FAILED]: 'it claims to be from your bank but carries no valid signature',
     [REJECT.DKIM_DOMAIN_MISMATCH]: 'it is signed by a domain other than the one it claims to be from',

@@ -40,12 +40,12 @@
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import {
     MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
-    SENDERS_FIELD, sendersOf,
+    SENDERS_FIELD, sendersOf, heldOf,
 } from './gmail-link.mjs';
-import { dedupeStored, BANKS } from './wealthflow-mail-ingest.mjs';
+import { dedupeStored, BANKS, releasedBy } from './wealthflow-mail-ingest.mjs';
 import {
     addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
-    matchSender, hasApproved,
+    matchSender, hasApproved, policyFrom,
 } from './wealthflow-mail-senders.mjs';
 
 /* How many stored documents this endpoint will look at, and how many
@@ -212,7 +212,35 @@ export default async function handler(req, res) {
         } catch (_) {
             return j(res, 503, { ok: false, error: 'could not save the sender list' });
         }
-        return j(res, 200, { ok: true, senders: result.list, knownBanks, ...groupForDisplay(result.list) });
+        /* ── RELEASING WHAT THE OLD ANSWER REFUSED ────────────────────────
+         *
+         * A message refused for a sender reason is HELD as a reference rather
+         * than dropped (see planHold). Approving the sender is the moment that
+         * refusal became wrong, so it is the moment to say which held messages
+         * are now owed to the owner.
+         *
+         * This reports them; it does not fetch them. The fetch belongs to the
+         * scan endpoint, which already owns the credential exchange and the
+         * attachment rules — doing it here would be a second copy of both, and
+         * two copies of a fetch policy is one more than can be kept in step. */
+        let releasable = [];
+        try {
+            const heldNow = heldOf(snap && snap.exists ? snap.data() : null);
+            const decide = policyFrom(result.list).decide;
+            releasable = heldNow.filter((h) => releasedBy(h, decide));
+        } catch (_) { releasable = []; }
+
+        return j(res, 200, {
+            ok: true, senders: result.list, knownBanks, ...groupForDisplay(result.list),
+            /* Named so the screen can say it: "3 statements were waiting on
+             * this sender." A number the owner watches fall to zero is a better
+             * answer than a list that quietly got longer. */
+            releasable: releasable.length,
+            released: releasable.map((h) => ({
+                messageId: h.messageId, from: h.from, subject: h.subject,
+                bank: h.bank || null, heldMs: h.heldMs || null,
+            })).slice(0, 20),
+        });
     }
 
     /* ── REMOVING WHAT IS ALREADY STORED ─────────────────────────────────────
