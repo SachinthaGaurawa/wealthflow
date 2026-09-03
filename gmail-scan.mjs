@@ -80,7 +80,7 @@ export function scanSenders() {
  * on the first of a month would otherwise silently shift every window by one,
  * re-reading one month and skipping another.
  */
-export function windowFor({ months, index, now, senders = null, discover = null } = {}) {
+export function windowFor({ months, index, now, senders = null, discover = null, banks = null } = {}) {
     const m = Math.max(1, Math.min(SCAN.MAX_MONTHS, Math.floor(Number(months)) || 0));
     /* STRICT. `Number(null)` is 0 and `Number('')` is 0, so a lenient parse
      * turns a client that forgot to send an index into a request for window
@@ -137,6 +137,12 @@ export function windowFor({ months, index, now, senders = null, discover = null 
     const windows = planWindows({
         months: m, now: at, senders: chosen,
         discover: discover === true,
+        /* Picker names, not a query. tokensFor() resolves them against the
+         * canonical institution list and drops anything not on it, so the one
+         * rule this endpoint has always kept still holds: no caller-shaped text
+         * reaches a Gmail query built on a credential that can read a whole
+         * mailbox. */
+        banks: Array.isArray(banks) ? banks.slice(0, 40).map((b) => String(b || '').slice(0, 80)) : [],
         /* Someone who has approved nobody gets the statement vocabulary as well
          * as the built-in domains, so their first scan is not limited to the
          * four banks this pipeline happens to ship with. Someone who HAS

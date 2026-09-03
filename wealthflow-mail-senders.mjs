@@ -154,6 +154,22 @@ export function normalizeSender(input) {
     return { ok: true, kind: 'domain', id: domain, domain };
 }
 
+/**
+ * The display name out of a From header, if it carries one.
+ *
+ * `Seylan Bank <noreply@mailer.example>` → `Seylan Bank`. Quotes stripped, and
+ * an address with no display name yields the empty string rather than the
+ * address again — a caller checking "did this mail name a bank" must not be
+ * handed the domain a second time and told it was a name.
+ */
+export function displayNameOf(from) {
+    const raw = String(from == null ? '' : from).trim();
+    if (!raw) return '';
+    const lt = raw.indexOf('<');
+    if (lt < 0) return '';
+    return raw.slice(0, lt).trim().replace(/^"(.*)"$/, '$1').trim().slice(0, 80);
+}
+
 /** A year of month keys is enough to see a rhythm and small enough to store. */
 const MAX_MONTHS = 12;
 
@@ -199,6 +215,12 @@ function entryOf(e) {
         /* The last full address seen for this domain-level entry. Kept because
          * `noreply@` is evidence and the domain alone cannot show it. */
         lastFrom: String(e.lastFrom || '').slice(0, 120).toLowerCase(),
+        /* The DISPLAY name off the From header — "Seylan Bank" in
+         * `Seylan Bank <noreply@mailer.example>`. It is how a bank that sends
+         * through a third party is still recognisable as that bank, which the
+         * domain alone cannot show. Bounded: this is mail content on its way to
+         * a settings screen. */
+        lastDisplay: String(e.lastDisplay || '').slice(0, 80),
     };
 }
 
@@ -349,6 +371,7 @@ export function recordSighting(list, { from = '', subject = '', now = 0, month =
              * the recurrence signal would never fire. */
             months: [...new Set([...arr(e.months), String(month || '')].filter(Boolean))],
             lastFrom: addressOf(from) || e.lastFrom || '',
+            lastDisplay: displayNameOf(from) || e.lastDisplay || '',
         };
         return normalizeList(entries.map((x, i) => (i === idx ? next : x)));
     }
@@ -365,6 +388,7 @@ export function recordSighting(list, { from = '', subject = '', now = 0, month =
         lastSubject: String(subject || '').slice(0, 120),
         months: month ? [String(month)] : [],
         lastFrom: addressOf(from) || '',
+        lastDisplay: displayNameOf(from) || '',
     }, ...entries]);
 }
 
@@ -537,7 +561,7 @@ export const REASON_TEXT = {
 const API = {
     STATUS, REASON, REASON_TEXT, MAX_DECIDED, MAX_NEW,
     normalizeSender, normalizeList, matchSender, addSender, setStatus, removeSender,
-    senderCoverage,
+    senderCoverage, displayNameOf,
     recordSighting, approvedClauses, hasApproved, groupForDisplay, policyFrom,
 };
 

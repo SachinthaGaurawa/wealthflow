@@ -225,6 +225,10 @@ export function planWindows({
      * reports success. A mode that reads less must be asked for. */
     discover = false,
     includeTerms = null,
+    /* Picker names off the owner's own records. Resolved against the canonical
+     * institution list inside wideQuery(), so an unknown name contributes no
+     * clause rather than reaching a Gmail query. */
+    banks = [],
 } = {}) {
     const depth = Math.max(1, Math.min(120, Math.floor(num(months)) || 1));
     /* Accepts either bare domains or ready-made `from:` clauses, because the
@@ -283,11 +287,26 @@ export function planWindows({
             const hi = new Date(Date.UTC(stop.getUTCFullYear(), stop.getUTCMonth() - i + 1, 1));
             const lo = new Date(Date.UTC(stop.getUTCFullYear(), stop.getUTCMonth() - i, 1));
             const month = `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`;
-            for (const pass of [PASS.ATTACHMENTS, PASS.WORDING]) {
+            /* NAMED FIRST, AND THE ORDER IS THE POINT.
+             *
+             * A run is bounded, so a truncated one must still have answered the
+             * question. The named pass is the precise one — it asks which
+             * address Sampath writes from, rather than enumerating a mailbox
+             * and ranking it — so putting it first means the first calls spent
+             * are the ones that produce a row with an address in it. The two
+             * sweeps follow for recall, and a run that never reaches them has
+             * still done the useful half.
+             *
+             * It is skipped entirely when the owner has no banks on record:
+             * wideQuery returns '' for an empty token list, and a window with
+             * no query would ask Gmail for everything. */
+            for (const pass of [PASS.NAMED, PASS.ATTACHMENTS, PASS.WORDING]) {
+                const query = wideQuery({ after: lo.getTime(), before: hi.getTime(), pass, banks });
+                if (!query) continue;
                 out.push({
                     label: month,
                     pass,
-                    query: wideQuery({ after: lo.getTime(), before: hi.getTime(), pass }),
+                    query,
                     after: lo.getTime(),
                     before: hi.getTime(),
                     /* The handler reads headers only for a discovery window and

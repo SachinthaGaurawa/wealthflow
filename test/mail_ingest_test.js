@@ -151,14 +151,23 @@ describe('the DKIM result', () => {
 describe('a message that merely claims to be from a bank is refused', () => {
     it('accepts a genuine one', () => {
         const r = identifyBank({ from: '<statements@hnb.lk>', 'authentication-results': GOOD_AUTH });
-        expect(r).toMatchObject({ ok: true, bank: 'HNB', domain: 'hnb.lk' });
+        /* THE LABEL IS THE PICKER STRING NOW, NOT A SHORT NICKNAME.
+         *
+         * BANKS is derived from wealthflow-institutions.js, the one place a
+         * bank is described, so the name a statement is filed under is the same
+         * string every card charge already carries. That is the point: the
+         * short form 'HNB' had to be reconciled with 'Hatton National Bank
+         * (HNB)' by substring matching every time an account was looked up, and
+         * a nickname that only ALMOST matches the stored form is how a
+         * statement ends up filed against no account at all. */
+        expect(r).toMatchObject({ ok: true, bank: 'Hatton National Bank (HNB)', domain: 'hnb.lk' });
     });
 
     it('accepts a subdomain the bank actually sends from', () => {
         expect(identifyBank({
             from: '<no-reply@e.amex.com>',
             'authentication-results': 'dkim=pass header.i=@amex.com',
-        })).toMatchObject({ ok: true, bank: 'American Express' });
+        })).toMatchObject({ ok: true, bank: 'American Express (AMEX)' });
     });
 
     it.each([
@@ -237,7 +246,7 @@ describe('an unlisted but verified sender is held, not dropped', () => {
         const r = identifyBank({ from: '<statements@hnb.lk>', 'authentication-results': auth('hnb.lk') });
         expect(r.ok).toBe(true);
         expect(r.known).toBe(true);
-        expect(r.bank).toBe('HNB');
+        expect(r.bank).toBe('Hatton National Bank (HNB)');
     });
 
     it('an unlisted sender with NO valid signature is still refused', () => {
@@ -538,7 +547,7 @@ describe('planMessage', () => {
              * alongside so the write path can recognise what it already has. */
             key: stableItemKey('MSG1', { filename: 'stmt.pdf', size: 250000 }),
             legacyKey: itemKey('MSG1', 'ATT1'),
-            bank: 'HNB', filename: 'stmt.pdf',
+            bank: 'Hatton National Bank (HNB)', filename: 'stmt.pdf',
             messageId: 'MSG1', receivedMs: 1787820000000, subject: 'Your e-Statement',
         });
     });
@@ -602,7 +611,7 @@ describe('planMessage', () => {
     it('names the bank even on a refusal, so the message can say which', () => {
         const r = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [{ mimeType: 'text/html', body: { size: 9 } }]));
         expect(r.ok).toBe(false);
-        expect(r.bank).toBe('HNB');
+        expect(r.bank).toBe('Hatton National Bank (HNB)');
     });
 
     it('survives a message with no payload at all', () => {

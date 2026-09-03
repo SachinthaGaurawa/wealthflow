@@ -67,6 +67,7 @@
  * ===========================================================================*/
 
 import { CONSUMER_MAIL, addressOf, domainOf } from './wealthflow-mail-ingest.mjs';
+import { tokensFor, institutionForSender, INSTITUTIONS } from './wealthflow-institutions.js';
 
 const s = (v) => String(v == null ? '' : v).trim();
 const lower = (v) => s(v).toLowerCase();
@@ -93,6 +94,25 @@ export const PASS = {
     /* Everything with an attachment. Catches a bank whatever it CALLS its
      * mail — the pass that fixes "my bank never says the word statement". */
     ATTACHMENTS: 'attachments',
+    /* NAMED BANKS. The pass that asks the right question.
+     *
+     * The other two enumerate the MAILBOX and then ask of each sender "is this
+     * a bank?". That is the question backwards. The owner's ledger already
+     * names the institutions they hold — the picker string is on every card
+     * charge they have ever saved — so the answerable question is the narrow
+     * one: WHICH ADDRESS DOES SAMPATH SEND FROM?
+     *
+     * Searching a mailbox for "sampath" is precise, costs one clause, and needs
+     * no assumption about infrastructure. It also reaches what neither other
+     * pass can: a bank that attaches nothing AND never uses the word statement
+     * still puts its own name in the mail, because a letter from a bank that
+     * did not say which bank would be unreadable by its recipient too.
+     *
+     * And it dissolves the problem this file kept running into. The domain list
+     * could not be filled in by guessing — a wrong guess allowlists a stranger.
+     * It does not have to be guessed: the owner's own mailbox supplies the
+     * domain, DKIM-verified, attached to a bank name they themselves entered. */
+    NAMED: 'named',
     /* Everything that SAYS statement, attachment or not. Catches the bank that
      * emails "your statement is ready, log in to view it" and attaches
      * nothing — the case the attachment pass cannot reach by construction.
@@ -104,12 +124,22 @@ export const PASS = {
     WORDING: 'wording',
 };
 
-export function wideQuery({ after, before, exclude = CONSUMER_MAIL, pass = PASS.ATTACHMENTS, terms = SUBJECT_TERMS } = {}) {
+export function wideQuery({ after, before, exclude = CONSUMER_MAIL, pass = PASS.ATTACHMENTS, terms = SUBJECT_TERMS, banks = [] } = {}) {
     const lo = num(after);
     const hi = num(before);
     if (!(lo > 0) || !(hi > lo)) return '';
     const parts = [];
-    if (pass === PASS.WORDING) {
+    if (pass === PASS.NAMED) {
+        /* THE TOKENS ARE LOOKED UP, NEVER ACCEPTED. `banks` are picker names,
+         * and tokensFor() resolves them against the canonical institution list
+         * — anything not on it contributes nothing. So no caller-supplied text
+         * reaches a Gmail query, which is the rule this endpoint has kept since
+         * the beginning: a credential that can read an entire mailbox must
+         * never be handed a query someone else shaped. */
+        const words = tokensFor(arr(banks)).map((t) => `"${t.replace(/"/g, '')}"`);
+        if (!words.length) return '';
+        parts.push(`(${words.join(' OR ')})`);
+    } else if (pass === PASS.WORDING) {
         const words = arr(terms).map(s).filter(Boolean).map((t) => `"${t.replace(/"/g, '')}"`);
         if (!words.length) return '';
         parts.push(`(${words.join(' OR ')})`);
@@ -303,10 +333,99 @@ export function discoveryReport(list) {
     };
 }
 
+/* ── 4. the answer, per bank ──────────────────────────────────────────────── */
+
+/**
+ * For each institution the owner actually holds: which address does it write
+ * from?
+ *
+ * THIS IS THE QUESTION THE OTHER TWO PASSES ASK BACKWARDS. They enumerate a
+ * mailbox and rank every sender in it, which produces a list of forty domains
+ * and hands the owner the same problem they started with. The ledger already
+ * names their institutions. So the useful output is not a ranked pile — it is a
+ * row per bank with an address in it, or an honest empty.
+ *
+ * `banks`  the picker names off their own records.
+ * `list`   the sender list, with the sightings a hunt has just recorded.
+ *
+ * A sender is attributed to a bank when the DOMAIN or the DISPLAY NAME carries
+ * one of that institution's names. Unattributed senders are not discarded — a
+ * bank mailing from a third party under a name nobody recognises is exactly the
+ * one the owner needs to see — they are returned separately, so a row can say
+ * "we could not tell which bank this is" rather than guessing on a screen where
+ * one tap files money under the answer.
+ */
+export function bankHunt(banks, list) {
+    /* GROUPED BY MAILBOX IDENTITY, NOT BY PICKER ENTRY.
+     *
+     * NTB is two picker entries because its AMEX and Visa cards carry different
+     * cash-advance fees — which is right for a fee table and wrong here. They
+     * share one mailbox, so two rows would offer the owner the same address
+     * twice and ask them to accept it twice. `mailName` is the institution's
+     * identity as a SENDER, and that is what this list is about. */
+    const wanted = [];
+    const seenName = new Set();
+    for (const raw of arr(banks)) {
+        const name = s(raw);
+        if (!name) continue;
+        const inst = INSTITUTIONS.find((i) => i.name === name) || null;
+        const label = inst ? (inst.mailName || inst.name) : name;
+        const key = lower(label);
+        if (seenName.has(key)) continue;
+        seenName.add(key);
+        wanted.push({ name: label, inst });
+    }
+
+    const scored = arr(list)
+        .filter((e) => e && typeof e === 'object' && (!e.status || e.status === 'new'))
+        .map((e) => ({ entry: e, scored: scoreSender(e) }))
+        .filter((x) => x.scored.id);
+
+    const claimed = new Set();
+    const rows = wanted.map(({ name, inst }) => {
+        const found = scored.filter(({ entry }) => {
+            const hit = institutionForSender({
+                domain: entry.domain || entry.id,
+                displayName: entry.lastDisplay || entry.name,
+            });
+            return hit && inst && hit.id === inst.id;
+        });
+        found.sort((a, b) => b.scored.score - a.scored.score || a.scored.id.localeCompare(b.scored.id));
+        for (const f of found) claimed.add(f.scored.id);
+        return {
+            bank: name,
+            /* The address to offer, or null. Named `best` rather than `match`
+             * because it is a suggestion the owner confirms, not a decision
+             * already taken. */
+            best: found.length ? { ...found[0].scored, address: found[0].entry.lastFrom || found[0].scored.id } : null,
+            others: found.slice(1).map((f) => ({ ...f.scored, address: f.entry.lastFrom || f.scored.id })),
+            /* `searched` is the honest distinction between "we looked and found
+             * nothing" and "we never looked". A screen that cannot tell them
+             * apart turns a bounded search into a false negative. */
+            found: found.length,
+        };
+    });
+
+    const unattributed = scored
+        .filter((x) => !claimed.has(x.scored.id))
+        .map((x) => ({ ...x.scored, address: x.entry.lastFrom || x.scored.id }))
+        .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+
+    return {
+        rows,
+        unattributed,
+        /* Counted here so no surface has to re-derive it and get a different
+         * number from the one beside it. */
+        matched: rows.filter((r) => r.best).length,
+        of: rows.length,
+        missing: rows.filter((r) => !r.best).map((r) => r.bank),
+    };
+}
+
 const API = {
     SIGNAL, SIGNAL_TEXT, WEIGHT, SUBJECT_TERMS, LIKELY, PASS,
     wideQuery, looksAutomated, saysStatement, monthKey,
-    scoreSender, rankCandidates, discoveryReport,
+    scoreSender, rankCandidates, discoveryReport, bankHunt,
 };
 
 if (typeof window !== 'undefined') window.WFDiscovery = API;

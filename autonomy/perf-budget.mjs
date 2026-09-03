@@ -157,7 +157,7 @@ export const BUDGETS = {
      * "ten accounts, three syncing". It is markup and a short reader over the
      * account registry, and it belongs on the screen where the owner asks —
      * a report they have to go and find is a report nobody reads. */
-    htmlBytes: 1_924_000,        // measured 1,922,547 — a resumable search that says when it stopped early
+    htmlBytes: 1_929_000,        // measured 1,927,543 — the per-bank hunt panel
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -287,7 +287,13 @@ export const BUDGETS = {
      * ranked low but ABSENT. Moving that judgement into a module is what makes
      * it explainable on screen and testable here, and it is why the query got
      * simpler while the file count went up. */
-    totalJsBytes: 1_576_000,     // measured 1,574,384 — the two-pass discovery query
+    /* Raised for wealthflow-institutions.js — the ONE description of a bank,
+     * from which the picker, the mail allowlist and the search tokens are now
+     * derived. It costs a file and removes a class of defect: the picker
+     * offered fourteen institutions while the mail pipeline knew four, and
+     * nothing compared them, which is why an owner with ten accounts saw three
+     * of them sync. A cross-check test pinned that gap; this deletes it. */
+    totalJsBytes: 1_592_000,     // measured 1,590,313 across 60 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -343,7 +349,7 @@ export const BUDGETS = {
     // one quietly becomes the one that matters. It also has to be unit-testable:
     // wealthflow-intelligence.js is an IIFE with no exports and consequently no
     // test file, and crypto holding bank passwords cannot ship untested.
-    moduleCount: 59,   // measured 59 — 58 -> 59 for wealthflow-sender-discovery.js
+    moduleCount: 60,   // measured 60 — 59 -> 60 for wealthflow-institutions.js
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -386,7 +392,12 @@ export const BUDGETS = {
     // already shipped actually run. The device half of the mail pipeline could
     // not execute at all without the second, which is the defect this change
     // exists to fix.
-    scriptTags: 65,              // measured 65 — two new ESM modules, both deferred by type=module
+    /* 65 -> 66 for wealthflow-institutions.js. It is a REQUEST, not just a
+     * file, and that is the trade recorded here: the alternative was to inline
+     * the bank descriptions into index.html, where the picker and the mail
+     * pipeline could drift apart again exactly as they did. Deferred by
+     * type=module, so it does not block the first paint. */
+    scriptTags: 66,              // measured 66 — three ESM modules, all deferred by type=module
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

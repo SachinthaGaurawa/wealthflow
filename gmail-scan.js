@@ -135,6 +135,9 @@ export default async function handler(req, res, deps) {
          * as always: a caller-shaped query against a credential that can read a
          * whole mailbox is a general mail-search proxy. */
         discover: body.discover === true ? true : null,
+        /* The institutions the owner holds, off their own records. Names only —
+         * see windowFor: they are looked up, never used as text. */
+        banks: Array.isArray(body.banks) ? body.banks : [],
     });
     if (!window) {
         return j(res, 400, { ok: false, error: 'that is not a window this scan can ask for' });

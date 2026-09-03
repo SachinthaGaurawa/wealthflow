@@ -452,3 +452,126 @@ describe('the search reaches the whole mailbox, or says it did not', () => {
         expect(r.cannotFind).toContain('never uses the word statement');
     });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE QUESTION ASKED THE RIGHT WAY ROUND
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the named pass: which address does Sampath write from?', () => {
+    const list = () => {
+        let l = [];
+        for (const m of ['2026-08', '2026-07', '2026-06']) {
+            l = recordSighting(l, { from: 'Sampath Bank <eStatement@sampath.lk>', subject: 'Ref 91', now: 1, month: m });
+        }
+        for (const m of ['2026-08', '2026-07']) {
+            l = recordSighting(l, { from: '"Seylan Bank" <noreply@mailer.example>', subject: 'Monthly summary', now: 1, month: m });
+        }
+        l = recordSighting(l, { from: 'kamal@printshop.lk', subject: 'Your order', now: 1, month: '2026-08' });
+        return l;
+    };
+
+    it('answers per bank, with an address', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Sampath Bank', 'Seylan Bank', 'Bank of Ceylon (BOC)'], list());
+        expect(r.of).toBe(3);
+        expect(r.matched).toBe(2);
+        expect(r.rows[0].best.address).toBe('estatement@sampath.lk');
+        expect(r.missing).toEqual(['Bank of Ceylon (BOC)']);
+    });
+
+    it('finds a bank that mails through a THIRD PARTY, by its display name', async () => {
+        // noreply@mailer.example says nothing. "Seylan Bank" says everything —
+        // and the domain-only reading this app had before could not see it.
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Seylan Bank'], list());
+        expect(r.rows[0].best.address).toBe('noreply@mailer.example');
+    });
+
+    it('never attributes a sender to a bank it does not name', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Sampath Bank'], list());
+        expect(r.unattributed.map((u) => u.id)).toContain('printshop.lk');
+        expect(r.rows[0].best.address).toBe('estatement@sampath.lk');
+    });
+
+    it('a bank with nothing found says so, rather than borrowing another\'s sender', async () => {
+        // The failure that would matter most: one tap here files money under
+        // the answer, so a wrong attribution is worse than an empty row.
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Bank of Ceylon (BOC)'], list());
+        expect(r.rows[0].best).toBeNull();
+        expect(r.rows[0].found).toBe(0);
+        expect(r.matched).toBe(0);
+    });
+
+    it('does not offer a sender the owner already decided about', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const decided = list().map((e) => (e.id === 'sampath.lk' ? { ...e, status: 'approved' } : e));
+        expect(bankHunt(['Sampath Bank'], decided).rows[0].best).toBeNull();
+    });
+
+    it('collapses the two NTB picker entries into one row', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        const r = bankHunt(['Nations Trust Bank (NTB) — AMEX', 'Nations Trust Bank (NTB) — Visa/Mastercard'], []);
+        expect(r.of).toBe(1);
+    });
+
+    it('never throws on a list read back from storage', async () => {
+        const { bankHunt } = await import('../wealthflow-sender-discovery.js');
+        for (const junk of [null, undefined, 'x', [0], [{}], [{ id: 5 }]]) {
+            expect(() => bankHunt(['Sampath Bank'], junk)).not.toThrow();
+        }
+        expect(() => bankHunt(null, list())).not.toThrow();
+    });
+
+    it('THE NAMED PASS RUNS FIRST, so a truncated run has still answered', async () => {
+        const { PASS } = await import('../wealthflow-sender-discovery.js');
+        const w = planWindows({ months: 1, now: Date.UTC(2026, 8, 3), discover: true, banks: ['Sampath Bank'] });
+        expect(w.map((x) => x.pass)).toEqual([PASS.NAMED, PASS.ATTACHMENTS, PASS.WORDING]);
+    });
+
+    it('and is skipped entirely when the owner has no banks on record', () => {
+        // wideQuery returns '' for an empty token list, and a window with no
+        // query would ask Gmail for the entire month.
+        const w = planWindows({ months: 1, now: Date.UTC(2026, 8, 3), discover: true });
+        expect(w).toHaveLength(2);
+        expect(w.every((x) => x.query)).toBe(true);
+    });
+
+    it('an unknown bank name reaches no Gmail query', async () => {
+        const { PASS, wideQuery } = await import('../wealthflow-sender-discovery.js');
+        expect(wideQuery({ after: AUG, before: SEP, pass: PASS.NAMED, banks: ['from:evil.example'] })).toBe('');
+        const w = windowFor({ months: 6, index: 0, now: SEP, discover: true, banks: ['" OR from:x'] });
+        expect(w.query).not.toContain('evil');
+        expect(w.pass).not.toBe(PASS.NAMED);
+    });
+});
+
+describe('the per-bank answer is on the screen', () => {
+    const APP = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+
+    it('the panel is computed and rendered', () => {
+        expect(APP).toContain('function _bankHuntPanel()');
+        expect(APP).toContain('+ _bankHuntPanel()');
+        expect(APP).toContain('D.bankHunt(banks, _senders.pending)');
+    });
+
+    it('the owner\'s banks are SENT with the run', () => {
+        expect(APP).toContain('banks: _ownedBanks(),');
+    });
+
+    it('accepting one saves it under the bank\'s exact picker name', () => {
+        // The payoff of asking the question this way round: nothing downstream
+        // has to guess that "Sampath" and "Sampath Bank" are one institution.
+        expect(APP).toContain("data-hbank=");
+        expect(APP).toContain("name: b.getAttribute('data-hbank')");
+        expect(APP).toContain("status: 'approved'");
+    });
+
+    it('a bank with no match shows an empty row, not a borrowed address', () => {
+        expect(APP).toContain('not found in the months searched so far');
+    });
+
+    it('the institutions module is loaded by the app', () => {
+        expect(APP).toMatch(/<script type="module" src="wealthflow-institutions\.js">/);
+    });
+});
