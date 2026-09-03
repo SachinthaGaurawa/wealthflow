@@ -277,6 +277,12 @@
          iOS near its web-process memory limit, so any extra allocation could
          crash the page. They're optional (OCR fallback / image sharpening). -->
 
+    <!-- What day is it HERE. Thirty-seven places answered that with
+         today() — today in UTC — which in Colombo
+         (UTC+05:30) is YESTERDAY until half past five in the morning, and on the
+         first of a month files the transaction into the previous month's tab.
+         Loaded before everything that asks. window.WFWhen -->
+    <script type="module" src="wealthflow-when.js"></script>
     <script src="wealthflow-scanner.js" defer></script>
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
@@ -548,6 +554,10 @@
     <!-- Accurate text-layer statement parsing (DFCC etc.): reads EVERY row from a
          text PDF and validates each amount against the running balance. window.WFStatementParser -->
     <script src="wealthflow-statement-parser.js" defer></script>
+    <!-- Statement layout memory: when the parser meets a bank whose date format it
+         has never seen, this proposes readings, the owner confirms ONE, and every
+         later statement from that bank parses on its own. window.WFLayoutMemory -->
+    <script src="wealthflow-layout-memory.js" defer></script>
     <!-- Password-protected PDF support: prompts for a password ONLY when a PDF is
          encrypted, unlocks it, and feeds clean text to the parser. window.WFPdfUnlock -->
     <script src="wealthflow-pdf-unlock.js" defer></script>
@@ -5686,7 +5696,7 @@
         <div class="main">
             <header class="topbar">
                 <div class="tb-left">
-                    <button class="mobile-btn" onclick="openSb()"><i data-wfi="menu"></i></button>
+                    <button aria-label="Open the menu" class="mobile-btn" onclick="openSb()"><i data-wfi="menu"></i></button>
                     <div class="pg-title" id="pgTitle"><i data-wfi="dashboard"></i> <span>Dashboard</span></div>
                 </div>
                 <div class="tb-right">
@@ -6270,7 +6280,7 @@
                                         <input type="file" multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/gif,image/bmp,application/pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.pdf,.PDF,image/*" id="ai_chat_scan" style="display:none;" onchange="_aiChatFilePicked(event)">
                                     </label>
                                 </div>
-                                <button id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;"><i data-wfi="send"></i></button>
+                                <button aria-label="Send message" id="aiSendBtn" class="btn btn-primary" onclick="sendAIMessage()" style="padding:10px 18px;border-radius:12px;flex-shrink:0;font-size:15px;"><i data-wfi="send"></i></button>
                             </div>
                             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
                                 <div id="aiTypingIndicator" style="font-size:11px;color:var(--text3);display:none;">
@@ -6496,7 +6506,7 @@
             aria-label="Close AI bar"><i data-wfi="x"></i></button>
         <input class="floating-ai-input" id="floatingAIInput" placeholder="Ask AI anything..."
             onkeydown="if(event.key==='Enter'){sendFloatingAI();event.preventDefault();}">
-        <button class="floating-ai-send" onclick="sendFloatingAI()"><i data-wfi="send"></i></button>
+        <button aria-label="Send message" class="floating-ai-send" onclick="sendFloatingAI()"><i data-wfi="send"></i></button>
     </div>
 
     <div id="notifs"></div>
@@ -7371,7 +7381,7 @@
         <div class="ai-lang-modal-content">
             <div class="ai-lang-modal-hdr">
                 <div class="ai-lang-modal-title">🌐 AI Response Language</div>
-                <button class="ai-lang-modal-close" onclick="closeLangModal()"><i data-wfi="x"></i></button>
+                <button aria-label="Close" class="ai-lang-modal-close" onclick="closeLangModal()"><i data-wfi="x"></i></button>
             </div>
             <div class="ai-lang-search">
                 <input type="text" id="aiLangModalSearch" placeholder="Search languages..." oninput="_filterLangModal()">
@@ -9054,7 +9064,16 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         const uid = () => '_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
             + ((_uidSeq = (_uidSeq + 1) % 46656) + 46656).toString(36).slice(1);
         const sleep = ms => new Promise(r => setTimeout(r, ms));
-        const today = () => { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+        /* ONE ANSWER TO "WHAT DAY IS IT". This page had the right one here and
+         * the wrong one — today(), which is UTC — in
+         * fourteen other places, including inside the SAME function as a
+         * correct local month key. Both now come from wealthflow-when.js.
+         *
+         * No UTC fallback if that module is missing: a silent fall back to UTC is
+         * the exact defect being removed, and this app already requires sixty-one
+         * other modules without one. test/local_day_test.js asserts the tag. */
+        const today = () => window.WFWhen.today();
+        const thisMonth = () => window.WFWhen.thisMonth();
         const p2 = n => String(n).padStart(2, '0');
         const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         const MONTHS_S = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -10539,7 +10558,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     break;
                 }
             }
-            if (!result.date) result.date = new Date().toISOString().split('T')[0];
+            if (!result.date) result.date = today();
 
             // Category: comprehensive keyword detection (Sri Lankan focus)
             const txt = text.toLowerCase();
@@ -10737,7 +10756,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 // Step 2 — Build prompt
                 let prompt = '';
                 if (isExpense) {
-                    const today = new Date().toISOString().split('T')[0];
+                    const today = today();
                     const depthHint = (scanMode === 'ultra' || scanMode === 'frontier')
                         ? '\n- This is a HIGH-PRECISION scan. Re-read faint/blurry digits carefully. Cross-check the total against line items if visible.'
                         : '';
@@ -10794,7 +10813,7 @@ Be conversational and precise.`;
                     const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65, false);
 
                     if (isExpense) {
-                        const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}`;
+                        const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${today()}","category":"Other"}`;
                         const retry = await callAI(simplePrompt, smaller);
                         const r2 = _parseAIJson(retry);
                         if (r2 && r2.amount && _populateExpenseFromScan(r2)) {
@@ -17091,7 +17110,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     filtered.map(v => `<div class="ac-item" onclick="acSelect('${_wfJsAttr(inputId)}','${_wfJsAttr(v)}')">
                         <span style="font-size:14px;">${icon}</span>
                         <span class="ac-item-text">${v}</span>
-                        <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
+                        <button aria-label="Remove this account" class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
                     </div>`).join('');
                 drop.classList.add('show');
                 _openDropdowns.add(inputId);
@@ -17120,7 +17139,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             drop.innerHTML = `<div class="ac-sep">💡 Previous Entries</div>` +
                 items.map(v => `<div class="ac-item" onclick="acSelect('${_wfJsAttr(inputId)}','${_wfJsAttr(v)}')">
                     <span class="ac-item-text">${v}</span>
-                    <button class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
+                    <button aria-label="Remove this account" class="ac-del" onclick="event.stopPropagation(); acDeleteAndRefresh('${_wfJsAttr(inputId)}','${_wfJsAttr(listName)}','${_wfJsAttr(v)}')"><i data-wfi="x"></i></button>
                 </div>`).join('');
             triggerHaptic('delete');
             notify('Entry removed from suggestions', 'info');
@@ -17797,7 +17816,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div><div style="font-size:15px;font-weight:700;">${_wfEsc(source.name)}</div><div style="font-size:12px;color:var(--text3);margin-top:2px;">🏛️ ${_wfEsc(source.company)} · ${fmtDatePretty(source.start)}${source.end ? ' → ' + fmtDatePretty(source.end) : ''}</div></div>
                 <div style="display:flex;gap:10px;align-items:flex-start;">
                     <div style="text-align:right;"><div style="font-size:21px;font-weight:800;font-family:var(--mono);color:var(--green);">${fmt(source.monthly)}</div><div style="font-size:11px;color:var(--text3);">${freqL}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editIncome('${_wfJsAttr(source.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteIncome('${_wfJsAttr(source.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button aria-label="Edit this income source" class="ib e" onclick="editIncome('${_wfJsAttr(source.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this income source" class="ib d" onclick="deleteIncome('${_wfJsAttr(source.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -18467,7 +18486,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const monthlyRate = (l.rate || 0) / 100 / 12;
             const monthsArr = _loanInstallmentMonths(l);
             const payments = l.payments || [];
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             const isReducing = _loanMethod(l) === 'reducing';
             const principalPerMonth = isReducing ? l.amount / l.duration : null;
 
@@ -18671,7 +18690,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // For EMI: always l.monthly. For reducing: live-computed from current balance.
         // This is what the loan card and dashboard stats should display as "this month".
         function loanNextScheduledPayment(l) {
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             const months = _loanInstallmentMonths(l);
             const payments = l.payments || [];
             // Prefer the first unpaid month >= today. If everything from today onward is
@@ -18718,7 +18737,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function loanRecalculatedInstallment(l) {
             const months = _loanInstallmentMonths(l);
             const payments = l.payments || [];
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             const monthlyRate = (l.rate || 0) / 100 / 12;
             const isReducing = _loanMethod(l) === 'reducing';
 
@@ -19034,7 +19053,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const skipCount = l.skipped?.length || 0;
                 const proj = loanProjectedSchedule(l);
 
-                const todayKey = new Date().toISOString().slice(0, 7);
+                const todayKey = thisMonth();
                 // Smart auto-centering window for the mini-grid:
                 //   1. Always include the current calendar month (even if paid).
                 //   2. Show up to 2 OVERDUE unpaid months immediately before it (so user sees what they missed).
@@ -19067,7 +19086,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 <div><div class="loan-name">${_wfEsc(l.name)}</div><div class="loan-bank">🏦 ${_wfEsc(l.bank)}${l.purpose ? ' · ' + l.purpose : ''} · ${methodBadge}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="loan-monthly">${fmt(displayMonthly)}<span style="font-size:11px;font-weight:400;color:var(--text3);">/mo</span></div>${monthlyHint}<div>${active ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-gr">Completed</span>'}</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editLoan('${_wfJsAttr(l.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteLoan('${_wfJsAttr(l.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button aria-label="Edit this loan" class="ib e" onclick="editLoan('${_wfJsAttr(l.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this loan" class="ib d" onclick="deleteLoan('${_wfJsAttr(l.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
             <div class="pb" style="margin-bottom:6px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${prog.pct}%"></div></div>
@@ -19075,7 +19094,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             <!-- ISSUE 1 FIX — Prominent "Pay This Month" CTA on the loan card -->
             ${active ? (() => {
-                        const todayMonthKey = new Date().toISOString().slice(0, 7);
+                        const todayMonthKey = thisMonth();
                         const thisMonthScheduled = months.find(m => m.key === todayMonthKey);
                         if (!thisMonthScheduled) return '';
                         const thisPay = (l.payments || []).find(p => p.month === todayMonthKey);
@@ -19208,7 +19227,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const l = DB.get('loans').find(x => x.id === loanId);
             if (!l) return;
             const proj = loanProjectedSchedule(l);
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             // The "Current Balance" stat shows what the user owes RIGHT NOW (after their last
             // recorded payment), NOT proj.currentBalance which is the FINAL balance after the
             // full projection (always ≈0 for an amortizing loan — it would mislead the user).
@@ -19343,8 +19362,8 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     if (m.isPartial) payCell += '<div style="font-size:10px;color:var(--red);margin-top:1px;">' + fmt(m.diff) + ' short</div>';
 
                     const actionBtn = m.paid
-                        ? `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="eye"></i></button>`
-                        : `<button class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="coins"></i></button>`;
+                        ? `<button aria-label="View this instalment" class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_viewLoanInstallment('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="eye"></i></button>`
+                        : `<button aria-label="Mark this instalment paid" class="btn btn-ghost btn-sm" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();_payLoanInstallmentFromTable('${_wfJsAttr(l.id)}','${_wfJsAttr(m.month)}')"><i data-wfi="coins"></i></button>`;
 
                     let row = '<tr ' + (isCurrent ? 'data-current-row="1" ' : '') + 'style="border-bottom:1px solid var(--border); background:' + bg + '; cursor:pointer;" ';
                     row += 'onclick="_payLoanInstallmentFromTable(\'' + l.id + '\',\'' + m.month + '\')" ';
@@ -20887,8 +20906,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td style="min-width:110px;"><div class="pb" style="margin-bottom:3px;"><div class="pf ${prog.pct > 80 ? 'pf-r' : prog.pct > 50 ? 'pf-a' : 'pf-g'}" style="width:${Math.min(100, prog.pct)}%"></div></div><div style="font-size:10px;color:var(--text3);">${prog.paid}/${prog.total} (${prog.pct}%)</div></td>
             <td>${item.completed ? '<span class="badge bg-gr">Done</span>' : isActive ? '<span class="badge bg-g">Active</span>' : '<span class="badge bg-r">Overdue</span>'}</td>
             <td><div class="act-btns">${!item.completed ? `<button class="ib c" onclick="markCCIDone('${_wfJsAttr(item.id)}')" title="Mark Complete"><i data-wfi="check"></i></button>` : ''}
-                <button class="ib e" onclick="editCCI('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
-                <button class="ib d" onclick="deleteCCI('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button></div></td>
+                <button aria-label="Edit this instalment plan" class="ib e" onclick="editCCI('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
+                <button aria-label="Delete this instalment plan" class="ib d" onclick="deleteCCI('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button></div></td>
         </tr>`;
             }).join('') + _cap.row;
         }
@@ -21456,8 +21475,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             <td class="td-m">${_wfEsc(item.notes || '')}</td>
             <td><div class="act-btns">
                 ${item.status === 'pending' ? `<button class="ib c" onclick="markChequeCleared('${_wfJsAttr(item.id)}')" title="Clear"><i data-wfi="check"></i></button><button class="ib d" onclick="markChequeBounced('${_wfJsAttr(item.id)}')" title="Bounce" style="font-size:11px;">⚠️</button>` : ''}
-                <button class="ib e" onclick="editCheque('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
-                <button class="ib d" onclick="deleteCheque('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button>
+                <button aria-label="Edit this cheque" class="ib e" onclick="editCheque('${_wfJsAttr(item.id)}')"><i data-wfi="edit"></i></button>
+                <button aria-label="Delete this cheque" class="ib d" onclick="deleteCheque('${_wfJsAttr(item.id)}')"><i data-wfi="trash"></i></button>
             </div></td>
         </tr>`;
             }).join('') + _cap.row;
@@ -21954,7 +21973,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         <span style="color:var(--text2);">${s.date}${s.note ? ' · ' + _wfEsc(s.note) : ''}</span>
         <div style="display:flex;align-items:center;gap:8px;">
             <span style="color:var(--green);font-family:var(--mono);font-weight:700;">+${fmt(s.amount)}</span>
-            <button class="ib d" onclick="deleteSaving('${_wfJsAttr(tid)}','${_wfJsAttr(s.id)}')"><i data-wfi="x"></i></button>
+            <button aria-label="Delete this saving" class="ib d" onclick="deleteSaving('${_wfJsAttr(tid)}','${_wfJsAttr(s.id)}')"><i data-wfi="x"></i></button>
         </div>
     </div>`).join('') : '<div class="empty" style="padding:20px;"><div class="empty-sub">No saving entries yet</div></div>';
             openModal('mdSavHistory');
@@ -22503,7 +22522,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return overlay;
         }
 
-        const _liqToday = () => new Date().toISOString().slice(0, 10);
+        const _liqToday = () => today();
 
         function openPawnModal(existing) {
             const p = existing || {};
@@ -24403,6 +24422,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             /* Statements whose rows are parsed and waiting for the owner to file
              * them. Filled by the loop, drained after it. */
             const _ready = [];
+            /* Statements the parser could not read because the LAYOUT is new to
+             * it — not because they were locked, not because they were empty.
+             * They are the only ones worth asking the owner about, and asking
+             * once is what teaches the reader. */
+            const _teach = [];
 
             /* HOW MANY WERE HELD FOR A PASSWORD, counted rather than merely
              * shown per row. A statement that could not be opened is a
@@ -24472,8 +24496,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * summary of them, and this is the only place they
                              * exist. Returning the value unchanged keeps
                              * intakeStatement's own behaviour identical. */
+                            /* `{ bank }` is not decoration. parseStatement()
+                             * asks wealthflow-layout-memory.js for the layouts
+                             * the owner has already confirmed, and it asks for
+                             * THIS bank's first. Called with the text alone it
+                             * still works, but it tries other banks' layouts
+                             * before the right one — which is the difference
+                             * between reading the statement and reading it on
+                             * the sixth attempt. */
                             parse: (text) => {
-                                const out = window.WFStatementParser.parseStatement(text);
+                                const out = window.WFStatementParser.parseStatement(text, { bank });
                                 _parsed = out;
                                 return out;
                             },
@@ -24525,6 +24557,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const lockedOut = stmtCodes.some(
                             (c) => c === QK.PASSWORD_FAILED || c === QK.NO_VAULT_KEYS);
                         if (lockedOut) _mailSyncState.locked += 1;
+                        /* THE ONE CASE THAT IS NOT A DEAD END. An unknown
+                         * layout is a question with an answer, and the answer
+                         * is on the screen in front of the owner. Held here,
+                         * offered after the loop, taught once. */
+                        if (stmtCodes[0] === QK.LAYOUT_UNKNOWN && typeof res.text === 'string' && res.text) {
+                            _teach.push({
+                                key: d.id, bank, text: res.text, index: i,
+                                last4: (d.manifest && d.manifest.card_last4) || '',
+                            });
+                        }
                         set(i, {
                             stage: 'held',
                             why: stmtCodes[0] || null,
@@ -24559,8 +24601,31 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
 
             /* Opened AFTER the loop, so the owner is not interrupted between
-             * statements while the rest are still being decrypted. */
-            if (_ready.length) _reviewMailStatements(_ready);
+             * statements while the rest are still being decrypted.
+             *
+             * TEACHING COMES FIRST, and the review screen waits for it. A
+             * statement whose layout the owner has just confirmed belongs on
+             * the SAME review screen as the ones that parsed by themselves —
+             * one place to check, one Save, one undoable batch. Opening the
+             * review screen first and the teach screen behind it would put two
+             * modals on top of each other and file half the sync. */
+            const _openReview = () => { if (_ready.length) _reviewMailStatements(_ready); };
+            if (_teach.length) {
+                _teachStatementLayout(_teach, (learned) => {
+                    for (const l of learned) {
+                        _ready.push(l);
+                        set(l.index, {
+                            stage: 'ready',
+                            note: String(l.rows.length) + ' transaction'
+                                + (l.rows.length === 1 ? '' : 's') + ' read using the layout you confirmed',
+                        });
+                    }
+                    _openReview();
+                    try { renderDash(); } catch (_) {}
+                });
+            } else {
+                _openReview();
+            }
             /* renderQuarantineTile() used to be called here. It was never
              * defined anywhere, so the bare identifier threw a ReferenceError
              * that this try/catch swallowed on every single sync — which is
@@ -24736,6 +24801,224 @@ table.amort tbody tr { page-break-inside: avoid; }
             );
         }
         window._reviewMailStatements = _reviewMailStatements;
+
+        /* ── TEACHING WEALTHFLOW A BANK'S LAYOUT ───────────────────────────────
+         *
+         * The owner's words: "If it catches a completely new bank PDF and cannot
+         * understand the layout, DO NOT SILENTLY DROP IT. Send it to the Needs
+         * Review widget. Let me manually verify it once, so the AI can learn the
+         * layout for the future."
+         *
+         * So: nothing is typed. wealthflow-layout-memory.js reads the page the
+         * way a person would who had never seen the format — it finds every
+         * date-shaped run, tries each way of reading it, and keeps the ones that
+         * produce rows the statement's own opening/closing arithmetic agrees
+         * with. What reaches this screen is a READING, complete, with the
+         * balances shown. The owner says yes.
+         *
+         * Two readings can both reconcile — 02.07.2026 is the 2nd of July and
+         * the 7th of February, and no arithmetic separates them. When that
+         * happens the screen says so rather than picking one quietly, because a
+         * silently transposed month is a year of misfiled transactions.
+         */
+        function _teachStatementLayout(queue, done) {
+            const list = (Array.isArray(queue) ? queue : []).slice();
+            const learned = [];
+            const finish = () => { try { done(learned); } catch (_) {} };
+            const P = window.WFStatementParser;
+            const M = window.WFLayoutMemory;
+            if (!P || !M || typeof M.propose !== 'function') {
+                /* Said out loud. A statement that is silently skipped because a
+                 * script did not load is precisely the failure this whole
+                 * feature exists to end. */
+                notify('A statement needs a layout confirmed, but the layout reader did not load. It is still held and will be offered again.', 'warn');
+                finish();
+                return;
+            }
+
+            const step = () => {
+                const item = list.shift();
+                if (!item) { finish(); return; }
+                let readings = [];
+                try { readings = M.propose(item.text, P.parseStatement, { bank: item.bank }) || []; } catch (_) { readings = []; }
+                if (!readings.length) {
+                    notify('WealthFlow still cannot read the ' + item.bank
+                        + ' statement. It is held, not lost — send it in and it will be added to the reader.', 'warn');
+                    step();
+                    return;
+                }
+                _showLayoutTeachModal(item, readings, (accepted, reading) => {
+                    if (accepted && reading) {
+                        let stored = null;
+                        try { stored = M.remember(item.bank, reading.template); } catch (_) { stored = null; }
+                        if (!stored || stored.ok !== true) {
+                            /* The rows are still good — they are on screen. Only
+                             * the memory failed, so the next statement will ask
+                             * again. Saying which of the two happened is the
+                             * difference between a bug report and a shrug. */
+                            notify('These rows are ready, but the layout could not be saved, so the next '
+                                + item.bank + ' statement will ask again.', 'warn');
+                        }
+                        learned.push({
+                            key: item.key, bank: item.bank, index: item.index,
+                            rows: reading.rows, doubts: new Map(), last4: item.last4 || '',
+                        });
+                    }
+                    step();
+                });
+            };
+            step();
+        }
+        window._teachStatementLayout = _teachStatementLayout;
+
+        /**
+         * One reading, on screen, for one confirmation.
+         *
+         * Built with createElement and textContent throughout: every value here
+         * came out of a PDF the owner was sent, and a narration is exactly the
+         * kind of attacker-controlled string that must never reach innerHTML.
+         */
+        function _showLayoutTeachModal(item, readings, onAnswer) {
+            let at = 0;
+            let answered = false;
+            const money = (n) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const el = (tag, css, text) => {
+                const n = document.createElement(tag);
+                if (css) n.style.cssText = css;
+                if (text != null) n.textContent = String(text);
+                return n;
+            };
+
+            const ov = el('div', 'position:fixed;inset:0;z-index:100050;background:rgba(4,7,16,.72);'
+                + 'display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto;');
+            /* max-height with the body scrolling INSIDE it, so the heading and
+             * the buttons stay on screen on a phone. Hiding either of them to
+             * make room is the lazy route the owner ruled out by name. */
+            const card = el('div', 'width:min(680px,100%);max-height:92vh;display:flex;flex-direction:column;'
+                + 'background:var(--bg2,#111827);color:var(--text1,#e6e7eb);border:1px solid rgba(255,255,255,.10);'
+                + 'border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.55);overflow:hidden;');
+
+            const head = el('div', 'padding:18px 20px 12px;border-bottom:1px solid rgba(255,255,255,.08);flex:0 0 auto;');
+            head.appendChild(el('div', 'font-size:12px;letter-spacing:.10em;text-transform:uppercase;opacity:.62;', 'Needs review'));
+            head.appendChild(el('div', 'font-size:19px;font-weight:700;margin-top:6px;line-height:1.25;',
+                'A layout WealthFlow has not seen before'));
+            head.appendChild(el('div', 'font-size:13.5px;opacity:.78;margin-top:8px;line-height:1.5;',
+                'This is how it reads the ' + (item.bank || 'bank') + ' statement. Check one row against the PDF. '
+                + 'Confirm it once and every future statement from this bank is read on its own.'));
+
+            const body = el('div', 'padding:14px 20px;overflow:auto;flex:1 1 auto;min-height:0;');
+            const foot = el('div', 'padding:14px 20px 18px;border-top:1px solid rgba(255,255,255,.08);flex:0 0 auto;'
+                + 'display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;');
+
+            const btn = (label, primary) => {
+                const b = el('button', 'padding:11px 18px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;'
+                    + 'border:1px solid ' + (primary ? 'transparent' : 'rgba(255,255,255,.18)') + ';'
+                    + 'background:' + (primary ? 'var(--accent,#2563eb)' : 'transparent') + ';'
+                    + 'color:' + (primary ? '#fff' : 'inherit') + ';min-height:44px;', label);
+                b.type = 'button';
+                return b;
+            };
+
+            const close = (accepted) => {
+                if (answered) return;
+                answered = true;
+                document.removeEventListener('keydown', onKey);
+                try { ov.remove(); } catch (_) {}
+                try { onAnswer(accepted, accepted ? readings[at] : null); } catch (_) {}
+            };
+            const onKey = (e) => { if (e.key === 'Escape') close(false); };
+
+            const draw = () => {
+                body.textContent = '';
+                const r = readings[at] || {};
+                const rows = Array.isArray(r.rows) ? r.rows : [];
+
+                if (readings.length > 1) {
+                    body.appendChild(el('div', 'font-size:12.5px;opacity:.7;margin-bottom:10px;',
+                        'Reading ' + (at + 1) + ' of ' + readings.length));
+                }
+                if (r.ambiguous) {
+                    /* The honest warning. Both readings reconcile; only the
+                     * owner can tell 2 July from 7 February. */
+                    body.appendChild(el('div', 'font-size:13px;line-height:1.5;padding:10px 12px;border-radius:10px;'
+                        + 'background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.35);margin-bottom:12px;',
+                        'These dates read equally well the other way round. Check one date against the statement '
+                        + 'before confirming, or use "Read it differently".'));
+                }
+
+                const scroll = el('div', 'overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid rgba(255,255,255,.08);border-radius:12px;');
+                const table = el('table', 'width:100%;border-collapse:collapse;font-size:13px;min-width:460px;');
+                const thead = document.createElement('thead');
+                const hr = document.createElement('tr');
+                ['Date', 'Description', 'In / Out', 'Amount'].forEach((h, i) => {
+                    const th = el('th', 'text-align:' + (i === 3 ? 'right' : 'left') + ';padding:9px 12px;font-size:11.5px;'
+                        + 'letter-spacing:.06em;text-transform:uppercase;opacity:.6;font-weight:600;'
+                        + 'border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap;', h);
+                    hr.appendChild(th);
+                });
+                thead.appendChild(hr);
+                table.appendChild(thead);
+
+                const tb = document.createElement('tbody');
+                rows.forEach((row) => {
+                    const tr = document.createElement('tr');
+                    tr.appendChild(el('td', 'padding:9px 12px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.05);font-variant-numeric:tabular-nums;', row.date || ''));
+                    tr.appendChild(el('td', 'padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);', row.narration || row.description || ''));
+                    const dir = row.direction === 'credit' ? 'In' : (row.direction === 'debit' ? 'Out' : 'Not stated');
+                    tr.appendChild(el('td', 'padding:9px 12px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.05);'
+                        + 'opacity:' + (row.direction ? '1' : '.6') + ';', dir));
+                    tr.appendChild(el('td', 'padding:9px 12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'
+                        + 'border-bottom:1px solid rgba(255,255,255,.05);', money(row.amount)));
+                    tb.appendChild(tr);
+                });
+                table.appendChild(tb);
+                scroll.appendChild(table);
+                body.appendChild(scroll);
+
+                /* The statement's own arithmetic, printed. It is the evidence
+                 * behind the ranking, and the owner is entitled to see the
+                 * reason a reading is being recommended. */
+                const rec = r.reconciliation || {};
+                let note;
+                if (rec.ok === true) {
+                    note = 'Opening ' + money(rec.opening) + ' plus money in, less money out, reaches the closing balance '
+                        + money(rec.closing) + ' exactly. The statement agrees with this reading.';
+                } else if (rec.ok === false) {
+                    note = 'These rows do not add up to the closing balance on the statement — a difference of '
+                        + money(rec.difference) + '. A row may be missing.';
+                } else {
+                    note = 'This statement prints no opening and closing balance, so the totals cannot be cross-checked. '
+                        + 'Read the rows before confirming.';
+                }
+                body.appendChild(el('div', 'font-size:12.5px;line-height:1.55;opacity:.78;margin-top:12px;', note));
+                body.appendChild(el('div', 'font-size:12.5px;line-height:1.55;opacity:.62;margin-top:6px;',
+                    String(rows.length) + ' transaction' + (rows.length === 1 ? '' : 's') + ' found. '
+                    + 'Nothing is saved until you check them on the next screen.'));
+            };
+
+            const yes = btn('Yes, read it this way', true);
+            yes.addEventListener('click', () => close(true));
+            const other = btn('Read it differently');
+            other.addEventListener('click', () => { at = (at + 1) % readings.length; draw(); });
+            const skip = btn('Not now');
+            skip.addEventListener('click', () => close(false));
+
+            if (readings.length > 1) foot.appendChild(other);
+            foot.appendChild(skip);
+            foot.appendChild(yes);
+
+            card.appendChild(head);
+            card.appendChild(body);
+            card.appendChild(foot);
+            ov.appendChild(card);
+            ov.addEventListener('click', (e) => { if (e.target === ov) close(false); });
+            document.addEventListener('keydown', onKey);
+            draw();
+            document.body.appendChild(ov);
+            try { yes.focus(); } catch (_) {}
+        }
+        window._showLayoutTeachModal = _showLayoutTeachModal;
+
 
         /* ── CONNECTING THE MAILBOX ────────────────────────────────────────────
          *
@@ -25219,7 +25502,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <div><div class="tgt-name">${done ? '🏆 ' : ''} ${_wfEsc(t.name)}</div><div class="tgt-dates">📅 ${fmtDatePretty(t.start)} → ${fmtDatePretty(t.end)}</div></div>
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <div style="text-align:right;"><div class="tgt-big">${fmtS(t.amount)}</div><div style="font-size:11px;color:var(--text3);">Target · ${fmt(t.amount)}</div><div class="tgt-rem">${fmtS(remain)}</div><div style="font-size:11px;color:var(--text3);">Remaining</div></div>
-                    <div class="act-btns"><button class="ib e" onclick="editTarget('${_wfJsAttr(t.id)}')"><i data-wfi="edit"></i></button><button class="ib d" onclick="deleteTarget('${_wfJsAttr(t.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div class="act-btns"><button aria-label="Edit this target" class="ib e" onclick="editTarget('${_wfJsAttr(t.id)}')"><i data-wfi="edit"></i></button><button aria-label="Delete this target" class="ib d" onclick="deleteTarget('${_wfJsAttr(t.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>
             </div>
 
@@ -25404,7 +25687,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     <div class="flow-dot ${f.type === 'set' ? 'in' : f.type}">${dot}</div>
                     <div class="flow-info"><div class="flow-name">${_wfEsc(f.company)}</div><div class="flow-date">${f.date}${f.notes ? ' · ' + _wfEsc(f.notes) : ''}</div></div>
                     <div class="flow-right"><div class="flow-amt ${f.type === 'out' ? 'out' : 'in'}">${f.type === 'out' ? '-' : '+'}${fmt(f.amount)}</div><div><span class="badge ${cls}">${lbl}</span></div></div>
-                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button class="ib e" onclick="editBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="edit"></i></button>` : ''}<button class="ib d" onclick="deleteBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="trash"></i></button></div>
+                    <div style="display:flex;gap:4px;">${(f.type !== 'set' && !isTarget) ? `<button aria-label="Edit this balance flow" class="ib e" onclick="editBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="edit"></i></button>` : ''}<button aria-label="Delete this balance flow" class="ib d" onclick="deleteBalFlow('${_wfJsAttr(f.id)}')"><i data-wfi="trash"></i></button></div>
                 </div>`;
             }).join('');
 
@@ -27583,7 +27866,7 @@ table.amort tbody tr { page-break-inside: avoid; }
              * back apart. */
             const _plainMirror = () => {
                 try {
-                    const today = new Date().toISOString().slice(0, 10);
+                    const today = today();
                     const nk = 'wf_devnotif_' + today;
                     const sent = JSON.parse(localStorage.getItem(nk) || '[]');
                     if (!sent.includes(id) && typeof sendSmartNotification === 'function') {
@@ -27930,7 +28213,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 const slot = _currentReminderSlot();
                 if (!slot) return;
-                const today = new Date().toISOString().slice(0, 10);
+                const today = today();
                 const key = 'wf_reminder_slot_' + today;
                 const done = JSON.parse(localStorage.getItem(key) || '[]');
                 if (done.includes(slot)) return;
@@ -27951,7 +28234,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const now = new Date();
             const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
-            const today = now.toISOString().slice(0, 10);
+            const today = window.WFWhen.ymd(now);
             const incomeRecv = DB.getObj('incomeReceived', {});
             const dismissedToday = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
 
@@ -32050,7 +32333,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 return `${yr}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
                             }
                         } catch (_) {}
-                        return new Date().toISOString().split('T')[0];
+                        return today();
                     })(dateMatch[1]);
                     out.push({ date: dt, description: desc.slice(0, 80), amount: amt, type, notes: '' });
                 });
@@ -32315,7 +32598,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             const _lm = _matchLoanForPayment(t.description || '', t.amount, t.direction);
                             if (_lm) {
                                 t._dest = 'loan'; t._loanId = _lm.id; t._loanName = _lm.name;
-                                t._loanMonth = (String(t.date || '').slice(0, 7)) || new Date().toISOString().slice(0, 7);
+                                t._loanMonth = (String(t.date || '').slice(0, 7)) || thisMonth();
                                 t._review = true; // surface it so the user SEES the allocation before commit
                             }
                         } catch (_) {}

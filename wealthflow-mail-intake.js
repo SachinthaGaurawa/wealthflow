@@ -60,6 +60,14 @@ export const QUARANTINE = {
     NO_VAULT_KEYS: 'no-vault-keys',
     NO_TEXT_LAYER: 'no-text-layer',
     UNPARSEABLE: 'unparseable',
+    /* UNPARSEABLE used to mean all three of these at once, and the three want
+     * three different things from the owner: one is a layout to teach, one is
+     * nothing at all, and one is a number to check. Collapsing them is why a
+     * statement from an unknown bank was reported the same way as a month with
+     * no spending on it — and then dropped. */
+    LAYOUT_UNKNOWN: 'layout-unknown',
+    NO_TRANSACTIONS: 'no-transactions',
+    BALANCE_MISMATCH: 'balance-mismatch',
     DIRECTION_UNRESOLVED: 'direction-unresolved',
     ROUTING_CONFLICT: 'routing-conflict',
     LOW_CONFIDENCE: 'low-confidence',
@@ -72,6 +80,9 @@ export const QUARANTINE_TEXT = {
     [QUARANTINE.NO_VAULT_KEYS]: 'it is password-protected and your vault is empty',
     [QUARANTINE.NO_TEXT_LAYER]: 'the pages are images, so there is no text to read',
     [QUARANTINE.UNPARSEABLE]: 'the layout did not yield any transaction rows',
+    [QUARANTINE.LAYOUT_UNKNOWN]: 'this bank lays its statement out in a way WealthFlow has not seen before — confirm the rows once and it will read the next one on its own',
+    [QUARANTINE.NO_TRANSACTIONS]: 'the statement is readable and has no transactions on it',
+    [QUARANTINE.BALANCE_MISMATCH]: 'the rows were read, but the opening and closing balances do not add up',
     [QUARANTINE.DIRECTION_UNRESOLVED]: 'the statement does not say whether this was money in or out',
     [QUARANTINE.ROUTING_CONFLICT]: 'the bank’s own figures and the description disagree about the direction',
     [QUARANTINE.LOW_CONFIDENCE]: 'the category could not be decided confidently',
@@ -305,7 +316,39 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
         return fail(QUARANTINE.UNPARSEABLE, { why: (e && e.message) ? String(e.message).slice(0, 120) : 'parser threw' });
     }
     const rows = arr(parsed && parsed.rows);
-    if (!rows.length) return fail(QUARANTINE.UNPARSEABLE, { rows: 0 });
+    if (!rows.length) {
+        /* THE PARSER KNOWS WHY. It grades its own result — 'unreadable' for a
+         * layout it has never seen, 'empty' for a statement with nothing on it,
+         * 'no-text' for a scan. Re-deriving that here from `rows.length` is how
+         * both became "unparseable" and were treated identically.
+         *
+         * `text` rides along ONLY on the teachable case, because the screen
+         * that offers to learn the layout needs the page it failed on. It stays
+         * on the device: this module has no network and its one caller hands it
+         * to a local review screen. */
+        const verdict = parsed && parsed.verdict;
+        if (verdict === 'no-text') return fail(QUARANTINE.NO_TEXT_LAYER, { chars: text.trim().length });
+        if (verdict === 'empty') return fail(QUARANTINE.NO_TRANSACTIONS, { rows: 0 });
+        if (verdict === 'unreadable') {
+            return {
+                ...fail(QUARANTINE.LAYOUT_UNKNOWN, {
+                    rows: 0,
+                    moneyLines: num(parsed.moneyLines),
+                    candidateRows: num(parsed.candidateRows),
+                    teachable: true,
+                }),
+                text,
+            };
+        }
+        return fail(QUARANTINE.UNPARSEABLE, { rows: 0 });
+    }
+
+    /* Readable but not trustworthy. The rows still go through — the owner
+     * reviews every imported statement — but the statement carries a warning
+     * beside them, because "opening + credits - debits does not reach closing"
+     * means at least one row on this page was misread or missed entirely, and
+     * that is not something to discover three months later. */
+    const unbalanced = parsed && parsed.verdict === 'unverified';
 
     let routedRows = [];
     try { routedRows = arr(await route(rows, ctx)); } catch (e) {
@@ -349,7 +392,28 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
         }
     }
 
-    return { id, bank, applied, quarantined, usedVaultIndex: opened.usedIndex, encrypted: opened.encrypted };
+    if (unbalanced) {
+        quarantined.push({
+            scope: 'statement', reason: QUARANTINE.BALANCE_MISMATCH, bank, id,
+            detail: {
+                opening: num(parsed.reconciliation && parsed.reconciliation.opening),
+                closing: num(parsed.reconciliation && parsed.reconciliation.closing),
+                difference: num(parsed.reconciliation && parsed.reconciliation.difference),
+                rows: rows.length,
+            },
+            /* Not a dead end: the rows ARE in `applied`. This says "check the
+             * total", not "nothing was read". The one caller distinguishes them
+             * by whether applied is empty, and so does intakeAll's failed count. */
+            advisory: true,
+        });
+    }
+
+    return {
+        id, bank, applied, quarantined,
+        usedVaultIndex: opened.usedIndex, encrypted: opened.encrypted,
+        verdict: (parsed && parsed.verdict) || null,
+        learnedLayout: (parsed && parsed.learnedLayout) || null,
+    };
 }
 
 /** Every pending statement, oldest first, each isolated from the others. */
@@ -373,7 +437,7 @@ export async function intakeAll(items, deps = {}, ctx = {}) {
             };
         }
         out.statements += 1;
-        if (!r.applied.length && r.quarantined.some((q) => q.scope === 'statement')) out.failed += 1;
+        if (!r.applied.length && r.quarantined.some((q) => q.scope === 'statement' && !q.advisory)) out.failed += 1;
         out.applied.push(...r.applied);
         out.quarantined.push(...r.quarantined);
     }

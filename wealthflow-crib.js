@@ -598,7 +598,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             return _analyse(fields, res.rawText).then(function (a) {
                 var rep = {
                     id: _uid(), ts: _now(),
-                    dateLabel: fields.reportDate || new Date().toISOString().slice(0, 10),
+                    dateLabel: fields.reportDate || window.WFWhen.today(),
                     fingerprint: fp, textFp: tfp,
                     score: (fields.score != null ? fields.score : null),
                     scoreMax: fields.scoreMax || 900,

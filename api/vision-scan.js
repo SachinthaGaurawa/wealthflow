@@ -156,8 +156,36 @@ function inferCurrency(rawText, vendor, hintCurrency) {
     return hintCurrency || 'LKR';
 }
 
+/**
+ * The day it is where the OWNER is, not where this function runs.
+ *
+ * THE DEFECT: this file runs on a server whose clock is UTC, and it answered
+ * "what is today" with new Date().toISOString().slice(0,10). Colombo is
+ * UTC+05:30, so between midnight and half past five in the morning the server's
+ * answer is YESTERDAY — and that answer is handed to the vision model as the
+ * date to assume for a receipt that does not print one. On the first of a month
+ * it puts the transaction in the previous month's tab.
+ *
+ * The client now sends `today` (its own local date) and `tz` (its IANA zone) on
+ * every call, so this normally just uses what it was told. `tz` is the fallback
+ * for an older client that sends one but not the other, and UTC is the fallback
+ * for a caller that sends neither — which is a caller that has told us nothing,
+ * not a caller we can be clever about.
+ */
+function todayFor(hints) {
+    if (hints && typeof hints.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(hints.today)) return hints.today;
+    const tz = hints && typeof hints.tz === 'string' ? hints.tz : '';
+    if (tz) {
+        try {
+            // 'en-CA' formats as YYYY-MM-DD, which is the shape every caller wants.
+            return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+        } catch (_) { /* an unknown zone falls through to UTC */ }
+    }
+    return new Date().toISOString().split('T')[0];
+}
+
 function buildReceiptPrompt(hints) {
-    const today = (hints && hints.today) || new Date().toISOString().split('T')[0];
+    const today = todayFor(hints);
     const currency = (hints && hints.currency) || 'LKR';
     return `You are a world-class receipt OCR system specialised for Sri Lankan and international receipts. Read this image with surgical precision. Return ONLY a single valid JSON object — no markdown, no commentary.
 
@@ -455,7 +483,7 @@ async function callOcrSpace(image, ocrKey) {
 }
 
 async function structureRawText(rawText, hints, keys) {
-    const today = hints?.today || new Date().toISOString().split('T')[0];
+    const today = todayFor(hints);
     const currency = hints?.currency || 'LKR';
     const sysPrompt = `Extract the structured data from this OCR'd receipt text. Return ONLY this JSON:
 {"vendor":"","amount":0,"date":"YYYY-MM-DD","category":"","items":[],"currency":"${currency}","tax":null,"payment_method":null,"receipt_number":null,"time":null}
@@ -877,7 +905,7 @@ function consensus(engineResults, hints) {
     const finalCategory = category.value || inferCategory(vendor.value, rawText);
     const result = {
         vendor: vendor.value, amount: amount.value,
-        date: date.value || hints?.today || new Date().toISOString().split('T')[0],
+        date: date.value || todayFor(hints),
         category: finalCategory || 'Other',
         items: items.value || [],
         currency: currency.value || inferCurrency(rawText, vendor.value, hints?.currency),
