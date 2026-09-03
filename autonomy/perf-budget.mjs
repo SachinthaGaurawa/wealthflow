@@ -157,7 +157,15 @@ export const BUDGETS = {
      * "ten accounts, three syncing". It is markup and a short reader over the
      * account registry, and it belongs on the screen where the owner asks —
      * a report they have to go and find is a report nobody reads. */
-    htmlBytes: 1_929_000,        // measured 1,927,543 — the per-bank hunt panel
+    /* Raised for the quarantine learning loop. A statement from a bank whose
+     * layout the parser has never seen used to come back as `rows: []` — the
+     * same value an empty month returns — and was dropped in silence with a
+     * green tick. The page now holds those statements back, offers the reading
+     * wealthflow-layout-memory.js derived from the page itself, and remembers
+     * the one the owner confirms. Most of the growth is the confirmation screen,
+     * which is built with createElement and textContent because every value on
+     * it came out of somebody else's PDF. */
+    htmlBytes: 1_945_000,        // measured 1,943,840 — the layout confirmation screen
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -297,7 +305,14 @@ export const BUDGETS = {
      * tries every password the owner already saved before anyone is asked for
      * one. The passwords, the derived guesses and the ordering all existed —
      * this module was simply not calling them, while two other callers were. */
-    totalJsBytes: 1_597_000,     // measured 1,596,031 across 60 modules
+    /* Raised for wealthflow-layout-memory.js. It does NOT add a second row
+     * reader — that is the whole design: it learns only the DATE SHAPE, rewrites
+     * the text into a form the real parser already matches, and hands it back,
+     * so there is still exactly one implementation of a transaction row and one
+     * reconciliation. The bytes are the derivation, the self-verification that
+     * refuses a template it cannot read back, and the two named regex mistakes
+     * written down so they are not made a third time. */
+    totalJsBytes: 1_636_000,     // measured 1,634,548 across 61 modules
     largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -353,7 +368,11 @@ export const BUDGETS = {
     // one quietly becomes the one that matters. It also has to be unit-testable:
     // wealthflow-intelligence.js is an IIFE with no exports and consequently no
     // test file, and crypto holding bank passwords cannot ship untested.
-    moduleCount: 60,   // measured 60 — 59 -> 60 for wealthflow-institutions.js
+    /* 60 -> 61 for wealthflow-layout-memory.js. A file, not an inline block,
+     * for the same reason as the last one: it is the only thing that knows how
+     * a learned layout is stored, and inlining it into index.html would put a
+     * second copy of that knowledge next to the parser it feeds. */
+    moduleCount: 61,   // measured 61 — 60 -> 61 for wealthflow-layout-memory.js
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -401,7 +420,9 @@ export const BUDGETS = {
      * the bank descriptions into index.html, where the picker and the mail
      * pipeline could drift apart again exactly as they did. Deferred by
      * type=module, so it does not block the first paint. */
-    scriptTags: 66,              // measured 66 — three ESM modules, all deferred by type=module
+    /* 66 -> 67 for wealthflow-layout-memory.js, deferred, so it costs a request
+     * and nothing at first paint. */
+    scriptTags: 67,              // measured 67 — three ESM modules, all deferred by type=module
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

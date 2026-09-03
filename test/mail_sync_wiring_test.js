@@ -104,9 +104,18 @@ describe('the pipeline is handed the right functions', () => {
          * "needs review" on a pipeline that is in fact completely broken. */
         const fn = functionBody('runMailSync');
         expect(fn, 'runMailSync not found').toBeTruthy();
-        expect(fn).toContain('WFStatementParser.parseStatement(text)');
+        expect(fn).toMatch(/WFStatementParser\.parseStatement\(text[,)]/);
         expect(codeOnly(fn), 'parse is wired to the bare-array shorthand again')
             .not.toContain('parseStatementText');
+    });
+
+    it('tells the parser which bank sent it, so a learned layout is found', () => {
+        /* parseStatement() consults wealthflow-layout-memory.js for the layouts
+         * the owner has already confirmed, and asks for THIS bank's first.
+         * Called with the text alone it still works, but it tries every other
+         * bank's layout before the right one — and gives up after six. */
+        const fn = functionBody('runMailSync');
+        expect(codeOnly(fn)).toContain('parseStatement(text, { bank })');
     });
 
     it('passes the four functions intakeStatement requires', () => {

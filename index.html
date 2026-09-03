@@ -548,6 +548,10 @@
     <!-- Accurate text-layer statement parsing (DFCC etc.): reads EVERY row from a
          text PDF and validates each amount against the running balance. window.WFStatementParser -->
     <script src="wealthflow-statement-parser.js" defer></script>
+    <!-- Statement layout memory: when the parser meets a bank whose date format it
+         has never seen, this proposes readings, the owner confirms ONE, and every
+         later statement from that bank parses on its own. window.WFLayoutMemory -->
+    <script src="wealthflow-layout-memory.js" defer></script>
     <!-- Password-protected PDF support: prompts for a password ONLY when a PDF is
          encrypted, unlocks it, and feeds clean text to the parser. window.WFPdfUnlock -->
     <script src="wealthflow-pdf-unlock.js" defer></script>
@@ -24403,6 +24407,11 @@ table.amort tbody tr { page-break-inside: avoid; }
             /* Statements whose rows are parsed and waiting for the owner to file
              * them. Filled by the loop, drained after it. */
             const _ready = [];
+            /* Statements the parser could not read because the LAYOUT is new to
+             * it — not because they were locked, not because they were empty.
+             * They are the only ones worth asking the owner about, and asking
+             * once is what teaches the reader. */
+            const _teach = [];
 
             /* HOW MANY WERE HELD FOR A PASSWORD, counted rather than merely
              * shown per row. A statement that could not be opened is a
@@ -24472,8 +24481,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * summary of them, and this is the only place they
                              * exist. Returning the value unchanged keeps
                              * intakeStatement's own behaviour identical. */
+                            /* `{ bank }` is not decoration. parseStatement()
+                             * asks wealthflow-layout-memory.js for the layouts
+                             * the owner has already confirmed, and it asks for
+                             * THIS bank's first. Called with the text alone it
+                             * still works, but it tries other banks' layouts
+                             * before the right one — which is the difference
+                             * between reading the statement and reading it on
+                             * the sixth attempt. */
                             parse: (text) => {
-                                const out = window.WFStatementParser.parseStatement(text);
+                                const out = window.WFStatementParser.parseStatement(text, { bank });
                                 _parsed = out;
                                 return out;
                             },
@@ -24525,6 +24542,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                         const lockedOut = stmtCodes.some(
                             (c) => c === QK.PASSWORD_FAILED || c === QK.NO_VAULT_KEYS);
                         if (lockedOut) _mailSyncState.locked += 1;
+                        /* THE ONE CASE THAT IS NOT A DEAD END. An unknown
+                         * layout is a question with an answer, and the answer
+                         * is on the screen in front of the owner. Held here,
+                         * offered after the loop, taught once. */
+                        if (stmtCodes[0] === QK.LAYOUT_UNKNOWN && typeof res.text === 'string' && res.text) {
+                            _teach.push({
+                                key: d.id, bank, text: res.text, index: i,
+                                last4: (d.manifest && d.manifest.card_last4) || '',
+                            });
+                        }
                         set(i, {
                             stage: 'held',
                             why: stmtCodes[0] || null,
@@ -24559,8 +24586,31 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
 
             /* Opened AFTER the loop, so the owner is not interrupted between
-             * statements while the rest are still being decrypted. */
-            if (_ready.length) _reviewMailStatements(_ready);
+             * statements while the rest are still being decrypted.
+             *
+             * TEACHING COMES FIRST, and the review screen waits for it. A
+             * statement whose layout the owner has just confirmed belongs on
+             * the SAME review screen as the ones that parsed by themselves —
+             * one place to check, one Save, one undoable batch. Opening the
+             * review screen first and the teach screen behind it would put two
+             * modals on top of each other and file half the sync. */
+            const _openReview = () => { if (_ready.length) _reviewMailStatements(_ready); };
+            if (_teach.length) {
+                _teachStatementLayout(_teach, (learned) => {
+                    for (const l of learned) {
+                        _ready.push(l);
+                        set(l.index, {
+                            stage: 'ready',
+                            note: String(l.rows.length) + ' transaction'
+                                + (l.rows.length === 1 ? '' : 's') + ' read using the layout you confirmed',
+                        });
+                    }
+                    _openReview();
+                    try { renderDash(); } catch (_) {}
+                });
+            } else {
+                _openReview();
+            }
             /* renderQuarantineTile() used to be called here. It was never
              * defined anywhere, so the bare identifier threw a ReferenceError
              * that this try/catch swallowed on every single sync — which is
@@ -24736,6 +24786,224 @@ table.amort tbody tr { page-break-inside: avoid; }
             );
         }
         window._reviewMailStatements = _reviewMailStatements;
+
+        /* ── TEACHING WEALTHFLOW A BANK'S LAYOUT ───────────────────────────────
+         *
+         * The owner's words: "If it catches a completely new bank PDF and cannot
+         * understand the layout, DO NOT SILENTLY DROP IT. Send it to the Needs
+         * Review widget. Let me manually verify it once, so the AI can learn the
+         * layout for the future."
+         *
+         * So: nothing is typed. wealthflow-layout-memory.js reads the page the
+         * way a person would who had never seen the format — it finds every
+         * date-shaped run, tries each way of reading it, and keeps the ones that
+         * produce rows the statement's own opening/closing arithmetic agrees
+         * with. What reaches this screen is a READING, complete, with the
+         * balances shown. The owner says yes.
+         *
+         * Two readings can both reconcile — 02.07.2026 is the 2nd of July and
+         * the 7th of February, and no arithmetic separates them. When that
+         * happens the screen says so rather than picking one quietly, because a
+         * silently transposed month is a year of misfiled transactions.
+         */
+        function _teachStatementLayout(queue, done) {
+            const list = (Array.isArray(queue) ? queue : []).slice();
+            const learned = [];
+            const finish = () => { try { done(learned); } catch (_) {} };
+            const P = window.WFStatementParser;
+            const M = window.WFLayoutMemory;
+            if (!P || !M || typeof M.propose !== 'function') {
+                /* Said out loud. A statement that is silently skipped because a
+                 * script did not load is precisely the failure this whole
+                 * feature exists to end. */
+                notify('A statement needs a layout confirmed, but the layout reader did not load. It is still held and will be offered again.', 'warn');
+                finish();
+                return;
+            }
+
+            const step = () => {
+                const item = list.shift();
+                if (!item) { finish(); return; }
+                let readings = [];
+                try { readings = M.propose(item.text, P.parseStatement, { bank: item.bank }) || []; } catch (_) { readings = []; }
+                if (!readings.length) {
+                    notify('WealthFlow still cannot read the ' + item.bank
+                        + ' statement. It is held, not lost — send it in and it will be added to the reader.', 'warn');
+                    step();
+                    return;
+                }
+                _showLayoutTeachModal(item, readings, (accepted, reading) => {
+                    if (accepted && reading) {
+                        let stored = null;
+                        try { stored = M.remember(item.bank, reading.template); } catch (_) { stored = null; }
+                        if (!stored || stored.ok !== true) {
+                            /* The rows are still good — they are on screen. Only
+                             * the memory failed, so the next statement will ask
+                             * again. Saying which of the two happened is the
+                             * difference between a bug report and a shrug. */
+                            notify('These rows are ready, but the layout could not be saved, so the next '
+                                + item.bank + ' statement will ask again.', 'warn');
+                        }
+                        learned.push({
+                            key: item.key, bank: item.bank, index: item.index,
+                            rows: reading.rows, doubts: new Map(), last4: item.last4 || '',
+                        });
+                    }
+                    step();
+                });
+            };
+            step();
+        }
+        window._teachStatementLayout = _teachStatementLayout;
+
+        /**
+         * One reading, on screen, for one confirmation.
+         *
+         * Built with createElement and textContent throughout: every value here
+         * came out of a PDF the owner was sent, and a narration is exactly the
+         * kind of attacker-controlled string that must never reach innerHTML.
+         */
+        function _showLayoutTeachModal(item, readings, onAnswer) {
+            let at = 0;
+            let answered = false;
+            const money = (n) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const el = (tag, css, text) => {
+                const n = document.createElement(tag);
+                if (css) n.style.cssText = css;
+                if (text != null) n.textContent = String(text);
+                return n;
+            };
+
+            const ov = el('div', 'position:fixed;inset:0;z-index:100050;background:rgba(4,7,16,.72);'
+                + 'display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto;');
+            /* max-height with the body scrolling INSIDE it, so the heading and
+             * the buttons stay on screen on a phone. Hiding either of them to
+             * make room is the lazy route the owner ruled out by name. */
+            const card = el('div', 'width:min(680px,100%);max-height:92vh;display:flex;flex-direction:column;'
+                + 'background:var(--bg2,#111827);color:var(--text1,#e6e7eb);border:1px solid rgba(255,255,255,.10);'
+                + 'border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.55);overflow:hidden;');
+
+            const head = el('div', 'padding:18px 20px 12px;border-bottom:1px solid rgba(255,255,255,.08);flex:0 0 auto;');
+            head.appendChild(el('div', 'font-size:12px;letter-spacing:.10em;text-transform:uppercase;opacity:.62;', 'Needs review'));
+            head.appendChild(el('div', 'font-size:19px;font-weight:700;margin-top:6px;line-height:1.25;',
+                'A layout WealthFlow has not seen before'));
+            head.appendChild(el('div', 'font-size:13.5px;opacity:.78;margin-top:8px;line-height:1.5;',
+                'This is how it reads the ' + (item.bank || 'bank') + ' statement. Check one row against the PDF. '
+                + 'Confirm it once and every future statement from this bank is read on its own.'));
+
+            const body = el('div', 'padding:14px 20px;overflow:auto;flex:1 1 auto;min-height:0;');
+            const foot = el('div', 'padding:14px 20px 18px;border-top:1px solid rgba(255,255,255,.08);flex:0 0 auto;'
+                + 'display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;');
+
+            const btn = (label, primary) => {
+                const b = el('button', 'padding:11px 18px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;'
+                    + 'border:1px solid ' + (primary ? 'transparent' : 'rgba(255,255,255,.18)') + ';'
+                    + 'background:' + (primary ? 'var(--accent,#2563eb)' : 'transparent') + ';'
+                    + 'color:' + (primary ? '#fff' : 'inherit') + ';min-height:44px;', label);
+                b.type = 'button';
+                return b;
+            };
+
+            const close = (accepted) => {
+                if (answered) return;
+                answered = true;
+                document.removeEventListener('keydown', onKey);
+                try { ov.remove(); } catch (_) {}
+                try { onAnswer(accepted, accepted ? readings[at] : null); } catch (_) {}
+            };
+            const onKey = (e) => { if (e.key === 'Escape') close(false); };
+
+            const draw = () => {
+                body.textContent = '';
+                const r = readings[at] || {};
+                const rows = Array.isArray(r.rows) ? r.rows : [];
+
+                if (readings.length > 1) {
+                    body.appendChild(el('div', 'font-size:12.5px;opacity:.7;margin-bottom:10px;',
+                        'Reading ' + (at + 1) + ' of ' + readings.length));
+                }
+                if (r.ambiguous) {
+                    /* The honest warning. Both readings reconcile; only the
+                     * owner can tell 2 July from 7 February. */
+                    body.appendChild(el('div', 'font-size:13px;line-height:1.5;padding:10px 12px;border-radius:10px;'
+                        + 'background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.35);margin-bottom:12px;',
+                        'These dates read equally well the other way round. Check one date against the statement '
+                        + 'before confirming, or use "Read it differently".'));
+                }
+
+                const scroll = el('div', 'overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid rgba(255,255,255,.08);border-radius:12px;');
+                const table = el('table', 'width:100%;border-collapse:collapse;font-size:13px;min-width:460px;');
+                const thead = document.createElement('thead');
+                const hr = document.createElement('tr');
+                ['Date', 'Description', 'In / Out', 'Amount'].forEach((h, i) => {
+                    const th = el('th', 'text-align:' + (i === 3 ? 'right' : 'left') + ';padding:9px 12px;font-size:11.5px;'
+                        + 'letter-spacing:.06em;text-transform:uppercase;opacity:.6;font-weight:600;'
+                        + 'border-bottom:1px solid rgba(255,255,255,.08);white-space:nowrap;', h);
+                    hr.appendChild(th);
+                });
+                thead.appendChild(hr);
+                table.appendChild(thead);
+
+                const tb = document.createElement('tbody');
+                rows.forEach((row) => {
+                    const tr = document.createElement('tr');
+                    tr.appendChild(el('td', 'padding:9px 12px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.05);font-variant-numeric:tabular-nums;', row.date || ''));
+                    tr.appendChild(el('td', 'padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.05);', row.narration || row.description || ''));
+                    const dir = row.direction === 'credit' ? 'In' : (row.direction === 'debit' ? 'Out' : 'Not stated');
+                    tr.appendChild(el('td', 'padding:9px 12px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,.05);'
+                        + 'opacity:' + (row.direction ? '1' : '.6') + ';', dir));
+                    tr.appendChild(el('td', 'padding:9px 12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;'
+                        + 'border-bottom:1px solid rgba(255,255,255,.05);', money(row.amount)));
+                    tb.appendChild(tr);
+                });
+                table.appendChild(tb);
+                scroll.appendChild(table);
+                body.appendChild(scroll);
+
+                /* The statement's own arithmetic, printed. It is the evidence
+                 * behind the ranking, and the owner is entitled to see the
+                 * reason a reading is being recommended. */
+                const rec = r.reconciliation || {};
+                let note;
+                if (rec.ok === true) {
+                    note = 'Opening ' + money(rec.opening) + ' plus money in, less money out, reaches the closing balance '
+                        + money(rec.closing) + ' exactly. The statement agrees with this reading.';
+                } else if (rec.ok === false) {
+                    note = 'These rows do not add up to the closing balance on the statement — a difference of '
+                        + money(rec.difference) + '. A row may be missing.';
+                } else {
+                    note = 'This statement prints no opening and closing balance, so the totals cannot be cross-checked. '
+                        + 'Read the rows before confirming.';
+                }
+                body.appendChild(el('div', 'font-size:12.5px;line-height:1.55;opacity:.78;margin-top:12px;', note));
+                body.appendChild(el('div', 'font-size:12.5px;line-height:1.55;opacity:.62;margin-top:6px;',
+                    String(rows.length) + ' transaction' + (rows.length === 1 ? '' : 's') + ' found. '
+                    + 'Nothing is saved until you check them on the next screen.'));
+            };
+
+            const yes = btn('Yes, read it this way', true);
+            yes.addEventListener('click', () => close(true));
+            const other = btn('Read it differently');
+            other.addEventListener('click', () => { at = (at + 1) % readings.length; draw(); });
+            const skip = btn('Not now');
+            skip.addEventListener('click', () => close(false));
+
+            if (readings.length > 1) foot.appendChild(other);
+            foot.appendChild(skip);
+            foot.appendChild(yes);
+
+            card.appendChild(head);
+            card.appendChild(body);
+            card.appendChild(foot);
+            ov.appendChild(card);
+            ov.addEventListener('click', (e) => { if (e.target === ov) close(false); });
+            document.addEventListener('keydown', onKey);
+            draw();
+            document.body.appendChild(ov);
+            try { yes.focus(); } catch (_) {}
+        }
+        window._showLayoutTeachModal = _showLayoutTeachModal;
+
 
         /* ── CONNECTING THE MAILBOX ────────────────────────────────────────────
          *
