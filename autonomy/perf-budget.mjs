@@ -170,7 +170,12 @@ export const BUDGETS = {
      * which in Colombo is YESTERDAY until 05:30, and on the first of a month
      * files the transaction into the previous month's tab. The growth is one
      * script tag and the reproduction written beside the helper it replaced. */
-    htmlBytes: 1_946_000,        // measured 1,944,377 — one notion of "today"
+    /* Raised for the money-export fix and the startup work: _csvMoney (the CSV
+     * was writing raw binary floats into a file people open in Excel), and
+     * ensureChart/_wfChartThen replacing three eagerly-loaded vendor libraries.
+     * Most of the growth is the measurements written beside each — 6.1 s to
+     * interactive on a throttled phone, and which 195 KB bought nothing. */
+    htmlBytes: 1_956_000,        // measured 1,954,984 — money exports + on-demand charts
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -329,7 +334,12 @@ export const BUDGETS = {
      * first-party wealthflow-* module on disk, browser and server alike. It is a
      * proxy for how much first-party code this project carries, not a byte-exact
      * browser payload — two of the modules never reach a browser. */
-    totalJsBytes: 1_726_000,     // measured 1,709,902 across 64 modules
+    /* Raised for wealthflow-approval-bot.mjs — the rules behind the Telegram
+     * approval button. It is a first-party wealthflow-* module so this ceiling
+     * counts it, though it never reaches a browser: it is imported by the
+     * serverless webhook and by the CI notifier. See the note above about what
+     * this number actually measures. */
+    totalJsBytes: 1_740_000,     // measured 1,724,535 across 65 modules
     largestModuleBytes: 212_000, // measured 210,068 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -391,7 +401,7 @@ export const BUDGETS = {
      * second copy of that knowledge next to the parser it feeds. */
     /* 61 -> 64: +1 for wealthflow-when.js and +2 that were always here and never
      * counted, because the measurer could not see a .mjs. */
-    moduleCount: 64,   // measured 64
+    moduleCount: 65,   // measured 65 — 64 -> 65 for wealthflow-approval-bot.mjs
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -441,12 +451,12 @@ export const BUDGETS = {
      * type=module, so it does not block the first paint. */
     /* 66 -> 67 for wealthflow-layout-memory.js, deferred, so it costs a request
      * and nothing at first paint. */
-    /* 67 -> 68 for wealthflow-when.js. It answers one question — which calendar
-     * day it is where the owner is — and it is a file rather than four lines in
-     * index.html because thirty-seven callers outside index.html need the same
-     * answer, and the last time this app held two notions of "today" they
-     * disagreed inside the same function. */
-    scriptTags: 68,              // measured 68 — four ESM modules, all deferred by type=module
+    /* 68 -> 65. THIS CEILING WENT DOWN, which it has not done before: Chart.js,
+     * jsPDF and jspdf-autotable are no longer fetched at startup. jsPDF was
+     * already lazy-loaded by _loadPdfLibs() and the eager tag merely made that a
+     * no-op; `autoTable` is called nowhere in this repository and had been
+     * downloaded on every startup, by everyone, forever. */
+    scriptTags: 65,              // measured 65 — three fewer CDN libraries at startup
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

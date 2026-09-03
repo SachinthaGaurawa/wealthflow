@@ -267,9 +267,24 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js" defer></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js" defer></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
+    <!-- Chart.js, jsPDF and jspdf-autotable used to be fetched HERE, on every
+         single startup, from three separate CDN connections. Measured on a
+         mid-range phone (4x CPU throttle, Fast 3G, gzip on as Vercel serves it)
+         that is ~195 KB of the 985 KB the app pulls before it is interactive —
+         about a fifth of the wire budget — for three libraries the owner may
+         never touch in a session.
+
+         jsPDF was the plainest waste: _loadPdfLibs() at the bottom of this file
+         ALREADY lazy-loads it on demand, and every construction of a PDF in this
+         app goes through that one guarded path. The eager tag simply made the
+         lazy loader a no-op while still spending the bytes.
+
+         jspdf-autotable was worse: `autoTable` is not called anywhere in this
+         repository. It was fetched on every startup and never used, by anyone.
+
+         Chart.js is now ensureChart(), warmed up once the first screen is on
+         screen — see below. Nothing here blocks a chart from appearing; it
+         appears a moment later, on a device that became usable sooner. -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://js.puter.com/v2/" defer></script>
     <!-- v7.9.0 — Tesseract.js & TensorFlow.js are LAZY-loaded on demand (see
@@ -10461,6 +10476,62 @@ Keep total under 200 words. No markdown, no asterisks.`;
             if (typeof Tesseract !== 'undefined') return Promise.resolve(true);
             return _wfLazyScript('tesseract', 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js');
         };
+        /**
+         * Chart.js, when something actually needs to draw.
+         *
+         * Resolves false rather than throwing if the CDN cannot be reached: a
+         * missing chart costs a chart, and four of the five call sites in this
+         * file already say exactly that in their own comments. The fifth did
+         * not, and would have thrown — see renderDebtDemolisher.
+         */
+        window.ensureChart = function () {
+            if (typeof Chart !== 'undefined') return Promise.resolve(true);
+            return _wfLazyScript('chartjs', 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js')
+                .then(function () { return typeof Chart !== 'undefined'; })
+                .catch(function () { return false; });
+        };
+
+        /**
+         * Fetch Chart.js once the first screen is up, then redraw whatever is on
+         * it.
+         *
+         * WITHOUT THE REDRAW THIS IS A REGRESSION, NOT AN OPTIMISATION. Every
+         * chart site guards on `typeof Chart !== 'undefined'` and quietly draws
+         * nothing when it is missing — so making the library lazy without asking
+         * the screen to draw again would simply delete the dashboard's charts,
+         * and the page would look fine while being wrong. That is the exact
+         * shape of failure this project keeps hitting, so the warm-up and the
+         * redraw are one function and cannot be separated by an edit.
+         */
+        /**
+         * Draw again once Chart.js is here.
+         *
+         * Every chart site in this file guards on `typeof Chart !== 'undefined'`
+         * and quietly draws NOTHING when it is missing. That guard was written
+         * for a CDN that was merely slow; with the library now fetched on
+         * demand it is the normal first state, so each of those sites has to say
+         * what to re-run, or the chart is simply gone and the page looks fine.
+         */
+        window._wfChartThen = function (redraw) {
+            window.ensureChart().then(function (ok) {
+                if (!ok || typeof redraw !== 'function') return;
+                try { redraw(); } catch (_) {}
+            });
+        };
+
+        window._wfWarmCharts = function () {
+            if (window._wfChartsWarmed) return;
+            window._wfChartsWarmed = true;
+            const go = () => window.ensureChart().then((ok) => {
+                if (!ok) return;
+                for (const fn of ['renderDash', 'renderDebtDemolisher', 'renderMonteCarlo']) {
+                    try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {}
+                }
+            });
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout: 2500 });
+            else setTimeout(go, 400);
+        };
+
         window.ensureTF = function () {
             if (typeof tf !== 'undefined') return Promise.resolve(true);
             // Skip TF on memory-constrained mobile/iOS — sharpening is optional and
@@ -11572,6 +11643,11 @@ ACTIVE PERSONA: ${(stylePrompts[advisorStyle] || stylePrompts.balanced).split('.
             bubble.innerHTML = f;
 
             // Render any AI-generated charts now that the canvases exist.
+            /* The warm-up below fetches Chart.js on idle right after the
+             * first dashboard paint, so it is present long before any AI
+             * reply arrives. This starts the fetch anyway for the case where
+             * it is not — a reply cannot redraw itself. */
+            if (_charts.length && typeof Chart === 'undefined') window.ensureChart();
             if (_charts.length && typeof Chart !== 'undefined') {
                 // v7.66.0 — destroy the PREVIOUS AI charts before drawing again. These
                 // instances were created and thrown away; Chart.js keeps a canvas, a GPU
@@ -12889,6 +12965,55 @@ function _csvCell(v) {
     return /[",\n\r]/.test(body) ? '"' + body.replace(/"/g, '""') + '"' : body;
 }
 window._csvCell = _csvCell;
+
+/**
+ * One money value, as a CSV cell.
+ *
+ * THE DEFECT: the analytics export wrote `l.amount` straight into the file. On
+ * screen every figure goes through fmtN(), which rounds to two decimals, so the
+ * owner sees "17,705.36". The CSV bypassed that entirely and wrote the binary
+ * float, verbatim. Measured in a browser with ordinary data:
+ *
+ *     screen                CSV
+ *     0.30                  0.30000000000000004
+ *     17,705.36             17705.357142857145
+ *     18,706.25             18706.247142857148
+ *
+ * That file is opened in Excel and sent to accountants and banks. It is the one
+ * surface where a number leaves this app as data rather than as a picture, and
+ * it was the one surface with no formatting at all.
+ *
+ * TWO DELIBERATE CHOICES.
+ *
+ * THE SAME ROUNDING AS THE SCREEN, which is toLocaleString and NOT toFixed. The
+ * first version of this function used toFixed(2) and a comment asserting the two
+ * agree. They do not, and a test written to check the claim rather than to
+ * restate it found the case in one run:
+ *
+ *     2.675   toFixed -> "2.67"      toLocaleString -> "2.68"
+ *
+ * toFixed reads the binary value, which for 2.675 is 2.67499999999999982, and
+ * truncates honestly downward; Intl rounds the decimal the number is trying to
+ * be. Neither is wrong in isolation — but a file that says 2.67 beside a screen
+ * that says 2.68 is a support ticket, and worse, it is the kind that makes an
+ * owner distrust every other figure. Agreement is the property that matters, so
+ * this calls exactly what fmtN() calls, with the grouping turned off.
+ *
+ * No separators, no currency symbol, and NOTHING from _wfDisplayPrefs(). Privacy
+ * mode replaces figures with dots and "Round Display Amounts" drops the cents —
+ * both are how the SCREEN looks, and neither may reach a file. An export that
+ * silently wrote "••••••" or dropped cents because of a display toggle would be
+ * a far worse bug than the one being fixed.
+ */
+function _csvMoney(v) {
+    const n = parseFloat(v);
+    if (!Number.isFinite(n)) return '';
+    const out = n.toLocaleString('en-US', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false,
+    });
+    return out === '-0.00' ? '0.00' : out;      // a rounded-away debit is not negative zero
+}
+window._csvMoney = _csvMoney;
 
 /**
  * An icon, or nothing when the set has not loaded.
@@ -16526,7 +16651,13 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
          * the other eight surfaces from repainting — this file has already been
          * burnt once by a render error being reported as a lost connection.
          */
+        /* _wfWarmCharts() is one-shot and idempotent, so calling it from the
+         * app-wide repaint costs nothing after the first time. Without a
+         * caller it is a facility wired to nobody — the defect this
+         * repository keeps producing — and the dashboard charts would simply
+         * never appear. */
         function refreshAllSurfaces() {
+            try { window._wfWarmCharts(); } catch (_) {}
             const active = document.querySelector('.page.active');
             const activeId = active ? active.id.replace('page-', '') : '';
             const step = (what, run) => {
@@ -19499,7 +19630,18 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
 
             const fmtMonthLabel = (m) => m.label || m.month;
-            const fmtPay = (n) => 'LKR ' + Math.round(n).toLocaleString('en-US');
+            /* TWO DECIMALS, and this is not cosmetic. Math.round() printed
+             * every figure to the whole rupee, INCLUDING the totals, so the
+             * document contradicted itself: forty expense lines of 1,234.57
+             * printed as forty 1,235s that sum to 49,400, under a total that
+             * printed 49,383. Seventeen rupees apart, growing with every row,
+             * on a page headed "Statement".
+             *
+             * Rounding the total to match the rounded lines would make the
+             * columns foot and the total wrong. Printing the cents makes both
+             * right, which is the only answer available on a financial
+             * statement. */
+            const fmtPay = (n) => 'LKR ' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
             // Build a single table row. The `idx` is the global row index (not the section index)
             // so the # column matches the official installment number across both sections.
@@ -25926,6 +26068,13 @@ table.amort tbody tr { page-break-inside: avoid; }
         window.renderRunwayCard = renderRunwayCard;
 
         function renderDash() {
+
+            /* Also from here, because refreshAllSurfaces() is the REPAINT path and a
+
+             * cold start may reach the dashboard without it. One-shot either way. */
+
+            try { window._wfWarmCharts(); } catch (_) {}
+
             /* The display preferences that live on the document rather than in
              * a number: compact spacing, privacy shading. Applied here because
              * this runs on boot and on every return to the dashboard, so the
@@ -28673,11 +28822,25 @@ table.amort tbody tr { page-break-inside: avoid; }
              * "Sampath &amp; Co" into the file, and left a comma in a
              * description free to shift every column after it. */
             const row = (...cells) => cells.map(_csvCell).join(',') + '\n';
-            md.loanItems.forEach(l => { csv += row('LOAN', l.bank, l.name, l.amount); });
-            md.ccItems2.forEach(c => { csv += row('CC INSTALLMENT', c.bank, c.name, c.amount); });
-            md.expItems.forEach(e => { csv += row('EXPENSE', e.cat, e.name, e.amount); });
+            /* _csvMoney on the amount, see its definition: this column used to
+             * carry the raw binary float — 17705.357142857145 where the screen
+             * said 17,705.36 — into a file people open in Excel. */
+            md.loanItems.forEach(l => { csv += row('LOAN', l.bank, l.name, _csvMoney(l.amount)); });
+            md.ccItems2.forEach(c => { csv += row('CC INSTALLMENT', c.bank, c.name, _csvMoney(c.amount)); });
+            md.expItems.forEach(e => { csv += row('EXPENSE', e.cat, e.name, _csvMoney(e.amount)); });
 
-            csv += `\nSUMMARY\nTotal Income,,${md.income}\nTotal Expenses,,${md.totalExp}\nNet Balance,,${md.balance}\n`;
+            /* Through row() as well. These three lines were built by template
+             * interpolation, so they skipped BOTH the money formatting and the
+             * cell escaping every other line in the file goes through.
+             *
+             * The totals are rounded ONCE, from the exact figures — not summed
+             * from the rounded rows above. That is the accounting convention and
+             * it is also the truth: the rows printed here are three of the six
+             * categories that make up Total Expenses. */
+            csv += '\nSUMMARY\n';
+            csv += row('Total Income', '', _csvMoney(md.income));
+            csv += row('Total Expenses', '', _csvMoney(md.totalExp));
+            csv += row('Net Balance', '', _csvMoney(md.balance));
 
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
@@ -28709,7 +28872,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             const colorRed = '#b91c1c';
             const colorBalanceFill = '#fff7e6';
 
-            const fmtPay = (n) => 'LKR ' + Math.round(n).toLocaleString('en-US');
+            /* TWO DECIMALS, and this is not cosmetic. Math.round() printed
+             * every figure to the whole rupee, INCLUDING the totals, so the
+             * document contradicted itself: forty expense lines of 1,234.57
+             * printed as forty 1,235s that sum to 49,400, under a total that
+             * printed 49,383. Seventeen rupees apart, growing with every row,
+             * on a page headed "Statement".
+             *
+             * Rounding the total to match the rounded lines would make the
+             * columns foot and the total wrong. Printing the cents makes both
+             * right, which is the only answer available on a financial
+             * statement. */
+            const fmtPay = (n) => 'LKR ' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
             const summaryRows = [
                 ['Report Type', 'Elite Financial Vault Summary'],
@@ -29821,6 +29995,12 @@ Be direct and use real numbers. Avoid generic advice.`;
             const dataAv = labels.map((_, i) => getBal(avHist, i));
             const dataSn = labels.map((_, i) => getBal(snHist, i));
 
+            /* GUARDED like the other four. This line had no check at all, so
+             * with Chart.js absent — a slow CDN, a blocked CDN, or now simply a
+             * library that has not arrived yet — it threw a ReferenceError and
+             * took the whole Debt Demolisher screen with it. */
+            if (!chartEl) return;
+            if (typeof Chart === 'undefined') { window._wfChartThen(renderDebtDemolisher); return; }
             debtDemoChartInst = new Chart(chartEl, {
                 type: 'line',
                 data: {
@@ -30302,6 +30482,7 @@ Be direct, specific, and use real LKR numbers from above. Format with clear para
             // Draw chart with confidence-cone bands
             const chartEl = $('mcChart');
             if (mcChartInst) mcChartInst.destroy();
+            if (chartEl && typeof Chart === 'undefined') { window._wfChartThen(renderMonteCarlo); return; }
             if (chartEl && typeof Chart !== 'undefined') {
                 mcChartInst = new Chart(chartEl, {
                     type: 'line',

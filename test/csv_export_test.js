@@ -149,7 +149,12 @@ describe('the export actually uses it', () => {
         /* e.cat had no escaping at all — a category with a comma in it shifted
          * the row exactly like a description did. */
         expect(fn).toMatch(/cells\.map\(_csvCell\)/);
-        expect(fn).toContain("row('EXPENSE', e.cat, e.name, e.amount)");
+        /* The amount now goes through _csvMoney FIRST — it was being written as
+         * a raw binary float, 17705.357142857145 where the screen said
+         * 17,705.36; see test/money_export_test.js. What this assertion is
+         * about is unchanged: every column, the category included, still
+         * reaches the file through row() and therefore through _csvCell. */
+        expect(fn).toContain("row('EXPENSE', e.cat, e.name, _csvMoney(e.amount))");
     });
 });
 

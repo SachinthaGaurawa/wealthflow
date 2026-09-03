@@ -488,3 +488,33 @@ jobs:
             exit 1
           fi
           echo "✓ Every sensitive file predates the approval — the label covers this head."
+
+      # ── ONE TAP INSTEAD OF A LAPTOP ──────────────────────────────────────
+      #
+      # Runs only when this job has FAILED, which is exactly the two moments the
+      # owner is needed: the label is missing, or it is older than a guarded file
+      # in this head and no longer covers it. Both happened on #183 in one
+      # morning, and the second is the one nobody expects — the label is sitting
+      # right there on the pull request while the gate is red.
+      #
+      # It carries the head SHA, so the message names the commit being approved
+      # and the button records it. An approval that cannot be attributed to a
+      # commit is not an approval, and this gate voids one for exactly that.
+      #
+      # Silent and successful when no bot is configured, and it NEVER changes
+      # this job's result: the gate has already decided, and its own error above
+      # is what blocks the merge. This only makes the decision reachable from a
+      # phone. See autonomy/approval-notify.mjs.
+      - name: Offer the approval on Telegram
+        if: always() && failure() && steps.scope.outputs.gate == 'yes'
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_OWNER_ID: ${{ secrets.TELEGRAM_OWNER_ID }}
+          APPROVAL_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GUARDED_PATHS: ${{ steps.changed.outputs.files }}
+        run: node autonomy/approval-notify.mjs
