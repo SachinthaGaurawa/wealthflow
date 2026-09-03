@@ -15,6 +15,18 @@
 //   with `Authorization: Bearer $OLLAMA_API_KEY`. The chat API accepts `images` (base64
 //   array) inside the `messages[].images` field for vision models.
 
+import * as Matrix from './ai-matrix.mjs';
+
+/* HOW MANY ANSWERS BEFORE WE STOP WAITING.
+ *
+ * The old default returned the FIRST valid reply and read none of the others.
+ * Sixteen engines ran in parallel and exactly one was heard from. Waiting for a
+ * small quorum instead costs the difference between the fastest engine and the
+ * third fastest — not the difference between the fastest and the slowest, which
+ * is what full consensus costs — and it is the difference between an answer and
+ * a corroborated answer. */
+const QUORUM = 3;
+
 export const config = {
     maxDuration: 45 // seconds — long enough for deep responses
 };
@@ -339,9 +351,15 @@ export default async function handler(req, res) {
     // All engines fire SIMULTANEOUSLY (not one-by-one). This is dramatically
     // faster and more reliable: a slow/down provider no longer blocks the rest.
     //
-    //  • mode=fastest  → first valid reply wins (best for chat latency)
-    //  • mode=consensus→ collect all replies, pick the best (best for accuracy
-    //                     on vision / JSON extraction / critical answers)
+    //  • mode=corroborated → stop at the first QUORUM valid answers, then let
+    //                        api/ai-matrix.mjs pick the one they agree on. The
+    //                        default for prose and chat.
+    //  • mode=consensus    → wait for every engine, then vote (vision / JSON)
+    //  • mode=fastest      → the old race, still available when a caller wants
+    //                        latency above all. It no longer PRESENTS itself as
+    //                        agreement: the reply comes back labelled `solo`
+    //                        with trustworthy:false when one engine is all that
+    //                        had arrived.
     const errorLog = [];
 
     let engines;
@@ -385,7 +403,13 @@ export default async function handler(req, res) {
     // Wants JSON (receipt extraction etc.) → use consensus for max accuracy.
     const wantsJSON = /\{[^}]*"vendor"[^}]*\}|return only.*json|extract.*json/i.test(prompt);
     const requestedMode = (req.body && req.body.mode) ? String(req.body.mode) : null;
-    const mode = requestedMode || ((isVision || wantsJSON) ? 'consensus' : 'fastest');
+    // DEFAULT CHANGED: prose and chat used to default to `fastest`, a race whose
+    // winner was returned unread by anyone else. It now defaults to
+    // `corroborated`. An explicit mode:'fastest' from a caller is still served —
+    // latency is a legitimate thing to ask for — but the reply is labelled with
+    // what actually backed it, so nothing can present one engine as agreement.
+    const mode = requestedMode || ((isVision || wantsJSON) ? 'consensus' : 'corroborated');
+    const task = isVision ? Matrix.TASK.VISION : wantsJSON ? Matrix.TASK.EXTRACTION : Matrix.TASK.PROSE;
 
     // Wrap each engine call so a rejection becomes a tagged result, never throws.
     function run(engine) {
@@ -402,31 +426,46 @@ export default async function handler(req, res) {
 
     const isValid = (txt) => typeof txt === 'string' && txt.trim().length > 1;
 
-    // ---- MODE: FASTEST (race — first valid reply wins) ----
-    if (mode === 'fastest') {
+    // ---- MODE: CORROBORATED (wait for a quorum, then cross-check) ----
+    //
+    // Every engine still fires at once. What changed is when we stop listening:
+    // at the first QUORUM valid answers rather than the first one. Whatever has
+    // arrived by then goes to the matrix, which picks the answer the arrivals
+    // agree on and reports how well supported it is — including the case that
+    // matters most here, two answers that read alike and name different money.
+    if (mode === 'fastest' || mode === 'corroborated') {
+        const target = mode === 'fastest' ? 1 : Math.min(QUORUM, engines.length);
         const pending = engines.map(run);
         const settled = [];
-        // Resolve as soon as ANY engine returns a valid reply.
-        const winner = await new Promise((resolve) => {
+        await new Promise((resolve) => {
             let remaining = pending.length;
+            let valid = 0;
             pending.forEach(p => p.then(r => {
                 settled.push(r);
-                if (r.ok && isValid(r.reply)) resolve(r);
-                if (--remaining === 0) resolve(null); // all done, none valid
+                if (r.ok && isValid(r.reply) && ++valid >= target) resolve();
+                if (--remaining === 0) resolve();
             }));
         });
-        if (winner) {
-            // Let the remaining engines settle in the background (no-op) — we
-            // already have our fast answer.
+
+        // Snapshot: engines that have not settled keep running harmlessly, and
+        // a list that grows underneath the decision would make the reported
+        // counts describe a different set from the one that was read.
+        const decision = Matrix.decide(settled.slice(), { task, json: wantsJSON });
+        if (decision.reply) {
             return res.status(200).json({
-                reply: winner.reply,
-                provider: winner.provider,
-                mode: 'fastest',
-                latencyMs: winner.ms,
-                engines: engines.map(e => e.name)
+                reply: decision.reply,
+                provider: decision.provider,
+                mode: decision.mode,          // corroborated | consensus | split | solo
+                task: decision.task,
+                corroboration: decision.corroboration,
+                trustworthy: Matrix.trustworthy(decision),
+                engines: engines.map(e => e.name),
+                answered: decision.answered,
+                failed: decision.failed
             });
         }
-        // Fall through to consensus handling if the race produced nothing.
+        // Nothing valid arrived. Fall through and wait for the rest rather than
+        // reporting a failure while engines are still working.
     }
 
     // ---- MODE: CONSENSUS (gather all, choose the best) ----
@@ -452,6 +491,7 @@ export default async function handler(req, res) {
     }
 
     let best;
+    let proseDecision = null;
     if (wantsJSON) {
         const parsed = good.map(r => ({ r, j: tryParse(r.reply) })).filter(x => x.j);
         if (parsed.length) {
@@ -509,23 +549,33 @@ export default async function handler(req, res) {
             best = good.sort((a, b) => b.reply.length - a.reply.length)[0];
         }
     } else {
-        // Prose: longest substantive wins; tie-break by speed.
-        best = good.sort((a, b) => {
-            const d = b.reply.trim().length - a.reply.trim().length;
-            if (Math.abs(d) > 120) return d;
-            return a.ms - b.ms;
-        })[0];
+        /* PROSE USED TO BE "THE LONGEST SUBSTANTIVE ANSWER", tie-broken by
+         * speed. That is a length heuristic wearing a consensus label: it reads
+         * every reply and lets none of them check any other, so the most verbose
+         * engine won a vote that was never held.
+         *
+         * It is now a real cross-check — the answer the largest group of engines
+         * actually agrees on, with disagreement and near misses reported. */
+        proseDecision = Matrix.decide(good, { task });
+        best = good.find(r => r.reply === proseDecision.reply && r.provider === proseDecision.provider) || good[0];
     }
 
     return res.status(200).json({
         reply: best.reply,
         provider: best.provider,
         mode: 'consensus',
+        task,
         consensusOf: good.length,
         agreement: good.map(r => r.name),
         consensusFields: best._consensusFields || null,
         consensusConfidence: (best._consensusConfidence != null ? best._consensusConfidence : null),
         fieldAgreement: best._consensusAgreement || null,
+        // Present on every path, so a caller never has to know which branch
+        // produced its answer in order to find out how well supported it is.
+        corroboration: proseDecision ? proseDecision.corroboration : {
+            agreed: good.length, of: good.length, score: 1, dissent: [], nearMisses: [], numericConflict: false
+        },
+        trustworthy: proseDecision ? Matrix.trustworthy(proseDecision) : good.length >= 2,
         latencyMs: best.ms
     });
 }
