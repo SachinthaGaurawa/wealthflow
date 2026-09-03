@@ -334,7 +334,12 @@ export const BUDGETS = {
      * first-party wealthflow-* module on disk, browser and server alike. It is a
      * proxy for how much first-party code this project carries, not a byte-exact
      * browser payload — two of the modules never reach a browser. */
-    totalJsBytes: 1_728_000,     // measured 1,711,737 across 64 modules
+    /* Raised for wealthflow-approval-bot.mjs — the rules behind the Telegram
+     * approval button. It is a first-party wealthflow-* module so this ceiling
+     * counts it, though it never reaches a browser: it is imported by the
+     * serverless webhook and by the CI notifier. See the note above about what
+     * this number actually measures. */
+    totalJsBytes: 1_740_000,     // measured 1,724,535 across 65 modules
     largestModuleBytes: 212_000, // measured 210,068 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -396,7 +401,7 @@ export const BUDGETS = {
      * second copy of that knowledge next to the parser it feeds. */
     /* 61 -> 64: +1 for wealthflow-when.js and +2 that were always here and never
      * counted, because the measurer could not see a .mjs. */
-    moduleCount: 64,   // measured 64
+    moduleCount: 65,   // measured 65 — 64 -> 65 for wealthflow-approval-bot.mjs
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
