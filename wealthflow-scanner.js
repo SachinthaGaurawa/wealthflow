@@ -47,7 +47,7 @@
         } catch (_) { return String(n); }
     }
 
-    function nowIso() { return new Date().toISOString().split('T')[0]; }
+    function nowIso() { return window.WFWhen.today(); }
 
     // Read a File as a HTMLImageElement (in-memory)
     function fileToImage(file) {

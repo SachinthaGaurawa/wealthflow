@@ -277,6 +277,12 @@
          iOS near its web-process memory limit, so any extra allocation could
          crash the page. They're optional (OCR fallback / image sharpening). -->
 
+    <!-- What day is it HERE. Thirty-seven places answered that with
+         today() — today in UTC — which in Colombo
+         (UTC+05:30) is YESTERDAY until half past five in the morning, and on the
+         first of a month files the transaction into the previous month's tab.
+         Loaded before everything that asks. window.WFWhen -->
+    <script type="module" src="wealthflow-when.js"></script>
     <script src="wealthflow-scanner.js" defer></script>
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
@@ -9058,7 +9064,16 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         const uid = () => '_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
             + ((_uidSeq = (_uidSeq + 1) % 46656) + 46656).toString(36).slice(1);
         const sleep = ms => new Promise(r => setTimeout(r, ms));
-        const today = () => { const d = new Date(); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()); };
+        /* ONE ANSWER TO "WHAT DAY IS IT". This page had the right one here and
+         * the wrong one — today(), which is UTC — in
+         * fourteen other places, including inside the SAME function as a
+         * correct local month key. Both now come from wealthflow-when.js.
+         *
+         * No UTC fallback if that module is missing: a silent fall back to UTC is
+         * the exact defect being removed, and this app already requires sixty-one
+         * other modules without one. test/local_day_test.js asserts the tag. */
+        const today = () => window.WFWhen.today();
+        const thisMonth = () => window.WFWhen.thisMonth();
         const p2 = n => String(n).padStart(2, '0');
         const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
         const MONTHS_S = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -10543,7 +10558,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                     break;
                 }
             }
-            if (!result.date) result.date = new Date().toISOString().split('T')[0];
+            if (!result.date) result.date = today();
 
             // Category: comprehensive keyword detection (Sri Lankan focus)
             const txt = text.toLowerCase();
@@ -10741,7 +10756,7 @@ Keep total under 200 words. No markdown, no asterisks.`;
                 // Step 2 — Build prompt
                 let prompt = '';
                 if (isExpense) {
-                    const today = new Date().toISOString().split('T')[0];
+                    const today = today();
                     const depthHint = (scanMode === 'ultra' || scanMode === 'frontier')
                         ? '\n- This is a HIGH-PRECISION scan. Re-read faint/blurry digits carefully. Cross-check the total against line items if visible.'
                         : '';
@@ -10798,7 +10813,7 @@ Be conversational and precise.`;
                     const { base64: smaller } = await _compressImageToBase64(file, 800, 0.65, false);
 
                     if (isExpense) {
-                        const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${new Date().toISOString().split('T')[0]}","category":"Other"}`;
+                        const simplePrompt = `Read this receipt. Return ONLY JSON: {"vendor":"Name","amount":0,"date":"${today()}","category":"Other"}`;
                         const retry = await callAI(simplePrompt, smaller);
                         const r2 = _parseAIJson(retry);
                         if (r2 && r2.amount && _populateExpenseFromScan(r2)) {
@@ -18471,7 +18486,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const monthlyRate = (l.rate || 0) / 100 / 12;
             const monthsArr = _loanInstallmentMonths(l);
             const payments = l.payments || [];
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             const isReducing = _loanMethod(l) === 'reducing';
             const principalPerMonth = isReducing ? l.amount / l.duration : null;
 
@@ -18675,7 +18690,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // For EMI: always l.monthly. For reducing: live-computed from current balance.
         // This is what the loan card and dashboard stats should display as "this month".
         function loanNextScheduledPayment(l) {
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             const months = _loanInstallmentMonths(l);
             const payments = l.payments || [];
             // Prefer the first unpaid month >= today. If everything from today onward is
@@ -18722,7 +18737,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         function loanRecalculatedInstallment(l) {
             const months = _loanInstallmentMonths(l);
             const payments = l.payments || [];
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             const monthlyRate = (l.rate || 0) / 100 / 12;
             const isReducing = _loanMethod(l) === 'reducing';
 
@@ -19038,7 +19053,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                 const skipCount = l.skipped?.length || 0;
                 const proj = loanProjectedSchedule(l);
 
-                const todayKey = new Date().toISOString().slice(0, 7);
+                const todayKey = thisMonth();
                 // Smart auto-centering window for the mini-grid:
                 //   1. Always include the current calendar month (even if paid).
                 //   2. Show up to 2 OVERDUE unpaid months immediately before it (so user sees what they missed).
@@ -19079,7 +19094,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
 
             <!-- ISSUE 1 FIX — Prominent "Pay This Month" CTA on the loan card -->
             ${active ? (() => {
-                        const todayMonthKey = new Date().toISOString().slice(0, 7);
+                        const todayMonthKey = thisMonth();
                         const thisMonthScheduled = months.find(m => m.key === todayMonthKey);
                         if (!thisMonthScheduled) return '';
                         const thisPay = (l.payments || []).find(p => p.month === todayMonthKey);
@@ -19212,7 +19227,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             const l = DB.get('loans').find(x => x.id === loanId);
             if (!l) return;
             const proj = loanProjectedSchedule(l);
-            const todayKey = new Date().toISOString().slice(0, 7);
+            const todayKey = thisMonth();
             // The "Current Balance" stat shows what the user owes RIGHT NOW (after their last
             // recorded payment), NOT proj.currentBalance which is the FINAL balance after the
             // full projection (always ≈0 for an amortizing loan — it would mislead the user).
@@ -22507,7 +22522,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return overlay;
         }
 
-        const _liqToday = () => new Date().toISOString().slice(0, 10);
+        const _liqToday = () => today();
 
         function openPawnModal(existing) {
             const p = existing || {};
@@ -27851,7 +27866,7 @@ table.amort tbody tr { page-break-inside: avoid; }
              * back apart. */
             const _plainMirror = () => {
                 try {
-                    const today = new Date().toISOString().slice(0, 10);
+                    const today = today();
                     const nk = 'wf_devnotif_' + today;
                     const sent = JSON.parse(localStorage.getItem(nk) || '[]');
                     if (!sent.includes(id) && typeof sendSmartNotification === 'function') {
@@ -28198,7 +28213,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 const slot = _currentReminderSlot();
                 if (!slot) return;
-                const today = new Date().toISOString().slice(0, 10);
+                const today = today();
                 const key = 'wf_reminder_slot_' + today;
                 const done = JSON.parse(localStorage.getItem(key) || '[]');
                 if (done.includes(slot)) return;
@@ -28219,7 +28234,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const now = new Date();
             const curMonthStr = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`;
-            const today = now.toISOString().slice(0, 10);
+            const today = window.WFWhen.ymd(now);
             const incomeRecv = DB.getObj('incomeReceived', {});
             const dismissedToday = JSON.parse(localStorage.getItem('wf_notif_dismissed_' + today) || '[]');
 
@@ -32318,7 +32333,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 return `${yr}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
                             }
                         } catch (_) {}
-                        return new Date().toISOString().split('T')[0];
+                        return today();
                     })(dateMatch[1]);
                     out.push({ date: dt, description: desc.slice(0, 80), amount: amt, type, notes: '' });
                 });
@@ -32583,7 +32598,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             const _lm = _matchLoanForPayment(t.description || '', t.amount, t.direction);
                             if (_lm) {
                                 t._dest = 'loan'; t._loanId = _lm.id; t._loanName = _lm.name;
-                                t._loanMonth = (String(t.date || '').slice(0, 7)) || new Date().toISOString().slice(0, 7);
+                                t._loanMonth = (String(t.date || '').slice(0, 7)) || thisMonth();
                                 t._review = true; // surface it so the user SEES the allocation before commit
                             }
                         } catch (_) {}

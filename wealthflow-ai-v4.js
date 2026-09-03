@@ -584,7 +584,7 @@
      * 7. RECEIPT PROMPT BUILDER (used for fallback path)
      * ========================================================================= */
     function buildReceiptPrompt(hints) {
-        var today = (hints && hints.today) || new Date().toISOString().split('T')[0];
+        var today = (hints && hints.today) || window.WFWhen.today();
         var currency = (hints && hints.currency) || 'LKR';
         return 'You are a world-class receipt OCR. Read this image with surgical precision and return ONLY a single valid JSON object — no markdown, no commentary:\n\n' +
             '{"vendor":"","amount":0,"date":"YYYY-MM-DD","category":"","items":[],"currency":"' + currency + '","tax":null,"payment_method":null,"receipt_number":null,"time":null,"raw_text":""}\n\n' +
@@ -604,7 +604,7 @@
      *   everything into a single descriptor.
      * ========================================================================= */
     function buildCCStatementPrompt(bank) {
-        var today = new Date().toISOString().split('T')[0];
+        var today = window.WFWhen.today();
         var thisYear = today.substring(0, 4);
         var bankLine = bank ? ('This statement is from: ' + bank + '\n') : '';
         return 'You are an expert credit-card-statement parser specialised in Sri Lankan banks ' +
@@ -684,7 +684,7 @@
      *   Handles DD/MM/YYYY, DD-MM-YYYY, DD MMM, "May 22", etc.
      * ========================================================================= */
     function normaliseCCOTDate(s) {
-        if (!s) return new Date().toISOString().split('T')[0];
+        if (!s) return window.WFWhen.today();
         var str = String(s).trim();
         // Already ISO?
         if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.substring(0, 10);
@@ -710,9 +710,13 @@
         // Last resort — Date.parse
         try {
             var d3 = new Date(str);
-            if (!isNaN(d3)) return d3.toISOString().split('T')[0];
+            /* WFWhen.ymd, not toISOString(). `new Date('02 July 2026')` parses to
+             * LOCAL midnight, and toISOString() then reads it back in UTC — which
+             * in Colombo is 18:30 on the FIRST of July. A date printed on the
+             * statement came out one day earlier than the statement says. */
+            if (!isNaN(d3)) return window.WFWhen.ymd(d3);
         } catch (_) {}
-        return new Date().toISOString().split('T')[0];
+        return window.WFWhen.today();
     }
 
 
@@ -1364,7 +1368,7 @@
                         if (hasVS) {
                             var ccotHints = {
                                 currency: (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.currency) || 'LKR',
-                                today: new Date().toISOString().split('T')[0],
+                                today: window.WFWhen.today(), tz: window.WFWhen.zone(),
                                 locale: navigator.language || 'en-LK',
                                 docType: 'cc_statement_multi_row',
                                 bank: ccotBank,
@@ -1567,7 +1571,7 @@
             var settings = window.WF_SCAN_SETTINGS || {};
             var hints = {
                 currency: settings.currency || 'LKR',
-                today: new Date().toISOString().split('T')[0],
+                today: window.WFWhen.today(), tz: window.WFWhen.zone(),
                 locale: navigator.language || 'en-LK',
                 docType: isSubscription ? 'subscription_bill' : (isCCOT ? 'cc_statement' : 'receipt'),
                 bank: isCCOT ? ccotBank : null
@@ -1815,7 +1819,7 @@
         if (typeof window.notify === 'function') window.notify('🔍 Deep scanning…', 'info');
 
         try {
-            var hints = { currency: 'LKR', today: new Date().toISOString().split('T')[0] };
+            var hints = { currency: 'LKR', today: window.WFWhen.today() };
             var hasVisionScan = await isEndpointAvailable('/vision-scan');
             var scanData = null;
             if (hasVisionScan) {
@@ -3183,7 +3187,7 @@
                         image: images[0].base64,
                         mode: preferFrontier ? 'frontier' : 'ultra',
                         hints: {
-                            today: new Date().toISOString().split('T')[0],
+                            today: window.WFWhen.today(), tz: window.WFWhen.zone(),
                             currency: 'LKR',
                             taskType: 'universal_vision',
                             customPrompt: prompt
@@ -3223,7 +3227,7 @@
                 body: JSON.stringify({
                     image: img.base64,
                     mode: 'deep',
-                    hints: { today: new Date().toISOString().split('T')[0], taskType: 'universal_vision' }
+                    hints: { today: window.WFWhen.today(), tz: window.WFWhen.zone(), taskType: 'universal_vision' }
                 })
             }).then(function (r) { return r.ok ? r.json() : null; })
               .catch(function () { return null; });

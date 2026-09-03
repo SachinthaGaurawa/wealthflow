@@ -680,7 +680,7 @@
     }
 
     function _generateEula(version) {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = window.WFWhen.today();
         return (
 'WEALTHFLOW ELITE — SOFTWARE UPDATE & END-USER LICENSE AGREEMENT\n' +
 'Version ' + version + ' · Effective ' + today + '\n' +
@@ -1788,7 +1788,7 @@
             latest: v,
             mandatory: [],
             notes: { [v]: {
-                date: new Date().toISOString().slice(0, 10),
+                date: window.WFWhen.today(),
                 type: 'full',
                 headline: 'Test update ' + v,
                 sections: [

@@ -249,7 +249,7 @@
             if (!match) return null;
             var amount = Number(f.amount) || 0;
             if (!amount) return null;   // no amount → let normal path handle it
-            var date = f.date ? new Date(f.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+            var date = f.date ? new Date(f.date).toISOString().slice(0, 10) : window.WFWhen.today();
 
             if (match.type === 'goal') {
                 if (!allocateToGoal(match.id, amount, date, 'Auto-allocated · matched "' + match.name + '"')) return null;

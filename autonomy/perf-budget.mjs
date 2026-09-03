@@ -165,7 +165,12 @@ export const BUDGETS = {
      * the one the owner confirms. Most of the growth is the confirmation screen,
      * which is built with createElement and textContent because every value on
      * it came out of somebody else's PDF. */
-    htmlBytes: 1_945_000,        // measured 1,943,840 — the layout confirmation screen
+    /* Raised for the local-day fix. Thirty-seven places in this app answered
+     * "what is today" with new Date().toISOString().slice(0,10) — today in UTC —
+     * which in Colombo is YESTERDAY until 05:30, and on the first of a month
+     * files the transaction into the previous month's tab. The growth is one
+     * script tag and the reproduction written beside the helper it replaced. */
+    htmlBytes: 1_946_000,        // measured 1,944,377 — one notion of "today"
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -312,8 +317,20 @@ export const BUDGETS = {
      * reconciliation. The bytes are the derivation, the self-verification that
      * refuses a template it cannot read back, and the two named regex mistakes
      * written down so they are not made a third time. */
-    totalJsBytes: 1_636_000,     // measured 1,634,548 across 61 modules
-    largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
+    /* Raised for wealthflow-when.js AND for what including .mjs revealed.
+     *
+     * The filter was /^wealthflow-.*\.js$/, so wealthflow-mail-ingest.mjs and
+     * wealthflow-mail-senders.mjs — 69 KB of first-party code, one of it loaded
+     * by index.html — had never been counted by this ratchet at all. The ceiling
+     * has been "held" for months over a figure that was 4.3% short, and any
+     * module added with that extension would have been free forever.
+     *
+     * What this number counts, stated plainly so the next raise is honest: every
+     * first-party wealthflow-* module on disk, browser and server alike. It is a
+     * proxy for how much first-party code this project carries, not a byte-exact
+     * browser payload — two of the modules never reach a browser. */
+    totalJsBytes: 1_726_000,     // measured 1,709,902 across 64 modules
+    largestModuleBytes: 212_000, // measured 210,068 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely
@@ -372,7 +389,9 @@ export const BUDGETS = {
      * for the same reason as the last one: it is the only thing that knows how
      * a learned layout is stored, and inlining it into index.html would put a
      * second copy of that knowledge next to the parser it feeds. */
-    moduleCount: 61,   // measured 61 — 60 -> 61 for wealthflow-layout-memory.js
+    /* 61 -> 64: +1 for wealthflow-when.js and +2 that were always here and never
+     * counted, because the measurer could not see a .mjs. */
+    moduleCount: 64,   // measured 64
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -422,7 +441,12 @@ export const BUDGETS = {
      * type=module, so it does not block the first paint. */
     /* 66 -> 67 for wealthflow-layout-memory.js, deferred, so it costs a request
      * and nothing at first paint. */
-    scriptTags: 67,              // measured 67 — three ESM modules, all deferred by type=module
+    /* 67 -> 68 for wealthflow-when.js. It answers one question — which calendar
+     * day it is where the owner is — and it is a file rather than four lines in
+     * index.html because thirty-seven callers outside index.html need the same
+     * answer, and the last time this app held two notions of "today" they
+     * disagreed inside the same function. */
+    scriptTags: 68,              // measured 68 — four ESM modules, all deferred by type=module
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
@@ -465,8 +489,15 @@ export function measure({ repoDir = process.cwd() } = {}) {
 
     let modules = [];
     try {
+        /* `.mjs` TOO. The filter was /^wealthflow-.*\.js$/, so a module named
+         * with the other extension every ESM file in the world uses was invisible
+         * to this ratchet: its bytes were not counted, it could not push
+         * totalJsBytes or moduleCount over any ceiling, and the budget would have
+         * reported a clean bill of health while the payload grew. A gate that
+         * passes because it examined nothing is the failure this whole file
+         * exists to prevent. */
         modules = fs.readdirSync(repoDir)
-            .filter((f) => /^wealthflow-.*\.js$/.test(f))
+            .filter((f) => /^wealthflow-.*\.m?js$/.test(f))
             .map((f) => ({ file: f, bytes: bytes(path.join(repoDir, f)) }))
             .sort((a, b) => b.bytes - a.bytes);
     } catch { modules = []; }
