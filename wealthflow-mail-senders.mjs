@@ -538,10 +538,51 @@ export function senderCoverage(banks, list) {
     };
 }
 
+/**
+ * Is this a NEW ADDRESS AT A BANK THE OWNER ALREADY APPROVED?
+ *
+ * THE BUG THIS EXISTS FOR. The owner adds `estatement@sampath.lk`. Next month
+ * Sampath sends from `noreply@sampath.lk` — same bank, same DKIM-verified
+ * domain, different mailbox. matchSender is address-exact for an address entry,
+ * correctly: approving one address is not approving a domain. So the sibling
+ * scores as an unknown sender, gets refused as "not on your list", and appears
+ * in the pending queue looking like a stranger.
+ *
+ * From the owner's side that reads as: "I added the address and the statement
+ * still did not arrive." Which is exactly what was reported.
+ *
+ * This does NOT approve anything. It says the relationship out loud so the
+ * screen can ask the right question — "Sampath Bank wrote from a new address,
+ * is this them too?" — instead of the wrong one. Auto-approving a sibling would
+ * widen a trust allowlist for financial documents without the owner saying so,
+ * and that line does not move.
+ */
+export function relatedApproval(list, from) {
+    const entries = normalizeList(list);
+    const domain = domainOf(from);
+    const address = addressOf(from);
+    if (!domain) return null;
+    for (const e of entries) {
+        if (e.status !== STATUS.APPROVED) continue;
+        /* Only an ADDRESS entry can have a sibling. A domain entry already
+         * covers every mailbox under it, so a message reaching here at all
+         * means the domain was never approved. */
+        if (e.kind !== 'address') continue;
+        if (e.domain !== domain) continue;
+        if (e.id === address) continue;             // the same address is not a sibling
+        return { approvedAddress: e.id, domain, name: e.name || '', address };
+    }
+    return null;
+}
+
 export function policyFrom(list) {
     const entries = normalizeList(list);
     return {
         decide: (from) => matchSender(entries, from),
+        /* Named separately from `decide` because it is a different question:
+         * not "may this in", but "is this the bank they already said yes to,
+         * writing from another desk". */
+        related: (from) => relatedApproval(entries, from),
         /* Approved domains only. A blocked domain is not something to protect
          * from impersonation — it is already refused whatever it looks like. */
         domains: entries.filter((e) => e.status === STATUS.APPROVED).map((e) => e.domain),
@@ -561,7 +602,7 @@ export const REASON_TEXT = {
 const API = {
     STATUS, REASON, REASON_TEXT, MAX_DECIDED, MAX_NEW,
     normalizeSender, normalizeList, matchSender, addSender, setStatus, removeSender,
-    senderCoverage, displayNameOf,
+    senderCoverage, displayNameOf, relatedApproval,
     recordSighting, approvedClauses, hasApproved, groupForDisplay, policyFrom,
 };
 

@@ -37,13 +37,13 @@
  * ===========================================================================*/
 
 import { getAdminDb, withDeadline } from './admin-db.mjs';
-import { identify, sendersOf, SENDERS_FIELD } from './gmail-link.mjs';
+import { identify, sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
 import {
     normalizeList, approvedClauses, policyFrom, recordSighting,
 } from './wealthflow-mail-senders.mjs';
 import { monthKey } from './wealthflow-sender-discovery.js';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
-import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
+import { planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
 import { MAIL_ROOT, windowFor, listUrl, boundedMax, pageResult } from './gmail-scan.mjs';
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -168,6 +168,8 @@ export default async function handler(req, res, deps) {
 
     const ids = ((listed && listed.messages) || []).map((m) => m && m.id).filter(Boolean);
     const stored = [];
+    /* References to messages refused for a sender reason — see planHold. */
+    const held = [];
     const skipped = [];
 
     /* Headers only on a discovery window. `format=metadata` returns From,
@@ -230,6 +232,11 @@ export default async function handler(req, res, deps) {
             if (isWorthTelling(plan)) {
                 skipped.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
             }
+            /* HELD, NOT DROPPED — the same rule as the push hook, applied here
+             * because a rule kept in one of this pair and not the other is this
+             * repository's most repeated defect. */
+            const hold = planHold(plan, msg);
+            if (hold) { held.push(hold); }
             continue;
         }
 
@@ -296,9 +303,12 @@ export default async function handler(req, res, deps) {
      * page still reports success. */
     let discovered = 0;
     try {
-        if (seen !== senderList) {
+        if (seen !== senderList || held.length) {
             discovered = seen.filter((e) => e && e.status === 'new').length;
-            await withDeadline(ref.set({ [SENDERS_FIELD]: seen }, { merge: true }), 8000, 'wf-mail senders');
+            await withDeadline(ref.set({
+                ...(seen !== senderList ? { [SENDERS_FIELD]: seen } : {}),
+                ...(held.length ? { [HELD_FIELD]: mergeHeld(state && state[HELD_FIELD], held) } : {}),
+            }, { merge: true }), 8000, 'wf-mail senders');
         }
     } catch (_) { /* the scan succeeded; the suggestions can wait for the next page */ }
 

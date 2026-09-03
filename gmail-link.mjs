@@ -172,6 +172,56 @@ export function linkRecord(email, refreshToken, now = Date.now()) {
  * nothing the caller sends. */
 export const SENDERS_FIELD = 'senders';
 
+/* Where refused-but-recoverable messages wait. Beside the sender list on the
+ * same document, because the two are read and written together: the list is
+ * what refused them and approving on the list is what releases them. */
+export const HELD_FIELD = 'held';
+
+/** At most this many. A junk mailbox must not be able to fill a database. */
+export const MAX_HELD = 200;
+
+/**
+ * Merge newly held references into what is already stored.
+ *
+ * NEWEST FIRST, DE-DUPLICATED BY MESSAGE ID, BOUNDED. A push and a scan can see
+ * the same message — redelivery is normal — and a held list that grew a row per
+ * delivery would report one refused statement as fifty.
+ *
+ * `heldMs` is stamped HERE rather than at the call site so every entry carries
+ * one, including those written by a caller that forgot.
+ */
+export function mergeHeld(existing, incoming, now = Date.now()) {
+    const out = [];
+    const at = new Map();
+    const push = (h) => {
+        if (!h || typeof h !== 'object') return;
+        const key = String(h.messageId || h.key || '').trim();
+        if (!key) return;
+        const stamp = Number(h.heldMs) > 0 ? Number(h.heldMs) : now;
+        if (at.has(key)) {
+            /* SEEN BEFORE. Keep the EARLIEST stamp: what matters about a held
+             * message is when it was first refused, not when it was most
+             * recently redelivered. Overwriting it made every held statement
+             * look like it arrived today, so "held since the 3rd" — the thing
+             * that tells the owner how long they have been missing it — could
+             * never be shown. */
+            const row = out[at.get(key)];
+            row.heldMs = Math.min(row.heldMs, stamp);
+            return;
+        }
+        at.set(key, out.length);
+        out.push({ ...h, key, messageId: key, heldMs: stamp });
+    };
+    for (const h of (Array.isArray(incoming) ? incoming : [])) push(h);
+    for (const h of (Array.isArray(existing) ? existing : [])) push(h);
+    return out.slice(0, MAX_HELD);
+}
+
+/** The held list off a stored document, cleaned. */
+export function heldOf(state) {
+    return mergeHeld(state && state[HELD_FIELD], []);
+}
+
 /** The stored sender list, defaulted so a document written before it existed
  *  reads as "nothing decided yet" rather than as an error. */
 export function sendersOf(doc) {
