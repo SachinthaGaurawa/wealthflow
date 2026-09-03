@@ -575,3 +575,54 @@ describe('the per-bank answer is on the screen', () => {
         expect(APP).toMatch(/<script type="module" src="wealthflow-institutions\.js">/);
     });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * A FINDING FROM THE REVIEW BOARD, CHECKED RATHER THAN ARGUED WITH
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a second search cannot start on top of the first', () => {
+    /* The consensus board blocked a commit on this:
+     *
+     *   "the button is not disabled while the search is running, so the user
+     *    can press it again and start a second search on top of the first one"
+     *
+     * It is wrong on the facts — the disabled attribute is on the line above
+     * the one it cited, and a re-entrancy guard sits at the top of the function
+     * as well. But a bot finding is a bug report, and the answer to a bug
+     * report you disagree with is not a rebuttal, it is a test. If the claim
+     * ever becomes true, this goes red instead of someone re-arguing it.
+     *
+     * The concern is also worth guarding for its own sake: two concurrent runs
+     * would advance one cursor from two places and skip whole months between
+     * them — which is exactly the class of silent incompleteness this whole
+     * change exists to remove.
+     */
+    const APP = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'index.html'), 'utf8');
+    /* Sliced FORWARD from the bar, not to the next `host.innerHTML =` — the
+     * loading branch earlier in renderSenderList assigns that too, so slicing
+     * between the two markers yielded an empty string and every assertion below
+     * failed against nothing. Caught by the test failing for the wrong reason,
+     * which is the only way that mistake ever announces itself. */
+    const bar = APP.slice(APP.indexOf('const discoverBar ='), APP.indexOf('const discoverBar =') + 2000);
+
+    it('the button carries `disabled` for as long as a run is going', () => {
+        expect(bar).toContain("id=\"_sl_find\"' + (finding ? ' disabled' : '')");
+        // `finding` is set just above the bar, not inside it.
+        expect(APP).toContain("const finding = _discover.stage === 'running';");
+    });
+
+    it('and the function refuses to start a second run even if it is called', () => {
+        // Belt and braces on purpose: a disabled attribute is a rendering
+        // detail, and window.runSenderDiscovery is exported on the global.
+        const fn = APP.slice(APP.indexOf('async function runSenderDiscovery'));
+        const head = fn.slice(0, fn.indexOf('let cursor'));
+        expect(head).toContain("if (_discover.stage === 'running') return;");
+    });
+
+    it('the label changes while the guard does not', () => {
+        // What the finding actually saw was the LABEL ternary, which is a
+        // different expression on a different line from the disabled one.
+        expect(bar).toContain("' Keep looking'");
+        expect(bar).toContain("' Find my banks'");
+        expect(bar).toContain("' Searching'");
+    });
+});
