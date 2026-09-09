@@ -323,8 +323,20 @@ describe('everything the build imports survives the deploy', () => {
 describe('Vercel actually runs it, and the headers are safe if it does not', () => {
     const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
 
-    it('the build command is set', () => {
+    it('the build command is set, AND the output directory with it', () => {
         expect(vercel.buildCommand).toBe('node build.mjs --write');
+        /* ONE WITHOUT THE OTHER IS A FAILED DEPLOY, and that is not a guess —
+         * it is what the preview said:
+         *
+         *     Error: No Output Directory named "public" found after the Build
+         *     completed. Update vercel.json#outputDirectory
+         *
+         * With no build command Vercel serves the repository root. Adding one
+         * makes it look for build OUTPUT, and it looks in public/. This build
+         * rewrites the files where they already are — that is the whole point,
+         * because Vercel serves this root directly and /api is detected there —
+         * so the output directory is the root, named explicitly. */
+        expect(vercel.outputDirectory, 'a buildCommand without an outputDirectory fails the deploy').toBe('.');
     });
 
     it('only a HASHED name may be cached for a year', () => {

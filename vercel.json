@@ -1,5 +1,6 @@
 {
   "buildCommand": "node build.mjs --write",
+  "outputDirectory": ".",
   "functions": {
     "api/*.js": {
       "maxDuration": 60

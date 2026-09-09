@@ -95,6 +95,14 @@
  * beside it at the root. test/build_test.js now reads .vercelignore and refuses
  * any import of this file that the deploy would delete.
  *
+ * The second thing the preview taught, also unknowable from here: adding a
+ * buildCommand changes how Vercel resolves what to SERVE. With no build command
+ * it serves the repository root; with one it looks for build output, in
+ * public/, and fails when there is none. Since this build rewrites the files
+ * where they already are, vercel.json names the root as the output directory
+ * explicitly. Both settings only make sense together, and build_test.js pins
+ * that pairing.
+ *
  * USAGE
  *   node build.mjs                 report what would change, write nothing
  *   node build.mjs --write         strip and hash in place (what Vercel runs)
