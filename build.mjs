@@ -41,7 +41,7 @@
  *
  *   1. Comments are removed by a real scanner, not a regular expression, so a
  *      `//` inside a string or a regex literal cannot corrupt the file. See
- *      autonomy/strip-comments.mjs.
+ *      build-strip.mjs.
  *   2. Every written module is parsed with `node --check`, which parses and
  *      stops. Importing would EXECUTE it, and half this app's modules touch
  *      `window` on load — one of them from a timer that fires after the import
@@ -83,6 +83,18 @@
  * tree is never touched by CI, and running it locally without --write only
  * reports.
  *
+ * ── IT LIVES AT THE ROOT, AND THAT IS NOT AN ACCIDENT ───────────────────────
+ *
+ * build-strip.mjs sat in autonomy/ first, and Vercel's build failed on it:
+ * `.vercelignore` removes autonomy/ entirely, so the build sandbox had
+ * build.mjs and not the one module it imports. Nothing local could have caught
+ * that — this sandbox has the whole repository; the build machine does not.
+ * The preview deployment caught it, which is what preview deployments are for.
+ *
+ * A build tool's dependencies have to survive .vercelignore, so they live
+ * beside it at the root. test/build_test.js now reads .vercelignore and refuses
+ * any import of this file that the deploy would delete.
+ *
  * USAGE
  *   node build.mjs                 report what would change, write nothing
  *   node build.mjs --write         strip and hash in place (what Vercel runs)
@@ -93,7 +105,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { stripJs, stripHtml, tidy } from './autonomy/strip-comments.mjs';
+import { stripJs, stripHtml, tidy } from './build-strip.mjs';
 
 /** Files the browser is served and that carry comments worth removing. */
 export const MODULE_RE = /^wealthflow-[a-zA-Z0-9-]+\.(?:js|mjs)$/;

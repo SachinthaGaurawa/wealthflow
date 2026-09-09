@@ -212,6 +212,112 @@ describe('the real build over a real copy of this repository', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * THE BUILD MACHINE DOES NOT HAVE THIS WHOLE REPOSITORY
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * The failure that actually happened, and the one nothing local could catch.
+ *
+ * build.mjs imported a module from autonomy/, which `.vercelignore` deletes in
+ * its entirety before the build runs. Every local check passed — this machine
+ * has the whole repository — and Vercel died on
+ * `Cannot find module '/vercel/path0/autonomy/strip-comments.mjs'`.
+ *
+ * So the ignore file is read here and every local import the build depends on
+ * is checked against it. A build tool whose dependency the deploy removes is
+ * not a build tool, and this is the check that says so before a push instead of
+ * after one.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('everything the build imports survives the deploy', () => {
+    /** The ignore rules, in the only three shapes this file actually uses. */
+    function ignoredBy(rules, relPath) {
+        for (const raw of rules) {
+            const rule = raw.trim();
+            if (!rule || rule.startsWith('#')) continue;
+            if (rule.endsWith('/')) {                       // a whole directory
+                if (relPath.startsWith(rule) || relPath.startsWith(rule.slice(0, -1) + '/')) return rule;
+            } else if (rule.startsWith('*.')) {             // an extension
+                if (relPath.endsWith(rule.slice(1))) return rule;
+            } else if (relPath === rule || relPath.endsWith('/' + rule)) {
+                return rule;
+            }
+        }
+        return null;
+    }
+
+    /** Every local file reachable from build.mjs by a static import. */
+    function localImports(entry, seen = new Set()) {
+        const abs = path.resolve(ROOT, entry);
+        if (seen.has(abs) || !fs.existsSync(abs)) return seen;
+        seen.add(abs);
+        const src = fs.readFileSync(abs, 'utf8');
+        for (const m of src.matchAll(/^\s*import[^'"]*['"](\.[^'"]+)['"]/gm)) {
+            localImports(path.relative(ROOT, path.resolve(path.dirname(abs), m[1])), seen);
+        }
+        return seen;
+    }
+
+    const rules = fs.readFileSync(path.join(ROOT, '.vercelignore'), 'utf8').split('\n');
+
+    it('the ignore reader understands the rules this file actually uses', () => {
+        /* A checker that matched nothing would pass the assertion below on any
+         * repository, which is how a guard becomes decoration. */
+        expect(ignoredBy(rules, 'autonomy/strip-comments.mjs')).toBe('autonomy/');
+        expect(ignoredBy(rules, 'test/build_test.js')).toBe('test/');
+        expect(ignoredBy(rules, 'README.md')).toBe('*.md');
+        expect(ignoredBy(rules, 'build.mjs')).toBe(null);
+        expect(ignoredBy(rules, 'wealthflow-pawn.js')).toBe(null);
+    });
+
+    it('BUILD.MJS AND EVERYTHING IT IMPORTS SURVIVE .vercelignore', () => {
+        const files = [...localImports('build.mjs')].map((f) => path.relative(ROOT, f));
+        expect(files.length).toBeGreaterThan(1);       // it does import something
+        const deleted = files.map((f) => [f, ignoredBy(rules, f)]).filter(([, r]) => r);
+        expect(deleted.map(([f, r]) => f + ' (removed by "' + r + '")'),
+            'the build machine will not have these').toEqual([]);
+    });
+
+    it('and the entry point itself is not ignored', () => {
+        expect(ignoredBy(rules, 'build.mjs')).toBe(null);
+        expect(fs.existsSync(path.join(ROOT, 'build-strip.mjs'))).toBe(true);
+    });
+
+    it('THE REPRODUCTION: the build runs in a tree with the ignored files removed', () => {
+        /* The static check above reads intent; this one runs the real command
+         * the way Vercel runs it, in a copy of the repository with everything
+         * .vercelignore names actually deleted. It is the difference between
+         * believing the build machine has a file and watching it not.
+         *
+         * It also catches the next shape of this bug, which the static reader
+         * would miss: a require, a dynamic import, or a path read at runtime. */
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-deploy-'));
+        try {
+            const skip = new Set(['node_modules', '.git']);
+            for (const entry of fs.readdirSync(ROOT, { withFileTypes: true })) {
+                if (skip.has(entry.name)) continue;
+                const rel = entry.name + (entry.isDirectory() ? '/' : '');
+                if (ignoredBy(rules, rel) || ignoredBy(rules, entry.name)) continue;
+                const from = path.join(ROOT, entry.name);
+                const to = path.join(dir, entry.name);
+                if (entry.isDirectory()) fs.cpSync(from, to, { recursive: true });
+                else fs.copyFileSync(from, to);
+            }
+            /* The ignore really did bite: autonomy/ is gone from the copy. */
+            expect(fs.existsSync(path.join(dir, 'autonomy'))).toBe(false);
+            expect(fs.existsSync(path.join(dir, 'build.mjs'))).toBe(true);
+
+            const out = execFileSync(process.execPath, [path.join(dir, 'build.mjs'), '--write'],
+                { cwd: dir, encoding: 'utf8', timeout: 120000 });
+            expect(out).toContain('written in place');
+            /* And it produced hashed modules, not just an exit code of 0. */
+            const built = fs.readdirSync(dir).filter((f) => HASHED_RE.test(f));
+            expect(built.length).toBeGreaterThan(40);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }, 180000);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * THE DEPLOY IS WIRED TO IT
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('Vercel actually runs it, and the headers are safe if it does not', () => {

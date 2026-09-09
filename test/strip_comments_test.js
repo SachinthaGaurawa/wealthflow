@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import fc from 'fast-check';
 import { runs } from './fuzz-config.js';
-import { stripJs, stripCss, stripHtml, tidy } from '../autonomy/strip-comments.mjs';
+import { stripJs, stripCss, stripHtml, tidy } from '../build-strip.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 

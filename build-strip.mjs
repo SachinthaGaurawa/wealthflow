@@ -1,5 +1,5 @@
 /* =============================================================================
- * autonomy/strip-comments.mjs — take the reasons out of the shipped copy
+ * build-strip.mjs — take the reasons out of the shipped copy
  * -----------------------------------------------------------------------------
  * This repository is written with the reasoning in the source. Comments here are
  * not decoration: they are the record of which bug a line exists to prevent, and
@@ -38,7 +38,10 @@
  *      is idempotent and that a second pass finds nothing left to remove.
  *   2. autonomy/verify-exports.mjs imports each stripped module and compares
  *      its exported names with the original's — a module that no longer parses
- *      cannot be imported at all.
+ *      cannot be imported at all. (That one is a TEST tool and stays in
+ *      autonomy/; this file is a BUILD tool and must survive .vercelignore,
+ *      which removes autonomy/ from the deploy entirely. Putting it there was
+ *      the first version, and the preview deployment failed on exactly that.)
  *   3. build.mjs parses every written module with `node --check`, and the
  *      stripped index.html is booted in a real browser.
  *
