@@ -298,6 +298,37 @@
          first of a month files the transaction into the previous month's tab.
          Loaded before everything that asks. window.WFWhen -->
     <script type="module" src="wealthflow-when.js"></script>
+    <!-- One write, every screen — and "received" made to mean something.
+         Two faults produced one symptom the owner reported: money marked
+         received on its own tab still read as unreceived on the dashboard.
+         Each handler had to remember renderDash() itself and several did not,
+         so deleting income repainted the dashboard while receiving it did not;
+         and `received` was a label no total ever consulted, so income the owner
+         had NOT received was inflating Year Income, Net Savings and the Savings
+         Rate. The repaint now belongs to DB.set/DB.delKey rather than to
+         whoever remembers, coalesced to one paint per frame and bounded so a
+         renderer that writes cannot loop.
+         LOADED HERE, WITH wealthflow-when.js, because getMonthlyData() asks it
+         what arrived and the dashboard is the first thing drawn.
+         ESM, so type="module" is load-bearing; window.WFReactive. -->
+    <script type="module" src="wealthflow-reactive.js"></script>
+    <!-- 2000 becomes 2,000 while it is still being typed — in every amount
+         field, including the ones drawn after the page loaded. The rule was
+         always right; it was attached by a one-off DOM walk, so every modal and
+         every table row created afterwards carried the class and behaved like a
+         plain text box. The listeners now live on the document.
+         ESM; window.WFMoneyInput. -->
+    <script type="module" src="wealthflow-money-input.js"></script>
+    <!-- What a statement password is MADE OF. The owner asked why a date of
+         birth with slashes was never tried: because the derivation only ever
+         produced bare digits, and because the vault only ever asked for an
+         opaque string, so 07/07/1993 and 07071993 were two different secrets.
+         The vault now records the KIND (NIC, birthday, account number, mobile,
+         or a password the bank chose) and this module turns that into every
+         plausible spelling, most likely first. Loaded before the vault and
+         before wealthflow-intelligence.js, which both read it.
+         ESM; window.WFPwShapes. -->
+    <script type="module" src="wealthflow-password-shapes.js"></script>
     <script src="wealthflow-scanner.js" defer></script>
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
@@ -8393,6 +8424,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 if (window._isDecoyMode === true) {
                     appData[k] = v; // in-memory only; lost on reload
                     console.log('[DECOY] Write blocked from disk/cloud:', k);
+                    /* The screens still redraw. Decoy mode shows a false set of
+                     * books convincingly or it shows nothing at all. */
+                    try { if (window._wfTouch) window._wfTouch(k); } catch (_) {}
                     return;
                 }
                 // v7.52.0 — stamp per-record _ut and tombstone deletions BEFORE we
@@ -8427,6 +8461,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setDirty(true);
                     debouncedSync();
                 }
+                /* EVERY SCREEN THAT READS THIS KEY, ONCE, NEXT FRAME.
+                 *
+                 * It used to be each handler's job to call renderDash() after
+                 * writing, and deleteIncomeRecv() did while markIncRecvReceived()
+                 * three lines above it did not — so deleting income updated the
+                 * dashboard and receiving it did not. Doing it here means a
+                 * handler cannot forget. Coalesced and bounded in
+                 * wealthflow-reactive.js; see _wfTouch below. */
+                try { if (window._wfTouch) window._wfTouch(k); } catch (_) {}
             },
             // Delete ONE key from a synced MAP field — locally, in localStorage, AND
             // on the server. Use this instead of `delete obj[key]; DB.set(field,obj)`
@@ -8456,6 +8499,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setDirty(true);
                     debouncedSync();
                 }
+                try { if (window._wfTouch) window._wfTouch(field); } catch (_) {}
             }
         };
 
@@ -9391,59 +9435,64 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             });
         }
 
-        // Reusable money-input behavior so dynamically-created dialog inputs (loan/income payment prompts)
-        // get the same caret-friendly typing experience as the static form inputs.
-        // - input handler: lets the user type freely, only adds thousands separators and clamps to 2dp.
-        //                  cursor position is preserved by counting digits-before-caret.
-        // - blur handler:  finalizes formatting to the canonical "1,234.00" form.
-        // - focus handler: shows the raw number for easy editing.
+        /* ── EVERY AMOUNT FIELD, INCLUDING THE ONES THAT DO NOT EXIST YET ────
+         *
+         * The owner: "typing 2000 must instantly become 2,000 in EVERY amount
+         * input." The rule itself was already correct; WHERE it applied was
+         * not. It was attached element by element by a DOM walk, so every field
+         * drawn after that walk — every modal, every table row, the
+         * card-reconcile amount cells, the past-months panel — carried the
+         * class, looked identical and behaved like a plain text box.
+         *
+         * The listeners now live on the document and match by class at event
+         * time, so a field created a second from now is already bound, and the
+         * next money field anybody adds is bound without them knowing this code
+         * exists. The caret arithmetic and the format rule are in
+         * wealthflow-money-input.js, where a test types into them.
+         *
+         * _attachMoneyHandlers keeps the name three callers already use: it no
+         * longer attaches anything, it marks the field, which is all that is
+         * left to do. */
         function _attachMoneyHandlers(inp, opts) {
-            if (!inp || inp._wfMoneyAttached) return;
-            inp._wfMoneyAttached = true;
-            opts = (opts && typeof opts === 'object') ? opts : {};
-            const _wantCents = !!(opts.cents || (inp.classList && inp.classList.contains('money-cents')));
-            inp.addEventListener('input', function () {
-                const oldVal = this.value;
-                const oldCaret = this.selectionStart || 0;
-                // Count "tracked" chars (digits + dots) to the left of the caret in the OLD value.
-                // Including the dot in the count means typing "." advances the caret past it as
-                // expected, instead of being snapped back to the digit-count position.
-                // Commas are auto-inserted formatting and intentionally NOT tracked.
-                const trackedBefore = (oldVal.slice(0, oldCaret).match(/[\d.]/g) || []).length;
-                // Strip everything that isn't a digit or a dot, collapse multiple dots to the first one
-                const cleaned = oldVal.replace(/[^0-9.]/g, '');
-                const firstDot = cleaned.indexOf('.');
-                let normalized = firstDot === -1
-                    ? cleaned
-                    : cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
-                const parts = normalized.split('.');
-                const int = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-                const dec = parts.length > 1 ? '.' + parts[1].slice(0, 2) : '';
-                const newVal = int + dec;
-                // Restore caret to the same digit/dot position (preserves natural typing in the middle)
-                let newCaret = newVal.length;
-                let counted = 0;
-                for (let i = 0; i < newVal.length; i++) {
-                    if (counted >= trackedBefore) { newCaret = i; break; }
-                    if (/[\d.]/.test(newVal[i])) counted++;
-                }
-                this.value = newVal;
-                try { this.setSelectionRange(newCaret, newCaret); } catch (e) { /* not all input types support selection */ }
-            });
-            inp.addEventListener('blur', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = _wantCents ? raw.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : fmtN(raw); });
-            inp.addEventListener('focus', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = String(raw); });
+            if (!inp || !inp.classList) return;
+            inp.classList.add('money-input');
+            if (opts && opts.cents) inp.classList.add('money-cents');
+            _installMoneyInputs();
         }
-
-        // v7.47.0 — expose so modal/dynamically-created money fields (e.g. the Card
-        // Registry credit limit) get the SAME live "350,000" → "350,000.00" formatting.
         try { window._attachMoneyHandlers = _attachMoneyHandlers; } catch (_) {}
-        function initMoneyInputs() {
-            document.querySelectorAll('.money-input').forEach(inp => _attachMoneyHandlers(inp));
 
-            document.querySelectorAll('.auth-numpad-only').forEach(inp => {
-                inp.addEventListener('input', function () { this.value = this.value.replace(/[^0-9]/g, ''); });
+        function _installMoneyInputs() {
+            if (!window.WFMoneyInput) return false;
+            /* install() is idempotent, so a defensive call from a render costs
+             * one property read. */
+            window.WFMoneyInput.install({
+                doc: document,
+                /* How many decimals a field settles to is a DISPLAY PREFERENCE
+                 * — "round amounts" in Settings — and this module has no
+                 * business knowing about settings. It asks. */
+                decimalsFor: () => (_wfDisplayPrefs().round ? 0 : 2),
             });
+            return true;
         }
+
+        /* Digits only, delegated for the same reason. The old version attached a
+         * fresh listener to every numpad field on every call, so opening the
+         * lock screen five times left five listeners on each of them. */
+        document.addEventListener('input', function (e) {
+            const el = e.target;
+            if (!el || !el.classList || !el.classList.contains('auth-numpad-only')) return;
+            const only = String(el.value || '').replace(/[^0-9]/g, '');
+            if (only !== el.value) el.value = only;
+        }, true);
+
+        function initMoneyInputs() { _installMoneyInputs(); }
+        /* Installed as early as it can be, and again once the deferred modules
+         * have actually run — this inline script executes during parse, when a
+         * type="module" script has not. install() is idempotent, so the
+         * repetition is what makes it certain rather than what makes it slow. */
+        _installMoneyInputs();
+        document.addEventListener('DOMContentLoaded', _installMoneyInputs);
+        window.addEventListener('load', _installMoneyInputs);
 
         // ==================== AUTO LOCK ====================
         function resetAutoLockTimer() { inactivityTimer = 0; }
@@ -11165,8 +11214,11 @@ Be conversational and precise.`;
             try { if (window.WFCrib && typeof window.WFCrib.contextForAdvisor === 'function') cribSummary = window.WFCrib.contextForAdvisor(); } catch (_) {}
             let receivedThisMonth = 0, subsCount = 0, subsMonthly = 0, ccPending = 0;
             try {
-                const incRecv = DB.get('incomeRecv') || [];
-                receivedThisMonth = incRecv.filter(x => x.month === curMonthStr && x.received).reduce((s, x) => s + (x.amount || 0), 0);
+                /* The SAME rule the dashboard totals with. This line used to
+                 * read `x.received` as truthy, which quietly excluded every row
+                 * written before that field existed — so the advisor was told a
+                 * smaller figure than the screen showed and reasoned from it. */
+                receivedThisMonth = window.WFReactive.incomeIn(DB.get('incomeRecv') || [], curMonthStr).received;
             } catch (_) {}
             try {
                 const subs = DB.get('subscriptions') || [];
@@ -16682,6 +16734,51 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         window.refreshAllSurfaces = refreshAllSurfaces;
 
+        /* ═══════════════════════════════════════════════════════════════════
+         * STRICT REACTIVE BINDING — the write repaints, not the handler
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * DB.set() and DB.delKey() call _wfTouch(). One paint per frame however
+         * many writes there were, so a two-hundred-row import still repaints
+         * once. The scheduler itself — coalescing, the re-entrancy bound, the
+         * ignore list — is wealthflow-reactive.js, where a test drives it
+         * without a browser.
+         *
+         * BUILT LAZILY. Module scripts run after this inline one, so
+         * window.WFReactive does not exist yet at this line; asking for it here
+         * would silently produce no scheduler at all and leave every screen
+         * exactly as stale as before. */
+        let _wfRepainter = null;
+        function _wfRepaintScheduler() {
+            if (_wfRepainter) return _wfRepainter;
+            if (!window.WFReactive || !window.WFReactive.createRepaintScheduler) return null;
+            _wfRepainter = window.WFReactive.createRepaintScheduler({
+                schedule: (fn) => {
+                    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => fn());
+                    else setTimeout(fn, 0);
+                },
+                paint: () => refreshAllSurfaces(),
+                onLoop: (keys) => {
+                    console.warn('[REACTIVE] a repaint keeps writing; stopped after two passes:', keys.join(', '));
+                },
+                onError: (err, keys) => {
+                    console.error('[REACTIVE] a repaint failed (your data is safe):', keys.join(', '), err && err.message);
+                },
+            });
+            return _wfRepainter;
+        }
+        function _wfTouch(key) {
+            /* Nothing is on screen before the app is. Repainting through the
+             * lock screen would run every renderer over data the owner has not
+             * unlocked, and boot draws everything once anyway. */
+            const app = document.getElementById('app');
+            if (!app || !app.classList.contains('show')) return false;
+            const sched = _wfRepaintScheduler();
+            return sched ? sched.touch(key) : false;
+        }
+        window._wfTouch = _wfTouch;
+        window._wfRepaintNow = () => { const s = _wfRepaintScheduler(); if (s) s.flush(); };
+
         // ==================== LUXURY HAPTIC FEEDBACK ENGINE v3 ====================
         // Android: Real vibration via navigator.vibrate (when truly supported)
         // iOS:     Real Taptic Engine via hidden <input switch> click trick
@@ -18224,7 +18321,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         <div class="pm-month">${_wfEsc(m.label)}</div>
                         ${tag}
                         <div style="flex:1;"></div>
-                        <input type="text" class="pm-amount" data-ym="${m.ym}"
+                        <input type="text" class="pm-amount money-input" data-ym="${m.ym}"
                             value="${m.amount.toFixed(2)}"
                             ${m.confirmed ? 'disabled' : ''}
                             inputmode="decimal" placeholder="Amount">
@@ -22675,7 +22772,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + '<div class="fg"><label class="fl" for="_pw_ticket">Ticket number</label>'
                 + '<input class="fi" id="_pw_ticket" placeholder="A-4471" value="' + _wfEsc(p.ticket || '') + '"></div>'
                 + '<div class="fg"><label class="fl" for="_pw_principal">Amount advanced</label>'
-                + '<input class="fi" id="_pw_principal" inputmode="decimal" value="' + _wfEsc(String(p.principal || '')) + '"></div>'
+                + '<input class="fi money-input" id="_pw_principal" inputmode="decimal" value="' + _wfEsc(String(p.principal || '')) + '"></div>'
                 + '<div class="fg"><label class="fl" for="_pw_rate">Interest, % per month</label>'
                 + '<input class="fi" id="_pw_rate" inputmode="decimal" placeholder="2.2" value="' + _wfEsc(String(p.rate || '')) + '"></div>'
                 + '<div class="fg"><label class="fl" for="_pw_mode">How it is charged</label>'
@@ -22766,7 +22863,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 '<div class="fg"><label class="fl" for="_db_name">Name</label>'
                 + '<input class="fi" id="_db_name" placeholder="Nimal" value="' + _wfEsc(d.name || '') + '"></div>'
                 + '<div class="fg"><label class="fl" for="_db_amount">Amount lent</label>'
-                + '<input class="fi" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
+                + '<input class="fi money-input" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
                 + '<div class="fg"><label class="fl" for="_db_date">Date lent</label>'
                 + '<input class="fi" id="_db_date" type="date" value="' + _liqToday() + '"></div>'
                 + '<div class="fg"><label class="fl" for="_db_note">Note</label>'
@@ -22830,7 +22927,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 (window.WFIcon ? WFIcon(isPay ? 'coins' : 'plus') : '')
                     + (isPay ? ' Repayment from ' : ' Lend more to ') + _wfEsc(d.name || 'debtor'),
                 '<div class="fg"><label class="fl" for="_ev_amount">Amount</label>'
-                + '<input class="fi" id="_ev_amount" inputmode="decimal"></div>'
+                + '<input class="fi money-input" id="_ev_amount" inputmode="decimal"></div>'
                 + '<div class="fg"><label class="fl" for="_ev_date">Date</label>'
                 + '<input class="fi" id="_ev_date" type="date" value="' + _liqToday() + '"></div>'
                 + '<div class="fg"><label class="fl" for="_ev_note">Note</label>'
@@ -25850,13 +25947,24 @@ table.amort tbody tr { page-break-inside: avoid; }
             // inflates Year Income / Net Savings / Savings Rate / the dashboard chart /
             // Monthly Plan / the CSV+PDF reports / the 3D cash-flow view, all of which
             // read this single value.
+            //
+            // ── AND `received` IS NOW READ, WHICH IT NEVER USED TO BE ────────
+            //
+            // This loop summed every row in the month and never looked at the
+            // field. The statement importer writes `received: past`, so a
+            // credit dated next week is imported as NOT received — and was
+            // counted in Year Income, Net Savings and the Savings Rate anyway.
+            // That is the owner's own rule broken from the inside: money that
+            // has not arrived must never be posted. The rule itself lives in
+            // wealthflow-reactive.js (incomeIn) so that this function, the AI
+            // context and the Income tab cannot disagree about what arrived,
+            // and it excludes ONLY an explicit false — rows written before the
+            // field existed keep counting rather than vanishing on first load.
             const _incYM = year + '-' + p2(month + 1);
-            let income = 0;
-            (DB.get('incomeRecv') || []).forEach(r => {
-                if (!r) return;
-                const rm = r.month || (r.date ? String(r.date).slice(0, 7) : '');
-                if (rm === _incYM) income += (+r.amount || 0);
-            });
+            const _inc = window.WFReactive.incomeIn(DB.get('incomeRecv') || [], _incYM);
+            const income = _inc.received;
+            // Not counted, not hidden: the dashboard names it under Year Income.
+            const incomePending = _inc.pending;
             let loanTotal = 0, loanItems = [];
             (DB.get('loans') || []).forEach(l => {
                 if (!l || !l.start) return;
@@ -25945,7 +26053,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const totalExp = loanTotal + ccTotal + expTotal + ccotTotal + subTotal + cheTotal;
             return {
-                income, loanTotal, ccTotal, expTotal,
+                income, incomePending, loanTotal, ccTotal, expTotal,
                 ccotTotal, subTotal, cheTotal,
                 totalExp, balance: income - totalExp,
                 loanItems, ccItems2, expItems,
@@ -26083,13 +26191,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
             const incData = [], expData = [], netData = [];
-            let yrInc = 0, yrExp = 0;
+            let yrInc = 0, yrExp = 0, yrPending = 0;
             for (let i = 0; i < 12; i++) {
                 const md = getMonthlyData(year, i);
                 incData.push(md.income);
                 expData.push(md.totalExp);
                 netData.push(md.balance);
                 yrInc += md.income; yrExp += md.totalExp;
+                /* Imported but not yet confirmed as arrived. It is NOT in
+                 * yrInc — that is the point of the change — so it is named on
+                 * the card instead. A total that quietly got smaller is
+                 * indistinguishable from a bug. */
+                yrPending += (md.incomePending || 0);
             }
             // Current month expenses (actual expenses logged for this month only)
             const nowD = new Date();
@@ -26206,7 +26319,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             } catch (_) {}
             $('dashStats').innerHTML = predictiveHtml + `
-        <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div></div>
+        <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div>${yrPending > 0 ? `<div class="stat-meta">${fmtS(yrPending)} not yet confirmed received</div>` : ''}</div>
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
         <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
@@ -31500,7 +31613,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const draw = () => {
                     body.innerHTML = `
                         <div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:4px;">
-                            Unlocked. Add the password each bank puts on its statement PDF.
+                            Unlocked. Add the password each bank puts on its statement PDF —
+                            and say what it is. A date of birth is tried in every written form,
+                            slashes included, so you do not have to know which one your bank used.
                         </div>
                         <datalist id="_bv_banks">${suggestions.map(b => `<option value="${_wfEsc(b)}"></option>`).join('')}</datalist>
                         <div id="_bv_rows" style="margin:14px 0;display:flex;flex-direction:column;gap:10px;"></div>
@@ -31513,38 +31628,83 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     if (!rows.length) {
                         host.innerHTML = `<div style="text-align:center;color:var(--text3);font-size:12.5px;padding:14px 0;">No passwords saved yet.</div>`;
                     }
+                    /* ── WHAT KIND OF THING THIS PASSWORD IS ────────────────
+                     *
+                     * The owner: "Why didn't you anticipate that a user's
+                     * password might be a Date of Birth with slashes
+                     * (DD/MM/YYYY)?" Because the field only ever took an opaque
+                     * string, so 07/07/1993 and 07071993 were two different
+                     * secrets and only the one typed was ever tried.
+                     *
+                     * Declaring the kind lets wealthflow-password-shapes.js
+                     * produce every plausible spelling of the same secret. The
+                     * format dropdown appears ONLY for a birthday, because a
+                     * format question about a password the bank chose has no
+                     * answer and an always-visible dropdown that is usually
+                     * meaningless is how a form starts being ignored. */
+                    const S = window.WFPwShapes;
                     rows.forEach((row, i) => {
                         const card = document.createElement('div');
                         card.style.cssText = 'border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);';
+                        const isBirthday = (row.kind || '') === (S ? S.PW_KIND.BIRTHDAY : 'birthday');
                         card.innerHTML = `
                             <div style="display:flex;gap:8px;margin-bottom:8px;">
                                 <input class="fi _bv_bank" list="_bv_banks" placeholder="Bank (e.g. HNB)" style="flex:1;">
                                 <input class="fi _bv_label" placeholder="Label (optional)" style="flex:1;">
-                                <button class="btn btn-ghost btn-sm _bv_del" title="Remove" style="color:var(--red);flex:0 0 auto;">${(window.WFIcon ? WFIcon('x') : '')}</button>
+                                <button class="btn btn-ghost btn-sm _bv_del" aria-label="Remove this password" title="Remove" style="color:var(--red);flex:0 0 auto;">${(window.WFIcon ? WFIcon('x') : '')}</button>
+                            </div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                                <label class="fl" style="flex:1 1 100%;margin:0 0 2px;">What is this password?</label>
+                                <select class="fs _bv_kind" style="flex:1 1 190px;">
+                                    ${(S ? S.KIND_OPTIONS : []).map(o => `<option value="${_wfEsc(o.id)}">${_wfEsc(o.label)}</option>`).join('')}
+                                </select>
+                                <select class="fs _bv_fmt" style="flex:1 1 150px;${isBirthday ? '' : 'display:none;'}">
+                                    ${(S ? S.DATE_FORMATS : []).map(f => `<option value="${_wfEsc(f.id)}">${_wfEsc(f.label)}  ·  ${_wfEsc(f.example)}</option>`).join('')}
+                                </select>
                             </div>
                             <div style="display:flex;gap:8px;">
-                                <input class="fi _bv_pw" type="password" placeholder="Statement password" autocomplete="off" spellcheck="false" style="flex:1;font-family:var(--mono);">
-                                <button class="btn btn-ghost btn-sm _bv_eye" title="Show" style="flex:0 0 auto;">${(window.WFIcon ? WFIcon('eye') : '')}</button>
-                            </div>`;
+                                <input class="fi _bv_pw" type="password" placeholder="${isBirthday ? 'e.g. 07/07/1993' : 'Statement password'}" autocomplete="off" spellcheck="false" style="flex:1;font-family:var(--mono);">
+                                <button class="btn btn-ghost btn-sm _bv_eye" aria-label="Show or hide this password" aria-pressed="false" title="Show" style="flex:0 0 auto;">${(window.WFIcon ? WFIcon('eye') : '')}</button>
+                            </div>
+                            <div class="_bv_says" style="font-size:11.5px;color:var(--text3);margin-top:6px;min-height:15px;"></div>`;
                         // Values assigned as PROPERTIES, never interpolated into
                         // the markup above — see the note on this function.
                         card.querySelector('._bv_bank').value = row.bank || '';
                         card.querySelector('._bv_label').value = row.label || '';
                         card.querySelector('._bv_pw').value = row.password || '';
+                        const kindEl = card.querySelector('._bv_kind');
+                        const fmtEl = card.querySelector('._bv_fmt');
+                        const saysEl = card.querySelector('._bv_says');
+                        kindEl.value = row.kind || (S ? S.PW_KIND.OTHER : 'other');
+                        fmtEl.value = row.format || (S ? S.DEFAULT_DATE_FORMAT : '');
+                        /* Says WHAT WILL HAPPEN, and recalculated on every
+                         * keystroke: "11 forms of this will be tried, in order"
+                         * is the difference between a dropdown the owner trusts
+                         * and one they guess at. */
+                        const says = () => {
+                            fmtEl.style.display = (kindEl.value === (S ? S.PW_KIND.BIRTHDAY : 'birthday')) ? '' : 'none';
+                            saysEl.textContent = S ? S.describe(rows[i]) : '';
+                        };
                         card.querySelector('._bv_bank').oninput = (e) => { rows[i].bank = e.target.value; };
                         card.querySelector('._bv_label').oninput = (e) => { rows[i].label = e.target.value; };
-                        card.querySelector('._bv_pw').oninput = (e) => { rows[i].password = e.target.value; };
+                        card.querySelector('._bv_pw').oninput = (e) => { rows[i].password = e.target.value; says(); };
+                        kindEl.onchange = () => { rows[i].kind = kindEl.value; says(); };
+                        fmtEl.onchange = () => { rows[i].format = fmtEl.value; says(); };
                         card.querySelector('._bv_del').onclick = () => { rows.splice(i, 1); draw(); };
-                        card.querySelector('._bv_eye').onclick = () => {
+                        card.querySelector('._bv_eye').onclick = (ev) => {
                             const f = card.querySelector('._bv_pw');
-                            f.type = f.type === 'password' ? 'text' : 'password';
+                            const showing = f.type === 'password';
+                            f.type = showing ? 'text' : 'password';
+                            ev.currentTarget.setAttribute('aria-pressed', showing ? 'true' : 'false');
+                            ev.currentTarget.title = showing ? 'Hide' : 'Show';
                             try { triggerHaptic('light'); } catch (_) {}
                         };
+                        says();
                         host.appendChild(card);
                     });
 
                     body.querySelector('#_bv_add').onclick = () => {
-                        rows.push({ bank: '', label: '', password: '' });
+                        rows.push({ bank: '', label: '', password: '', kind: (S ? S.PW_KIND.OTHER : 'other'), format: (S ? S.DEFAULT_DATE_FORMAT : '') });
                         draw();
                     };
                     const wipe = body.querySelector('#_bv_wipe');

@@ -212,6 +212,28 @@ export default async function handler(req, res, deps) {
             continue;
         }
 
+        /* ── THE WINDOW IS A CONSTRAINT, NOT A REQUEST ───────────────────
+         *
+         * The owner reported that choosing a month range still pulled
+         * everything. The query is right — every window carries after: and
+         * before: — but nothing on this side had ever CHECKED it. Gmail's
+         * after:/before: are day-granular and evaluated in the account's own
+         * timezone, while these bounds are built in UTC, so the edges of a
+         * window are Gmail's interpretation rather than ours; and a page token
+         * belongs to the search that minted it, so a mismatched one would page
+         * through a different month entirely with nothing to notice.
+         *
+         * internalDate is the message's own receipt time, from Google, in
+         * milliseconds. Comparing it to the window turns the range from
+         * something we asked for into something that holds. A message outside
+         * it is not an error and not worth telling the owner about — it is
+         * simply not part of the month they chose. */
+        const landed = Number(msg.internalDate);
+        if (Number.isFinite(landed) && landed > 0
+            && (landed < window.after || landed >= window.before)) {
+            continue;
+        }
+
         /* The SAME plan the live hook applies: allowlisted sender, DKIM held,
          * an attachment worth taking. A second copy of that judgement is a
          * second place for a statement to be accepted that should not be. */

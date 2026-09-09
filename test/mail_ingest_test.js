@@ -307,7 +307,12 @@ describe('an unlisted but verified sender is held, not dropped', () => {
         };
         const r = planMessage(flyer);
         expect(r.ok).toBe(false);
-        expect(r.reason).toBe(REJECT.NOT_A_STATEMENT);
+        /* NOT_A_STATEMENT_DOC and no longer NOT_A_STATEMENT, and the change is
+         * an improvement rather than a rename. `flyer.pdf` announces what it
+         * is, so the document check now refuses it for EVERY sender — the old
+         * reason could only be reached for a sender nobody recognised, which
+         * meant an approved domain's flyers were filed unread. */
+        expect(r.reason).toBe(REJECT.NOT_A_STATEMENT_DOC);
     });
 
     it('the FILENAME alone is enough to call it a statement', () => {

@@ -62,6 +62,7 @@
  * because the match is anchored to a label boundary at the end.
  */
 import { BANK_DOMAINS } from './wealthflow-institutions.js';
+import { nameVerdict, VERDICT as ID_VERDICT } from './wealthflow-statement-identity.js';
 import { STATEMENT_TERMS } from './wealthflow-backfill.js';
 
 /* DERIVED, NOT DECLARED. This used to be a hand-written list of four
@@ -106,6 +107,14 @@ export const REJECT = {
      * rather than dropped, so one tap releases it. */
     SENDER_SIBLING: 'a-new-address-at-a-bank-you-approved',
     NOT_A_STATEMENT: 'unrecognised-sender-and-nothing-says-statement',
+    /* THE DOCUMENT ANNOUNCED ITSELF AS SOMETHING ELSE — an invoice, a receipt,
+     * a payslip — whoever sent it. Kept apart from NOT_A_STATEMENT above, which
+     * is the weaker "nobody vouches for this sender AND nothing says statement";
+     * this one holds even for a bank the owner approved by name, because
+     * approving a sender means they MAY send statements, not that everything
+     * they send is one. That conflation is the bug the owner reported four
+     * times. See wealthflow-statement-identity.js. */
+    NOT_A_STATEMENT_DOC: 'the-attachment-is-not-a-bank-statement',
     DKIM_FAILED: 'dkim-did-not-pass',
     DKIM_DOMAIN_MISMATCH: 'signed-by-a-different-domain',
     NO_ATTACHMENT: 'no-pdf-attachment',
@@ -674,6 +683,51 @@ export function planMessage(message, policy = {}) {
         };
     }
 
+    /* ── APPROVING A SENDER IS NOT APPROVING EVERYTHING THEY SEND ─────────
+     *
+     * THE BUG THE OWNER REPORTED FOUR TIMES. The only check on WHAT a document
+     * is used to live inside `if (who.known === false)` just below — so it ran
+     * for unrecognised senders and for nobody else. Approve a sender and every
+     * PDF that sender ever mails was filed unread.
+     *
+     * That is not a corner case, it is the normal case: approvedClauses widens
+     * the FETCH to the whole domain on purpose, so a bank's second address can
+     * be discovered. An approved domain that also invoices you then sends its
+     * invoices straight into a screen meant for bank statements. Their
+     * screenshot is exactly that — Invoice-NCQIAKMS-0008.pdf,
+     * Receipt-2402-5154-7274.pdf, invoice-113674.pdf, beside one real DFCC
+     * statement.
+     *
+     * So the veto is UNIVERSAL now, and it runs before a byte is downloaded.
+     *
+     * PLACED BELOW THE SENDER RULE ON PURPOSE. Both refusals are true of a bill
+     * from a stranger, and the sender one is the ACTIONABLE one: "you have not
+     * decided about this sender yet" offers a tap that fixes it, while "this is
+     * an invoice" ends the conversation. Above this line the question is WHO;
+     * from here down it is WHAT, and what is left here is every sender the
+     * owner has already accepted — which is exactly the population the old
+     * code never checked.
+     *
+     * IT VETOES ONLY ON POSITIVE EVIDENCE OF BEING SOMETHING ELSE. Silence is
+     * not evidence: a real statement in that same screenshot is called
+     * `5996631318_455.pdf` and parsed two transactions correctly. A rule that
+     * required the name to SAY "statement" would have deleted it. See
+     * wealthflow-statement-identity.js. */
+    const byName = nameVerdict({
+        subject: headers.subject || '',
+        filenames: what.take.map((a) => a && a.filename).filter(Boolean),
+    });
+    if (byName.verdict === ID_VERDICT.NOT_STATEMENT) {
+        return {
+            ok: false,
+            reason: REJECT.NOT_A_STATEMENT_DOC,
+            bank: who.bank,
+            detail: { from: who.domain, why: byName.reason, hits: byName.hits.slice(0, 4) },
+            from: seenFrom,
+            subject: headers.subject || '',
+        };
+    }
+
     if (who.known === false) {
         /* ONCE THE OWNER HAS A LIST, THE LIST DECIDES.
          *
@@ -769,7 +823,12 @@ export function isWorthTelling(plan) {
     return plan.reason === REJECT.TOO_LARGE
         || plan.reason === REJECT.TOO_MANY
         || plan.reason === REJECT.DKIM_FAILED
-        || plan.reason === REJECT.DKIM_DOMAIN_MISMATCH;
+        || plan.reason === REJECT.DKIM_DOMAIN_MISMATCH
+        /* Counted and named. The owner's standing instruction is that nothing
+         * is dropped in silence: an invoice correctly refused and a statement
+         * wrongly refused have to be told apart by looking at the report, and
+         * that needs the refusal to appear in it. */
+        || plan.reason === REJECT.NOT_A_STATEMENT_DOC;
 }
 
 export const REJECT_TEXT = {
@@ -778,6 +837,7 @@ export const REJECT_TEXT = {
     [REJECT.NOT_ON_YOUR_LIST]: 'the sender is not on your statement-sender list',
     [REJECT.SENDER_SIBLING]: 'a bank you approved wrote from a different address',
     [REJECT.NOT_A_STATEMENT]: 'the sender is not a bank you have confirmed, and nothing about the mail says statement',
+    [REJECT.NOT_A_STATEMENT_DOC]: 'the attachment says it is an invoice, a receipt or a payslip — not a bank statement',
     [REJECT.DKIM_FAILED]: 'it claims to be from your bank but carries no valid signature',
     [REJECT.DKIM_DOMAIN_MISMATCH]: 'it is signed by a domain other than the one it claims to be from',
     [REJECT.NO_ATTACHMENT]: 'there is no PDF attached',

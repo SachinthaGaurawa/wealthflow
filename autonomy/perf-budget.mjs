@@ -175,7 +175,20 @@ export const BUDGETS = {
      * ensureChart/_wfChartThen replacing three eagerly-loaded vendor libraries.
      * Most of the growth is the measurements written beside each — 6.1 s to
      * interactive on a throttled phone, and which 195 KB bought nothing. */
-    htmlBytes: 1_956_000,        // measured 1,954,984 — money exports + on-demand charts
+    /* Raised for the four defects the owner reported together: the Gmail
+     * junk filter (a document-type check that only ever ran for unrecognised
+     * senders), the reactive binding (each handler had to remember
+     * renderDash() and several did not), live thousands separators in every
+     * amount field rather than only the ones present at page load, and the
+     * password vault asking what KIND of thing a password is.
+     *
+     * AND THIS CEILING NOW MEASURES SOMETHING THE OWNER NEVER DOWNLOADS.
+     * build.mjs strips the comments out of the deployed copy: index.html ships
+     * at about 1.49 MB and the modules at about 1.15 MB, roughly 28% below the
+     * numbers below. The ceiling still measures the source, deliberately —
+     * source is what grows, and a budget that fell every time somebody wrote a
+     * comment explaining a bug would be an incentive to stop explaining bugs. */
+    htmlBytes: 1_986_000,        // measured 1,966,015 — deployed, after the strip: ~1,486 KB
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -339,7 +352,13 @@ export const BUDGETS = {
      * counts it, though it never reaches a browser: it is imported by the
      * serverless webhook and by the CI notifier. See the note above about what
      * this number actually measures. */
-    totalJsBytes: 1_740_000,     // measured 1,724,535 across 65 modules
+    /* Raised for wealthflow-reactive.js, wealthflow-money-input.js,
+     * wealthflow-password-shapes.js and wealthflow-statement-identity.js — the
+     * four modules the owner's four reported defects needed. Deployed, after
+     * the strip, these 69 modules are about 1,147 KB rather than the 1,775 KB
+     * this ceiling counts; see the note on htmlBytes for why the ceiling still
+     * measures the source. */
+    totalJsBytes: 1_793_000,     // measured 1,775,346 across 69 modules
     largestModuleBytes: 212_000, // measured 210,068 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -401,7 +420,18 @@ export const BUDGETS = {
      * second copy of that knowledge next to the parser it feeds. */
     /* 61 -> 64: +1 for wealthflow-when.js and +2 that were always here and never
      * counted, because the measurer could not see a .mjs. */
-    moduleCount: 65,   // measured 65 — 64 -> 65 for wealthflow-approval-bot.mjs
+    /* 65 -> 69. Four modules for the owner's four reported defects, and each
+     * one is a file rather than an inline block for the same reason as every
+     * entry above it: each owns a rule that more than one caller needs, and
+     * inlining any of them into index.html would put a second copy of that rule
+     * next to the first. wealthflow-statement-identity.js decides what a
+     * document IS (the server plans with it, the device confirms with it);
+     * wealthflow-reactive.js owns the repaint and the "what actually arrived"
+     * rule (getMonthlyData and the advisor both read it);
+     * wealthflow-money-input.js owns how an amount field behaves while it is
+     * being typed into; wealthflow-password-shapes.js owns how a date of birth
+     * can be written (the vault offers the list, the ID vault derives from it). */
+    moduleCount: 69,   // measured 69
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -456,7 +486,11 @@ export const BUDGETS = {
      * already lazy-loaded by _loadPdfLibs() and the eager tag merely made that a
      * no-op; `autoTable` is called nowhere in this repository and had been
      * downloaded on every startup, by everyone, forever. */
-    scriptTags: 65,              // measured 65 — three fewer CDN libraries at startup
+    /* 65 -> 68 for the three new browser modules. All three are
+     * type="module", so they are deferred and none of them blocks first paint —
+     * renderBlockingScripts below is unchanged at 2, which is the number that
+     * actually decides how fast the page appears. */
+    scriptTags: 68,              // measured 68
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
