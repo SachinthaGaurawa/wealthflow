@@ -272,10 +272,12 @@ describe('the page uses it, and every amount field is marked', () => {
     it('and every decimal amount field carries it — except the one that is a percentage', () => {
         const tags = HTML.match(/<input\b[^>]*>/gs) || [];
         const missing = tags.filter((t) => !t.includes('money-input') && t.includes('inputmode="decimal"'));
-        /* _pw_rate is a monthly interest rate. Grouping a percentage would be
-         * wrong, so it is named here rather than quietly excluded by a pattern. */
-        expect(missing.length).toBe(1);
-        expect(missing[0]).toContain('_pw_rate');
+        /* Both are monthly interest RATES — the one on a pawn ticket and the
+         * one on its renewal. Grouping a percentage would be wrong, so each is
+         * named here rather than quietly excluded by a pattern that would also
+         * excuse the next real money field somebody forgets. */
+        const ids = missing.map((t) => (/id="([^"]+)"/.exec(t) || [])[1]).sort();
+        expect(ids).toEqual(['_pw_rate', '_px_rate']);
     });
 
     it('the numpad filter is delegated too, so it cannot stack listeners', () => {

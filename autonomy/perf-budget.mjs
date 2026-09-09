@@ -188,7 +188,13 @@ export const BUDGETS = {
      * numbers below. The ceiling still measures the source, deliberately —
      * source is what grows, and a budget that fell every time somebody wrote a
      * comment explaining a bug would be an incentive to stop explaining bugs. */
-    htmlBytes: 1_986_000,        // measured 1,966,015 — deployed, after the strip: ~1,486 KB
+    /* Raised again for the Liquidity & Credit Hub the owner asked to be taken
+     * seriously. A pawn ticket turned out to need part payments, renewals that
+     * change the rate and the term, a month-by-month history and an undo on
+     * every row; the debtor ledger had no edit and no undo at all. Most of the
+     * growth is the two screens and the sentences on them that say what a
+     * choice will cost before it is made. */
+    htmlBytes: 2_031_000,        // measured 2,011,142 — deployed, after the strip: ~1,520 KB
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -358,7 +364,10 @@ export const BUDGETS = {
      * the strip, these 69 modules are about 1,147 KB rather than the 1,775 KB
      * this ceiling counts; see the note on htmlBytes for why the ceiling still
      * measures the source. */
-    totalJsBytes: 1_793_000,     // measured 1,775,346 across 69 modules
+    /* And for wealthflow-pawn.js, which now owns everything a pawn ticket
+     * costs. wealthflow-liquidity.js imports and re-exports it rather than
+     * keeping a second copy of the arithmetic. */
+    totalJsBytes: 1_835_000,     // measured 1,816,204 across 70 modules
     largestModuleBytes: 212_000, // measured 210,068 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -431,7 +440,12 @@ export const BUDGETS = {
      * wealthflow-money-input.js owns how an amount field behaves while it is
      * being typed into; wealthflow-password-shapes.js owns how a date of birth
      * can be written (the vault offers the list, the ID vault derives from it). */
-    moduleCount: 69,   // measured 69
+    /* 69 -> 70 for wealthflow-pawn.js. A file rather than more of
+     * wealthflow-liquidity.js because a pawn ticket has arithmetic of its own —
+     * month-by-month accrual on a balance that changes, a term schedule with
+     * more than one rate, payments allocated interest-first — and it is
+     * exercised by its own test without a browser. */
+    moduleCount: 70,   // measured 70
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -490,7 +504,7 @@ export const BUDGETS = {
      * type="module", so they are deferred and none of them blocks first paint —
      * renderBlockingScripts below is unchanged at 2, which is the number that
      * actually decides how fast the page appears. */
-    scriptTags: 68,              // measured 68
+    scriptTags: 69,              // measured 69 — +1, deferred, not render-blocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

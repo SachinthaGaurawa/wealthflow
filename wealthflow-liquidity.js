@@ -5,14 +5,26 @@
  * problem: an amount that changes with TIME or with EVENTS, where getting the
  * arithmetic silently wrong costs real money.
  *
- *   PAWNED ASSETS. Gold at a pawn broker: a principal advanced, a monthly
- *   interest rate, and a maturity date after which the item can be sold. What
- *   matters is what it costs to redeem TODAY, and how long is left.
+ *   PAWNED ASSETS. Gold at a pawn broker. THE ARITHMETIC FOR THIS MOVED OUT to
+ *   wealthflow-pawn.js and this file re-exports it, because a pawn ticket
+ *   turned out to be far more than a principal and a rate: part payments that
+ *   change what later months accrue on, renewals that change the rate and the
+ *   term, and interest that is sometimes paid at the counter and sometimes
+ *   rolled into the advance. That is a ledger of its own. Everything here that
+ *   named a pawn function still works and means the same thing — one
+ *   implementation, one home, no second copy to drift.
  *
  *   MONEY LENT TO PEOPLE. Not a bank loan with a schedule — a debtor who repays
  *   what they can when they can, and who sometimes borrows more. The ledger has
  *   to survive partial repayments, a lump-sum settlement, and a top-up that
  *   raises the principal without erasing the history of what came before.
+ *
+ *   AND IT HAS TO SURVIVE BEING WRONG. The owner reported this and they were
+ *   right: there was no way to edit a debtor and no way to undo anything. A
+ *   name typed wrong, a repayment logged twice, a confirmation pressed by
+ *   accident — the only recovery was deleting the person and their whole
+ *   history. Every write below now has an edit and a reverse, because a ledger
+ *   people are afraid to touch is a ledger that stops being true.
  *
  * ── THE RULE THAT SHAPES BOTH ───────────────────────────────────────────────
  *
@@ -28,6 +40,11 @@
  * `asOf` is always passed in.
  * ===========================================================================*/
 
+import PAWN, {
+    PAWN_STATE, MATURITY_WARN_DAYS, parseDay, daysBetween, addMonths, isoOf,
+    monthsElapsed, pawnStatus, pawnTotals, clearFirst, pendingPawn,
+} from './wealthflow-pawn.js';
+
 const DAY_MS = 86400000;
 /* The average calendar month. Used only where a fraction of a month is being
  * measured; whole-month counting below is done on the calendar, not on this. */
@@ -37,59 +54,26 @@ const arr = (v) => (Array.isArray(v) ? v : []);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const s = (v) => String(v == null ? '' : v).trim();
 
-export const PAWN_STATE = { ACTIVE: 'ACTIVE', REDEEMED: 'REDEEMED', OVERDUE: 'OVERDUE' };
 export const DEBT_STATE = { OPEN: 'OPEN', CLOSED: 'CLOSED' };
 export const EVENT = { LENT: 'lent', REPAYMENT: 'repayment', TOPUP: 'topup' };
 
-/* How close to maturity is close enough to warn. A pawn broker can sell the
- * item after maturity, so this is the one date in the app where being late has
- * a consequence that cannot be undone by paying afterwards. */
-export const MATURITY_WARN_DAYS = 14;
+/* How late a repayment has to be before the queue says so. Money lent to a
+ * person has no contractual due date unless the owner recorded one — so this
+ * counts from the date THEY expected it, and stays silent when they did not
+ * give one rather than inventing a deadline. */
+export const LATE_AFTER_DAYS = 3;
 
-/** Parse 'YYYY-MM-DD' or an ISO timestamp to a UTC day. Null if unusable. */
-export function parseDay(v) {
-    if (!v) return null;
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v));
-    if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-    const d = new Date(v);
-    return isFinite(d.getTime())
-        ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
-        : null;
-}
-
-/** Whole days between two days, never negative. */
-export function daysBetween(from, to) {
-    if (!from || !to) return 0;
-    return Math.max(0, Math.round((to.getTime() - from.getTime()) / DAY_MS));
-}
-
-/**
- * How many months of interest a pawn has run.
+/* ── pawned assets: re-exported, not re-implemented ───────────────────────
  *
- * `roundUp` is the DEFAULT and it is not a rounding preference — it is how a
- * pawn broker bills. A ticket eight days into its second month is charged for
- * two months, and a calculator that reported 1.26 would tell the owner they owe
- * less than the counter will ask for. The exact-fraction mode exists for
- * anything that genuinely accrues daily.
- */
-export function monthsElapsed(fromISO, asOf, { roundUp = true } = {}) {
-    const from = parseDay(fromISO);
-    const to = asOf instanceof Date ? parseDay(asOf.toISOString()) : parseDay(asOf);
-    if (!from || !to) return 0;
-    const days = daysBetween(from, to);
-    if (days <= 0) return roundUp ? 0 : 0;
-    const exact = days / DAYS_PER_MONTH;
-    return roundUp ? Math.ceil(exact) : exact;
-}
-
-/**
- * Interest on a principal at a rate PER MONTH.
- *
- * Both modes are offered because both are used: most Sri Lankan pawn brokers
- * charge simple monthly interest, some compound it monthly, and the difference
- * over a year on a large ticket is not small. The record says which; nothing
- * here guesses.
- */
+ * Named here so every existing caller, test and screen keeps working, while
+ * exactly one file decides what a pawn ticket costs. A second implementation
+ * of "how many months has this run" is the defect this repository keeps
+ * producing; there is not going to be one. */
+export {
+    PAWN_STATE, MATURITY_WARN_DAYS, parseDay, daysBetween, monthsElapsed,
+    pawnStatus, pawnTotals, clearFirst,
+};
+/** Kept because callers import it from here; the rule lives in the pawn engine. */
 export function interestOn(principal, ratePctPerMonth, months, mode = 'simple') {
     const p = num(principal);
     const r = num(ratePctPerMonth) / 100;
@@ -97,60 +81,6 @@ export function interestOn(principal, ratePctPerMonth, months, mode = 'simple') 
     if (!(p > 0) || !(r > 0) || !(m > 0)) return 0;
     if (s(mode).toLowerCase() === 'compound') return p * (Math.pow(1 + r, m) - 1);
     return p * r * m;
-}
-
-/**
- * Everything the screen says about one pawned item.
- *
- * A redeemed ticket is finished: no further interest accrues and no warning is
- * raised, whatever the maturity date says. Reporting a redeemed item as overdue
- * is how a ledger loses the owner's trust in one glance.
- */
-export function pawnStatus(pawn, asOf) {
-    const p = pawn || {};
-    const today = asOf instanceof Date ? parseDay(asOf.toISOString()) : parseDay(asOf);
-    const principal = num(p.principal);
-    const redeemed = !!p.redeemedAt || s(p.state).toUpperCase() === PAWN_STATE.REDEEMED;
-    const maturity = parseDay(p.maturity);
-    const until = redeemed ? (parseDay(p.redeemedAt) || today) : today;
-
-    const months = monthsElapsed(p.pawnDate, until, { roundUp: p.accrual !== 'daily' });
-    const interest = interestOn(principal, p.rate, months, p.interestMode);
-    const daysToMaturity = (maturity && today) ? Math.round((maturity.getTime() - today.getTime()) / DAY_MS) : null;
-
-    let state = PAWN_STATE.ACTIVE;
-    if (redeemed) state = PAWN_STATE.REDEEMED;
-    else if (daysToMaturity !== null && daysToMaturity < 0) state = PAWN_STATE.OVERDUE;
-
-    return {
-        state,
-        months,
-        principal,
-        interest,
-        payable: principal + interest,
-        daysToMaturity,
-        /* Warned about only while something can still be done about it. */
-        warn: state === PAWN_STATE.ACTIVE && daysToMaturity !== null && daysToMaturity <= MATURITY_WARN_DAYS,
-    };
-}
-
-/** Totals across a set of pawned items, for the header of the ledger. */
-export function pawnTotals(pawns, asOf) {
-    let principal = 0;
-    let interest = 0;
-    let active = 0;
-    let overdue = 0;
-    let warn = 0;
-    for (const p of arr(pawns)) {
-        const st = pawnStatus(p, asOf);
-        if (st.state === PAWN_STATE.REDEEMED) continue;
-        principal += st.principal;
-        interest += st.interest;
-        active += 1;
-        if (st.state === PAWN_STATE.OVERDUE) overdue += 1;
-        if (st.warn) warn += 1;
-    }
-    return { principal, interest, payable: principal + interest, active, overdue, warn };
 }
 
 /* ── money lent to people ─────────────────────────────────────────────────── */
@@ -269,7 +199,46 @@ export function pendingLiquidity(appData, asOf) {
                 late: false,
             });
         }
+        /* ── AND THE REPAYMENT THAT WAS PROMISED AND HAS NOT COME ──────────
+         *
+         * This queue used to hold only events somebody had already logged, so
+         * a debtor who said "next Friday" and then went quiet produced NOTHING
+         * on any screen — the one case where a person actually needs reminding
+         * is the one case with no row in it. A debtor with an expected-by date
+         * that has passed and money still outstanding is now a row of its own.
+         *
+         * It is NOT a payment: confirming it would invent a repayment nobody
+         * received. It is a prompt to go and ask, and the button on it says
+         * so. Silent when no date was given, because a deadline the owner
+         * never set is not one they can be late on. */
+        const dueISO = s(d.dueISO);
+        if (dueISO && su.outstanding > 0 && su.state === DEBT_STATE.OPEN) {
+            const due = parseDay(dueISO);
+            const today = asOf instanceof Date ? parseDay(asOf.toISOString()) : parseDay(asOf);
+            const late = (due && today) ? daysBetween(due, today) : 0;
+            if (due && today && today >= due) {
+                rows.push({
+                    key: `debtor-due:${d.id}`,
+                    kind: 'inflow',
+                    source: 'debtor-due',
+                    sourceId: d.id,
+                    eventId: '',
+                    name: s(d.name) || 'Debtor',
+                    company: 'Repayment expected',
+                    amount: su.outstanding,
+                    monthKey: dueISO.slice(0, 7),
+                    dueISO,
+                    state: late > LATE_AFTER_DAYS ? 'DELAYED' : 'PENDING',
+                    daysLate: late,
+                    late: late > LATE_AFTER_DAYS,
+                });
+            }
+        }
     }
+    /* The pawn ledger's unconfirmed payments belong in the same queue: money
+     * handed over at a counter and not yet verified is the same kind of claim
+     * as a repayment logged for a debtor. One card, both ledgers. */
+    for (const row of pendingPawn(arr(A.pawns), asOf)) rows.push(row);
     rows.sort((a, b) => (a.dueISO < b.dueISO ? -1 : a.dueISO > b.dueISO ? 1 : 0));
     return rows;
 }
@@ -333,12 +302,117 @@ export function settleInFull(debtor, { date, id, now = 0, confirmed = false } = 
     return { ok: true, debtor: { ...r.debtor, ...(confirmed ? { closedAt: num(now) } : {}) }, event: r.event };
 }
 
+/* ── the edits and the undos, which did not exist ─────────────────────────
+ *
+ * Reported directly by the owner: "Debtors feature එකේ undo නෑ. Edit නෑ."
+ * They were right, and it was not a small gap. A name typed wrong, a repayment
+ * entered twice, a confirmation pressed on the wrong row — the only recovery
+ * was deleting the person and losing every event they ever had.
+ *
+ * All of these are pure and return a NEW record, like every other write here,
+ * so the caller stores and a test can drive them without a browser. */
+
+/** Fields on the person, not on the money. Anything absent is left alone. */
+export function updateDebtor(debtor, fields = {}) {
+    const d = debtor || {};
+    const next = { ...d };
+    if (fields.name !== undefined) next.name = s(fields.name).slice(0, 120);
+    if (fields.note !== undefined) next.note = s(fields.note).slice(0, 200);
+    if (fields.phone !== undefined) next.phone = s(fields.phone).slice(0, 40);
+    /* When they said they would pay. Optional, and the queue stays silent
+     * without it rather than inventing a deadline. */
+    if (fields.dueISO !== undefined) next.dueISO = s(fields.dueISO).slice(0, 10);
+    if (!s(next.name)) return { ok: false, reason: 'no-name', debtor: d };
+    return { ok: true, debtor: next };
+}
+
+/** Change one event: a wrong amount, a wrong date, a wrong kind, a note. */
+export function updateEvent(debtor, eventId, fields = {}) {
+    const d = debtor || {};
+    const id = s(eventId);
+    let hit = false;
+    const events = arr(d.events).map((e) => {
+        if (!e || s(e.id) !== id) return e;
+        const next = { ...e };
+        if (fields.amount !== undefined) {
+            const amt = num(fields.amount);
+            /* A zero-amount event is not an edit, it is a deletion wearing a
+             * disguise — and it would sit in the ledger looking like a real
+             * row. Refuse it and let removeEvent do the deleting. */
+            if (!(amt > 0)) return e;
+            next.amount = amt;
+        }
+        if (fields.date !== undefined) next.date = s(fields.date);
+        if (fields.note !== undefined) next.note = s(fields.note).slice(0, 200);
+        if (fields.kind !== undefined) {
+            const k = s(fields.kind).toLowerCase();
+            if ([EVENT.LENT, EVENT.REPAYMENT, EVENT.TOPUP].includes(k)) next.kind = k;
+        }
+        hit = true;
+        return next;
+    });
+    return { ok: hit, debtor: hit ? { ...d, events } : d };
+}
+
+/** Take one event off the ledger. The undo for logging something by mistake. */
+export function removeEvent(debtor, eventId) {
+    const d = debtor || {};
+    const id = s(eventId);
+    const events = arr(d.events).filter((e) => e && s(e.id) !== id);
+    const hit = events.length !== arr(d.events).length;
+    if (!hit) return { ok: false, reason: 'no-such-event', debtor: d };
+    const next = { ...d, events };
+    /* Removing the final payment re-opens a debtor that settling had closed.
+     * Leaving them CLOSED with a balance again is a lie the screen would keep
+     * telling until somebody noticed the number. */
+    const su = debtorSummary(next, null);
+    if (su.outstanding > 0 && next.closedAt) delete next.closedAt;
+    if (su.outstanding > 0 && s(next.state).toUpperCase() === DEBT_STATE.CLOSED) next.state = DEBT_STATE.OPEN;
+    return { ok: true, debtor: next };
+}
+
+/** Undo a confirmation. Pressing confirm on the wrong row was permanent. */
+export function unconfirmEvent(debtor, eventId) {
+    const d = debtor || {};
+    const id = s(eventId);
+    let hit = false;
+    const events = arr(d.events).map((e) => {
+        if (!e || s(e.id) !== id) return e;
+        hit = true;
+        const next = { ...e, confirmed: false };
+        delete next.confirmedAt;
+        return next;
+    });
+    if (!hit) return { ok: false, reason: 'no-such-event', debtor: d };
+    const next = { ...d, events };
+    /* Un-confirming the settling payment re-opens them, for the same reason. */
+    if (debtorSummary(next, null).outstanding > 0) {
+        if (next.closedAt) delete next.closedAt;
+        if (s(next.state).toUpperCase() === DEBT_STATE.CLOSED) next.state = DEBT_STATE.OPEN;
+    }
+    return { ok: true, debtor: next };
+}
+
+/** Undo a settlement without touching the history that led to it. */
+export function reopenDebtor(debtor) {
+    const d = debtor || {};
+    if (!d.closedAt && s(d.state).toUpperCase() !== DEBT_STATE.CLOSED) {
+        return { ok: false, reason: 'already-open', debtor: d };
+    }
+    const next = { ...d, state: DEBT_STATE.OPEN };
+    delete next.closedAt;
+    return { ok: true, debtor: next };
+}
+
 const API = {
-    PAWN_STATE, DEBT_STATE, EVENT, MATURITY_WARN_DAYS,
+    PAWN_STATE, DEBT_STATE, EVENT, MATURITY_WARN_DAYS, LATE_AFTER_DAYS,
     parseDay, daysBetween, monthsElapsed, interestOn,
-    pawnStatus, pawnTotals,
+    pawnStatus, pawnTotals, clearFirst,
     debtorSummary, debtorTotals, pendingLiquidity,
     addEvent, confirmEvent, settleInFull,
+    updateDebtor, updateEvent, removeEvent, unconfirmEvent, reopenDebtor,
+    /* The pawn engine, reachable from the one global the page already has. */
+    pawn: PAWN,
 };
 
 if (typeof window !== 'undefined') window.WFLiquidity = API;
