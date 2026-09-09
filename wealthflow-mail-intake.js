@@ -54,6 +54,8 @@
  * ===========================================================================*/
 
 /** Why a statement or a row did not make it through. */
+import { textVerdict, VERDICT as ID_VERDICT } from './wealthflow-statement-identity.js';
+
 export const QUARANTINE = {
     CHUNKS_MISSING: 'chunks-missing',
     PASSWORD_FAILED: 'password-failed',
@@ -66,6 +68,11 @@ export const QUARANTINE = {
      * statement from an unknown bank was reported the same way as a month with
      * no spending on it — and then dropped. */
     LAYOUT_UNKNOWN: 'layout-unknown',
+    /* The document opened, its text was read, and it is not a bank statement.
+     * This is the SECOND and authoritative layer of the check planMessage makes
+     * on the filename: a bank that titles its mail badly still gets in, and an
+     * invoice from an approved supplier does not. */
+    NOT_A_STATEMENT: 'not-a-statement',
     NO_TRANSACTIONS: 'no-transactions',
     BALANCE_MISMATCH: 'balance-mismatch',
     DIRECTION_UNRESOLVED: 'direction-unresolved',
@@ -80,6 +87,7 @@ export const QUARANTINE_TEXT = {
     [QUARANTINE.NO_VAULT_KEYS]: 'it is password-protected and your vault is empty',
     [QUARANTINE.NO_TEXT_LAYER]: 'the pages are images, so there is no text to read',
     [QUARANTINE.UNPARSEABLE]: 'the layout did not yield any transaction rows',
+    [QUARANTINE.NOT_A_STATEMENT]: 'it is not a bank statement — it reads as something else',
     [QUARANTINE.LAYOUT_UNKNOWN]: 'this bank lays its statement out in a way WealthFlow has not seen before — confirm the rows once and it will read the next one on its own',
     [QUARANTINE.NO_TRANSACTIONS]: 'the statement is readable and has no transactions on it',
     [QUARANTINE.BALANCE_MISMATCH]: 'the rows were read, but the opening and closing balances do not add up',
@@ -310,6 +318,30 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
     let text = '';
     try { text = String(await extractText(opened.doc) || ''); } catch (_) { text = ''; }
     if (text.trim().length < 40) return fail(QUARANTINE.NO_TEXT_LAYER, { chars: text.trim().length });
+
+    /* ── IS IT A BANK STATEMENT AT ALL? ──────────────────────────────────
+     *
+     * The filename veto in planMessage runs before anything is downloaded and
+     * can only judge what a document CALLS itself. This layer judges what it
+     * CONTAINS, and it is the authoritative one: a statement period, a balance
+     * that moves, an account identifier, a table of dated movements. An invoice
+     * has a total and line items and no running balance.
+     *
+     * UNSURE LETS IT THROUGH. Losing a real statement is far worse than showing
+     * one invoice, so only proof of being something else refuses — and the
+     * refusal is named and counted rather than silent, which is the owner's own
+     * standing rule about anything this pipeline cannot read.
+     *
+     * See wealthflow-statement-identity.js for why each fact is reported by
+     * name instead of collapsed into a score with a threshold. */
+    const identity = textVerdict(text);
+    if (identity.verdict === ID_VERDICT.NOT_STATEMENT) {
+        return fail(QUARANTINE.NOT_A_STATEMENT, {
+            why: identity.reason,
+            against: identity.against,
+            confidence: identity.confidence,
+        });
+    }
 
     let parsed;
     try { parsed = await parse(text); } catch (e) {

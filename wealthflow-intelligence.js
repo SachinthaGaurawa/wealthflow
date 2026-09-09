@@ -133,16 +133,23 @@
             push(nic.slice(0, 6));             // birth-encoded prefix of old NIC
         }
         if (v.dob) {
-            var m = String(v.dob).match(/(\d{4})\D?(\d{2})\D?(\d{2})/);
-            if (m) {
-                var Y = m[1], M = m[2], D = m[3], yy = Y.slice(2);
-                push(D + M + Y);     // DDMMYYYY
-                push(Y + M + D);     // YYYYMMDD
-                push(D + M + yy);    // DDMMYY
-                push(yy + M + D);    // YYMMDD
-                push(M + D + Y);     // MMDDYYYY
-                push(D + M);         // DDMM
-                push(Y + D + M);     // YYYYDDMM
+            /* ── THE OWNER'S QUESTION ────────────────────────────────────────
+             *
+             *   "Why didn't you anticipate that a user's password might be a
+             *    Date of Birth with slashes (DD/MM/YYYY)?"
+             *
+             * Because this block used to build the seven forms by hand and
+             * every one of them was bare digits. A bank whose letter says "your
+             * password is your date of birth, e.g. 07/07/1993" was never going
+             * to be opened, and the failure looked like a broken parser rather
+             * than a missing candidate.
+             *
+             * The eleven written forms — separators included — now come from
+             * wealthflow-password-shapes.js, which is the SAME list the vault's
+             * format dropdown offers. Two hand-maintained copies of "how a date
+             * can be written" is how one of them ends up missing the slashes. */
+            if (window.WFPwShapes) {
+                window.WFPwShapes.expand({ password: v.dob, kind: 'birthday' }).forEach(push);
             }
         }
         (v.last4 || []).forEach(function (c) { push(String(c).trim()); });

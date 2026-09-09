@@ -298,6 +298,37 @@
          first of a month files the transaction into the previous month's tab.
          Loaded before everything that asks. window.WFWhen -->
     <script type="module" src="wealthflow-when.js"></script>
+    <!-- One write, every screen — and "received" made to mean something.
+         Two faults produced one symptom the owner reported: money marked
+         received on its own tab still read as unreceived on the dashboard.
+         Each handler had to remember renderDash() itself and several did not,
+         so deleting income repainted the dashboard while receiving it did not;
+         and `received` was a label no total ever consulted, so income the owner
+         had NOT received was inflating Year Income, Net Savings and the Savings
+         Rate. The repaint now belongs to DB.set/DB.delKey rather than to
+         whoever remembers, coalesced to one paint per frame and bounded so a
+         renderer that writes cannot loop.
+         LOADED HERE, WITH wealthflow-when.js, because getMonthlyData() asks it
+         what arrived and the dashboard is the first thing drawn.
+         ESM, so type="module" is load-bearing; window.WFReactive. -->
+    <script type="module" src="wealthflow-reactive.js"></script>
+    <!-- 2000 becomes 2,000 while it is still being typed — in every amount
+         field, including the ones drawn after the page loaded. The rule was
+         always right; it was attached by a one-off DOM walk, so every modal and
+         every table row created afterwards carried the class and behaved like a
+         plain text box. The listeners now live on the document.
+         ESM; window.WFMoneyInput. -->
+    <script type="module" src="wealthflow-money-input.js"></script>
+    <!-- What a statement password is MADE OF. The owner asked why a date of
+         birth with slashes was never tried: because the derivation only ever
+         produced bare digits, and because the vault only ever asked for an
+         opaque string, so 07/07/1993 and 07071993 were two different secrets.
+         The vault now records the KIND (NIC, birthday, account number, mobile,
+         or a password the bank chose) and this module turns that into every
+         plausible spelling, most likely first. Loaded before the vault and
+         before wealthflow-intelligence.js, which both read it.
+         ESM; window.WFPwShapes. -->
+    <script type="module" src="wealthflow-password-shapes.js"></script>
     <script src="wealthflow-scanner.js" defer></script>
     <script src="wealthflow-ai-v4.js" defer></script>
     <script src="wealthflow-ai-v6.js" defer></script>
@@ -485,6 +516,15 @@
          money lent to people (partial repayments, further advances, settlement).
          Pure arithmetic, no DOM: the page draws what it says, and no event moves
          a balance until it is confirmed. ESM; window.WFLiquidity. -->
+    <!-- A pawn ticket, the way a pawn ticket actually behaves: part payments
+         that change what later months are charged on, renewals that change the
+         rate and the term, and interest that is sometimes paid at the counter
+         and sometimes rolled into the advance. The ledger used to be able to
+         redeem a whole ticket or delete it, and nothing else.
+         Loaded BEFORE wealthflow-liquidity.js, which imports and re-exports it
+         so there is exactly one answer to what a ticket costs.
+         ESM; window.WFPawn. -->
+    <script type="module" src="wealthflow-pawn.js"></script>
     <script type="module" src="wealthflow-liquidity.js"></script>
     <!-- Dynamic amortization — how many payments are actually left after an
          over- or underpayment, which the fixed l.duration could never answer.
@@ -8393,6 +8433,9 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 if (window._isDecoyMode === true) {
                     appData[k] = v; // in-memory only; lost on reload
                     console.log('[DECOY] Write blocked from disk/cloud:', k);
+                    /* The screens still redraw. Decoy mode shows a false set of
+                     * books convincingly or it shows nothing at all. */
+                    try { if (window._wfTouch) window._wfTouch(k); } catch (_) {}
                     return;
                 }
                 // v7.52.0 — stamp per-record _ut and tombstone deletions BEFORE we
@@ -8427,6 +8470,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setDirty(true);
                     debouncedSync();
                 }
+                /* EVERY SCREEN THAT READS THIS KEY, ONCE, NEXT FRAME.
+                 *
+                 * It used to be each handler's job to call renderDash() after
+                 * writing, and deleteIncomeRecv() did while markIncRecvReceived()
+                 * three lines above it did not — so deleting income updated the
+                 * dashboard and receiving it did not. Doing it here means a
+                 * handler cannot forget. Coalesced and bounded in
+                 * wealthflow-reactive.js; see _wfTouch below. */
+                try { if (window._wfTouch) window._wfTouch(k); } catch (_) {}
             },
             // Delete ONE key from a synced MAP field — locally, in localStorage, AND
             // on the server. Use this instead of `delete obj[key]; DB.set(field,obj)`
@@ -8456,6 +8508,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     setDirty(true);
                     debouncedSync();
                 }
+                try { if (window._wfTouch) window._wfTouch(field); } catch (_) {}
             }
         };
 
@@ -9391,59 +9444,64 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
             });
         }
 
-        // Reusable money-input behavior so dynamically-created dialog inputs (loan/income payment prompts)
-        // get the same caret-friendly typing experience as the static form inputs.
-        // - input handler: lets the user type freely, only adds thousands separators and clamps to 2dp.
-        //                  cursor position is preserved by counting digits-before-caret.
-        // - blur handler:  finalizes formatting to the canonical "1,234.00" form.
-        // - focus handler: shows the raw number for easy editing.
+        /* ── EVERY AMOUNT FIELD, INCLUDING THE ONES THAT DO NOT EXIST YET ────
+         *
+         * The owner: "typing 2000 must instantly become 2,000 in EVERY amount
+         * input." The rule itself was already correct; WHERE it applied was
+         * not. It was attached element by element by a DOM walk, so every field
+         * drawn after that walk — every modal, every table row, the
+         * card-reconcile amount cells, the past-months panel — carried the
+         * class, looked identical and behaved like a plain text box.
+         *
+         * The listeners now live on the document and match by class at event
+         * time, so a field created a second from now is already bound, and the
+         * next money field anybody adds is bound without them knowing this code
+         * exists. The caret arithmetic and the format rule are in
+         * wealthflow-money-input.js, where a test types into them.
+         *
+         * _attachMoneyHandlers keeps the name three callers already use: it no
+         * longer attaches anything, it marks the field, which is all that is
+         * left to do. */
         function _attachMoneyHandlers(inp, opts) {
-            if (!inp || inp._wfMoneyAttached) return;
-            inp._wfMoneyAttached = true;
-            opts = (opts && typeof opts === 'object') ? opts : {};
-            const _wantCents = !!(opts.cents || (inp.classList && inp.classList.contains('money-cents')));
-            inp.addEventListener('input', function () {
-                const oldVal = this.value;
-                const oldCaret = this.selectionStart || 0;
-                // Count "tracked" chars (digits + dots) to the left of the caret in the OLD value.
-                // Including the dot in the count means typing "." advances the caret past it as
-                // expected, instead of being snapped back to the digit-count position.
-                // Commas are auto-inserted formatting and intentionally NOT tracked.
-                const trackedBefore = (oldVal.slice(0, oldCaret).match(/[\d.]/g) || []).length;
-                // Strip everything that isn't a digit or a dot, collapse multiple dots to the first one
-                const cleaned = oldVal.replace(/[^0-9.]/g, '');
-                const firstDot = cleaned.indexOf('.');
-                let normalized = firstDot === -1
-                    ? cleaned
-                    : cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
-                const parts = normalized.split('.');
-                const int = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-                const dec = parts.length > 1 ? '.' + parts[1].slice(0, 2) : '';
-                const newVal = int + dec;
-                // Restore caret to the same digit/dot position (preserves natural typing in the middle)
-                let newCaret = newVal.length;
-                let counted = 0;
-                for (let i = 0; i < newVal.length; i++) {
-                    if (counted >= trackedBefore) { newCaret = i; break; }
-                    if (/[\d.]/.test(newVal[i])) counted++;
-                }
-                this.value = newVal;
-                try { this.setSelectionRange(newCaret, newCaret); } catch (e) { /* not all input types support selection */ }
-            });
-            inp.addEventListener('blur', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = _wantCents ? raw.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : fmtN(raw); });
-            inp.addEventListener('focus', function () { const raw = parseMoney(this.value); if (raw > 0) this.value = String(raw); });
+            if (!inp || !inp.classList) return;
+            inp.classList.add('money-input');
+            if (opts && opts.cents) inp.classList.add('money-cents');
+            _installMoneyInputs();
         }
-
-        // v7.47.0 — expose so modal/dynamically-created money fields (e.g. the Card
-        // Registry credit limit) get the SAME live "350,000" → "350,000.00" formatting.
         try { window._attachMoneyHandlers = _attachMoneyHandlers; } catch (_) {}
-        function initMoneyInputs() {
-            document.querySelectorAll('.money-input').forEach(inp => _attachMoneyHandlers(inp));
 
-            document.querySelectorAll('.auth-numpad-only').forEach(inp => {
-                inp.addEventListener('input', function () { this.value = this.value.replace(/[^0-9]/g, ''); });
+        function _installMoneyInputs() {
+            if (!window.WFMoneyInput) return false;
+            /* install() is idempotent, so a defensive call from a render costs
+             * one property read. */
+            window.WFMoneyInput.install({
+                doc: document,
+                /* How many decimals a field settles to is a DISPLAY PREFERENCE
+                 * — "round amounts" in Settings — and this module has no
+                 * business knowing about settings. It asks. */
+                decimalsFor: () => (_wfDisplayPrefs().round ? 0 : 2),
             });
+            return true;
         }
+
+        /* Digits only, delegated for the same reason. The old version attached a
+         * fresh listener to every numpad field on every call, so opening the
+         * lock screen five times left five listeners on each of them. */
+        document.addEventListener('input', function (e) {
+            const el = e.target;
+            if (!el || !el.classList || !el.classList.contains('auth-numpad-only')) return;
+            const only = String(el.value || '').replace(/[^0-9]/g, '');
+            if (only !== el.value) el.value = only;
+        }, true);
+
+        function initMoneyInputs() { _installMoneyInputs(); }
+        /* Installed as early as it can be, and again once the deferred modules
+         * have actually run — this inline script executes during parse, when a
+         * type="module" script has not. install() is idempotent, so the
+         * repetition is what makes it certain rather than what makes it slow. */
+        _installMoneyInputs();
+        document.addEventListener('DOMContentLoaded', _installMoneyInputs);
+        window.addEventListener('load', _installMoneyInputs);
 
         // ==================== AUTO LOCK ====================
         function resetAutoLockTimer() { inactivityTimer = 0; }
@@ -11165,8 +11223,11 @@ Be conversational and precise.`;
             try { if (window.WFCrib && typeof window.WFCrib.contextForAdvisor === 'function') cribSummary = window.WFCrib.contextForAdvisor(); } catch (_) {}
             let receivedThisMonth = 0, subsCount = 0, subsMonthly = 0, ccPending = 0;
             try {
-                const incRecv = DB.get('incomeRecv') || [];
-                receivedThisMonth = incRecv.filter(x => x.month === curMonthStr && x.received).reduce((s, x) => s + (x.amount || 0), 0);
+                /* The SAME rule the dashboard totals with. This line used to
+                 * read `x.received` as truthy, which quietly excluded every row
+                 * written before that field existed — so the advisor was told a
+                 * smaller figure than the screen showed and reasoned from it. */
+                receivedThisMonth = window.WFReactive.incomeIn(DB.get('incomeRecv') || [], curMonthStr).received;
             } catch (_) {}
             try {
                 const subs = DB.get('subscriptions') || [];
@@ -16682,6 +16743,51 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         window.refreshAllSurfaces = refreshAllSurfaces;
 
+        /* ═══════════════════════════════════════════════════════════════════
+         * STRICT REACTIVE BINDING — the write repaints, not the handler
+         * ═══════════════════════════════════════════════════════════════════
+         *
+         * DB.set() and DB.delKey() call _wfTouch(). One paint per frame however
+         * many writes there were, so a two-hundred-row import still repaints
+         * once. The scheduler itself — coalescing, the re-entrancy bound, the
+         * ignore list — is wealthflow-reactive.js, where a test drives it
+         * without a browser.
+         *
+         * BUILT LAZILY. Module scripts run after this inline one, so
+         * window.WFReactive does not exist yet at this line; asking for it here
+         * would silently produce no scheduler at all and leave every screen
+         * exactly as stale as before. */
+        let _wfRepainter = null;
+        function _wfRepaintScheduler() {
+            if (_wfRepainter) return _wfRepainter;
+            if (!window.WFReactive || !window.WFReactive.createRepaintScheduler) return null;
+            _wfRepainter = window.WFReactive.createRepaintScheduler({
+                schedule: (fn) => {
+                    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => fn());
+                    else setTimeout(fn, 0);
+                },
+                paint: () => refreshAllSurfaces(),
+                onLoop: (keys) => {
+                    console.warn('[REACTIVE] a repaint keeps writing; stopped after two passes:', keys.join(', '));
+                },
+                onError: (err, keys) => {
+                    console.error('[REACTIVE] a repaint failed (your data is safe):', keys.join(', '), err && err.message);
+                },
+            });
+            return _wfRepainter;
+        }
+        function _wfTouch(key) {
+            /* Nothing is on screen before the app is. Repainting through the
+             * lock screen would run every renderer over data the owner has not
+             * unlocked, and boot draws everything once anyway. */
+            const app = document.getElementById('app');
+            if (!app || !app.classList.contains('show')) return false;
+            const sched = _wfRepaintScheduler();
+            return sched ? sched.touch(key) : false;
+        }
+        window._wfTouch = _wfTouch;
+        window._wfRepaintNow = () => { const s = _wfRepaintScheduler(); if (s) s.flush(); };
+
         // ==================== LUXURY HAPTIC FEEDBACK ENGINE v3 ====================
         // Android: Real vibration via navigator.vibrate (when truly supported)
         // iOS:     Real Taptic Engine via hidden <input switch> click trick
@@ -18224,7 +18330,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         <div class="pm-month">${_wfEsc(m.label)}</div>
                         ${tag}
                         <div style="flex:1;"></div>
-                        <input type="text" class="pm-amount" data-ym="${m.ym}"
+                        <input type="text" class="pm-amount money-input" data-ym="${m.ym}"
                             value="${m.amount.toFixed(2)}"
                             ${m.confirmed ? 'disabled' : ''}
                             inputmode="decimal" placeholder="Amount">
@@ -22491,22 +22597,58 @@ table.amort tbody tr { page-break-inside: avoid; }
             const debtors = DB.get('debtors') || [];
 
             if (_liqTab === 'pawn') {
+                const P = window.WFPawn;
                 const t = L.pawnTotals(pawns, now);
                 stats.innerHTML = `
-                    <div class="stat-card sc-gold"><div class="stat-label">Advanced</div><div class="stat-val">${fmtS(t.principal)}</div></div>
-                    <div class="stat-card sc-red"><div class="stat-label">Interest so far</div><div class="stat-val">${fmtS(t.interest)}</div></div>
-                    <div class="stat-card sc-blue"><div class="stat-label">To redeem all</div><div class="stat-val">${fmtS(t.payable)}</div></div>
-                    <div class="stat-card ${t.overdue ? 'sc-red' : 'sc-green'}"><div class="stat-label">Active tickets</div><div class="stat-val">${t.active}${t.overdue ? ' · ' + t.overdue + ' overdue' : ''}</div></div>`;
+                    <div class="stat-card sc-gold"><div class="stat-label">To redeem everything</div><div class="stat-val">${fmtS(t.payable)}</div><div class="stat-meta">${fmtS(t.principal)} still advanced</div></div>
+                    <div class="stat-card sc-red"><div class="stat-label">Costing you</div><div class="stat-val">${fmtS(t.perMonth)}<span style="font-size:11px;font-weight:600;"> /month</span></div><div class="stat-meta">${fmtS(t.perDay)} every day</div></div>
+                    <div class="stat-card sc-blue"><div class="stat-label">Interest owed</div><div class="stat-val">${fmtS(t.interest)}</div>${t.pending ? `<div class="stat-meta">${t.pending} payment${t.pending === 1 ? '' : 's'} unconfirmed</div>` : ''}</div>
+                    <div class="stat-card ${t.overdue ? 'sc-red' : 'sc-green'}"><div class="stat-label">Active tickets</div><div class="stat-val">${t.active}${t.overdue ? ' · ' + t.overdue + ' overdue' : ''}</div>${t.underwater ? `<div class="stat-meta">${t.underwater} cost more than they are worth</div>` : ''}</div>`;
 
                 const rows = pawns.map((p, i) => {
                     const st = L.pawnStatus(p, now);
-                    const chip = st.state === L.PAWN_STATE.REDEEMED
+                    const redeemed = st.state === L.PAWN_STATE.REDEEMED;
+                    const chip = redeemed
                         ? _liqChip('REDEEMED', 'var(--green)', 'rgba(34,197,94,0.12)')
                         : st.state === L.PAWN_STATE.OVERDUE
                             ? _liqChip('OVERDUE', 'var(--red)', 'rgba(239,68,68,0.12)')
                             : st.warn
                                 ? _liqChip(st.daysToMaturity + ' DAYS LEFT', 'var(--amber,#f59e0b)', 'rgba(245,158,11,0.12)')
                                 : _liqChip('ACTIVE', 'var(--text3)', 'rgba(127,127,127,0.12)');
+
+                    /* The payment history, newest first. Every row can be
+                     * confirmed, un-confirmed, edited or removed — the undo
+                     * that did not exist anywhere on this screen. */
+                    const tl = st.payments.slice(-6).reverse().map((e) => {
+                        const rolled = e.kind === 'capitalise';
+                        const what = rolled ? 'rolled into the advance'
+                            : e.kind === 'interest' ? 'against interest'
+                                : e.kind === 'principal' ? 'off the advance'
+                                    : e.kind === 'redeem' ? 'redeemed' : 'part payment';
+                        return `<div class="liq-tl-item is-out">
+                            <b style="color:${rolled ? 'var(--text3)' : 'var(--red)'};">${rolled ? '' : '-'}${fmtS(e.amount)}</b>
+                            · ${_wfEsc(e.date || '')} · ${_wfEsc(what)}
+                            ${e.confirmed ? '' : ' · <span style="color:var(--amber,#f59e0b);font-weight:700;">waiting for your confirmation</span>'}
+                            ${e.note ? '<div style="color:var(--text3);font-size:11.5px;">' + _wfEsc(e.note) + '</div>' : ''}
+                            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
+                                ${e.kind === 'redeem' ? '' : e.confirmed
+                                    ? `<button class="btn btn-ghost btn-sm" data-pw-unconf="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Undo confirm</button>`
+                                    : `<button class="btn btn-primary btn-sm" data-pw-conf="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Confirm</button>`}
+                                ${e.kind === 'redeem' ? '' : `<button class="btn btn-ghost btn-sm" data-pw-pedit="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Edit</button>`}
+                                <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-pw-prm="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Remove</button>
+                            </div>
+                        </div>`;
+                    }).join('');
+
+                    /* Whether the thing in the safe is still worth getting
+                     * back. Silent unless a value was actually recorded — a
+                     * guessed valuation on gold is worse than none. */
+                    const worth = st.value > 0 ? `
+                        <div class="liq-sub" style="margin-top:2px;color:${st.underwater ? 'var(--red)' : 'var(--text3)'};">
+                            Worth ${fmtS(st.value)} · redeeming costs ${Math.round(st.ltv * 100)}% of that
+                            ${st.underwater ? ' — <b>more than the item is worth</b>' : ' · ' + fmtS(st.headroom) + ' of headroom'}
+                        </div>` : '';
+
                     return `
                     <div class="liq-row">
                         <div class="liq-head">
@@ -22515,19 +22657,28 @@ table.amort tbody tr { page-break-inside: avoid; }
                             <div style="font-weight:800;font-size:14px;color:var(--accent);">${fmtS(st.payable)}</div>
                         </div>
                         <div class="liq-sub" style="margin-top:3px;">
-                            ${p.ticket ? 'Ticket ' + _wfEsc(p.ticket) + ' · ' : ''}${_wfEsc(p.pawnDate || '')}${p.maturity ? ' → ' + _wfEsc(p.maturity) : ''}
-                            · ${fmtS(st.principal)} advanced at ${_wfEsc(String(p.rate || 0))}%/month
-                            ${p.interestMode === 'compound' ? ' compounded' : ''}
+                            ${p.ticket ? 'Ticket ' + _wfEsc(p.ticket) + ' · ' : ''}${p.broker ? _wfEsc(p.broker) + ' · ' : ''}${_wfEsc(p.pawnDate || '')}${st.maturityISO ? ' → ' + _wfEsc(st.maturityISO) : ' → open-ended'}
+                            · ${fmtS(st.principal)} advanced at ${_wfEsc(String(st.rate))}%/month${p.interestMode === 'compound' ? ' compounded' : ''}
+                            ${st.renewals ? ' · <b>renewed ' + st.renewals + 'x</b>' : ''}
                         </div>
                         <div class="liq-sub" style="margin-top:2px;">
-                            ${st.state === L.PAWN_STATE.REDEEMED
-                                ? 'Redeemed ' + _wfEsc(String(p.redeemedAt || '').slice(0, 10)) + ' · interest paid ' + fmtS(st.interest)
-                                : st.months + ' month' + (st.months === 1 ? '' : 's') + ' of interest so far: ' + fmtS(st.interest)}
+                            ${redeemed
+                                ? 'Redeemed ' + _wfEsc(String(p.redeemedAt || '').slice(0, 10)) + ' for ' + fmtS(p.redeemedFor || st.payable)
+                                : `${st.balance < st.principal ? fmtS(st.principal - st.balance) + ' paid off · ' : ''}${fmtS(st.balance)} still advanced + ${fmtS(st.interestDue)} interest after ${st.months} month${st.months === 1 ? '' : 's'}
+                                   · <b style="color:var(--red);">${fmtS(st.perDay)} a day</b> to hold · ${_wfEsc(String(Math.round(st.annualPct)))}% a year`}
                         </div>
+                        ${redeemed ? '' : worth}
+                        ${st.pending ? `<div class="liq-sub" style="margin-top:2px;color:var(--amber,#f59e0b);"><b>${st.pending} payment${st.pending === 1 ? '' : 's'} not counted above.</b> Confirmed, you would owe ${fmtS(st.payableIfConfirmed)}.</div>` : ''}
+                        ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
                         <div class="liq-acts">
-                            ${st.state !== L.PAWN_STATE.REDEEMED
-                                ? `<button class="btn btn-primary btn-sm" data-liq-redeem="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('check') : '')} Redeemed</button>` : ''}
-                            <button class="btn btn-secondary btn-sm" data-liq-pedit="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('edit') : '')} Edit</button>
+                            ${redeemed
+                                ? `<button class="btn btn-secondary btn-sm" data-liq-unredeem="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('undo') : '')} Not redeemed after all</button>`
+                                : `<button class="btn btn-primary btn-sm" data-liq-pay="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('coins') : '')} Pay something</button>
+                                   <button class="btn btn-secondary btn-sm" data-liq-extend="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('calendar') : '')} Extend the term</button>
+                                   <button class="btn btn-secondary btn-sm" data-liq-redeem="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('check') : '')} Redeemed</button>`}
+                            ${st.renewals ? `<button class="btn btn-ghost btn-sm" data-liq-unext="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('undo') : '')} Undo renewal</button>` : ''}
+                            <button class="btn btn-ghost btn-sm" data-liq-phist="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('list') : '')} Month by month</button>
+                            <button class="btn btn-ghost btn-sm" data-liq-pedit="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('edit') : '')} Edit</button>
                             <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-liq-pdel="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('trash') : 'Delete')}</button>
                         </div>
                     </div>`;
@@ -22540,26 +22691,40 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 <div style="font-weight:800;font-size:14.5px;color:var(--text);">Pawned assets ledger</div>
                                 <div style="font-size:11.5px;color:var(--text3);margin-top:1px;">
                                     Interest is charged per month and a part month counts as a whole one — the same way the counter bills it.
+                                    Pay a bit at a time and the months after it are charged on what is left.
                                 </div>
                             </div>
                             <div class="card-hdr-actions">
                                 <button class="btn btn-primary btn-sm" id="_liq_addp">${(window.WFIcon ? WFIcon('plus') : '')} Add ticket</button>
                             </div>
                         </div>
-                        ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nothing pawned. Add a ticket and this tracks what it costs to redeem, and warns you before the maturity date passes.</div>'}
-                    </div>`;
+                        ${rows || '<div style="font-size:12.5px;color:var(--text3);padding:14px 0;">Nothing pawned. Add a ticket and this tracks what it costs to redeem, what each part payment saves, and warns you before the maturity date passes.</div>'}
+                    </div>
+                    <div id="_liq_clear"></div>`;
+
+                _liqClearFirstCard(pawns, now);
 
                 const add = host.querySelector('#_liq_addp');
                 if (add) add.onclick = () => openPawnModal(null);
-                host.querySelectorAll('[data-liq-pedit]').forEach((b) => {
-                    b.onclick = () => openPawnModal(pawns[Number(b.getAttribute('data-liq-pedit'))]);
+                const byIndex = (attr, fn) => host.querySelectorAll('[' + attr + ']').forEach((b) => {
+                    b.onclick = () => fn(pawns[Number(b.getAttribute(attr))]);
                 });
-                host.querySelectorAll('[data-liq-redeem]').forEach((b) => {
-                    b.onclick = () => _redeemPawn(pawns[Number(b.getAttribute('data-liq-redeem'))]);
+                const byPair = (attr, fn) => host.querySelectorAll('[' + attr + ']').forEach((b) => {
+                    const [ix, id] = String(b.getAttribute(attr)).split('|');
+                    b.onclick = () => fn(pawns[Number(ix)], id);
                 });
-                host.querySelectorAll('[data-liq-pdel]').forEach((b) => {
-                    b.onclick = () => _deletePawn(pawns[Number(b.getAttribute('data-liq-pdel'))]);
-                });
+                byIndex('data-liq-pedit', (p) => openPawnModal(p));
+                byIndex('data-liq-redeem', (p) => _redeemPawn(p));
+                byIndex('data-liq-unredeem', (p) => _pawnUndo(p, 'redeem'));
+                byIndex('data-liq-unext', (p) => _pawnUndo(p, 'extension'));
+                byIndex('data-liq-pdel', (p) => _deletePawn(p));
+                byIndex('data-liq-pay', (p) => _pawnPay(p));
+                byIndex('data-liq-extend', (p) => _pawnExtend(p));
+                byIndex('data-liq-phist', (p) => _pawnHistory(p));
+                byPair('data-pw-conf', (p, id) => _pawnPaymentAction(p, id, 'confirm'));
+                byPair('data-pw-unconf', (p, id) => _pawnPaymentAction(p, id, 'unconfirm'));
+                byPair('data-pw-prm', (p, id) => _pawnPaymentAction(p, id, 'remove'));
+                byPair('data-pw-pedit', (p, id) => _pawnPay(p, id));
             } else {
                 const t = L.debtorTotals(debtors, now);
                 stats.innerHTML = `
@@ -22574,6 +22739,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     const chip = open
                         ? _liqChip('OPEN', 'var(--accent)', 'rgba(212,175,55,0.12)')
                         : _liqChip('SETTLED', 'var(--green)', 'rgba(34,197,94,0.12)');
+                    /* EVERY ROW CAN NOW BE TAKEN BACK. Reported directly:
+                     * "Debtors feature එකේ undo නෑ. Edit නෑ." A repayment
+                     * logged twice, or confirmed on the wrong person, used to
+                     * be permanent unless the whole debtor was deleted. */
                     const tl = su.events.slice(-6).reverse().map((e) => {
                         const isIn = e.kind === L.EVENT.REPAYMENT;
                         return `<div class="liq-tl-item ${isIn ? 'is-in' : 'is-out'}">
@@ -22581,8 +22750,25 @@ table.amort tbody tr { page-break-inside: avoid; }
                             · ${_wfEsc(e.date || '')} · ${_wfEsc(e.kind === L.EVENT.TOPUP ? 'further capital' : e.kind)}
                             ${e.confirmed ? '' : ' · <span style="color:var(--amber,#f59e0b);font-weight:700;">waiting for your confirmation</span>'}
                             ${e.note ? '<div style="color:var(--text3);font-size:11.5px;">' + _wfEsc(e.note) + '</div>' : ''}
+                            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
+                                ${e.confirmed
+                                    ? `<button class="btn btn-ghost btn-sm" data-db-unconf="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Undo confirm</button>`
+                                    : `<button class="btn btn-primary btn-sm" data-db-conf="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Confirm</button>`}
+                                <button class="btn btn-ghost btn-sm" data-db-eedit="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Edit</button>
+                                <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-db-erm="${_wfEsc(String(i))}|${_wfEsc(e.id)}">Remove</button>
+                            </div>
                         </div>`;
                     }).join('');
+                    /* When they said they would pay. Only shown when the owner
+                     * gave a date — a deadline nobody set is not one anybody
+                     * can be late on. */
+                    const dueDay = d.dueISO ? L.parseDay(d.dueISO) : null;
+                    const lateBy = (dueDay && open) ? L.daysBetween(dueDay, L.parseDay(now.toISOString())) : 0;
+                    const dueLine = d.dueISO && open ? `
+                        <div class="liq-sub" style="margin-top:2px;color:${lateBy > L.LATE_AFTER_DAYS ? 'var(--red)' : 'var(--text3)'};">
+                            Expected by ${_wfEsc(d.dueISO)}${lateBy > 0 ? ' — <b>' + lateBy + ' day' + (lateBy === 1 ? '' : 's') + ' ago</b>' : ''}
+                            ${d.phone ? ' · <a href="tel:' + _wfEsc(String(d.phone).replace(/[^0-9+]/g, '')) + '" style="color:var(--accent);">' + _wfEsc(d.phone) + '</a>' : ''}
+                        </div>` : (d.phone ? `<div class="liq-sub" style="margin-top:2px;"><a href="tel:${_wfEsc(String(d.phone).replace(/[^0-9+]/g, ''))}" style="color:var(--accent);">${_wfEsc(d.phone)}</a></div>` : '');
                     return `
                     <div class="liq-row">
                         <div class="liq-head">
@@ -22594,11 +22780,14 @@ table.amort tbody tr { page-break-inside: avoid; }
                             ${fmtS(su.lent)} lent · ${fmtS(su.repaid)} repaid${d.note ? ' · ' + _wfEsc(d.note) : ''}
                             ${su.pending ? ' · <b style="color:var(--amber,#f59e0b);">' + su.pending + ' unconfirmed, not counted above</b>' : ''}
                         </div>
+                        ${dueLine}
                         ${tl ? '<div class="liq-tl">' + tl + '</div>' : ''}
                         <div class="liq-acts">
                             <button class="btn btn-primary btn-sm" data-liq-pay="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('coins') : '')} Log repayment</button>
                             <button class="btn btn-secondary btn-sm" data-liq-top="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('plus') : '')} Lend more</button>
                             ${su.outstanding > 0 ? `<button class="btn btn-secondary btn-sm" data-liq-settle="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('checkCircle') : '')} Settle in full</button>` : ''}
+                            ${!open ? `<button class="btn btn-secondary btn-sm" data-liq-dreopen="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('undo') : '')} Reopen</button>` : ''}
+                            <button class="btn btn-ghost btn-sm" data-liq-dedit="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('edit') : '')} Edit</button>
                             <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-liq-ddel="${_wfEsc(String(i))}">${(window.WFIcon ? WFIcon('trash') : 'Delete')}</button>
                         </div>
                     </div>`;
@@ -22634,6 +22823,23 @@ table.amort tbody tr { page-break-inside: avoid; }
                 host.querySelectorAll('[data-liq-ddel]').forEach((b) => {
                     b.onclick = () => _deleteDebtor(debtors[Number(b.getAttribute('data-liq-ddel'))]);
                 });
+                host.querySelectorAll('[data-liq-dedit]').forEach((b) => {
+                    b.onclick = () => openDebtorModal(debtors[Number(b.getAttribute('data-liq-dedit'))]);
+                });
+                host.querySelectorAll('[data-liq-dreopen]').forEach((b) => {
+                    b.onclick = () => _debtorAction(debtors[Number(b.getAttribute('data-liq-dreopen'))], '', 'reopen');
+                });
+                const byDebtPair = (attr, what) => host.querySelectorAll('[' + attr + ']').forEach((b) => {
+                    const [ix, id] = String(b.getAttribute(attr)).split('|');
+                    b.onclick = () => _debtorAction(debtors[Number(ix)], id, what);
+                });
+                byDebtPair('data-db-conf', 'confirm');
+                byDebtPair('data-db-unconf', 'unconfirm');
+                byDebtPair('data-db-erm', 'remove');
+                host.querySelectorAll('[data-db-eedit]').forEach((b) => {
+                    const [ix, id] = String(b.getAttribute('data-db-eedit')).split('|');
+                    b.onclick = () => _debtorEditEvent(debtors[Number(ix)], id);
+                });
             }
             try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(host); } catch (_) {}
             try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(stats); } catch (_) {}
@@ -22666,48 +22872,132 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         const _liqToday = () => today();
 
+        /**
+         * Add or edit a ticket — BASIC first, everything else folded away.
+         *
+         * The owner asked for basic and advanced options, and the split is not
+         * cosmetic. Five fields is what somebody standing at a counter can fill
+         * in; the compounding mode, the broker's name, what the item is worth
+         * today and an exact maturity date that is not a whole number of months
+         * are all real and all rarely needed. Putting them on the same screen
+         * makes the common case look like paperwork.
+         *
+         * THE TERM IS ENTERED IN MONTHS, because that is how a ticket is
+         * spoken about — "three months", "twelve months" — and the maturity
+         * date is derived from it. The exact date is still editable underneath
+         * for the broker who writes something else on the ticket.
+         */
         function openPawnModal(existing) {
             const p = existing || {};
+            const P = window.WFPawn;
+            const curMaturity = (P && P.isoOf(P.maturityOf(p))) || p.maturity || '';
+            let termMonths = 3;
+            if (P && p.pawnDate && curMaturity) {
+                const a = P.parseDay(p.pawnDate); const b = P.parseDay(curMaturity);
+                if (a && b && b > a) termMonths = Math.max(1, Math.round(P.daysBetween(a, b) / 30.4375));
+            }
             _liqOverlay(
                 (window.WFIcon ? WFIcon('gem') : '') + (existing ? ' Edit ticket' : ' Add pawned item'),
                 '<div class="fg"><label class="fl" for="_pw_item">Item</label>'
                 + '<input class="fi" id="_pw_item" placeholder="Gold chain, 2 pav" value="' + _wfEsc(p.item || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_principal">Amount advanced</label>'
+                + '<input class="fi money-input" id="_pw_principal" inputmode="decimal" value="' + _wfEsc(String(p.principal || '')) + '"></div>'
+                + '<div style="display:flex;gap:8px;">'
+                + '<div class="fg" style="flex:1;"><label class="fl" for="_pw_rate">Interest, % per month</label>'
+                + '<input class="fi" id="_pw_rate" inputmode="decimal" placeholder="2.2" value="' + _wfEsc(String(p.rate || '')) + '"></div>'
+                + '<div class="fg" style="flex:1;"><label class="fl" for="_pw_term">Term, months</label>'
+                + '<select class="fi" id="_pw_term">'
+                + [1, 2, 3, 4, 6, 9, 12, 18, 24].map((m) => '<option value="' + m + '"' + (m === termMonths ? ' selected' : '') + '>' + m + ' month' + (m === 1 ? '' : 's') + '</option>').join('')
+                + '<option value="0"' + (curMaturity ? '' : ' selected') + '>Open-ended</option>'
+                + '</select></div>'
+                + '</div>'
+                + '<div class="fg"><label class="fl" for="_pw_date">Pawn date</label>'
+                + '<input class="fi" id="_pw_date" type="date" value="' + _wfEsc(p.pawnDate || _liqToday()) + '"></div>'
+                + '<div id="_pw_says" style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:-4px 0 10px;"></div>'
+                + '<button type="button" class="btn btn-ghost btn-sm" id="_pw_more" style="width:100%;margin-bottom:10px;">More options</button>'
+                + '<div id="_pw_adv" hidden>'
                 + '<div class="fg"><label class="fl" for="_pw_ticket">Ticket number</label>'
                 + '<input class="fi" id="_pw_ticket" placeholder="A-4471" value="' + _wfEsc(p.ticket || '') + '"></div>'
-                + '<div class="fg"><label class="fl" for="_pw_principal">Amount advanced</label>'
-                + '<input class="fi" id="_pw_principal" inputmode="decimal" value="' + _wfEsc(String(p.principal || '')) + '"></div>'
-                + '<div class="fg"><label class="fl" for="_pw_rate">Interest, % per month</label>'
-                + '<input class="fi" id="_pw_rate" inputmode="decimal" placeholder="2.2" value="' + _wfEsc(String(p.rate || '')) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_broker">Pawn broker</label>'
+                + '<input class="fi" id="_pw_broker" placeholder="Bank or shop name" value="' + _wfEsc(p.broker || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_value">What the item is worth today</label>'
+                + '<input class="fi money-input" id="_pw_value" inputmode="decimal" value="' + _wfEsc(String(p.value || '')) + '">'
+                + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. With it, this screen tells you when redeeming would cost more than the item is worth. Left empty, it says nothing rather than guessing.</div></div>'
                 + '<div class="fg"><label class="fl" for="_pw_mode">How it is charged</label>'
                 + '<select class="fi" id="_pw_mode">'
                 + '<option value="simple"' + (p.interestMode === 'compound' ? '' : ' selected') + '>Simple — on the amount advanced</option>'
-                + '<option value="compound"' + (p.interestMode === 'compound' ? ' selected' : '') + '>Compound — monthly</option>'
+                + '<option value="compound"' + (p.interestMode === 'compound' ? ' selected' : '') + '>Compound — monthly, on the running total</option>'
                 + '</select></div>'
-                + '<div class="fg"><label class="fl" for="_pw_date">Pawn date</label>'
-                + '<input class="fi" id="_pw_date" type="date" value="' + _wfEsc(p.pawnDate || _liqToday()) + '"></div>'
-                + '<div class="fg"><label class="fl" for="_pw_maturity">Maturity date</label>'
-                + '<input class="fi" id="_pw_maturity" type="date" value="' + _wfEsc(p.maturity || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pw_maturity">Exact maturity date</label>'
+                + '<input class="fi" id="_pw_maturity" type="date" value="' + _wfEsc(curMaturity) + '">'
+                + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Set from the term above. Change it only if the ticket says a different day.</div></div>'
+                + '</div>'
                 + '<div class="md-ftr"><button class="btn btn-primary" id="_pw_save" style="width:100%;">Save</button></div>',
                 (ov, close) => {
-                    ov.querySelector('#_pw_save').onclick = () => {
-                        const item = (ov.querySelector('#_pw_item').value || '').trim();
-                        const principal = parseMoney(ov.querySelector('#_pw_principal').value);
-                        const rate = parseFloat(ov.querySelector('#_pw_rate').value) || 0;
-                        if (!item || !principal) { notify('Name the item and the amount advanced', 'error'); return; }
-                        const arrp = (DB.get('pawns') || []).slice();
+                    const $q = (id) => ov.querySelector(id);
+                    const adv = $q('#_pw_adv');
+                    $q('#_pw_more').onclick = () => {
+                        adv.hidden = !adv.hidden;
+                        $q('#_pw_more').textContent = adv.hidden ? 'More options' : 'Fewer options';
+                    };
+                    /* The maturity date follows the term unless the owner
+                     * typed one, and the line under the form says what the
+                     * ticket will cost — before it is saved, when the numbers
+                     * can still change something. */
+                    let touchedMaturity = false;
+                    $q('#_pw_maturity').addEventListener('input', () => { touchedMaturity = true; });
+                    const recalc = () => {
+                        const months = parseInt($q('#_pw_term').value, 10) || 0;
+                        const from = $q('#_pw_date').value;
+                        if (!touchedMaturity && P && from) {
+                            $q('#_pw_maturity').value = months > 0 ? P.isoOf(P.addMonths(P.parseDay(from), months)) : '';
+                        }
+                        const principal = parseMoney($q('#_pw_principal').value);
+                        const rate = parseFloat($q('#_pw_rate').value) || 0;
+                        const says = $q('#_pw_says');
+                        if (!(principal > 0) || !(rate > 0)) { says.textContent = ''; return; }
+                        const perMonth = principal * rate / 100;
+                        says.innerHTML = fmtS(perMonth) + ' a month · ' + fmtS(perMonth / 30.4375) + ' a day'
+                            + (months > 0 ? ' · ' + fmtS(principal + perMonth * months) + ' to redeem at the end of ' + months + ' month' + (months === 1 ? '' : 's') : '')
+                            + ' · ' + Math.round(P ? P.effectiveAnnual(rate, $q('#_pw_mode').value) : rate * 12) + '% a year';
+                    };
+                    ['_pw_term', '_pw_date', '_pw_principal', '_pw_rate', '_pw_mode'].forEach((id) => {
+                        const el = $q('#' + id);
+                        if (el) { el.addEventListener('input', recalc); el.addEventListener('change', recalc); }
+                    });
+                    recalc();
+
+                    $q('#_pw_save').onclick = () => {
+                        const item = ($q('#_pw_item').value || '').trim();
+                        const principal = parseMoney($q('#_pw_principal').value);
+                        const rate = parseFloat($q('#_pw_rate').value) || 0;
+                        if (!item) { notify('Name the item', 'error'); return; }
+                        if (!principal) { notify('How much was advanced?', 'error'); return; }
+                        if (!rate) { notify('What is the monthly rate?', 'error'); return; }
+                        const list = (DB.get('pawns') || []).slice();
                         const rec = {
+                            ...(existing || {}),
                             id: (existing && existing.id) || uid(),
                             createdAt: (existing && existing.createdAt) || new Date().toISOString(),
-                            item, ticket: (ov.querySelector('#_pw_ticket').value || '').trim(),
+                            item, ticket: ($q('#_pw_ticket').value || '').trim(),
+                            broker: ($q('#_pw_broker').value || '').trim(),
                             principal, rate,
-                            interestMode: ov.querySelector('#_pw_mode').value,
-                            pawnDate: ov.querySelector('#_pw_date').value || _liqToday(),
-                            maturity: ov.querySelector('#_pw_maturity').value || '',
-                            ...(existing && existing.redeemedAt ? { redeemedAt: existing.redeemedAt, state: existing.state } : {}),
+                            value: parseMoney($q('#_pw_value').value) || 0,
+                            interestMode: $q('#_pw_mode').value,
+                            pawnDate: $q('#_pw_date').value || _liqToday(),
+                            maturity: $q('#_pw_maturity').value || '',
                         };
-                        const at = arrp.findIndex((x) => x && x.id === rec.id);
-                        if (at > -1) arrp[at] = rec; else arrp.push(rec);
-                        DB.set('pawns', arrp);
+                        /* EDITING THE RATE ON A RENEWED TICKET WOULD BE A LIE.
+                         * Once there are terms, the rate lives in them; writing
+                         * this field would leave the record saying one thing and
+                         * charging another. The renewal screen is where a rate
+                         * changes, and it is named on the row. */
+                        if (Array.isArray(rec.terms) && rec.terms.length) {
+                            rec.terms = rec.terms.map((t, i) => (i === rec.terms.length - 1 ? { ...t, rate } : t));
+                        }
+                        const at = list.findIndex((x) => x && x.id === rec.id);
+                        if (at > -1) list[at] = rec; else list.push(rec);
+                        DB.set('pawns', list);
                         try { triggerHaptic('success'); } catch (_) {}
                         notify(existing ? 'Ticket updated' : 'Ticket added', 'success');
                         close();
@@ -22718,9 +23008,330 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.openPawnModal = openPawnModal;
 
-        /* Redeeming is a fact, not a calculation, so it asks for the date it
-         * actually happened — interest stops there, not on the day the owner
-         * got round to recording it. */
+        /** Write one pawn record back, by id. Every action below goes through it. */
+        function _savePawn(next) {
+            const list = (DB.get('pawns') || []).slice();
+            const at = list.findIndex((x) => x && x.id === next.id);
+            if (at < 0) return false;
+            list[at] = next;
+            DB.set('pawns', list);
+            renderLiquidity();
+            return true;
+        }
+
+        /**
+         * Pay something toward a ticket — the action that did not exist.
+         *
+         * "අතේ තියෙන මුදලක් වගේ. ටිකෙන් ටික ගෙවනවා." Cash in hand, a bit at a
+         * time. The screen says what the payment will do BEFORE it is saved,
+         * because how a broker splits it between interest and the advance is
+         * exactly the thing nobody can work out in their head.
+         */
+        function _pawnPay(p, editId) {
+            if (!p || !window.WFPawn) return;
+            const P = window.WFPawn;
+            const now = new Date();
+            const st = P.pawnStatus(p, now);
+            const editing = editId ? st.payments.find((x) => x.id === editId) : null;
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('coins') : '') + (editing ? ' Edit payment' : ' Pay toward ') + _wfEsc(editing ? '' : (p.item || 'ticket')),
+                '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:10px;">'
+                + 'Owed right now: <b>' + fmtS(st.payable) + '</b> — ' + fmtS(st.balance) + ' advanced and '
+                + fmtS(st.interestDue) + ' interest.'
+                + '</div>'
+                + '<div class="fg"><label class="fl" for="_pp_amount">Amount paid</label>'
+                + '<input class="fi money-input" id="_pp_amount" inputmode="decimal" value="' + _wfEsc(editing ? String(editing.amount) : '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pp_kind">How the broker applies it</label>'
+                + '<select class="fi" id="_pp_kind">'
+                + '<option value="part">Interest first, then off the advance — the usual</option>'
+                + '<option value="interest">Interest only</option>'
+                + '<option value="principal">Straight off the advance</option>'
+                + '</select></div>'
+                + '<div class="fg"><label class="fl" for="_pp_date">Date paid</label>'
+                + '<input class="fi" id="_pp_date" type="date" value="' + _wfEsc(editing ? editing.date : _liqToday()) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_pp_note">Note</label>'
+                + '<input class="fi" id="_pp_note" maxlength="200" value="' + _wfEsc(editing ? editing.note : '') + '"></div>'
+                + '<div id="_pp_says" style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;"></div>'
+                + '<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text2);margin-bottom:10px;">'
+                + '<input type="checkbox" id="_pp_done"' + (editing && editing.confirmed ? ' checked' : '') + '> I have already handed this over</label>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_pp_save" style="width:100%;">' + (editing ? 'Save' : 'Record payment') + '</button></div>',
+                (ov, close) => {
+                    const $q = (id) => ov.querySelector(id);
+                    if (editing) $q('#_pp_kind').value = editing.kind === 'capitalise' ? 'part' : editing.kind;
+                    const says = () => {
+                        const amt = parseMoney($q('#_pp_amount').value);
+                        const kind = $q('#_pp_kind').value;
+                        if (!(amt > 0)) { $q('#_pp_says').textContent = ''; return; }
+                        let toInterest = 0; let toPrincipal = 0;
+                        if (kind === 'interest') toInterest = Math.min(amt, st.interestDue);
+                        else if (kind === 'principal') toPrincipal = Math.min(amt, st.balance);
+                        else { toInterest = Math.min(amt, st.interestDue); toPrincipal = Math.min(amt - toInterest, st.balance); }
+                        const newBalance = st.balance - toPrincipal;
+                        $q('#_pp_says').innerHTML = fmtS(toInterest) + ' clears interest, ' + fmtS(toPrincipal)
+                            + ' comes off the advance. Every month after this is charged on '
+                            + '<b>' + fmtS(newBalance) + '</b> instead of ' + fmtS(st.balance)
+                            + ' — ' + fmtS((st.balance - newBalance) * st.rate / 100) + ' a month less.';
+                    };
+                    ['_pp_amount', '_pp_kind'].forEach((id) => {
+                        $q('#' + id).addEventListener('input', says);
+                        $q('#' + id).addEventListener('change', says);
+                    });
+                    says();
+                    $q('#_pp_save').onclick = () => {
+                        const amount = parseMoney($q('#_pp_amount').value);
+                        if (!(amount > 0)) { notify('How much was paid?', 'error'); return; }
+                        const fields = {
+                            amount, kind: $q('#_pp_kind').value,
+                            date: $q('#_pp_date').value || _liqToday(),
+                            note: ($q('#_pp_note').value || '').trim(),
+                        };
+                        let r;
+                        if (editing) {
+                            r = P.updatePayment(p, editId, fields);
+                            if (r.ok) {
+                                r = $q('#_pp_done').checked
+                                    ? P.confirmPayment(r.pawn, editId, { now: Date.now() })
+                                    : P.unconfirmPayment(r.pawn, editId);
+                            }
+                        } else {
+                            r = P.addPayment(p, { ...fields, id: uid(), now: Date.now(), confirmed: $q('#_pp_done').checked });
+                        }
+                        if (!r.ok) { notify('That could not be recorded', 'error'); return; }
+                        _savePawn(r.pawn);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify(editing ? 'Payment updated' : ($q('#_pp_done').checked ? 'Payment recorded' : 'Recorded — confirm it when it clears'), 'success');
+                        close();
+                    };
+                },
+            );
+        }
+
+        /**
+         * Extend a ticket past its maturity, at whatever rate the new term carries.
+         *
+         * The owner's case, in their words: a three-month ticket reaching
+         * maturity is extended to twelve, AT THE TWELVE-MONTH RATE, adding nine
+         * months. The rate can go either way.
+         *
+         * TWO QUESTIONS THIS SCREEN REFUSES TO ANSWER FOR ANYBODY, because
+         * brokers genuinely do it both ways and getting it wrong is real money:
+         * whether the new rate re-prices the months already run, and what
+         * happens to the interest standing right now. Both are asked, both show
+         * their cost live, and neither has a hidden default.
+         */
+        function _pawnExtend(p) {
+            if (!p || !window.WFPawn) return;
+            const P = window.WFPawn;
+            const now = new Date();
+            const st = P.pawnStatus(p, now);
+            const curMonths = st.maturityISO && p.pawnDate
+                ? Math.max(1, Math.round(P.daysBetween(P.parseDay(p.pawnDate), P.parseDay(st.maturityISO)) / 30.4375))
+                : 0;
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('calendar') : '') + ' Extend ' + _wfEsc(p.item || 'ticket'),
+                '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:10px;">'
+                + 'Now: <b>' + (curMonths ? curMonths + ' month' + (curMonths === 1 ? '' : 's') : 'open-ended') + '</b> at '
+                + st.rate + '%/month, maturing ' + _wfEsc(st.maturityISO || '—') + '. '
+                + fmtS(st.interestDue) + ' of interest is standing.'
+                + '</div>'
+                + '<div style="display:flex;gap:8px;">'
+                + '<div class="fg" style="flex:1;"><label class="fl" for="_px_to">Extend to, in total</label>'
+                + '<select class="fi" id="_px_to">'
+                + [3, 6, 9, 12, 18, 24, 36].filter((m) => m > curMonths).map((m) => '<option value="' + m + '">' + m + ' months</option>').join('')
+                + '</select></div>'
+                + '<div class="fg" style="flex:1;"><label class="fl" for="_px_rate">Rate for that term, %/month</label>'
+                + '<input class="fi" id="_px_rate" inputmode="decimal" value="' + _wfEsc(String(st.rate)) + '"></div>'
+                + '</div>'
+                + '<div class="fg"><label class="fl" for="_px_from">Does the new rate apply to the months already run?</label>'
+                + '<select class="fi" id="_px_from">'
+                + '<option value="start">Yes — the ticket is re-issued at the new rate from the pawn date</option>'
+                + '<option value="renewal">No — the months so far keep the rate they were agreed at</option>'
+                + '</select></div>'
+                + '<div class="fg"><label class="fl" for="_px_int">The ' + fmtS(st.interestDue) + ' of interest standing now</label>'
+                + '<select class="fi" id="_px_int">'
+                + '<option value="carry">Leave it outstanding</option>'
+                + '<option value="paid">I paid it at the counter</option>'
+                + '<option value="capitalise">Rolled into the advance</option>'
+                + '</select></div>'
+                + '<div class="fg"><label class="fl" for="_px_date">Renewal date</label>'
+                + '<input class="fi" id="_px_date" type="date" value="' + _wfEsc(st.maturityISO || _liqToday()) + '"></div>'
+                + '<div id="_px_says" style="font-size:12px;color:var(--text3);line-height:1.65;margin:2px 0 10px;"></div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_px_save" style="width:100%;">Extend the ticket</button></div>',
+                (ov, close) => {
+                    const $q = (id) => ov.querySelector(id);
+                    const build = (rateFrom) => P.extendTerm(p, {
+                        toMonths: parseInt($q('#_px_to').value, 10) || 0,
+                        rate: parseFloat($q('#_px_rate').value) || st.rate,
+                        rateFrom,
+                        onInterest: $q('#_px_int').value,
+                        date: $q('#_px_date').value || _liqToday(),
+                        id: 'preview',
+                    });
+                    /* BOTH ANSWERS, PRICED, SIDE BY SIDE. The question is not
+                     * one anybody can answer from intuition — re-pricing the
+                     * whole ticket is cheaper when the rate drops and dearer
+                     * when it rises — so the screen works out both and the
+                     * owner picks the one their broker actually does. */
+                    const says = () => {
+                        const a = build('start');
+                        const b = build('renewal');
+                        if (!a.ok || !b.ok) { $q('#_px_says').textContent = ''; return; }
+                        const at = P.parseDay($q('#_px_date').value || _liqToday());
+                        const sa = P.pawnStatus(a.pawn, at);
+                        const sb = P.pawnStatus(b.pawn, at);
+                        const chosen = $q('#_px_from').value;
+                        $q('#_px_says').innerHTML =
+                            '<div style="' + (chosen === 'start' ? 'color:var(--text);font-weight:700;' : '') + '">'
+                            + 'Re-issued from the pawn date: owed at renewal ' + fmtS(sa.payable) + '</div>'
+                            + '<div style="' + (chosen === 'renewal' ? 'color:var(--text);font-weight:700;' : '') + '">'
+                            + 'Old rate kept for the months so far: owed at renewal ' + fmtS(sb.payable) + '</div>'
+                            + '<div style="margin-top:4px;">Difference: <b>' + fmtS(Math.abs(sa.payable - sb.payable)) + '</b> — '
+                            + (sa.payable < sb.payable ? 're-issuing is cheaper here.' : 'keeping the old rate is cheaper here.')
+                            + '</div>'
+                            + '<div style="margin-top:4px;">New maturity ' + _wfEsc(a.pawn.maturity || '—') + '.</div>';
+                    };
+                    ['_px_to', '_px_rate', '_px_from', '_px_int', '_px_date'].forEach((id) => {
+                        $q('#' + id).addEventListener('input', says);
+                        $q('#' + id).addEventListener('change', says);
+                    });
+                    says();
+                    $q('#_px_save').onclick = () => {
+                        const r = P.extendTerm(p, {
+                            toMonths: parseInt($q('#_px_to').value, 10) || 0,
+                            rate: parseFloat($q('#_px_rate').value) || st.rate,
+                            rateFrom: $q('#_px_from').value,
+                            onInterest: $q('#_px_int').value,
+                            date: $q('#_px_date').value || _liqToday(),
+                            id: uid(), now: Date.now(),
+                        });
+                        if (!r.ok) {
+                            notify(r.reason === 'not-longer' ? 'That is not longer than the term it already has' : 'Could not extend', 'error');
+                            return;
+                        }
+                        _savePawn(r.pawn);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify('Extended to ' + r.totalMonths + ' months at ' + r.rate + '%', 'success');
+                        close();
+                    };
+                },
+            );
+        }
+
+        /** Month by month, what this ticket was charged and why. */
+        function _pawnHistory(p) {
+            if (!p || !window.WFPawn) return;
+            const P = window.WFPawn;
+            const led = P.schedule(p, new Date());
+            const rows = led.months.map((m) => `
+                <div style="display:flex;gap:8px;padding:7px 0;border-top:1px solid var(--border);font-size:12.5px;">
+                    <div style="width:34px;color:var(--text3);">${m.index}</div>
+                    <div style="flex:1;">${_wfEsc(m.fromISO)}<div style="color:var(--text3);font-size:11px;">on ${fmtS(m.opening)} at ${m.rate}%</div></div>
+                    <div style="font-weight:700;color:var(--red);">${fmtS(m.interest)}</div>
+                </div>`).join('');
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('list') : '') + ' ' + _wfEsc(p.item || 'Ticket') + ' — month by month',
+                '<div style="font-size:12px;color:var(--text3);line-height:1.6;margin-bottom:6px;">'
+                + 'Each month is charged on the balance that stood when it began, at the rate in force then. '
+                + 'A part payment shows up as a smaller balance in every month after it.'
+                + '</div>'
+                + (rows || '<div style="font-size:12.5px;color:var(--text3);padding:10px 0;">No months have been billed yet.</div>')
+                + '<div style="display:flex;gap:8px;padding:9px 0;border-top:2px solid var(--border);font-size:13px;font-weight:800;">'
+                + '<div style="flex:1;">' + led.monthCount + ' months of interest</div><div>' + fmtS(led.interestAccrued) + '</div></div>'
+                + '<div style="font-size:12px;color:var(--text3);line-height:1.7;">'
+                + fmtS(led.interestSettled) + ' of it settled' + (led.capitalised > 0 ? ' (' + fmtS(led.capitalised) + ' rolled into the advance)' : '') + '.<br>'
+                + fmtS(led.principalPaid) + ' paid off the advance, leaving ' + fmtS(led.balance) + '.<br>'
+                + '<b style="color:var(--text);">To walk out with it today: ' + fmtS(led.payable) + '</b>'
+                + (led.credit > 0 ? '<br>' + fmtS(led.credit) + ' paid in excess of what was owed.' : '')
+                + '</div>',
+            );
+        }
+
+        /** Confirm, un-confirm or remove one payment. The undo, everywhere. */
+        function _pawnPaymentAction(p, id, what) {
+            if (!p || !id || !window.WFPawn) return;
+            const P = window.WFPawn;
+            const run = (r, msg) => {
+                if (!r.ok) { notify('That row is no longer there', 'info'); renderLiquidity(); return; }
+                _savePawn(r.pawn);
+                try { triggerHaptic(what === 'remove' ? 'light' : 'success'); } catch (_) {}
+                notify(msg, what === 'remove' ? 'info' : 'success');
+            };
+            if (what === 'confirm') return run(P.confirmPayment(p, id, { now: Date.now() }), 'Payment confirmed');
+            if (what === 'unconfirm') return run(P.unconfirmPayment(p, id), 'Back to unconfirmed');
+            return showConfirm(
+                'trash', 'Remove this payment?',
+                'The ticket goes back to what it would have been without it. Nothing else changes.',
+                'btn-danger', 'Remove',
+                () => run(P.removePayment(p, id), 'Payment removed'),
+            );
+        }
+
+        /** Undo a redemption, or the last renewal. Neither could be taken back. */
+        function _pawnUndo(p, what) {
+            if (!p || !window.WFPawn) return;
+            const P = window.WFPawn;
+            const r = what === 'redeem' ? P.unredeem(p) : P.undoLastExtension(p);
+            if (!r.ok) { notify('There is nothing to undo there', 'info'); return; }
+            _savePawn(r.pawn);
+            try { triggerHaptic('light'); } catch (_) {}
+            notify(what === 'redeem' ? 'Back to an active ticket' : 'Renewal undone', 'info');
+        }
+
+        /**
+         * With this much in hand, which ticket first?
+         *
+         * The question anybody with more than one ticket has, and the answer is
+         * not "the biggest". Overdue first, because past maturity the broker
+         * may sell the item and that is the only loss here money cannot undo
+         * afterwards; then by what each rupee spent stops costing every month.
+         */
+        function _liqClearFirstCard(pawns, now) {
+            const host = document.getElementById('_liq_clear');
+            if (!host || !window.WFPawn) return;
+            const active = (pawns || []).filter((p) => p && !p.redeemedAt);
+            if (active.length < 2) { host.innerHTML = ''; return; }
+            /* Guarded: some browsers throw on the accessor itself in private
+             * mode, and a card that cannot remember a figure must still draw. */
+            let cash = 0;
+            try { cash = Number(sessionStorage.getItem('wf_liq_cash') || 0) || 0; } catch (_) { cash = 0; }
+            const draw = () => {
+                const out = window.WFPawn.clearFirst(active, cash, now);
+                host.innerHTML = `
+                    <div class="card" style="padding:16px;margin-top:12px;">
+                        <div style="font-weight:800;font-size:14.5px;color:var(--text);">Which one first?</div>
+                        <div style="font-size:11.5px;color:var(--text3);margin:2px 0 10px;">
+                            Overdue tickets come first — past maturity the broker may sell the item, and that is the
+                            only loss on this screen that paying later cannot reverse. After that, by what each
+                            rupee you spend stops costing every month.
+                        </div>
+                        <div class="fg" style="max-width:220px;"><label class="fl" for="_liq_cash">Cash in hand</label>
+                            <input class="fi money-input" id="_liq_cash" inputmode="decimal" value="${cash ? fmtN(cash) : ''}" placeholder="100,000"></div>
+                        ${out.rows.map((r, n) => `
+                            <div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--border);flex-wrap:wrap;">
+                                <div style="width:22px;font-weight:800;color:var(--text3);">${n + 1}</div>
+                                <div style="flex:1;min-width:140px;">
+                                    <div style="font-size:13px;font-weight:700;color:var(--text);">${_wfEsc(r.item)}</div>
+                                    <div style="font-size:11.5px;color:var(--text3);">${_wfEsc(r.reason)}</div>
+                                </div>
+                                <div style="font-weight:800;font-size:13.5px;">${fmtS(r.payable)}</div>
+                                ${cash > 0 ? (r.affordable
+                                    ? '<span style="font-size:10.5px;font-weight:800;color:var(--green);background:rgba(34,197,94,0.12);border-radius:20px;padding:3px 9px;">YOU CAN CLEAR THIS</span>'
+                                    : '<span style="font-size:10.5px;font-weight:800;color:var(--text3);background:rgba(127,127,127,0.12);border-radius:20px;padding:3px 9px;">SHORT BY ' + fmtN(r.payable - cash) + '</span>') : ''}
+                            </div>`).join('')}
+                        ${cash > 0 && out.leftover > 0 ? `<div style="font-size:12px;color:var(--text3);padding-top:9px;">${fmtS(out.leftover)} left over after clearing the ones marked above.</div>` : ''}
+                    </div>`;
+                const input = host.querySelector('#_liq_cash');
+                if (input) {
+                    input.onchange = () => {
+                        try { sessionStorage.setItem('wf_liq_cash', String(parseMoney(input.value))); } catch (_) {}
+                        renderLiquidity();
+                    };
+                }
+                try { if (window.WFIcon && WFIcon.paint) WFIcon.paint(host); } catch (_) {}
+            };
+            draw();
+        }
+
         function _redeemPawn(p) {
             if (!p) return;
             const st = window.WFLiquidity.pawnStatus(p, new Date());
@@ -22733,14 +23344,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                     + 'as an expense yourself if you track it there.',
                 'btn-primary', 'Redeemed',
                 () => {
-                    const arrp = (DB.get('pawns') || []).slice();
-                    const at = arrp.findIndex((x) => x && x.id === p.id);
-                    if (at < 0) return;
-                    arrp[at] = { ...arrp[at], redeemedAt: _liqToday(), state: 'REDEEMED', redeemedFor: st.payable };
-                    DB.set('pawns', arrp);
+                    /* Through the engine, so the closing payment is written
+                     * into the history rather than only a flag being set. A
+                     * ticket that closes with no closing payment is a ledger
+                     * that does not add up. And it can be undone. */
+                    const r = window.WFPawn.redeem(p, { date: _liqToday(), id: uid(), now: Date.now() });
+                    if (!r.ok) { notify('That ticket is already redeemed', 'info'); return; }
+                    if (!_savePawn(r.pawn)) return;
                     try { triggerHaptic('success'); } catch (_) {}
-                    notify('Redeemed', 'success');
-                    renderLiquidity();
+                    notify('Redeemed for ' + fmtS(r.paid), 'success');
                 },
             );
         }
@@ -22765,10 +23377,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 (window.WFIcon ? WFIcon('user') : '') + (existing ? ' Edit debtor' : ' Add debtor'),
                 '<div class="fg"><label class="fl" for="_db_name">Name</label>'
                 + '<input class="fi" id="_db_name" placeholder="Nimal" value="' + _wfEsc(d.name || '') + '"></div>'
-                + '<div class="fg"><label class="fl" for="_db_amount">Amount lent</label>'
-                + '<input class="fi" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
-                + '<div class="fg"><label class="fl" for="_db_date">Date lent</label>'
-                + '<input class="fi" id="_db_date" type="date" value="' + _liqToday() + '"></div>'
+                + (existing ? '' : ('<div class="fg"><label class="fl" for="_db_amount">Amount lent</label>'
+                    + '<input class="fi money-input" id="_db_amount" inputmode="decimal" placeholder="200000"></div>'
+                    + '<div class="fg"><label class="fl" for="_db_date">Date lent</label>'
+                    + '<input class="fi" id="_db_date" type="date" value="' + _liqToday() + '"></div>'))
+                + '<div class="fg"><label class="fl" for="_db_phone">Phone</label>'
+                + '<input class="fi" id="_db_phone" type="tel" inputmode="tel" placeholder="077 123 4567" value="' + _wfEsc(d.phone || '') + '">'
+                + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. Shown on the row as a number you can tap to call, which is what you actually do when a repayment is late.</div></div>'
+                + '<div class="fg"><label class="fl" for="_db_due">Expected back by</label>'
+                + '<input class="fi" id="_db_due" type="date" value="' + _wfEsc(d.dueISO || '') + '">'
+                + '<div style="font-size:11px;color:var(--text3);margin-top:3px;">Optional. With it, an overdue repayment appears on the dashboard queue. Without it the app stays quiet rather than inventing a deadline.</div></div>'
                 + '<div class="fg"><label class="fl" for="_db_note">Note</label>'
                 + '<input class="fi" id="_db_note" maxlength="200" placeholder="For the shop renovation" value="' + _wfEsc(d.note || '') + '"></div>'
                 + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;">'
@@ -22778,18 +23396,31 @@ table.amort tbody tr { page-break-inside: avoid; }
                 (ov, close) => {
                     ov.querySelector('#_db_save').onclick = () => {
                         const name = (ov.querySelector('#_db_name').value || '').trim();
-                        const amount = parseMoney(ov.querySelector('#_db_amount').value);
+                        const amountEl = ov.querySelector('#_db_amount');
+                        const amount = amountEl ? parseMoney(amountEl.value) : 0;
                         if (!name) { notify('Name the debtor', 'error'); return; }
                         if (!existing && !amount) { notify('How much was lent?', 'error'); return; }
                         const list = (DB.get('debtors') || []).slice();
+                        /* SPREAD FROM THE EXISTING RECORD, not rebuilt from the
+                         * form. Rebuilding is how an edit quietly drops a field
+                         * the form does not happen to show — and this record
+                         * carries `state` and future fields that no form knows
+                         * about. */
                         let rec = {
+                            ...(existing || {}),
                             id: (existing && existing.id) || uid(),
                             createdAt: (existing && existing.createdAt) || new Date().toISOString(),
-                            name, note: (ov.querySelector('#_db_note').value || '').trim(),
+                            name,
+                            note: (ov.querySelector('#_db_note').value || '').trim(),
+                            phone: (ov.querySelector('#_db_phone').value || '').trim(),
+                            dueISO: ov.querySelector('#_db_due').value || '',
                             events: (existing && Array.isArray(existing.events)) ? existing.events.slice() : [],
-                            ...(existing && existing.closedAt ? { closedAt: existing.closedAt } : {}),
                         };
-                        if (amount) {
+                        /* Only on the way IN. The amount field is blank when
+                         * editing, but a stray keystroke in it used to write a
+                         * second advance onto somebody's ledger every time
+                         * their name was corrected. */
+                        if (amount && !existing) {
                             /* CONFIRMED on the spot. Handing somebody cash is
                              * something the owner just did — asking them to
                              * verify their own action a second time is the
@@ -22797,7 +23428,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * for confirmation is money moving in the OTHER
                              * direction, which is a claim about the bank. */
                             const r = window.WFLiquidity.addEvent(rec, {
-                                kind: 'lent', amount, date: ov.querySelector('#_db_date').value || _liqToday(),
+                                kind: 'lent', amount, date: (ov.querySelector('#_db_date') || {}).value || _liqToday(),
                                 id: uid(), now: Date.now(), confirmed: true,
                             });
                             if (r.ok) rec = r.debtor;
@@ -22830,7 +23461,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 (window.WFIcon ? WFIcon(isPay ? 'coins' : 'plus') : '')
                     + (isPay ? ' Repayment from ' : ' Lend more to ') + _wfEsc(d.name || 'debtor'),
                 '<div class="fg"><label class="fl" for="_ev_amount">Amount</label>'
-                + '<input class="fi" id="_ev_amount" inputmode="decimal"></div>'
+                + '<input class="fi money-input" id="_ev_amount" inputmode="decimal"></div>'
                 + '<div class="fg"><label class="fl" for="_ev_date">Date</label>'
                 + '<input class="fi" id="_ev_date" type="date" value="' + _liqToday() + '"></div>'
                 + '<div class="fg"><label class="fl" for="_ev_note">Note</label>'
@@ -22904,6 +23535,92 @@ table.amort tbody tr { page-break-inside: avoid; }
                     DB.set('debtors', (DB.get('debtors') || []).filter((x) => x && x.id !== d.id));
                     notify('Deleted', 'success');
                     renderLiquidity();
+                },
+            );
+        }
+
+        /** Write one debtor back, by id. Every action below goes through it. */
+        function _saveDebtor(next) {
+            const list = (DB.get('debtors') || []).slice();
+            const at = list.findIndex((x) => x && x.id === next.id);
+            if (at < 0) return false;
+            list[at] = next;
+            DB.set('debtors', list);
+            renderLiquidity();
+            return true;
+        }
+
+        /**
+         * Confirm, un-confirm, remove, reopen — THE UNDO THAT DID NOT EXIST.
+         *
+         * Reported in exactly those words: "Debtors feature එකේ undo නෑ. Edit
+         * නෑ." Every one of these was previously unreachable, and the only
+         * recovery from any mistake was deleting the person and losing their
+         * whole history with them. That is not a workaround, it is data loss
+         * offered as a feature.
+         */
+        function _debtorAction(d, eventId, what) {
+            if (!d || !window.WFLiquidity) return;
+            const L = window.WFLiquidity;
+            const run = (r, msg, tone) => {
+                if (!r.ok) { notify('That row is no longer there', 'info'); renderLiquidity(); return; }
+                _saveDebtor(r.debtor);
+                try { triggerHaptic(what === 'remove' ? 'light' : 'success'); } catch (_) {}
+                notify(msg, tone || 'success');
+            };
+            if (what === 'confirm') return run(L.confirmEvent(d, eventId, { now: Date.now() }), 'Confirmed');
+            if (what === 'unconfirm') return run(L.unconfirmEvent(d, eventId), 'Back to unconfirmed', 'info');
+            if (what === 'reopen') return run(L.reopenDebtor(d), 'Reopened', 'info');
+            return showConfirm(
+                'trash', 'Remove this entry?',
+                'The balance goes back to what it would have been without it. Nothing else about ' + (d.name || 'this debtor') + ' changes.',
+                'btn-danger', 'Remove',
+                () => run(L.removeEvent(d, eventId), 'Entry removed', 'info'),
+            );
+        }
+
+        /** Edit one entry on a debtor's ledger — a wrong figure, date or note. */
+        function _debtorEditEvent(d, eventId) {
+            if (!d || !window.WFLiquidity) return;
+            const L = window.WFLiquidity;
+            const su = L.debtorSummary(d, new Date());
+            const e = su.events.find((x) => x.id === eventId);
+            if (!e) { notify('That entry is no longer there', 'info'); renderLiquidity(); return; }
+            _liqOverlay(
+                (window.WFIcon ? WFIcon('edit') : '') + ' Edit entry for ' + _wfEsc(d.name || 'debtor'),
+                '<div class="fg"><label class="fl" for="_ee_amount">Amount</label>'
+                + '<input class="fi money-input" id="_ee_amount" inputmode="decimal" value="' + _wfEsc(String(e.amount)) + '"></div>'
+                + '<div class="fg"><label class="fl" for="_ee_kind">What it was</label>'
+                + '<select class="fi" id="_ee_kind">'
+                + '<option value="lent">Money lent</option>'
+                + '<option value="topup">Further capital</option>'
+                + '<option value="repayment">Repayment</option>'
+                + '</select></div>'
+                + '<div class="fg"><label class="fl" for="_ee_date">Date</label>'
+                + '<input class="fi" id="_ee_date" type="date" value="' + _wfEsc(e.date || '') + '"></div>'
+                + '<div class="fg"><label class="fl" for="_ee_note">Note</label>'
+                + '<input class="fi" id="_ee_note" maxlength="200" value="' + _wfEsc(e.note || '') + '"></div>'
+                + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:2px 0 10px;">'
+                + 'Changing this recalculates what is outstanding. To remove the entry entirely, use Remove on the row.'
+                + '</div>'
+                + '<div class="md-ftr"><button class="btn btn-primary" id="_ee_save" style="width:100%;">Save</button></div>',
+                (ov, close) => {
+                    ov.querySelector('#_ee_kind').value = e.kind;
+                    ov.querySelector('#_ee_save').onclick = () => {
+                        const amount = parseMoney(ov.querySelector('#_ee_amount').value);
+                        if (!(amount > 0)) { notify('An entry needs an amount — use Remove to delete it', 'error'); return; }
+                        const r = L.updateEvent(d, eventId, {
+                            amount,
+                            kind: ov.querySelector('#_ee_kind').value,
+                            date: ov.querySelector('#_ee_date').value || e.date,
+                            note: (ov.querySelector('#_ee_note').value || '').trim(),
+                        });
+                        if (!r.ok) { notify('That entry is no longer there', 'info'); close(); renderLiquidity(); return; }
+                        _saveDebtor(r.debtor);
+                        try { triggerHaptic('success'); } catch (_) {}
+                        notify('Entry updated', 'success');
+                        close();
+                    };
                 },
             );
         }
@@ -23003,10 +23720,18 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ${chip(r)}
                     <div style="display:flex;gap:7px;flex-shrink:0;">
                         <button class="btn btn-primary btn-sm" data-vq-ok="${_wfEsc(String(i))}">
-                            ${(window.WFIcon ? WFIcon('check') : '')} ${r.kind === 'outflow' ? 'Paid' : 'Received'}
+                            ${(window.WFIcon ? WFIcon('check') : '')} ${
+                                /* An expected repayment is a PROMPT — pressing
+                                 * it opens the form rather than posting money
+                                 * nobody has said arrived, so the label says
+                                 * what actually happens. */
+                                r.source === 'debtor-due' ? 'Log what came in'
+                                    : r.kind === 'outflow' ? 'Paid' : 'Received'}
                         </button>
                         <button class="btn btn-secondary btn-sm" data-vq-late="${_wfEsc(String(i))}">
-                            ${r.source === 'debtor' ? 'Remove' : (r.state === V.DELAYED ? 'Clear flag' : 'Not yet')}
+                            ${r.source === 'debtor-due' ? 'Change the date'
+                                : (r.source === 'debtor' || r.source === 'pawn') ? 'Remove'
+                                    : (r.state === V.DELAYED ? 'Clear flag' : 'Not yet')}
                         </button>
                     </div>
                 </div>`).join('');
@@ -23065,6 +23790,49 @@ table.amort tbody tr { page-break-inside: avoid; }
          */
         function _verifyConfirm(row) {
             const now = Date.now();
+            /* ── EVERY SOURCE THIS QUEUE CAN CARRY IS NAMED HERE ─────────────
+             *
+             * The fall-through at the bottom writes `incomeReceived` for an
+             * inflow and `billPaid` for an outflow, keyed by month. That is
+             * right for a salary and a subscription and wrong for everything
+             * else — so a row whose source is not handled above would be
+             * silently filed as income the owner never received. Adding rows to
+             * a queue without teaching its handler about them is the defect
+             * this repository keeps producing; these two branches are the
+             * teaching. */
+
+            /* A PAWN PAYMENT belongs to its ticket. Filing it under `billPaid`
+             * would mark a month paid and leave the payment unconfirmed on the
+             * ledger, so the ticket would go on charging interest on money the
+             * owner had already handed over. */
+            if (row.source === 'pawn') {
+                const list = (DB.get('pawns') || []).slice();
+                const at = list.findIndex((x) => x && x.id === row.sourceId);
+                if (at < 0 || !window.WFPawn) { notify('That ticket is no longer there', 'info'); renderVerifyQueue(); return; }
+                const r = window.WFPawn.confirmPayment(list[at], row.eventId, { now });
+                if (!r.ok) { notify('That payment is no longer there', 'info'); renderVerifyQueue(); return; }
+                list[at] = r.pawn;
+                DB.set('pawns', list);
+                notify(fmtS(row.amount) + ' confirmed against ' + (row.name || 'the ticket'), 'success');
+                renderVerifyQueue();
+                try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
+                return;
+            }
+
+            /* AN EXPECTED REPAYMENT IS A QUESTION, NOT A PAYMENT. This row
+             * exists because a date the owner set has passed with money still
+             * outstanding — nobody has said anything arrived. Confirming it
+             * here would invent a repayment of the whole balance, which is
+             * exactly the "blind automation corrupts the balance sheet" failure
+             * the owner ruled out. It opens the form instead. */
+            if (row.source === 'debtor-due') {
+                const d = (DB.get('debtors') || []).find((x) => x && x.id === row.sourceId);
+                if (!d) { notify('That debtor is no longer there', 'info'); renderVerifyQueue(); return; }
+                try { showPage('liquidity'); setLiquidityTab('debt'); } catch (_) {}
+                openDebtorEvent(d, 'repayment');
+                return;
+            }
+
             /* A debtor's event is not a monthly slot — it is one entry in that
              * person's ledger, and confirming it belongs to the module that
              * owns the arithmetic. Handled first so it can never fall through
@@ -23117,6 +23885,40 @@ table.amort tbody tr { page-break-inside: avoid; }
              * entry they logged by mistake, which is otherwise unreachable —
              * an unconfirmed repayment with a typo in it would sit in the queue
              * for good. */
+            /* A pawn payment logged by mistake: the same reasoning as a
+             * debtor's, and the same fix. There is nothing to "flag" — it was
+             * never counted, because it was never confirmed. */
+            if (row.source === 'pawn') {
+                showConfirm(
+                    'trash', 'Remove this payment?',
+                    'This deletes the ' + fmtS(row.amount) + ' payment from ' + (row.name || 'this ticket')
+                        + "'s history. Nothing else changes — it was never counted, because it was never confirmed.",
+                    'btn-danger', 'Remove',
+                    () => {
+                        const list = (DB.get('pawns') || []).slice();
+                        const at = list.findIndex((x) => x && x.id === row.sourceId);
+                        if (at < 0 || !window.WFPawn) return;
+                        const r = window.WFPawn.removePayment(list[at], row.eventId);
+                        if (!r.ok) return;
+                        list[at] = r.pawn;
+                        DB.set('pawns', list);
+                        notify('Removed', 'success');
+                        renderVerifyQueue();
+                        try { if (window._wfActivePage === 'liquidity') renderLiquidity(); } catch (_) {}
+                    },
+                );
+                return;
+            }
+            /* An expected repayment cannot be "removed" — the date is on the
+             * debtor, not on a row. Clearing the date is what stops it asking,
+             * and that is an edit to the person, so it goes to their form. */
+            if (row.source === 'debtor-due') {
+                const d = (DB.get('debtors') || []).find((x) => x && x.id === row.sourceId);
+                if (!d) { renderVerifyQueue(); return; }
+                try { showPage('liquidity'); setLiquidityTab('debt'); } catch (_) {}
+                openDebtorModal(d);
+                return;
+            }
             if (row.source === 'debtor') {
                 showConfirm(
                     'trash', 'Remove this entry?',
@@ -25850,13 +26652,24 @@ table.amort tbody tr { page-break-inside: avoid; }
             // inflates Year Income / Net Savings / Savings Rate / the dashboard chart /
             // Monthly Plan / the CSV+PDF reports / the 3D cash-flow view, all of which
             // read this single value.
+            //
+            // ── AND `received` IS NOW READ, WHICH IT NEVER USED TO BE ────────
+            //
+            // This loop summed every row in the month and never looked at the
+            // field. The statement importer writes `received: past`, so a
+            // credit dated next week is imported as NOT received — and was
+            // counted in Year Income, Net Savings and the Savings Rate anyway.
+            // That is the owner's own rule broken from the inside: money that
+            // has not arrived must never be posted. The rule itself lives in
+            // wealthflow-reactive.js (incomeIn) so that this function, the AI
+            // context and the Income tab cannot disagree about what arrived,
+            // and it excludes ONLY an explicit false — rows written before the
+            // field existed keep counting rather than vanishing on first load.
             const _incYM = year + '-' + p2(month + 1);
-            let income = 0;
-            (DB.get('incomeRecv') || []).forEach(r => {
-                if (!r) return;
-                const rm = r.month || (r.date ? String(r.date).slice(0, 7) : '');
-                if (rm === _incYM) income += (+r.amount || 0);
-            });
+            const _inc = window.WFReactive.incomeIn(DB.get('incomeRecv') || [], _incYM);
+            const income = _inc.received;
+            // Not counted, not hidden: the dashboard names it under Year Income.
+            const incomePending = _inc.pending;
             let loanTotal = 0, loanItems = [];
             (DB.get('loans') || []).forEach(l => {
                 if (!l || !l.start) return;
@@ -25945,7 +26758,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const totalExp = loanTotal + ccTotal + expTotal + ccotTotal + subTotal + cheTotal;
             return {
-                income, loanTotal, ccTotal, expTotal,
+                income, incomePending, loanTotal, ccTotal, expTotal,
                 ccotTotal, subTotal, cheTotal,
                 totalExp, balance: income - totalExp,
                 loanItems, ccItems2, expItems,
@@ -26083,13 +26896,18 @@ table.amort tbody tr { page-break-inside: avoid; }
             const year = parseInt($('dashYear').value) || new Date().getFullYear();
             const months = MONTHS_S;
             const incData = [], expData = [], netData = [];
-            let yrInc = 0, yrExp = 0;
+            let yrInc = 0, yrExp = 0, yrPending = 0;
             for (let i = 0; i < 12; i++) {
                 const md = getMonthlyData(year, i);
                 incData.push(md.income);
                 expData.push(md.totalExp);
                 netData.push(md.balance);
                 yrInc += md.income; yrExp += md.totalExp;
+                /* Imported but not yet confirmed as arrived. It is NOT in
+                 * yrInc — that is the point of the change — so it is named on
+                 * the card instead. A total that quietly got smaller is
+                 * indistinguishable from a bug. */
+                yrPending += (md.incomePending || 0);
             }
             // Current month expenses (actual expenses logged for this month only)
             const nowD = new Date();
@@ -26206,7 +27024,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
             } catch (_) {}
             $('dashStats').innerHTML = predictiveHtml + `
-        <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div></div>
+        <div class="stat-card sc-green"><div class="stat-label">Year Income</div><div class="stat-val">${fmtS(yrInc)}</div>${yrPending > 0 ? `<div class="stat-meta">${fmtS(yrPending)} not yet confirmed received</div>` : ''}</div>
         <div class="stat-card sc-red"><div class="stat-label">Year Expenses</div><div class="stat-val">${fmtS(yrExp)}</div></div>
         <div class="stat-card sc-gold"><div class="stat-label">Net Savings</div><div class="stat-val">${fmtS(yrInc - yrExp)}</div>${forexHtml}</div>
         <div class="stat-card sc-blue"><div class="stat-label">${periodCardTitle}</div><div class="stat-val">${fmtS(periodExp)}</div><div class="stat-meta">${periodLabel}</div></div>
@@ -31500,7 +32318,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const draw = () => {
                     body.innerHTML = `
                         <div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:4px;">
-                            Unlocked. Add the password each bank puts on its statement PDF.
+                            Unlocked. Add the password each bank puts on its statement PDF —
+                            and say what it is. A date of birth is tried in every written form,
+                            slashes included, so you do not have to know which one your bank used.
                         </div>
                         <datalist id="_bv_banks">${suggestions.map(b => `<option value="${_wfEsc(b)}"></option>`).join('')}</datalist>
                         <div id="_bv_rows" style="margin:14px 0;display:flex;flex-direction:column;gap:10px;"></div>
@@ -31513,38 +32333,83 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     if (!rows.length) {
                         host.innerHTML = `<div style="text-align:center;color:var(--text3);font-size:12.5px;padding:14px 0;">No passwords saved yet.</div>`;
                     }
+                    /* ── WHAT KIND OF THING THIS PASSWORD IS ────────────────
+                     *
+                     * The owner: "Why didn't you anticipate that a user's
+                     * password might be a Date of Birth with slashes
+                     * (DD/MM/YYYY)?" Because the field only ever took an opaque
+                     * string, so 07/07/1993 and 07071993 were two different
+                     * secrets and only the one typed was ever tried.
+                     *
+                     * Declaring the kind lets wealthflow-password-shapes.js
+                     * produce every plausible spelling of the same secret. The
+                     * format dropdown appears ONLY for a birthday, because a
+                     * format question about a password the bank chose has no
+                     * answer and an always-visible dropdown that is usually
+                     * meaningless is how a form starts being ignored. */
+                    const S = window.WFPwShapes;
                     rows.forEach((row, i) => {
                         const card = document.createElement('div');
                         card.style.cssText = 'border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);';
+                        const isBirthday = (row.kind || '') === (S ? S.PW_KIND.BIRTHDAY : 'birthday');
                         card.innerHTML = `
                             <div style="display:flex;gap:8px;margin-bottom:8px;">
                                 <input class="fi _bv_bank" list="_bv_banks" placeholder="Bank (e.g. HNB)" style="flex:1;">
                                 <input class="fi _bv_label" placeholder="Label (optional)" style="flex:1;">
-                                <button class="btn btn-ghost btn-sm _bv_del" title="Remove" style="color:var(--red);flex:0 0 auto;">${(window.WFIcon ? WFIcon('x') : '')}</button>
+                                <button class="btn btn-ghost btn-sm _bv_del" aria-label="Remove this password" title="Remove" style="color:var(--red);flex:0 0 auto;">${(window.WFIcon ? WFIcon('x') : '')}</button>
+                            </div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                                <label class="fl" style="flex:1 1 100%;margin:0 0 2px;">What is this password?</label>
+                                <select class="fs _bv_kind" style="flex:1 1 190px;">
+                                    ${(S ? S.KIND_OPTIONS : []).map(o => `<option value="${_wfEsc(o.id)}">${_wfEsc(o.label)}</option>`).join('')}
+                                </select>
+                                <select class="fs _bv_fmt" style="flex:1 1 150px;${isBirthday ? '' : 'display:none;'}">
+                                    ${(S ? S.DATE_FORMATS : []).map(f => `<option value="${_wfEsc(f.id)}">${_wfEsc(f.label)}  ·  ${_wfEsc(f.example)}</option>`).join('')}
+                                </select>
                             </div>
                             <div style="display:flex;gap:8px;">
-                                <input class="fi _bv_pw" type="password" placeholder="Statement password" autocomplete="off" spellcheck="false" style="flex:1;font-family:var(--mono);">
-                                <button class="btn btn-ghost btn-sm _bv_eye" title="Show" style="flex:0 0 auto;">${(window.WFIcon ? WFIcon('eye') : '')}</button>
-                            </div>`;
+                                <input class="fi _bv_pw" type="password" placeholder="${isBirthday ? 'e.g. 07/07/1993' : 'Statement password'}" autocomplete="off" spellcheck="false" style="flex:1;font-family:var(--mono);">
+                                <button class="btn btn-ghost btn-sm _bv_eye" aria-label="Show or hide this password" aria-pressed="false" title="Show" style="flex:0 0 auto;">${(window.WFIcon ? WFIcon('eye') : '')}</button>
+                            </div>
+                            <div class="_bv_says" style="font-size:11.5px;color:var(--text3);margin-top:6px;min-height:15px;"></div>`;
                         // Values assigned as PROPERTIES, never interpolated into
                         // the markup above — see the note on this function.
                         card.querySelector('._bv_bank').value = row.bank || '';
                         card.querySelector('._bv_label').value = row.label || '';
                         card.querySelector('._bv_pw').value = row.password || '';
+                        const kindEl = card.querySelector('._bv_kind');
+                        const fmtEl = card.querySelector('._bv_fmt');
+                        const saysEl = card.querySelector('._bv_says');
+                        kindEl.value = row.kind || (S ? S.PW_KIND.OTHER : 'other');
+                        fmtEl.value = row.format || (S ? S.DEFAULT_DATE_FORMAT : '');
+                        /* Says WHAT WILL HAPPEN, and recalculated on every
+                         * keystroke: "11 forms of this will be tried, in order"
+                         * is the difference between a dropdown the owner trusts
+                         * and one they guess at. */
+                        const says = () => {
+                            fmtEl.style.display = (kindEl.value === (S ? S.PW_KIND.BIRTHDAY : 'birthday')) ? '' : 'none';
+                            saysEl.textContent = S ? S.describe(rows[i]) : '';
+                        };
                         card.querySelector('._bv_bank').oninput = (e) => { rows[i].bank = e.target.value; };
                         card.querySelector('._bv_label').oninput = (e) => { rows[i].label = e.target.value; };
-                        card.querySelector('._bv_pw').oninput = (e) => { rows[i].password = e.target.value; };
+                        card.querySelector('._bv_pw').oninput = (e) => { rows[i].password = e.target.value; says(); };
+                        kindEl.onchange = () => { rows[i].kind = kindEl.value; says(); };
+                        fmtEl.onchange = () => { rows[i].format = fmtEl.value; says(); };
                         card.querySelector('._bv_del').onclick = () => { rows.splice(i, 1); draw(); };
-                        card.querySelector('._bv_eye').onclick = () => {
+                        card.querySelector('._bv_eye').onclick = (ev) => {
                             const f = card.querySelector('._bv_pw');
-                            f.type = f.type === 'password' ? 'text' : 'password';
+                            const showing = f.type === 'password';
+                            f.type = showing ? 'text' : 'password';
+                            ev.currentTarget.setAttribute('aria-pressed', showing ? 'true' : 'false');
+                            ev.currentTarget.title = showing ? 'Hide' : 'Show';
                             try { triggerHaptic('light'); } catch (_) {}
                         };
+                        says();
                         host.appendChild(card);
                     });
 
                     body.querySelector('#_bv_add').onclick = () => {
-                        rows.push({ bank: '', label: '', password: '' });
+                        rows.push({ bank: '', label: '', password: '', kind: (S ? S.PW_KIND.OTHER : 'other'), format: (S ? S.DEFAULT_DATE_FORMAT : '') });
                         draw();
                     };
                     const wipe = body.querySelector('#_bv_wipe');

@@ -51,6 +51,12 @@
  * quietly upload every password in it.
  * ===========================================================================*/
 
+/* What a password is MADE OF, which the vault now records alongside it. A
+ * birthday typed as 07/07/1993 is the same secret as 07071993 and 1993-07-07,
+ * and until this module existed only the exact string typed was ever tried —
+ * the owner's complaint, in one sentence. */
+import { expand as expandShape } from './wealthflow-password-shapes.js';
+
 /* The store. Separate key from `wf_vault_enc` on purpose — different secret,
  * different key derivation, different lifetime. */
 export const STORE_KEY = 'wf_vault_pw_v1';
@@ -94,6 +100,12 @@ export function normaliseEntry(raw, now = Date.now()) {
         bank,
         label: s(r.label),
         password,
+        /* WHAT THE PASSWORD IS, not just what it says. An entry saved before
+         * these fields existed has neither, and wealthflow-password-shapes.js
+         * reads an absent kind as OTHER — so every password already in a
+         * vault keeps behaving exactly as it did. */
+        kind: s(r.kind),
+        format: s(r.format),
         updatedAt: Number(r.updatedAt) || now,
     };
 }
@@ -276,7 +288,13 @@ export function candidatesFor(bank, entries, derived = []) {
         // Substring either way: the registry may say "HNB" where the statement
         // says "Hatton National Bank", and the owner may have typed either.
         const hit = want && b && (b === want || b.includes(want) || want.includes(b));
-        push(hit ? matched : others, e.password);
+        /* EVERY SPELLING OF IT, not just the one that was typed. The owner
+         * asked why a date of birth with slashes was never tried; the answer
+         * was that a password could only ever be an opaque string here, so
+         * 07/07/1993 and 07071993 were two different secrets as far as this
+         * function could tell. An entry declaring itself a birthday now
+         * contributes both, and the declared form is still first. */
+        for (const v of expandShape(e)) push(hit ? matched : others, v);
     }
     for (const x of matched) push(out, x);
     for (const x of others) push(out, x);

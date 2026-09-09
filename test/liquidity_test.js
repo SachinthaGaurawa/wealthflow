@@ -27,6 +27,7 @@ import L, {
     PAWN_STATE, DEBT_STATE, EVENT, MATURITY_WARN_DAYS,
     monthsElapsed, interestOn, pawnStatus, pawnTotals,
     debtorSummary, debtorTotals, pendingLiquidity, addEvent, confirmEvent, settleInFull,
+    updateDebtor, updateEvent, removeEvent, unconfirmEvent, reopenDebtor,
 } from '../wealthflow-liquidity.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -400,5 +401,186 @@ describe('the owner can actually get to it', () => {
         for (const name of ['renderLiquidity', '_redeemPawn', '_settleDebtor', 'openDebtorEvent']) {
             expect(fn(name), `${name} writes to balance`).not.toMatch(/DB\.set\('balance'/);
         }
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE EDITS AND THE UNDOS — reported missing, and they were
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * "Debtors feature එකේ undo නෑ. Edit නෑ. ඉතින් ඒවා අඩුපාඩු."
+ *
+ * They were right. A name typed wrong, a repayment logged twice, a confirmation
+ * pressed on the wrong row — none of it could be taken back, and the only
+ * recovery on offer was deleting the person and every event they ever had.
+ * That is not a workaround, it is data loss dressed up as a feature.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('being able to be wrong', () => {
+    const nimal = () => ({
+        id: 'd1', name: 'Nimal', events: [
+            { id: 'e1', kind: 'lent', amount: 200000, date: '2026-05-01', confirmed: true },
+            { id: 'e2', kind: 'repayment', amount: 40000, date: '2026-07-02', confirmed: true },
+        ],
+    });
+
+    it('EDIT: the person, without touching the money', () => {
+        const r = updateDebtor(nimal(), { name: 'Nimal Perera', phone: '0771234567', dueISO: '2026-10-01', note: 'Shop' });
+        expect(r.ok).toBe(true);
+        expect(r.debtor.name).toBe('Nimal Perera');
+        expect(r.debtor.phone).toBe('0771234567');
+        expect(r.debtor.events.length).toBe(2);
+        expect(updateDebtor(nimal(), { name: '  ' }).ok).toBe(false);
+    });
+
+    it('EDIT: one entry, and the balance follows it', () => {
+        const r = updateEvent(nimal(), 'e2', { amount: 60000 });
+        expect(r.ok).toBe(true);
+        expect(debtorSummary(r.debtor, null).outstanding).toBe(140000);
+        expect(updateEvent(nimal(), 'nope', { amount: 1 }).ok).toBe(false);
+    });
+
+    it('an edit to zero is refused — that is a deletion in disguise', () => {
+        /* It would leave a row in the ledger that looks real and counts for
+         * nothing. Remove is the way to remove something. */
+        const r = updateEvent(nimal(), 'e2', { amount: 0 });
+        expect(debtorSummary(r.debtor, null).outstanding).toBe(160000);
+    });
+
+    it('UNDO: remove an entry logged by mistake', () => {
+        const r = removeEvent(nimal(), 'e2');
+        expect(r.ok).toBe(true);
+        expect(debtorSummary(r.debtor, null).outstanding).toBe(200000);
+        expect(removeEvent(nimal(), 'nope').ok).toBe(false);
+    });
+
+    it('UNDO: a confirmation pressed on the wrong row', () => {
+        const r = unconfirmEvent(nimal(), 'e2');
+        expect(r.ok).toBe(true);
+        const su = debtorSummary(r.debtor, null);
+        expect(su.outstanding).toBe(200000);          // no longer counted
+        expect(su.outstandingIfConfirmed).toBe(160000);
+        expect(su.pending).toBe(1);
+        expect(r.debtor.events[1].confirmedAt).toBeUndefined();
+    });
+
+    it('REMOVING THE FINAL PAYMENT RE-OPENS A SETTLED DEBTOR', () => {
+        /* Otherwise the screen goes on saying SETTLED next to a balance that
+         * is no longer zero, and keeps saying it until somebody reads the
+         * number rather than the label. */
+        const settled = settleInFull(nimal(), { date: '2026-08-01', id: 'f1', now: 1, confirmed: true });
+        expect(debtorSummary(settled.debtor, null).state).toBe(DEBT_STATE.CLOSED);
+        const back = removeEvent(settled.debtor, 'f1');
+        expect(debtorSummary(back.debtor, null).state).toBe(DEBT_STATE.OPEN);
+        expect(back.debtor.closedAt).toBeUndefined();
+    });
+
+    it('and so does un-confirming it', () => {
+        const settled = settleInFull(nimal(), { date: '2026-08-01', id: 'f2', now: 1, confirmed: true });
+        const back = unconfirmEvent(settled.debtor, 'f2');
+        expect(debtorSummary(back.debtor, null).state).toBe(DEBT_STATE.OPEN);
+    });
+
+    it('UNDO: reopen a debtor closed by hand', () => {
+        const closed = { ...nimal(), closedAt: 123, state: DEBT_STATE.CLOSED };
+        const r = reopenDebtor(closed);
+        expect(r.ok).toBe(true);
+        expect(r.debtor.closedAt).toBeUndefined();
+        expect(reopenDebtor(nimal()).ok).toBe(false);
+    });
+
+    it('every one of them returns a NEW record and leaves the old alone', () => {
+        const d = nimal();
+        const frozen = JSON.stringify(d);
+        updateDebtor(d, { name: 'x' });
+        updateEvent(d, 'e2', { amount: 1 });
+        removeEvent(d, 'e2');
+        unconfirmEvent(d, 'e2');
+        reopenDebtor(d);
+        expect(JSON.stringify(d)).toBe(frozen);
+    });
+
+    it('none of them throws on junk', () => {
+        for (const bad of [null, undefined, {}, { events: 'no' }]) {
+            expect(() => updateDebtor(bad, {})).not.toThrow();
+            expect(() => updateEvent(bad, 'x', {})).not.toThrow();
+            expect(() => removeEvent(bad, 'x')).not.toThrow();
+            expect(() => unconfirmEvent(bad, 'x')).not.toThrow();
+            expect(() => reopenDebtor(bad)).not.toThrow();
+        }
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE REPAYMENT THAT WAS PROMISED AND DID NOT COME
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('an expected repayment that has not arrived', () => {
+    const owed = (over = {}) => ({
+        id: 'd9', name: 'Kamal', dueISO: '2026-08-20',
+        events: [{ id: 'a', kind: 'lent', amount: 100000, date: '2026-05-01', confirmed: true }], ...over,
+    });
+
+    it('THE GAP: a debtor who went quiet produced nothing on any screen', () => {
+        /* The queue only ever held events somebody had already logged, so the
+         * one case that actually needs a nudge was the one case with no row. */
+        const rows = pendingLiquidity({ debtors: [owed()] }, AT('2026-09-09'));
+        const due = rows.find((r) => r.source === 'debtor-due');
+        expect(due).toBeTruthy();
+        expect(due.amount).toBe(100000);
+        expect(due.late).toBe(true);
+        expect(due.daysLate).toBe(20);
+    });
+
+    it('silent when no date was given — a deadline nobody set is not one to be late on', () => {
+        const rows = pendingLiquidity({ debtors: [owed({ dueISO: '' })] }, AT('2026-09-09'));
+        expect(rows.some((r) => r.source === 'debtor-due')).toBe(false);
+    });
+
+    it('and silent before the date, and once they have paid', () => {
+        expect(pendingLiquidity({ debtors: [owed()] }, AT('2026-08-01'))
+            .some((r) => r.source === 'debtor-due')).toBe(false);
+        const paid = owed({ events: [
+            { id: 'a', kind: 'lent', amount: 100000, date: '2026-05-01', confirmed: true },
+            { id: 'b', kind: 'repayment', amount: 100000, date: '2026-08-01', confirmed: true },
+        ] });
+        expect(pendingLiquidity({ debtors: [paid] }, AT('2026-09-09'))
+            .some((r) => r.source === 'debtor-due')).toBe(false);
+    });
+
+    it('unconfirmed pawn payments join the same queue', () => {
+        const rows = pendingLiquidity({
+            pawns: [{ id: 'p1', item: 'Chain', principal: 100000, rate: 2, pawnDate: '2026-06-01',
+                payments: [{ id: 'q', kind: 'part', amount: 5000, date: '2026-09-01', confirmed: false }] }],
+        }, AT('2026-09-09'));
+        expect(rows.some((r) => r.source === 'pawn' && r.amount === 5000)).toBe(true);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE QUEUE'S HANDLER KNOWS EVERY ROW IT CAN BE GIVEN
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('what the dashboard does when one of these is confirmed', () => {
+    /* Adding rows to a queue without teaching its handler about them is the
+     * defect this repository keeps producing. _verifyConfirm's fall-through
+     * writes `incomeReceived` for an inflow — so an un-taught `debtor-due` row
+     * would have filed the whole outstanding balance as income the owner never
+     * received. */
+    const CONFIRM = HTML.slice(HTML.indexOf('function _verifyConfirm(row)'), HTML.indexOf('function _verifyFlagLate'));
+
+    it('a pawn payment is confirmed on its ticket, not filed under billPaid', () => {
+        expect(CONFIRM).toContain("row.source === 'pawn'");
+        expect(CONFIRM).toContain('window.WFPawn.confirmPayment');
+        expect(CONFIRM.indexOf("row.source === 'pawn'"))
+            .toBeLessThan(CONFIRM.indexOf("const paid = DB.getObj('billPaid'"));
+    });
+
+    it('AN EXPECTED REPAYMENT OPENS THE FORM — it never posts money by itself', () => {
+        expect(CONFIRM).toContain("row.source === 'debtor-due'");
+        expect(CONFIRM).toContain("openDebtorEvent(d, 'repayment')");
+        expect(CONFIRM.indexOf("row.source === 'debtor-due'"))
+            .toBeLessThan(CONFIRM.indexOf("const got = DB.getObj('incomeReceived'"));
+    });
+
+    it('and the button says what pressing it actually does', () => {
+        expect(HTML).toContain("r.source === 'debtor-due' ? 'Log what came in'");
     });
 });
