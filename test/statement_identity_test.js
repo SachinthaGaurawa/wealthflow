@@ -277,20 +277,22 @@ describe('THE FIX IS WIRED — the veto is universal, not only for unknown sende
     it('planMessage vetoes by name for EVERY sender, not only unrecognised ones', () => {
         const at = ingest.indexOf('const byName = nameVerdict(');
         expect(at, 'the universal veto is gone').toBeGreaterThan(-1);
-        /* Above the `who.known === false` branch that used to own the only
-         * check on what a document is — that narrowing IS the bug. */
-        const narrow = ingest.indexOf('if (who.known === false)');
-        expect(narrow).toBeGreaterThan(-1);
-        expect(at).toBeLessThan(narrow);
-        /* And BELOW the curated sender rule, deliberately. Both refusals are
-         * true of a bill from a stranger and the sender one is the actionable
-         * one — "you have not decided about this sender" offers a tap that
-         * fixes it. What survives to the veto is every sender the owner has
-         * already accepted, which is exactly the population the old code never
-         * checked. */
-        const curated = ingest.indexOf('if (policy.curated && !ownerApproved)');
-        expect(curated).toBeGreaterThan(-1);
-        expect(at).toBeGreaterThan(curated);
+        /* The narrowing this used to sit behind — `if (who.known === false)`
+         * — is not merely reordered, it is gone from the source entirely: the
+         * keyword guess it gated was the second half of the same bug (an
+         * unapproved sender could reach content review at all, curated or
+         * not — see mail_owner_list_test.js), and there is no branch left for
+         * the veto to be narrower than. */
+        expect(ingest, 'the old narrowing is back').not.toContain('if (who.known === false)');
+        /* And BELOW the sender-approval gate, deliberately — WHO before WHAT.
+         * Both refusals are true of a bill from a stranger and the sender one
+         * is the actionable one — "you have not decided about this sender"
+         * offers a tap that fixes it. What survives to the veto is every
+         * sender the owner has actually approved — curated or not, now —
+         * which is exactly the population the old code never checked. */
+        const gate = ingest.indexOf('if (!ownerApproved)');
+        expect(gate, 'the unconditional sender-approval gate is gone').toBeGreaterThan(-1);
+        expect(at).toBeGreaterThan(gate);
     });
 
     it('and it refuses with a reason of its own, not the sender one', () => {

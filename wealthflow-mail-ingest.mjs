@@ -338,11 +338,34 @@ export function identifyBank(headers, policy = {}) {
             domain: from,
             known: true,
             approved: true,
+            builtIn: !!hit,
         };
     }
 
-    if (hit) return { ok: true, bank: hit.name, domain: hit.domain, known: true };
-    return { ok: true, bank: nameFromDomain(from), domain: from, known: false };
+    /* ── A BUILT-IN NAME IS A GUESS ABOUT WHO, NOT A GRANT OF TRUST ──────────
+     *
+     * THE BUG: this used to return `known: true` for a hit, unconditionally.
+     * `known: true` skipped BOTH the content check AND — until the owner had
+     * curated anything — the sender-approval gate too, because that gate used
+     * to be keyed off `policy.curated`, which nothing not yet approved could
+     * set. So mail from these five domains was filed sight-unseen from the
+     * moment the mailbox was linked, whether or not the owner had put that
+     * address anywhere in their own senders list — the exact "senders you
+     * never approved keep syncing anyway" report this rewrite exists to
+     * close. planMessage now holds anything not explicitly approved
+     * unconditionally, curated or not, so this is no longer the only place
+     * that mattered — but `known` still has to tell the truth on its own,
+     * because the mailbox card reads it directly.
+     *
+     * A hit still buys the nicer NAME below (`hit.name` instead of a guess
+     * from the domain) — that was never the security question. `builtIn`
+     * carries that recognition forward for planMessage's "this IS one of
+     * your banks, you just have not said so" hint on a hold, which needs the
+     * fact a domain matched without it granting anything. Trust is
+     * `known: true`, and the only thing that may grant it is the owner's own
+     * decision, three lines up. */
+    if (hit) return { ok: true, bank: hit.name, domain: hit.domain, known: false, builtIn: true };
+    return { ok: true, bank: nameFromDomain(from), domain: from, known: false, builtIn: false };
 }
 
 /* ── 1b. what to HOLD ─────────────────────────────────────────────────────── */
@@ -636,40 +659,37 @@ export function planMessage(message, policy = {}) {
     const what = selectAttachments(message && message.payload);
     if (!what.ok) return { ok: false, ...what, bank: who.bank, from: seenFrom, subject: headers.subject || '' };
 
-    /* An unrecognised sender has to LOOK like a statement as well as be
-     * verified. A valid signature says the sender is who it claims; it says
-     * nothing about whether a shop's PDF flyer belongs in a financial review
-     * queue. Without this, widening the allowlist would trade eleven dropped
-     * banks for a queue full of receipts, and a queue nobody can face is the
-     * same as no queue.
+    /* ── THE OWNER'S LIST IS THE ONLY AUTHORITY, CURATED OR NOT ───────────
      *
-     * Checked AFTER the attachments are selected so the filenames can vote:
-     * plenty of banks send `Statement_Aug2026.pdf` under a subject that says
-     * nothing. A KNOWN bank skips this entirely — HNB may title its statement
-     * whatever it likes. */
-    /* ── THE OWNER'S LIST IS THE AUTHORITY ───────────────────────────────
+     * THE BUG, IN TWO LAYERS. First: this used to read `if (who.known ===
+     * false)`, so the rule below applied only to senders the built-in BANKS
+     * list did not recognise — a message from hnb.lk, dfcc.lk,
+     * nationstrust.com, americanexpress.com or amex.com was `known: true` and
+     * skipped it entirely, filed on the strength of a hardcoded domain list
+     * the owner never saw, let alone approved. That is fixed above: `known`
+     * now requires the owner's own approval, so a built-in hit buys nothing
+     * here.
      *
-     * THE BUG: this used to read `if (who.known === false)`, so the curated
-     * rule below applied only to senders the built-in BANKS list did not
-     * recognise. A message from hnb.lk, dfcc.lk, nationstrust.com,
-     * americanexpress.com or amex.com was `known: true` and skipped the check
-     * ENTIRELY — and skipped looksLikeStatement with it, on the reasoning that
-     * a known bank may title its statement whatever it likes.
+     * Second, and the one that survived fixing the first: this was gated on
+     * `policy.curated`, true only once the owner has approved something.
+     * Before that first approval, EVERY sender — built-in or not — fell
+     * through to a keyword guess a few lines below (`looksLikeStatement`),
+     * which downloaded and filed anything whose subject or filename merely
+     * sounded like a statement, from any address at all. That is not a
+     * curation gap, it is the owner's own senders list having no power over
+     * the mailbox until they had already used it once — exactly what "add
+     * the emails I trust and use ONLY those" promises the list will never do,
+     * and precisely what the report was: mail from addresses never added
+     * kept arriving regardless.
      *
-     * So every PDF those five domains ever sent was filed. Marketing flyers,
-     * card bills, insurance offers, promotional inserts — all of it, with no
-     * second line of defence, and with the owner's own list powerless over it.
-     * That is the reported complaint word for word: "I added the emails, but it
-     * only takes from those" is what was asked for, and unwanted receipts and
-     * bills is what arrived.
-     *
-     * A built-in list is a SUGGESTION about who a bank might be. It was never
-     * meant to outrank the owner saying which senders are theirs. Once they
-     * have curated anything, the list decides for EVERYONE — the built-ins
-     * included — and a built-in bank that is not on it is offered for one tap
-     * rather than assumed. */
+     * So the gate is unconditional now. Not approved is not filed — full
+     * stop, curated or not — and NOTHING is lost by that: a refusal here is
+     * HOLDABLE (see HOLDABLE below), so the sender still surfaces for a
+     * one-tap approval and the next scan brings its statements in. That is
+     * the same discovery path a first sender always needed; it no longer
+     * runs through downloading and filing content nobody approved first. */
     const ownerApproved = who.approved === true;
-    if (policy.curated && !ownerApproved) {
+    if (!ownerApproved) {
         const rel = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
         return {
             ok: false,
@@ -677,7 +697,7 @@ export function planMessage(message, policy = {}) {
             bank: (rel && rel.name) || who.bank,
             detail: rel
                 ? { from: who.domain, approvedAddress: rel.approvedAddress, sawAddress: rel.address }
-                : { from: who.domain, knownBank: who.known === true },
+                : { from: who.domain, knownBank: who.builtIn === true },
             from: seenFrom,
             subject: headers.subject || '',
         };
@@ -728,44 +748,19 @@ export function planMessage(message, policy = {}) {
         };
     }
 
-    if (who.known === false) {
-        /* ONCE THE OWNER HAS A LIST, THE LIST DECIDES.
-         *
-         * The keyword test below is a guess, and a guess is what put utility
-         * bills and shop receipts in a screen meant for bank statements: it
-         * searched for the words `invoice` and `bill`, which describe every
-         * non-statement financial mail ever sent. Those two words are gone from
-         * the vocabulary now, but the deeper problem was that a guess was
-         * deciding at all.
-         *
-         * So an owner who has approved even one sender gets the strict rule: a
-         * sender they have not decided on is REFUSED, and offered to them
-         * instead. Nothing is lost — the refusal names the sender, one tap
-         * approves it, and the next scan brings its statements in.
-         *
-         * The guess survives only for someone who has not curated anything yet,
-         * where refusing everything would mean an empty screen and no way to
-         * discover what to approve. */
-        /* The curated case is handled above, for every sender rather than only
-         * the unrecognised ones. What is left here is the owner who has
-         * approved nothing yet, where refusing everything would mean an empty
-         * screen and no way to discover what to approve. */
-        const named = looksLikeStatement({
-            subject: headers.subject || '',
-            filenames: what.take.map((a) => a && a.filename).filter(Boolean),
-        });
-        if (!named) {
-            return {
-                ok: false,
-                reason: REJECT.NOT_A_STATEMENT,
-                bank: who.bank,
-                detail: { from: who.domain },
-                from: seenFrom,
-                subject: headers.subject || '',
-            };
-        }
-    }
-
+    /* THE KEYWORD GUESS THAT USED TO LIVE HERE IS GONE.
+     *
+     * It ran for a sender not yet approved, on the reasoning that someone who
+     * had approved nothing needed SOME way to discover what to approve. But a
+     * guess that a message "looks like" a statement is not the owner's
+     * consent, and downloading and filing content on the strength of a guess
+     * is exactly what the unconditional gate above now refuses to do,
+     * whatever `policy.curated` says. Discovery still works: the refusal a
+     * few lines up is HOLDABLE, so the sender surfaces for a one-tap approval
+     * with nothing of its content ever fetched first. `looksLikeStatement`
+     * stays exported and tested — nothing else in this file calls it, but
+     * removing a working, well-tested classifier because its one caller went
+     * away is a separate decision from removing the caller. */
     const items = [];
     for (const a of what.take) {
         const key = stableItemKey(message.id, a);

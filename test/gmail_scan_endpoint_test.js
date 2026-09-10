@@ -125,8 +125,16 @@ async function call({ method = 'POST', token = 'good-token', body = {}, gmail = 
     return seen;
 }
 
+/* Approved by default so `bankMessage()`'s own claim — "allowlisted sender"
+ * — is actually true against the policy this endpoint builds from Firestore.
+ * Sender approval is unconditional now (see wealthflow-mail-ingest.mjs): a
+ * hit against the built-in BANKS list buys a nicer name, never admission, so
+ * every test in this file that expects hnb.lk mail to be STORED needs this
+ * seeded, exactly as a real owner would have to approve it once first. */
+const HNB_APPROVED = [{ id: 'hnb.lk', kind: 'domain', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 }];
+
 function connect(extra = {}) {
-    fake.docs.set(`wf-mail/${KEY}`, { refresh_token: TOKEN, email: OWNER, ...extra });
+    fake.docs.set(`wf-mail/${KEY}`, { refresh_token: TOKEN, email: OWNER, senders: HNB_APPROVED, ...extra });
 }
 
 const WINDOW = { months: 6, index: 0, now: NOW };

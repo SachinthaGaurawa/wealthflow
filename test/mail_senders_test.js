@@ -88,23 +88,33 @@ describe('the exact mail the owner complained about', () => {
         expect(STATEMENT_TERMS).toContain('statement');
     });
 
-    it('an uncurated owner still gets the old lenient behaviour, on purpose', () => {
-        /* Someone who has approved nothing needs SOME mail to arrive, or there
-         * is nothing to discover and the list can never be started. The bill no
-         * longer matches — `bill` left the vocabulary — but a real statement
-         * from an unlisted bank does, and arrives held rather than filed. */
+    it('THE OLD LENIENT BOOTSTRAP BEHAVIOUR IS GONE: an uncurated owner is held too', () => {
+        /* REVERSED ON PURPOSE. This used to say the opposite — "someone who
+         * has approved nothing needs SOME mail to arrive" — and let a keyword
+         * guess file a real statement's content, unapproved, before the owner
+         * had ever used the list. That is not a bootstrap accommodation, it
+         * is the owner's list having no say until it has already been used
+         * once, and it is the same shape as causes #1 and #2 above: content
+         * or a bare DKIM pass deciding, instead of the owner.
+         *
+         * Discovery still works. NOT_ON_YOUR_LIST is holdable (see HOLDABLE
+         * in wealthflow-mail-ingest.mjs) — the sender surfaces, nothing of
+         * its content is ever fetched first, and approving it is what files
+         * anything. */
         const open = policyFrom([]);
         expect(planMessage(bill, open).ok).toBe(false);
         const plan = planMessage(msg('mail@sampathbank.lk', 'e-Statement for August'), open);
-        expect(plan.ok).toBe(true);
-        expect(plan.items[0].known).toBe(false);
+        expect(plan.ok).toBe(false);
+        expect(plan.reason).toBe(REJECT.NOT_ON_YOUR_LIST);
     });
 
-    it('`known` reaches the item, which is the field that was computed and dropped', () => {
+    it('`known` reaches the item once approved — the field that was once computed and dropped', () => {
         const approved = planMessage(statement, policyFrom(addSender([], 'hnb.lk', { now: NOW }).list));
-        const stranger = planMessage(msg('mail@sampathbank.lk', 'Statement'), policyFrom([]));
         expect(approved.items[0].known).toBe(true);
-        expect(stranger.items[0].known).toBe(false);
+        /* An unapproved stranger never reaches an item to carry the flag on
+         * at all now; identifyBank alone still reports what it would be. */
+        const who = identifyBank({ from: 'mail@sampathbank.lk', 'authentication-results': 'dkim=pass header.i=@sampathbank.lk' }, policyFrom([]));
+        expect(who.known).toBe(false);
     });
 });
 

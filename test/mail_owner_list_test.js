@@ -101,10 +101,40 @@ describe('a curated list decides for EVERYONE, built-in banks included', () => {
         expect(planMessage(message('estatement@sampath.lk', 'sampath.lk'), byDomain).ok).toBe(true);
     });
 
-    it('AN OWNER WHO HAS APPROVED NOTHING IS UNAFFECTED', () => {
-        // The one case that must not change. Refusing everything for someone
-        // with no list would mean an empty screen and no way to build one.
-        expect(planMessage(message('statements@hnb.lk', 'hnb.lk'), UNCURATED()).ok).toBe(true);
+    it('AN OWNER WHO HAS APPROVED NOTHING IS HELD, NOT FILED', () => {
+        /* REVERSED ON PURPOSE, and this is the second layer of the same bug.
+         * This test used to pin the opposite: an uncurated owner "gets the
+         * old lenient behaviour" — a keyword guess admits anything that
+         * sounds like a statement, from anyone, before the owner has
+         * approved a single sender. That is not a curation gap being worked
+         * around, it is the owner's senders list having no power over the
+         * mailbox until it has already been used once — precisely the
+         * report: mail from addresses never added kept arriving regardless
+         * of what Senders said.
+         *
+         * Nothing is lost by refusing it instead: NOT_ON_YOUR_LIST is
+         * HOLDABLE (see HOLDABLE below and mail_ingest_test.js), so the
+         * sender still surfaces — name, subject, nothing downloaded — for a
+         * one-tap approval. That tap, not a keyword match, is now the only
+         * thing that ever files a first statement. */
+        const r = planMessage(message('statements@hnb.lk', 'hnb.lk'), UNCURATED());
+        expect(r.ok).toBe(false);
+        expect(r.reason).toBe(REJECT.NOT_ON_YOUR_LIST);
+        expect(HOLDABLE.has(r.reason), 'an uncurated refusal must still be discoverable, not dropped').toBe(true);
+    });
+
+    it('a non-bank sender is held the same way while uncurated — never filed on a keyword guess', () => {
+        /* The domain does not even have to be a recognised bank for this to
+         * matter: `known: false` used to fall through to `looksLikeStatement`
+         * for ANY sender while uncurated, so a subject or filename that
+         * merely sounded right was enough to file it, from an address the
+         * owner had never heard of. */
+        const r = planMessage(
+            { ...message('estatement@some-random-domain.example', 'some-random-domain.example', 'Your e-Statement is ready'), id: 'MSGX' },
+            UNCURATED(),
+        );
+        expect(r.ok).toBe(false);
+        expect(r.reason).toBe(REJECT.NOT_ON_YOUR_LIST);
     });
 
     it('a blocked sender is still refused before anything else is considered', () => {

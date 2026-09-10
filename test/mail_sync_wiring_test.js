@@ -357,6 +357,19 @@ describe('the page actually asks Gmail to watch the mailbox', () => {
         expect(boot).toContain('_ensureMailWatch');
     });
 
+    it('ALSO PULLS on load — the renewal above only kept the push alive', () => {
+        /* THE OWNER'S REPORT: "auto sync does not work". It did not, because
+         * nothing ever pulled what a working push had already delivered — the
+         * card only checked on a manual "Check now" tap. renderDash renews the
+         * watch and then runs the same sync that button runs, once, right
+         * after confirming the mailbox is connected. */
+        const boot = codeOnly(functionBody('renderDash'));
+        const watch = boot.indexOf('_ensureMailWatch');
+        expect(watch).toBeGreaterThan(-1);
+        const sync = boot.indexOf('runMailSync()', watch);
+        expect(sync, 'renderDash renews the watch but never pulls what it delivered').toBeGreaterThan(watch);
+    });
+
     it('the renewal margin leaves room under Gmail’s seven-day maximum', async () => {
         const { WATCH } = await import('../gmail-watch.mjs');
         expect(WATCH.RENEW_WITH_DAYS_LEFT).toBeLessThan(WATCH.MAX_LIFETIME_DAYS);
