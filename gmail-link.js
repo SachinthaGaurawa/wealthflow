@@ -426,7 +426,7 @@ export default async function handler(req, res) {
              * anybody, and a statement from a real bank would be indistinguish-
              * able from a receipt if absence were read as refusal. `unrecorded`
              * is its own verdict, and the device neither holds nor sweeps it. */
-            if (!from) return { verdict: 'unrecorded', id: '', name: '', address: '' };
+            if (!from) return { verdict: 'unrecorded', id: '', name: '', address: '', domain: '' };
             const hit = matchSender(senderList, from);
             return {
                 verdict: hit.verdict,
@@ -436,6 +436,10 @@ export default async function handler(req, res) {
                  * the sender, and this one ends up on a confirmation that asks
                  * the owner to delete something. */
                 address: hit.address || '',
+                /* The domain too, alongside the address: blocking has to act on
+                 * it (see index.html's Block sender button) rather than
+                 * reparsing the From header a second time on the device. */
+                domain: hit.domain || '',
             };
         };
 

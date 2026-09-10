@@ -24238,19 +24238,39 @@ table.amort tbody tr { page-break-inside: avoid; }
              * `status`, because this sender may not be a row there yet at
              * all; addSender() creates or updates in one call either way.
              *
-             * The server clears out whatever this sender already put in the
-             * store as the direct, bounded result of this one block — see
-             * gmail-link.js. Without the re-sync below the row would still
-             * show here until the next natural refresh, which reads as the
-             * block having done nothing — the exact complaint this exists
-             * to close. */
+             * ── THE DOMAIN, NOT THE ONE ADDRESS ──────────────────────────
+             *
+             * THE BUG: this blocked `it.from` — the exact address that sent
+             * THIS message. normalizeSender() then stores that as an
+             * `address`-kind entry, matched only by an exact string equality
+             * in matchSender(). A transactional sender rarely mails twice
+             * from the same address — invoices@, no-reply+id@, a different
+             * subdomain per campaign — so the next message from "the same
+             * sender" arrived from an address that had never been blocked at
+             * all, and the row came back: "I blocked it and it came back
+             * anyway."
+             *
+             * recordSighting() (wealthflow-mail-senders.mjs) already solved
+             * this, for auto-discovery, the same way: "recorded at domain
+             * level — an address-level sighting would fill the screen with
+             * one row per no-reply variant of the same bank." Blocking from
+             * here now does the same thing it does there. `it.domain` is
+             * server-computed by the same matchSender() the trust decision
+             * itself runs, not reparsed from the header here — falling back
+             * to `it.from` only if an older cached row has no domain field
+             * yet. Approving is deliberately left address-scoped: a stranger
+             * sibling address is offered by name (SENDER_SIBLING) rather
+             * than silently trusted, which is the right default for
+             * granting trust. Blocking has no such downside — a block that
+             * is too narrow only ever lets more through, never less — so
+             * there is nothing to weigh here. */
             host.querySelectorAll('[data-msblock]').forEach((btn) => {
                 btn.onclick = async () => {
                     const it = st.items[Number(btn.getAttribute('data-msblock'))];
                     if (!it || !it.from) return;
                     try { triggerHaptic('light'); } catch (_) {}
                     btn.disabled = true;
-                    await _sendersDo('add', it.from, { status: 'blocked', name: it.bank || '' });
+                    await _sendersDo('add', it.domain || it.from, { status: 'blocked', name: it.bank || '' });
                     runMailSync();
                 };
             });
@@ -25372,6 +25392,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 known: _mailKnownNow(d, _mailSyncState.decided),
                 verdict: _mailVerdict(d, _mailSyncState.decided),
                 from: (d.manifest && d.manifest.from) || '',
+                /* Server-computed, from the same matchSender() the trust
+                 * decision itself uses — never re-parsed from `from` here.
+                 * Approve/Block need it: an address-scoped block only ever
+                 * catches the one exact address it names, and a sender that
+                 * mails from a different address next time (transactional
+                 * systems do this constantly) is then simply un-blocked. */
+                domain: (d.sender && d.sender.domain) || '',
             }));
             renderMailSync();
 
