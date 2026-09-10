@@ -2668,6 +2668,17 @@
         .wf-sender-note { font-size: 11.5px; color: var(--text3); margin: 3px 0 8px; line-height: 1.55; }
         .wf-sender-empty { font-size: 12px; color: var(--text3); padding: 9px 0; line-height: 1.6; }
         .wf-sender-err { font-size: 12.5px; color: var(--red); padding: 8px 0; }
+        /* The senders discovery scored and never showed: candidates with an
+         * attachment but nothing else bank-like about them. Closed by
+         * default — present, never hidden, just not claiming the same
+         * attention as an actual bank. */
+        .wf-sender-rest { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+        .wf-sender-rest summary { font-size: 12px; font-weight: 700; color: var(--text2);
+            cursor: pointer; list-style: none; }
+        .wf-sender-rest summary::-webkit-details-marker { display: none; }
+        .wf-sender-rest summary::before { content: '\25b8'; display: inline-block;
+            margin-right: 6px; color: var(--text3); transition: transform .15s ease; }
+        .wf-sender-rest[open] summary::before { transform: rotate(90deg); }
         /* Wraps rather than shrinks: on a narrow phone the sentence takes the
          * width and the button drops beneath it, which is the one arrangement
          * that never truncates either. */
@@ -25090,9 +25101,45 @@ table.amort tbody tr { page-break-inside: avoid; }
             const rowFor = (e, scored) => _senderRow(e,
                 _senderBtn('approve', e.id, 'This is my bank', 'check', 'primary')
                 + _senderBtn('block', e.id, 'Never', 'x', 'secondary'), scored);
+
+            /* ── THE SCORE WAS COMPUTED AND THEN IGNORED ──────────────────
+             *
+             * THE BUG: discoveryReport() already splits candidates into
+             * `likely` and `rest` — that split is the entire point of
+             * scoreSender()'s weighted signals (a monthly rhythm, an
+             * automated address, real vocabulary). But this screen used to
+             * render `report.ranked`, the UNSPLIT combined list, so a
+             * genuine bank candidate and a Glassdoor job alert that merely
+             * happened to carry an inline image Gmail's `has:attachment`
+             * counts as one — that discovery's OWN wide query, by design,
+             * cannot avoid catching — landed as two equally urgent rows,
+             * each demanding "This is my bank" or "Never". The owner reads
+             * that as one unbroken queue to clear by hand, over and over, as
+             * the mailbox keeps mailing them things: "I added the emails I
+             * want, why can't it be ONLY those."
+             *
+             * `likely` now renders as before, un-collapsed — it is short
+             * and it is the reason this screen exists. `rest` goes behind a
+             * closed disclosure: not hidden (nothing here is filed or
+             * dropped without the owner seeing it — the same rule that
+             * keeps an unapproved statement on the mailbox card), just not
+             * presented as work with the same claim on their attention as
+             * an actual bank. */
+            const likelyRows = report ? report.likely : null;
+            const restRows = report ? report.rest : null;
             const pending = report
-                ? report.ranked.map((r) => rowFor(byId.get(r.id) || { id: r.id, name: r.name }, r)).join('')
+                ? likelyRows.map((r) => rowFor(byId.get(r.id) || { id: r.id, name: r.name }, r)).join('')
                 : _senders.pending.map((e) => rowFor(e, null)).join('');
+            const restPending = restRows && restRows.length
+                ? '<details class="wf-sender-rest">'
+                    + '<summary>' + restRows.length + ' more, but nothing suggests '
+                    + (restRows.length === 1 ? 'it is' : 'they are') + ' a bank</summary>'
+                    + '<div class="wf-sender-note">Seen with an attachment, but not automated, not recurring, '
+                    + 'and the subject does not read like a statement. Most of these are receipts and '
+                    + 'newsletters, not banks.</div>'
+                    + restRows.map((r) => rowFor(byId.get(r.id) || { id: r.id, name: r.name }, r)).join('')
+                    + '</details>'
+                : '';
 
             const approved = _senders.approved.map((e) => _senderRow(e,
                 _senderBtn('block', e.id, 'Block', 'x', 'secondary')
@@ -25141,11 +25188,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + discoverBar
                 + _bankHuntPanel()
                 + section(
-                    'Waiting for you to decide' + (_senders.pending.length ? ' (' + _senders.pending.length + ')' : ''),
-                    'Senders that have mailed you a PDF. Nothing from these is filed until you say so.',
+                    'Waiting for you to decide'
+                        + (likelyRows && likelyRows.length ? ' (' + likelyRows.length + ')' : ''),
+                    'Senders that have mailed you a PDF and look like a bank. Nothing from these is filed until you say so.',
                     pending,
-                    'Nothing new. Senders show up here as your mailbox is scanned — or press '
-                        + '<b>Find my banks</b> above to go and look now.')
+                    likelyRows && !likelyRows.length && restRows && restRows.length
+                        /* Not "nothing new" — there IS mail waiting, it just
+                         * did not clear the bar for "looks like a bank". */
+                        ? 'Nothing looks like a bank yet — see below.'
+                        : 'Nothing new. Senders show up here as your mailbox is scanned — or press '
+                            + '<b>Find my banks</b> above to go and look now.')
+                + restPending
                 + (report && report.found
                     ? '<div class="wf-sender-note">Ranked by evidence, not by guesswork. '
                         + _wfEsc(report.cannotFind.charAt(0).toUpperCase() + report.cannotFind.slice(1))

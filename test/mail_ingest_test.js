@@ -31,7 +31,7 @@ import { describe, it, expect } from 'vitest';
 import G, {
     BANKS, REJECT, REJECT_TEXT, SINGLE_MAX, CHUNK_SIZE, MAX_BASE64, MAX_ATTACHMENTS,
     addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, worthSighting, looksLikeStatement,
 } from '../wealthflow-mail-ingest.mjs';
 
 const hdrs = (o) => Object.entries(o).map(([name, value]) => ({ name, value }));
@@ -716,6 +716,69 @@ describe('what is worth telling the user about', () => {
 
     it('every reason has a sentence, and every sentence a reason', () => {
         expect(Object.keys(REJECT_TEXT).sort()).toEqual(Object.values(REJECT).sort());
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * WHETHER A SENDER IS WORTH RECORDING AS A "SIGHTING" AT ALL
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE THIRD ROUND OF THE SAME REPORT: "I added the emails I want, why can't
+ * it be ONLY those." gmail-hook.js used to record every message the push
+ * received as a sighting, unconditionally — a job alert, a welcome email, a
+ * receipt with no attachment, all of it, because the Pub/Sub history it
+ * walks has no query. None of that can ever become a statement, so it only
+ * ever taught the owner one more domain to go block. worthSighting() is the
+ * gate both gmail-hook.js and gmail-scan.js now apply before recording one. */
+describe('worthSighting: is there any point recording this sender', () => {
+    const APPROVED = { decide: () => ({ verdict: 'approved' }) };
+    const UNDECIDED = {};
+
+    it('a taken statement is always worth it', () => {
+        const msg = message('statements@hnb.lk', GOOD_AUTH, [pdf('e.pdf', 9000, 'A1')]);
+        expect(worthSighting(planMessage(msg, APPROVED))).toBe(true);
+    });
+
+    it('a DKIM-verified sender WITH an attachment, not yet decided, is worth it', () => {
+        // The candidate the discovery gate exists to protect: a real bank the
+        // owner has not approved yet must still surface for a one-tap decision.
+        const msg = message('statements@hnb.lk', GOOD_AUTH, [pdf('e.pdf', 9000, 'A1')]);
+        const plan = planMessage(msg, UNDECIDED);
+        expect(plan.reason).toBe(REJECT.NOT_ON_YOUR_LIST);
+        expect(worthSighting(plan)).toBe(true);
+    });
+
+    it('a newsletter with NO attachment is never worth it, approved domain or not', () => {
+        // The actual flood: Glassdoor job alerts, a Netflix welcome email, a
+        // WIPO webinar invite — verified senders, nothing attached, and
+        // nothing that could ever become a statement.
+        const msg = message('jobs@glassdoor.com', 'mx.google.com; dkim=pass header.i=@glassdoor.com', []);
+        const plan = planMessage(msg, UNDECIDED);
+        expect(plan.reason).toBe(REJECT.NO_ATTACHMENT);
+        expect(worthSighting(plan)).toBe(false);
+    });
+
+    it('an already-blocked sender is never worth it', () => {
+        const blocked = { decide: () => ({ verdict: 'blocked' }) };
+        const msg = message('promo@dialog.lk', 'mx.google.com; dkim=pass header.i=@dialog.lk', [pdf('e.pdf', 9000, 'A1')]);
+        const plan = planMessage(msg, blocked);
+        expect(plan.reason).toBe(REJECT.SENDER_BLOCKED);
+        expect(worthSighting(plan)).toBe(false);
+    });
+
+    it('a personal mailbox is never worth it', () => {
+        const msg = message('a.friend@gmail.com', 'mx.google.com; dkim=pass header.i=@gmail.com', [pdf('e.pdf', 9000, 'A1')]);
+        expect(worthSighting(planMessage(msg, UNDECIDED))).toBe(false);
+    });
+
+    it('a failed or mismatched signature is never worth it', () => {
+        const bad = message('statements@hnb.lk', 'mx.google.com; dkim=fail header.i=@hnb.lk', [pdf('e.pdf', 9000, 'A1')]);
+        expect(worthSighting(planMessage(bad, UNDECIDED))).toBe(false);
+    });
+
+    it('answers false, never throws, for a plan that is missing or malformed', () => {
+        expect(worthSighting(null)).toBe(false);
+        expect(worthSighting(undefined)).toBe(false);
+        expect(worthSighting({})).toBe(false);
     });
 });
 

@@ -340,7 +340,38 @@ describe('the discovery report has a caller', () => {
 
     it('the pending list is ranked, not printed in arrival order', () => {
         expect(HTML).toContain('WFDiscovery.discoveryReport(_senders.pending)');
-        expect(HTML).toContain('report.ranked.map(');
+        expect(HTML).toContain('likelyRows.map(');
+    });
+
+    /* ── THE SPLIT WAS COMPUTED AND THEN IGNORED ──────────────────────────
+     *
+     * discoveryReport() separates `likely` from `rest` on exactly the
+     * evidence this file tests above — a monthly rhythm, an automated
+     * address, real vocabulary. The screen used to render the UNSPLIT
+     * `report.ranked`, so a genuine bank candidate and a newsletter that
+     * merely carried an inline image the wide `has:attachment` query cannot
+     * avoid catching were shown as two equally urgent rows, each demanding a
+     * decision. The owner reported that as an unbroken queue that never
+     * stops growing — this is the fix: `likely` renders as the main list,
+     * `rest` goes behind a closed disclosure so it is still there, never
+     * dropped, but does not claim the same attention as an actual bank. */
+    it('a low-score candidate is not shown as urgently as a likely bank', () => {
+        expect(HTML).toContain('report.likely');
+        expect(HTML).toContain('report.rest');
+        // Still present — see the "nothing is hidden" rule below — just
+        // behind a disclosure the owner opens, not a row demanding a tap.
+        expect(HTML).toContain('restRows.map(');
+        expect(HTML).toContain('wf-sender-rest');
+        expect(HTML).toMatch(/<details class="wf-sender-rest">/);
+    });
+
+    it('nothing scored is dropped — the same approve/block actions reach a low-score row too', () => {
+        // "Nothing is hidden from the owner" is this codebase's own rule for
+        // the mailbox card; the same has to hold for the senders screen, or
+        // collapsing the low-score bucket becomes a second, quieter way to
+        // lose a sender the owner actually wanted to see.
+        const rest = HTML.slice(HTML.indexOf('const restPending ='), HTML.indexOf('const restPending =') + 1200);
+        expect(rest).toContain('rowFor(');
     });
 
     it('every reason the ranking used is printed beside the row', () => {

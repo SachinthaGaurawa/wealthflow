@@ -258,6 +258,28 @@ export function normalizeList(list) {
  * blocked without losing its statements. Among entries of EQUAL specificity a
  * block beats an approval — the only tie-break that can be wrong in the safe
  * direction.
+ *
+ * ── A BLOCKED ADDRESS ALSO CATCHES ITS SIBLINGS, UNLESS THE DOMAIN SAYS OTHERWISE ──
+ *
+ * THE BUG: every sender blocked through the mailbox card before the domain-
+ * level fix above — or typed as a full address into Settings — is stored as
+ * an address-kind entry, exact-matched only. A transactional sender rarely
+ * reuses one address (no-reply+id@, statements@, alerts@, a different
+ * subdomain per campaign), so the very next message from what the owner
+ * calls "the same sender" arrived from an address nothing had ever blocked,
+ * and it kept coming back — precisely the report, restated a second time,
+ * that a re-send of PR #190 alone did not close: it fixed what NEW blocks
+ * store, not what OLD ones already are.
+ *
+ * So a blocked address entry now ALSO matches, weakly, any other address at
+ * its own domain — scored just BELOW a same-domain entry of either status,
+ * so it never overrides one. That "just below" is what keeps `promo@hnb.lk`
+ * blocked without taking `hnb.lk` down with it when the owner has separately
+ * approved the domain (an actual domain-kind entry for hnb.lk beats the
+ * fallback outright) — the exact "keep the statements, lose the marketing"
+ * case this function exists for. Where no domain-kind entry exists at all —
+ * a notification sender nobody ever approved, which is what a mailbox-card
+ * block is for — the fallback is the only signal there is, and it wins.
  */
 export function matchSender(list, from) {
     const entries = normalizeList(list);
@@ -274,7 +296,13 @@ export function matchSender(list, from) {
         if (e.status === STATUS.NEW) continue;
         let score = -1;
         if (e.kind === 'address') {
-            if (e.id === address) score = 1000 + e.id.length;
+            if (e.id === address) {
+                score = 1000 + e.id.length;
+            } else if (e.status === STATUS.BLOCKED && isUnder(domain, e.domain)) {
+                /* Half a point short of what an actual domain-kind entry for
+                 * this same domain would score — see the note above. */
+                score = e.domain.length - 0.5;
+            }
         } else if (isUnder(domain, e.id)) {
             score = e.id.length;
         }
