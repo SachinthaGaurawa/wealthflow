@@ -97,6 +97,26 @@ export function dueDateFor(day, year, monthIdx) {
     return new Date(Date.UTC(y, m, d));
 }
 
+/**
+ * The day-of-month `dueDateFor` needs, pulled out of whatever `income.day`
+ * actually holds.
+ *
+ * The income form's "Payment Start Date" field is a native date input, so
+ * saveIncome stores `day` as a full 'YYYY-MM-DD' string, never a bare 1-31
+ * number. `Number('2026-09-15')` is NaN, so every source's payout silently
+ * clamped to the 1st of the month regardless of what date was actually
+ * picked — every row in the queue read "Expected <month>-01". This is the
+ * same extraction checkActionableReminders() already does for the pay-day
+ * banner (`String(day).slice(-2)`); using it here too means the banner and
+ * this queue can never disagree about which day a source pays on.
+ */
+export function dayOfMonth(v) {
+    const tail = parseInt(String(v == null ? '' : v).slice(-2), 10);
+    if (tail >= 1 && tail <= 31) return tail;
+    const whole = parseInt(v, 10);
+    return (whole >= 1 && whole <= 31) ? whole : 1;
+}
+
 /** How many months between payouts, from a source's `freq`. */
 export function periodMonths(freq) {
     const f = s(freq).toLowerCase();
@@ -117,7 +137,7 @@ export function periodMonths(freq) {
 export function paysInMonth(source, year, monthIdx) {
     if (!source) return false;
     const end = parseDay(source.end);
-    const due = dueDateFor(source.day, year, monthIdx);
+    const due = dueDateFor(dayOfMonth(source.day), year, monthIdx);
     if (end && due > end) return false;
 
     const start = parseDay(source.start);
@@ -190,7 +210,7 @@ export function pendingInflows(appData, asOf, opts = {}) {
         for (let back = lookback; back >= 0; back -= 1) {
             const monthIdx = now.getUTCMonth() - back;
             if (!paysInMonth(src, now.getUTCFullYear(), monthIdx)) continue;
-            const due = dueDateFor(src.day, now.getUTCFullYear(), monthIdx);
+            const due = dueDateFor(dayOfMonth(src.day), now.getUTCFullYear(), monthIdx);
             /* NOT YET DUE IS NOT PENDING. The queue answers "has this arrived",
              * and a date in the future has no answer yet. */
             if (due > today) continue;
@@ -309,7 +329,7 @@ export function queueTotals(rows) {
 
 const API = {
     VERIFY, LOOKBACK_MONTHS, LATE_AFTER_DAYS,
-    monthKeyOf, parseDay, dueDateFor, periodMonths, paysInMonth,
+    monthKeyOf, parseDay, dueDateFor, dayOfMonth, periodMonths, paysInMonth,
     receivedKey, billKey, pendingInflows, pendingOutflows, queueTotals,
 };
 

@@ -24022,18 +24022,21 @@ table.amort tbody tr { page-break-inside: avoid; }
             } else if (connected === true && _mailStatus && Number(_mailStatus.senderCount) === 0) {
                 /* THE STATE THE OWNER'S COMPLAINT CAME FROM, NAMED.
                  *
-                 * With no approved senders the scanner has to search by
-                 * keyword, and a keyword search over a mailbox finds bills,
-                 * receipts and invoices along with statements. That was
-                 * happening silently and looking like a bug in the parser. It
-                 * is not a bug — it is the only question that can be asked
-                 * before anyone says whose mail counts — and saying so turns an
-                 * unexplained mess into one tap. */
+                 * This used to say the scanner "has to search by keyword",
+                 * because it did: with no approved senders it downloaded and
+                 * filed anything whose subject or filename merely sounded like
+                 * a statement, from any address at all — which is how bills,
+                 * receipts and invoices from senders nobody approved kept
+                 * arriving regardless of what was actually in Senders.
+                 *
+                 * Nothing is downloaded or filed on the strength of a guess
+                 * now, curated or not: a sender not explicitly approved is
+                 * only ever SEEN, never synced, until it is approved. */
                 banner = `<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--text2);line-height:1.6;">
                     <b>WealthFlow does not know which senders are your banks yet.</b>
-                    Until you say, it has to search by keyword — which is how bills and receipts
-                    end up here alongside statements. Open <b>Senders</b> to approve the real ones;
-                    after that nothing else is even searched for.
+                    Nothing from your mailbox is synced until you say — every sender it sees is only
+                    listed here, name and subject, with no content fetched. Open <b>Senders</b> to
+                    approve the real ones; only what you approve is ever brought in.
                 </div>`;
             } else if (!st.items.length && !_firstScanDone()) {
                 banner = `<div style="font-size:12.5px;color:var(--text3);">Connected. Your mailbox has not been scanned yet — this happens automatically on the next check.</div>`;
@@ -27017,8 +27020,26 @@ table.amort tbody tr { page-break-inside: avoid; }
                              * the renewal: a watch lasts seven days, so a check
                              * on every load with a six-day margin is what keeps
                              * the pipeline from quietly stopping on day eight. */
-                            if (c) return _ensureMailWatch().then(() => renderMailSync());
-                            return null;
+                            if (!c) return null;
+                            return _ensureMailWatch().then(() => {
+                                renderMailSync();
+                                /* THE STEP THAT WAS MISSING. Everything above
+                                 * keeps the PUSH pipeline alive; nothing ever
+                                 * PULLED what it had already delivered. A
+                                 * statement that arrived while the app was
+                                 * closed sat in the store waiting for the
+                                 * owner to remember the "Check now" button —
+                                 * which is the whole "auto sync does not
+                                 * work" report. This runs exactly what that
+                                 * button runs, once, on the load that just
+                                 * found the mailbox connected. It writes
+                                 * nothing to the ledger by itself: runMailSync
+                                 * only ever stages rows on the same review
+                                 * screen an uploaded statement reaches — see
+                                 * the comment inside it. */
+                                if (_mailSyncState.stage !== 'running') return runMailSync();
+                                return null;
+                            });
                         })
                         .catch(() => { _mailSyncState.connected = false; renderMailSync(); });
                 }

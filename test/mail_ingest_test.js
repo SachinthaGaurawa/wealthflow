@@ -242,10 +242,20 @@ describe('an unlisted but verified sender is held, not dropped', () => {
         expect(r.domain).toBe(domain);
     });
 
-    it('a listed bank is still marked known, so it is filed rather than held', () => {
+    it('a listed bank the owner has not approved is held exactly like an unlisted one', () => {
+        /* THE REPORT: "I added my bank's address to Senders, but mail from
+         * addresses I never approved keeps syncing anyway." A hit against the
+         * built-in list used to return `known: true` unconditionally, which
+         * bypassed both the content check and the owner's own approval gate
+         * (that gate is keyed off `policy.curated`, which nothing unapproved
+         * can set) — so these five domains were trusted from the moment the
+         * mailbox was linked, regardless of what the owner ever put in their
+         * senders list. The built-in list is only ever a NAME guess now;
+         * trust is `known: true`, and only the owner's own approval — tested
+         * two blocks up — may grant it. */
         const r = identifyBank({ from: '<statements@hnb.lk>', 'authentication-results': auth('hnb.lk') });
         expect(r.ok).toBe(true);
-        expect(r.known).toBe(true);
+        expect(r.known).toBe(false);
         expect(r.bank).toBe('Hatton National Bank (HNB)');
     });
 
@@ -289,10 +299,7 @@ describe('an unlisted but verified sender is held, not dropped', () => {
         }
     });
 
-    it('an unrecognised sender that says nothing about a statement is refused', () => {
-        /* The other half of the trade. Widening the allowlist without this
-         * would swap eleven dropped banks for a review queue full of shop
-         * receipts, and a queue nobody can face is the same as no queue. */
+    it('an unapproved sender is refused before content is even looked at', () => {
         const flyer = {
             id: 'j1',
             internalDate: '1700000000000',
@@ -305,20 +312,39 @@ describe('an unlisted but verified sender is held, not dropped', () => {
                 parts: [{ filename: 'flyer.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a9', size: 100 } }],
             },
         };
-        const r = planMessage(flyer);
+        expect(planMessage(flyer)).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });
+    });
+
+    it('the CONTENT veto refuses the same flyer even from a sender the owner approved', () => {
+        /* The other half of the trade. Widening the allowlist without this
+         * would swap eleven dropped banks for a review queue full of shop
+         * receipts, and a queue nobody can face is the same as no queue.
+         * `flyer.pdf` announces what it is, so the document check refuses it
+         * for EVERY approved sender too — it is not the sender rule wearing
+         * a second name. */
+        const flyer = {
+            id: 'j1',
+            internalDate: '1700000000000',
+            payload: {
+                headers: [
+                    { name: 'From', value: 'Deals <offers@shopping.example>' },
+                    { name: 'Subject', value: 'SALE' },
+                    { name: 'Authentication-Results', value: auth('shopping.example') },
+                ],
+                parts: [{ filename: 'flyer.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a9', size: 100 } }],
+            },
+        };
+        const r = planMessage(flyer, { decide: () => ({ verdict: 'approved' }) });
         expect(r.ok).toBe(false);
-        /* NOT_A_STATEMENT_DOC and no longer NOT_A_STATEMENT, and the change is
-         * an improvement rather than a rename. `flyer.pdf` announces what it
-         * is, so the document check now refuses it for EVERY sender — the old
-         * reason could only be reached for a sender nobody recognised, which
-         * meant an approved domain's flyers were filed unread. */
         expect(r.reason).toBe(REJECT.NOT_A_STATEMENT_DOC);
     });
 
-    it('the FILENAME alone is enough to call it a statement', () => {
+    it('the FILENAME alone is enough to call it a statement, for a sender the owner approved', () => {
         /* Plenty of banks send Statement_Aug2026.pdf under a subject that says
          * nothing, which is why the gate runs after the attachments are
-         * selected rather than on the headers alone. */
+         * selected rather than on the headers alone — and, since sender
+         * approval is unconditional now, why this needs an approved policy
+         * to reach that gate at all. */
         const msg = {
             id: 'f1',
             internalDate: '1700000000000',
@@ -331,13 +357,17 @@ describe('an unlisted but verified sender is held, not dropped', () => {
                 parts: [{ filename: 'Statement_Aug2026.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a1', size: 100 } }],
             },
         };
-        const r = planMessage(msg);
+        const r = planMessage(msg, { decide: () => ({ verdict: 'approved' }) });
         expect(r.ok, r.reason).toBe(true);
-        expect(r.items[0].known).toBe(false);
+        expect(r.items[0].known).toBe(true);
     });
 
-    it('a KNOWN bank skips the statement-shape gate entirely', () => {
-        /* HNB may title its statement whatever it likes. */
+    it('WITHOUT approval, the same message never reaches the content gate at all', () => {
+        /* Reversed on purpose. Being on the built-in BANKS list used to skip
+         * the content gate outright — "HNB may title its statement whatever
+         * it likes" — for EVERY hnb.lk message, approved or not. Now neither
+         * the built-in list nor the content ever gets a look-in without the
+         * owner's own approval: the sender gate refuses it first, always. */
         const msg = {
             id: 'k1',
             internalDate: '1700000000000',
@@ -350,7 +380,32 @@ describe('an unlisted but verified sender is held, not dropped', () => {
                 parts: [{ filename: 'doc.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a1', size: 100 } }],
             },
         };
-        expect(planMessage(msg).ok).toBe(true);
+        const r = planMessage(msg);
+        expect(r.ok).toBe(false);
+        expect(r.reason).toBe(REJECT.NOT_ON_YOUR_LIST);
+    });
+
+    it('an ACTUALLY APPROVED bank skips the statement-SHAPE gate, not the sender gate', () => {
+        /* The case the content gate's leniency was built for — HNB may title
+         * its statement whatever it likes — restored to what the owner's own
+         * approval buys rather than what a hardcoded domain list buys for
+         * free. */
+        const msg = {
+            id: 'k2',
+            internalDate: '1700000000000',
+            payload: {
+                headers: [
+                    { name: 'From', value: '<x@hnb.lk>' },
+                    { name: 'Subject', value: 'hello' },
+                    { name: 'Authentication-Results', value: auth('hnb.lk') },
+                ],
+                parts: [{ filename: 'doc.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a1', size: 100 } }],
+            },
+        };
+        const r = planMessage(msg, { decide: () => ({ verdict: 'approved' }) });
+        expect(r.ok, r.reason).toBe(true);
+        expect(r.items[0].known).toBe(true);
+        expect(r.items[0].approved).toBe(true);
     });
 
     it('looksLikeStatement reads the subject and the filenames, case-blind', () => {
@@ -362,8 +417,11 @@ describe('an unlisted but verified sender is held, not dropped', () => {
     });
 
     it('planMessage carries the known flag onto every item it plans', () => {
-        /* The flag is what the write path routes on. If it stopped being
-         * carried, every unknown bank would file itself silently. */
+        /* The flag is what the write path routes on: the mailbox card reads
+         * it back to show "not on your sender list", and only the owner's
+         * own approval — never mere membership of the built-in BANKS list —
+         * may turn it true. If it stopped being carried, every unapproved
+         * bank would file itself silently. */
         const msg = (fromDomain) => ({
             id: 'm1',
             internalDate: '1700000000000',
@@ -376,8 +434,13 @@ describe('an unlisted but verified sender is held, not dropped', () => {
                 parts: [{ filename: 's.pdf', mimeType: 'application/pdf', body: { attachmentId: 'A1', size: 1000 } }],
             },
         });
-        expect(planMessage(msg('hnb.lk')).items[0].known).toBe(true);
-        expect(planMessage(msg('sampathbank.lk')).items[0].known).toBe(false);
+        /* Unapproved, neither ever reaches an item at all any more — the
+         * sender gate refuses both before content is considered. */
+        expect(planMessage(msg('hnb.lk'))).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });
+        expect(planMessage(msg('sampathbank.lk'))).toMatchObject({ ok: false, reason: REJECT.NOT_ON_YOUR_LIST });
+        const approved = { decide: () => ({ verdict: 'approved' }) };
+        expect(planMessage(msg('hnb.lk'), approved).items[0].known).toBe(true);
+        expect(planMessage(msg('sampathbank.lk'), approved).items[0].known).toBe(true);
     });
 });
 
@@ -532,6 +595,12 @@ describe('redelivery writes the same document', () => {
  * THE WHOLE DECISION
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('planMessage', () => {
+    /* Every test below this point is about attachment/key handling, not
+     * sender trust — that has its own describe blocks above. An approved
+     * policy keeps them exercising what they are actually named for, now
+     * that an unapproved sender never reaches an item at all. */
+    const APPROVED = { decide: () => ({ verdict: 'approved' }) };
+
     it('settles identity BEFORE it looks at any attachment', () => {
         /* Order is the point: a message from an unrecognised sender must never
          * reach the code that would download from it. A spoofed message with a
@@ -543,7 +612,7 @@ describe('planMessage', () => {
     });
 
     it('carries the bank, the message and the arrival time onto every item', () => {
-        const r = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [{ mimeType: 'text/html', body: { size: 9 } }, pdf('stmt.pdf', 250000, 'ATT1')]));
+        const r = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [{ mimeType: 'text/html', body: { size: 9 } }, pdf('stmt.pdf', 250000, 'ATT1')]), APPROVED);
         expect(r.ok).toBe(true);
         expect(r.items).toHaveLength(1);
         expect(r.items[0]).toMatchObject({
@@ -569,8 +638,8 @@ describe('planMessage', () => {
          *
          * messageId is stable; within one message the filename and size are
          * properties of the MIME part rather than per-request tokens. */
-        const first = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-FIRST')]));
-        const again = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-REMINTED')]));
+        const first = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-FIRST')]), APPROVED);
+        const again = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [pdf('stmt.pdf', 250000, 'ATT-REMINTED')]), APPROVED);
 
         expect(first.items[0].key).toBe(again.items[0].key);
         expect(first.items[0].key, 'the key still contains the volatile token')
@@ -585,7 +654,7 @@ describe('planMessage', () => {
         const r = planMessage(message('<s@hnb.lk>', GOOD_AUTH, [
             pdf('january.pdf', 1000, 'A1'),
             pdf('february.pdf', 2000, 'A2'),
-        ]));
+        ]), APPROVED);
         expect(r.items).toHaveLength(2);
         expect(r.items[0].key).not.toBe(r.items[1].key);
     });
