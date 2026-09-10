@@ -145,6 +145,22 @@ describe('a curated list decides for EVERYONE, built-in banks included', () => {
         expect(planMessage(message('x@hnb.lk', 'hnb.lk'), blocked).reason).toBe(REJECT.SENDER_BLOCKED);
     });
 
+    it('a sender blocked by ONE address, from before the domain-level fix, still refuses its siblings', () => {
+        /* THE SECOND ROUND OF THE SAME REPORT. The mailbox card's Block button
+         * used to store the exact From address rather than the domain — fixed
+         * for blocks made from here on, but every sender blocked before that
+         * fix shipped is still sitting in the list as an address-kind entry,
+         * exact-matched. Without this, a message from a different address at
+         * that same domain would sail straight through: "I blocked it and it
+         * came back anyway," reported a second time, about a sender already
+         * on the blocked list. */
+        const blocked = policyFrom([
+            { id: 'noreply@dialog.lk', kind: 'address', domain: 'dialog.lk', status: 'blocked', source: 'manual', addedMs: 1 },
+        ]);
+        expect(planMessage(message('noreply@dialog.lk', 'dialog.lk'), blocked).reason).toBe(REJECT.SENDER_BLOCKED);
+        expect(planMessage(message('billing-alerts@dialog.lk', 'dialog.lk'), blocked).reason).toBe(REJECT.SENDER_BLOCKED);
+    });
+
     it('a failed signature still beats an approval', () => {
         // Approval says "this is one of mine". It has never meant "trust this".
         const bad = { ...message('estatement@sampath.lk', 'sampath.lk') };

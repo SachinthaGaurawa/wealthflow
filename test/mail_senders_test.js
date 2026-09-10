@@ -271,6 +271,61 @@ describe('matchSender: most specific wins, and a block wins a tie', () => {
     });
 });
 
+describe('a blocked ADDRESS also catches its siblings, unless the domain says otherwise', () => {
+    /* THE SECOND ROUND OF THE SAME REPORT. The mailbox card's Block button
+     * used to store the exact address on the one message being looked at —
+     * fixed to store the domain instead, but only for blocks made AFTER that
+     * fix. Every sender blocked before it — through the old button, or typed
+     * as a full address into Settings — is still sitting in the list as an
+     * address-kind entry, exact-matched. The owner reported the same "I
+     * blocked it and it came back anyway" a second time, from senders that
+     * were already on the blocked list. This is that gap, closed without a
+     * data migration: matchSender itself now treats a blocked address as
+     * covering its own domain too. */
+
+    it('a notification sender blocked by ONE address stays blocked from ANY address at that domain', () => {
+        const l = normalizeList([{ id: 'noreply@dialog.lk', status: STATUS.BLOCKED }]);
+        expect(matchSender(l, 'noreply@dialog.lk').verdict).toBe(STATUS.BLOCKED);
+        /* The sibling that was never named. */
+        expect(matchSender(l, 'billing-alerts@dialog.lk').verdict).toBe(STATUS.BLOCKED);
+        expect(matchSender(l, 'promo@dialog.lk').verdict).toBe(STATUS.BLOCKED);
+        /* An unrelated domain is not swept up by it. */
+        expect(matchSender(l, 'someone@ceb.lk').verdict).toBe(STATUS.NEW);
+    });
+
+    it('does NOT widen when the domain is separately approved — statements survive, marketing does not', () => {
+        /* The exact scenario the specificity rule exists for, unchanged: an
+         * address-level block of a bank's marketing line must not take the
+         * bank's own statements down with it. */
+        const l = normalizeList([
+            { id: 'hnb.lk', status: STATUS.APPROVED },
+            { id: 'promo@hnb.lk', status: STATUS.BLOCKED },
+        ]);
+        expect(matchSender(l, 'promo@hnb.lk').verdict).toBe(STATUS.BLOCKED);
+        expect(matchSender(l, 'estatement@hnb.lk').verdict).toBe(STATUS.APPROVED);
+        expect(matchSender(l, 'a-third-address@hnb.lk').verdict).toBe(STATUS.APPROVED);
+    });
+
+    it('an ACTUAL domain-kind block for the same domain is unaffected — no double-counting', () => {
+        const l = normalizeList([
+            { id: 'promo@shop.example', status: STATUS.BLOCKED },
+            { id: 'shop.example', status: STATUS.BLOCKED },
+        ]);
+        expect(matchSender(l, 'anything@shop.example').verdict).toBe(STATUS.BLOCKED);
+    });
+
+    it('an approved ADDRESS at the same domain is not overridden by a blocked sibling', () => {
+        /* Approving one address is a specific, deliberate act — a blocked
+         * sibling elsewhere at the domain must not undo it. */
+        const l = normalizeList([
+            { id: 'invoices@shop.example', status: STATUS.BLOCKED },
+            { id: 'statements@shop.example', status: STATUS.APPROVED },
+        ]);
+        expect(matchSender(l, 'statements@shop.example').verdict).toBe(STATUS.APPROVED);
+        expect(matchSender(l, 'invoices@shop.example').verdict).toBe(STATUS.BLOCKED);
+    });
+});
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * THE LIST AS A THING THAT IS EDITED
  * ═══════════════════════════════════════════════════════════════════════════*/
