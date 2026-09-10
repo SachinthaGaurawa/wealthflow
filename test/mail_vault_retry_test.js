@@ -165,6 +165,25 @@ describe('the vault modal can tell its caller it closed', () => {
     });
 });
 
+describe('a password with no bank name is not silently lost', () => {
+    /* THE BUG: "N password(s) encrypted" told the owner a save had succeeded
+     * while a row with an empty Bank field never reached WFVault.save() at
+     * all — dropped by a filter that required Bank to be non-empty. The
+     * owner typed a real password, the app said it was saved, and it never
+     * existed in the vault to be tried against anything. */
+    const body = fn('openBankVault');
+
+    it('only requires a password to keep a row — not a bank name', () => {
+        expect(body).toMatch(/const usable = rows\.filter\(r => r\.password && r\.password\.trim\(\)\)/);
+        expect(body).not.toMatch(/const usable = rows\.filter\(r => r\.bank/);
+    });
+
+    it('candidatesFor() already tries every password regardless of bank match — this is the same rule, one step earlier', () => {
+        const cf = fs.readFileSync(path.join(ROOT, 'wealthflow-vault.js'), 'utf8');
+        expect(cf).toContain('ORDER, NOT EXCLUSION');
+    });
+});
+
 describe('the iteration this depends on, still relentless', () => {
     it('every candidate is tried before it gives up, and the count is reported', async () => {
         const tried = [];
