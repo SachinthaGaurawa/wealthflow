@@ -17259,12 +17259,32 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             } else { btn.textContent = label || ''; }
         }
         function showConfirm(icon, msg, det, btnClass, btnText, cb) {
+            /* THE CRASH: `_deleteDebtor` (and every other caller — this modal
+             * is shared by every destructive action in the app) threw "null
+             * is not an object" evaluating a `.textContent =` assignment on
+             * this modal's message element, and never recovered. `_wfSetIcon`
+             * two lines down already guards against a missing element; the
+             * assignments below never did, so the one time that element was
+             * not found the whole confirmation — and whatever it was
+             * confirming — silently stopped working, with no dialog and no
+             * error the owner could see, only a repeat crash on every retry.
+             *
+             * Guarded now, and NOT by merely giving up: if this modal's own
+             * DOM is unexpectedly missing, a destructive action still needs a
+             * way to ask "are you sure?" — window.confirm() is what every
+             * browser provides for exactly that, so the action still
+             * completes instead of silently doing nothing. */
+            const modal = $('mdConfirm'), msgEl = $('confMsg'), detEl = $('confDet'), btnEl = $('confBtn');
+            if (!modal || !msgEl || !detEl || !btnEl) {
+                if (window.confirm(det ? msg + '\n\n' + det : msg)) { if (cb) cb(); }
+                return;
+            }
             _wfSetIcon($('confIcon'), icon);
-            $('confMsg').textContent = msg;
-            $('confDet').textContent = det;
-            $('confBtn').className = `btn ${btnClass}`;
-            _wfBtnLabel($('confBtn'), btnText);
-            $('confBtn').onclick = () => { closeModal('mdConfirm'); if (cb) cb(); };
+            msgEl.textContent = msg;
+            detEl.textContent = det;
+            btnEl.className = `btn ${btnClass}`;
+            _wfBtnLabel(btnEl, btnText);
+            btnEl.onclick = () => { closeModal('mdConfirm'); if (cb) cb(); };
             openModal('mdConfirm');
             try { if (window.WFIconHydrate) WFIconHydrate(document.getElementById('mdConfirm')); } catch (_) {}
         }

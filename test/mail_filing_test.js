@@ -395,12 +395,22 @@ describe('the check button stops re-offering what is done', () => {
          * `confDet` and `confMsg` appear exactly twice each in index.html: the
          * empty element in the markup, and the assignment. Any third reference
          * is worth a human reading it. */
-        for (const id of ['confDet', 'confMsg']) {
+        /* showConfirm() later hardened against its own modal being missing
+         * from the DOM (see the crash-recovery test below) — `$('confMsg')`
+         * is now read once into a local, `msgEl`, rather than re-looked-up at
+         * the assignment site. The count and the sink stay pinned; only the
+         * shape of the assignment changed. */
+        const body = fn('showConfirm');
+        for (const [id, varName] of [['confDet', 'detEl'], ['confMsg', 'msgEl']]) {
             const refs = html.split(id).length - 1;
             expect(refs, `${id} is referenced somewhere new — check it is not innerHTML`).toBe(2);
-            expect(html).toContain(`$('${id}').textContent =`);
+            expect(body).toContain(`${varName} = $('${id}')`);
+            expect(body).toContain(`${varName}.textContent =`);
             expect(html, `${id} is written with innerHTML`).not.toMatch(
                 new RegExp(`\\$\\('${id}'\\)\\.innerHTML`),
+            );
+            expect(body, `${varName} is written with innerHTML`).not.toMatch(
+                new RegExp(`${varName}\\.innerHTML`),
             );
         }
     });
