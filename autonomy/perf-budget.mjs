@@ -194,7 +194,11 @@ export const BUDGETS = {
      * every row; the debtor ledger had no edit and no undo at all. Most of the
      * growth is the two screens and the sentences on them that say what a
      * choice will cost before it is made. */
-    htmlBytes: 2_031_000,        // measured 2,011,142 — deployed, after the strip: ~1,520 KB
+    // Raised for the proactive vault-locked banner: a locked statement vault
+    // with mail already waiting used to say nothing until an owner pressed
+    // Check now and watched it fail, because _mailBootCheck() never runs the
+    // loop that would have counted the failure. Real new logic, not drift.
+    htmlBytes: 2_031_650,        // measured 2,031,609 — deployed, after the strip: ~1,520 KB
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

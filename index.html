@@ -24103,14 +24103,23 @@ table.amort tbody tr { page-break-inside: avoid; }
              * decision rather than two. */
             const vaultLocked = !!(window.WFVault && window.WFVault.isSet() && !window.WFVault.isUnlocked());
             const lockedCount = Number(_mailSyncState.locked) || 0;
-            const lockStrip = lockedCount ? `
+            const pendingKnown = (Array.isArray(st.items) ? st.items : [])
+                .filter((it) => it.stage === 'waiting' && it.known !== false).length;
+            const proactive = lockedCount === 0 && vaultLocked && pendingKnown > 0;
+            const n = proactive ? pendingKnown : lockedCount;
+            const headTxt = proactive
+                ? `${n} statement${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} waiting, and your statement vault is locked.`
+                : `${n} statement${n === 1 ? ' is' : 's are'} password-protected and could not be opened.`;
+            const tailTxt = proactive
+                ? 'Unlock it so <b>Check now</b> can try your saved passwords — nothing is opened until you do.'
+                : vaultLocked
+                    ? 'Your statement vault is locked, so none of your saved passwords were tried.'
+                    : `None of your saved passwords opened ${n === 1 ? 'it' : 'them'} — add the one your bank uses.`;
+            const lockStrip = (lockedCount || proactive) ? `
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;
                             background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.26);border-radius:10px;">
                     <div style="flex:1;min-width:190px;font-size:12.5px;color:var(--text2);line-height:1.6;">
-                        <b>${_wfEsc(String(lockedCount))} statement${lockedCount === 1 ? ' is' : 's are'} password-protected and could not be opened.</b>
-                        ${vaultLocked
-                            ? 'Your statement vault is locked, so none of your saved passwords were tried.'
-                            : 'None of your saved passwords opened ' + (lockedCount === 1 ? 'it' : 'them') + ' — add the one your bank uses.'}
+                        <b>${_wfEsc(headTxt)}</b> ${tailTxt}
                     </div>
                     <button class="btn btn-secondary btn-sm" id="_ms_vault" style="flex-shrink:0;">
                         ${(window.WFIcon ? WFIcon('lock') : '')} ${vaultLocked ? 'Unlock vault' : 'Add a password'}
