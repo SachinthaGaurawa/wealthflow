@@ -27052,27 +27052,25 @@ table.amort tbody tr { page-break-inside: avoid; }
                             /* And make sure Gmail is actually watching. This is
                              * the renewal: a watch lasts seven days, so a check
                              * on every load with a six-day margin is what keeps
-                             * the pipeline from quietly stopping on day eight. */
-                            if (!c) return null;
-                            return _ensureMailWatch().then(() => {
-                                renderMailSync();
-                                /* THE STEP THAT WAS MISSING. Everything above
-                                 * keeps the PUSH pipeline alive; nothing ever
-                                 * PULLED what it had already delivered. A
-                                 * statement that arrived while the app was
-                                 * closed sat in the store waiting for the
-                                 * owner to remember the "Check now" button —
-                                 * which is the whole "auto sync does not
-                                 * work" report. This runs exactly what that
-                                 * button runs, once, on the load that just
-                                 * found the mailbox connected. It writes
-                                 * nothing to the ledger by itself: runMailSync
-                                 * only ever stages rows on the same review
-                                 * screen an uploaded statement reaches — see
-                                 * the comment inside it. */
-                                if (_mailSyncState.stage !== 'running') return runMailSync();
-                                return null;
-                            });
+                             * the pipeline from quietly stopping on day eight.
+                             *
+                             * THIS USED TO ALSO auto-run runMailSync() here, on
+                             * the theory that nothing else ever PULLED what the
+                             * push had delivered. Reverted: on a phone, with a
+                             * mailbox holding dozens of pending statements, that
+                             * meant full PDF decrypt-and-parse work starting
+                             * unattended on every app open — competing with the
+                             * page's own boot for CPU and memory before the
+                             * owner had even seen a screen — and it was
+                             * repeatedly crashing Safari's WebContent process
+                             * (iOS's own "a problem repeatedly occurred" page)
+                             * within a day of shipping. An app that will not
+                             * reliably OPEN is a strictly worse failure than one
+                             * that needs a tap on "Check now", which still does
+                             * exactly this work, on demand, with the owner
+                             * watching it happen. */
+                            if (c) return _ensureMailWatch().then(() => renderMailSync());
+                            return null;
                         })
                         .catch(() => { _mailSyncState.connected = false; renderMailSync(); });
                 }

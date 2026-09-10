@@ -357,17 +357,21 @@ describe('the page actually asks Gmail to watch the mailbox', () => {
         expect(boot).toContain('_ensureMailWatch');
     });
 
-    it('ALSO PULLS on load — the renewal above only kept the push alive', () => {
-        /* THE OWNER'S REPORT: "auto sync does not work". It did not, because
-         * nothing ever pulled what a working push had already delivered — the
-         * card only checked on a manual "Check now" tap. renderDash renews the
-         * watch and then runs the same sync that button runs, once, right
-         * after confirming the mailbox is connected. */
+    it('BOOT NEVER AUTO-RUNS THE FULL SYNC — a phone crashed on this within a day', () => {
+        /* THE INCIDENT: renderDash briefly also called runMailSync() here, on
+         * the theory that nothing else ever pulled what a working push had
+         * already delivered ("auto sync does not work"). True, but the fix was
+         * the wrong shape: a mailbox holding dozens of pending statements then
+         * started full PDF decrypt-and-parse work, unattended, on every app
+         * open — competing with the page's own boot for CPU and memory before
+         * a screen had even drawn — and repeatedly crashed Safari's WebContent
+         * process (iOS's own "a problem repeatedly occurred" page) within a
+         * day of shipping. An app that will not reliably OPEN is a strictly
+         * worse failure than one that needs a tap on "Check now", which still
+         * does exactly this work — on demand, with the owner watching it
+         * happen, not fighting the boot for the phone's CPU. */
         const boot = codeOnly(functionBody('renderDash'));
-        const watch = boot.indexOf('_ensureMailWatch');
-        expect(watch).toBeGreaterThan(-1);
-        const sync = boot.indexOf('runMailSync()', watch);
-        expect(sync, 'renderDash renews the watch but never pulls what it delivered').toBeGreaterThan(watch);
+        expect(boot, 'the heavy sync is back on the boot path').not.toContain('runMailSync()');
     });
 
     it('the renewal margin leaves room under Gmail’s seven-day maximum', async () => {
