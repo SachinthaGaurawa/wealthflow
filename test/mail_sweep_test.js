@@ -166,6 +166,28 @@ describe('the listing decides against the list as it is NOW', () => {
         expect(fake.docs.has(`${ITEMS}/b1`)).toBe(false);
     });
 
+    it('BLOCKING THE DOMAIN CATCHES A SIBLING ADDRESS, not only the one that was on screen', async () => {
+        /* THE REGRESSION: the mailbox card's Block button used to pass the
+         * exact address on the one message being looked at. A transactional
+         * sender rarely reuses that address — invoices@, no-reply+id@, a
+         * different subdomain per campaign — so the very next message from
+         * "the same sender", by the owner's own reckoning, arrived from an
+         * address nothing had ever blocked, and the row came back. The
+         * button now sends the domain (see index.html's data-msblock
+         * handler) — the same level recordSighting() already uses for
+         * auto-discovery, for the identical reason. */
+        store('b1', { bank: 'Shop', from: 'invoices@shop.example' });
+        store('b2', { bank: 'Shop', from: 'no-reply+8827@shop.example' });
+        store('b3', { bank: 'HNB', from: 'statements@hnb.lk' });
+        await addSender('hnb.lk', 'approved');
+        const blocked = await addSender('shop.example', 'blocked');
+        expect(blocked.body.purged).toBe(2);
+        const seen = await list();
+        expect(byId(seen.body, 'b1')).toBeUndefined();
+        expect(byId(seen.body, 'b2')).toBeUndefined();
+        expect(byId(seen.body, 'b3')).toBeTruthy();
+    });
+
     it('A DOCUMENT STORED BEFORE THE FLAG EXISTED is judged by its sender, not by its silence', async () => {
         /* The owner's actual complaint. No `known` field at all — written by a
          * keyword search months before any list existed — and it used to draw
@@ -543,11 +565,27 @@ describe('the card', () => {
     });
 
     it('the block button is wired, and uses `add` — the row may have no sender entry yet', () => {
-        expect(card).toMatch(/data-msblock[\s\S]{0,400}_sendersDo\('add',\s*it\.from,\s*\{\s*status:\s*'blocked'/);
+        expect(card).toMatch(/data-msblock[\s\S]{0,400}_sendersDo\('add',\s*it\.domain \|\| it\.from,\s*\{\s*status:\s*'blocked'/);
         /* And it re-syncs afterward, or the just-blocked row sits there until
          * the owner does something else — the same "did this even work"
          * confusion the block itself was meant to end. */
         expect(card).toMatch(/data-msblock[\s\S]{0,500}runMailSync\(\)/);
+    });
+
+    it('BLOCKS THE DOMAIN, NOT THE ONE ADDRESS THAT HAPPENED TO SEND THIS MESSAGE', () => {
+        /* THE REGRESSION THIS CLOSES: blocking used to pass `it.from` — the
+         * exact address on this one message — straight to `_sendersDo`.
+         * normalizeSender() then stores that as an address-kind entry,
+         * matched only by exact string equality. A transactional sender
+         * rarely reuses one address — invoices@, no-reply+id@, a different
+         * subdomain per campaign — so the very next message from what the
+         * owner thinks of as "the same sender" arrived from an address that
+         * had never been blocked, and the row came back: "I blocked it and
+         * it came back anyway." Blocking now uses the domain the server
+         * already computed (`it.domain`, via the same matchSender() the
+         * trust decision itself runs) — the same level recordSighting()
+         * uses for auto-discovery, for the identical reason. */
+        expect(card).not.toMatch(/data-msblock[\s\S]{0,400}_sendersDo\('add',\s*it\.from,/);
     });
 
     it('nothing is hidden from the owner: the unapproved rows still draw', () => {
