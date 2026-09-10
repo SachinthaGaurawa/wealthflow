@@ -23969,6 +23969,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ${_mailStageChip(it.stage, it.reason)}
                     ${!it.known && it.from && it.verdict !== 'blocked' ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
                         ${(window.WFIcon ? WFIcon('plus') : '')} Add sender
+                    </button>
+                    <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-msblock="${_wfEsc(String(i))}">
+                        ${(window.WFIcon ? WFIcon('x') : '')} Block sender
                     </button>` : ''}
                     <button class="btn btn-ghost btn-sm" style="color:var(--red);" data-msdel="${_wfEsc(String(i))}"
                         aria-label="Remove this statement" title="Remove this statement">
@@ -24227,6 +24230,27 @@ table.amort tbody tr { page-break-inside: avoid; }
                     try { triggerHaptic('light'); } catch (_) {}
                     btn.disabled = true;
                     await _sendersDo('add', it.from, { status: 'approved', name: it.bank || '' });
+                    runMailSync();
+                };
+            });
+            /* BLOCK, RIGHT HERE — not a trip to Senders to find and retype an
+             * address the row already shows. `action: 'add'` rather than
+             * `status`, because this sender may not be a row there yet at
+             * all; addSender() creates or updates in one call either way.
+             *
+             * The server clears out whatever this sender already put in the
+             * store as the direct, bounded result of this one block — see
+             * gmail-link.js. Without the re-sync below the row would still
+             * show here until the next natural refresh, which reads as the
+             * block having done nothing — the exact complaint this exists
+             * to close. */
+            host.querySelectorAll('[data-msblock]').forEach((btn) => {
+                btn.onclick = async () => {
+                    const it = st.items[Number(btn.getAttribute('data-msblock'))];
+                    if (!it || !it.from) return;
+                    try { triggerHaptic('light'); } catch (_) {}
+                    btn.disabled = true;
+                    await _sendersDo('add', it.from, { status: 'blocked', name: it.bank || '' });
                     runMailSync();
                 };
             });
@@ -24856,6 +24880,15 @@ table.amort tbody tr { page-break-inside: avoid; }
             _senders.busy = '';
             if (!_sendersApply(r)) {
                 notify(_senders.error, 'error');
+            } else if (action === 'add' && extra && extra.status === 'blocked') {
+                /* THE MESSAGE "ADD" NORMALLY SHOWS IS BACKWARDS HERE: a block
+                 * is the one add-shaped call that means the opposite of "will
+                 * be searched". `purged` — added by the server precisely for
+                 * this — says whether anything already stored just left the
+                 * list, so the owner sees the block actually did something
+                 * rather than wondering whether it silently failed again. */
+                const n = Number(r && r.body && r.body.purged) || 0;
+                notify('Blocked.' + (n > 0 ? ' Removed ' + n + ' statement' + (n === 1 ? '' : 's') + ' already here.' : ''), 'success');
             } else if (action === 'add') {
                 notify('Added. The next scan will search this sender.', 'success');
             }
