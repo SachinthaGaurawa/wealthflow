@@ -17,6 +17,17 @@
  * and vault_test.js. What this file pins is the part that was missing: the
  * count, the sentence that distinguishes a locked vault from a wrong password,
  * and the retry that happens without the owner being asked twice.
+ *
+ * A second gap sat behind the first one: _mailBootCheck() (the "auto sync
+ * වෙන්නේ නෑ" fix) populates `items` on every boot without ever running the
+ * heavy loop that increments `locked` — by design, so boot stays cheap. So a
+ * device that opened with a locked vault and mail already waiting showed
+ * NOTHING actionable: `lockedCount` was still 0, since nothing had been
+ * tried and failed yet. The owner had saved the password; the app simply
+ * never got a chance to say it needed to be asked for it. The strip now also
+ * fires proactively — vault locked, at least one known-sender statement
+ * sitting in `waiting`, zero attempts made yet — with wording that says
+ * exactly that nothing has been tried, never the "opened it" language.
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
@@ -87,9 +98,37 @@ describe('what the card offers', () => {
         expect(card).toMatch(/vaultLocked\s*$|vaultLocked/m);
     });
 
-    it('the strip appears only when something is actually held for a key', () => {
-        expect(card).toMatch(/const lockStrip = lockedCount \?/);
+    it('the strip appears when something is held for a key, OR proactively when the vault is locked with mail waiting', () => {
+        expect(card).toMatch(/const lockStrip = \(lockedCount \|\| proactive\) \?/);
         expect(card).toContain('${lockStrip}');
+    });
+
+    it('PROACTIVE: a locked vault with known mail waiting is actionable before any attempt fails', () => {
+        /* lockedCount only ever grows inside runMailSync()'s heavy loop, which
+         * _mailBootCheck() never runs. Gating the strip on lockedCount alone
+         * meant a fresh boot with a locked vault and mail already waiting
+         * showed nothing — the owner had to press Check now, watch it fail,
+         * THEN see the strip, for a password they had already saved. */
+        expect(card).toMatch(/const pendingKnown = [\s\S]{0,200}stage === 'waiting'/);
+        expect(card).toContain("it.known !== false");
+        expect(card).toMatch(/const proactive = lockedCount === 0 && vaultLocked && pendingKnown > 0/);
+    });
+
+    it('PROACTIVE wording never claims a password was already tried', () => {
+        /* The reactive strip says "could not be opened" / "were tried" —
+         * both false when nothing has run yet. Saying either to someone who
+         * only just opened the app would be a lie about what happened. */
+        const head = /const headTxt = proactive\s*\?\s*`([\s\S]*?)`\s*:/.exec(card);
+        const tail = /const tailTxt = proactive\s*\?\s*'([\s\S]*?)'\s*:/.exec(card);
+        expect(head, 'could not isolate the proactive headTxt branch').toBeTruthy();
+        expect(tail, 'could not isolate the proactive tailTxt branch').toBeTruthy();
+        expect(head[1]).toContain('waiting, and your statement vault is locked');
+        expect(tail[1]).toContain('nothing is opened until you do');
+        expect(head[1] + tail[1]).not.toMatch(/could not be opened|were tried/);
+    });
+
+    it('the proactive count is the same "known, waiting" set the owner sees listed — not raw item count', () => {
+        expect(card).toMatch(/const n = proactive \? pendingKnown : lockedCount/);
     });
 
     it('the button is wired — a strip that opens nothing is decoration', () => {
