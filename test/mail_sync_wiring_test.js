@@ -166,13 +166,21 @@ describe('the card is actually drawn', () => {
             .toContain('renderMailSync();');
 
         /* UNCONDITIONALLY, and this needed a second assertion: deleting the
-         * plain call still left the one inside the _mailConnected() callback, so
-         * the first version of this test passed on a dashboard that drew nothing
-         * until an async probe resolved — and drew nothing at all if it never
-         * did. The first render must come BEFORE the probe. */
+         * plain call still left the one inside the connection probe's
+         * callback, so the first version of this test passed on a dashboard
+         * that drew nothing until an async probe resolved — and drew nothing
+         * at all if it never did. The first render must come BEFORE the
+         * probe.
+         *
+         * The probe itself moved into _mailBootCheck() — the cheap,
+         * unattended-safe half of a sync (see that function's own comment,
+         * and the boot-safety test below) — but the ordering guarantee this
+         * asserts is unchanged: it still calls _mailConnected() first thing,
+         * so a dashboard drawn before that resolves is still drawn before
+         * any connection state is known. */
         const drawAt = dash.indexOf('renderMailSync();');
-        const probeAt = dash.indexOf('_mailConnected()');
-        expect(probeAt, 'the connection probe is gone').toBeGreaterThan(0);
+        const probeAt = dash.indexOf('_mailBootCheck()');
+        expect(probeAt, 'the boot-time mail check is gone').toBeGreaterThan(0);
         expect(drawAt, 'the card is only drawn after an async probe resolves')
             .toBeLessThan(probeAt);
 
@@ -372,6 +380,47 @@ describe('the page actually asks Gmail to watch the mailbox', () => {
          * happen, not fighting the boot for the phone's CPU. */
         const boot = codeOnly(functionBody('renderDash'));
         expect(boot, 'the heavy sync is back on the boot path').not.toContain('runMailSync()');
+    });
+
+    /* ── THE OTHER HALF OF THE SAME REPORT ────────────────────────────────
+     *
+     * The incident above answered "why does the app crash" by removing the
+     * heavy sync from boot. It left a second, separate complaint standing:
+     * "auto checking වෙන්නේ නෑ අලුතින් bank statements ඇවිල්ලද කියලා" — the
+     * card never learns anything new until the owner opens it and presses
+     * Check now by hand. _mailBootCheck() is the fix: everything runMailSync()
+     * does BEFORE it ever opens a PDF — the recent-sweep network calls, then
+     * a read of the store — now runs on boot too, so the card shows what is
+     * actually waiting the moment the app opens. What it must never do is
+     * touch anything past that line. */
+    it('boot now DOES check for new mail — the auto-check the owner asked for', () => {
+        const boot = codeOnly(functionBody('renderDash'));
+        expect(boot, '_mailBootCheck is not called from boot').toContain('_mailBootCheck()');
+    });
+
+    it('_mailBootCheck() never opens a statement — no decrypt, no parse, no review screen', () => {
+        const body = codeOnly(functionBody('_mailBootCheck'));
+        expect(body, '_mailBootCheck not found').toBeTruthy();
+        for (const forbidden of [
+            'intakeStatement', 'WFPdfUnlock', 'wfVaultPdfPasswords',
+            'WFStatementParser', 'WFStatementRouter', '_reviewMailStatements',
+            '_teachStatementLayout',
+        ]) {
+            expect(body, `_mailBootCheck reaches ${forbidden} — that is the heavy half`).not.toContain(forbidden);
+        }
+    });
+
+    it('_mailBootCheck() makes the SAME cheap calls runMailSync() makes before it ever opens a PDF', () => {
+        /* Not a second policy for "what is new" — the same recent-sweep and
+         * the same store read, just without what follows them. Two places
+         * deciding that differently is exactly the kind of drift this
+         * codebase keeps finding between paired call sites. */
+        const boot = codeOnly(functionBody('_mailBootCheck'));
+        const full = codeOnly(functionBody('runMailSync'));
+        for (const shared of ["_recentSweep(false)", "_gmailLink('GET', null, '?items=1')", '_mailConnected()']) {
+            expect(boot, `_mailBootCheck does not make the ${shared} call runMailSync() makes`).toContain(shared);
+            expect(full, `runMailSync no longer makes the ${shared} call this pins`).toContain(shared);
+        }
     });
 
     it('the renewal margin leaves room under Gmail’s seven-day maximum', async () => {
