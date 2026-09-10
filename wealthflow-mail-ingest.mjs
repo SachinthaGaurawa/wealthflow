@@ -813,6 +813,38 @@ export function planMessage(message, policy = {}) {
  * is worth knowing about — a statement too large to store, or one whose
  * signature did not hold, is a statement that will silently never appear.
  */
+/**
+ * Could this message EVER become a statement? If not, recording its sender as
+ * a "sighting" teaches the owner nothing but one more domain to go block.
+ *
+ * THE THIRD ROUND OF THE SAME REPORT. gmail-hook.js used to call
+ * recordSighting() for every message the push received, unconditionally —
+ * the Pub/Sub history feed it walks has no query, so that meant every
+ * message added to the mailbox, statement-shaped or not. A job alert, a
+ * welcome email, a receipt with no attachment: none of these can ever become
+ * a filed statement, since planMessage() already refuses them below — but
+ * every one still added a row to the owner's senders list, because nothing
+ * gated the recording on what planMessage decided. "I added the emails I
+ * want, why can't it be ONLY those" is that gap, from the owner's side.
+ *
+ * True for anything actually taken (`plan.ok`), and for anything held for a
+ * reason a single tap fixes — HOLDABLE, which by construction only fires for
+ * a DKIM-verified sender that attached something worth reviewing. False for
+ * everything else: no attachment, a failed signature, a blocked sender, a
+ * personal mailbox, a lookalike of a bank someone already trusts — none of
+ * which can ever become a statement, however many times the owner approves
+ * the sender.
+ *
+ * The explicit "find my banks" hunt (wealthflow-sender-discovery.js) is a
+ * SEPARATE, opt-in feature with its own scoring and its own screen, and does
+ * not call this — an owner who asks WealthFlow to comb the mailbox for
+ * candidates should still see every candidate. This gate is only for the
+ * passive path that runs on every message that simply arrives.
+ */
+export function worthSighting(plan) {
+    return !!(plan && (plan.ok === true || HOLDABLE.has(plan.reason)));
+}
+
 export function isWorthTelling(plan) {
     if (!plan || plan.ok) return false;
     return plan.reason === REJECT.TOO_LARGE
@@ -844,7 +876,7 @@ const API = {
     BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
     addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, looksLikeStatement, nameFromDomain,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, worthSighting, looksLikeStatement, nameFromDomain,
     dedupeStored, betterCopy,
 };
 

@@ -49,7 +49,9 @@
  *      GOOGLE_OAUTH_CLIENT_SECRET, FIREBASE_SERVICE_ACCOUNT
  * ===========================================================================*/
 
-import { planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
+import {
+    planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
+} from './wealthflow-mail-ingest.mjs';
 import { normalizeList, policyFrom, recordSighting } from './wealthflow-mail-senders.mjs';
 import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
 import { getInboxDb } from './inbox-store.mjs';
@@ -243,11 +245,15 @@ export default async function handler(req, res) {
 
         const plan = planMessage(msg, policy);
 
-        /* Recorded on every message, taken or refused — see gmail-scan.js,
-         * which does exactly this. The two files apply one policy because they
-         * build it from one function; a rule applied in one of this pair and
-         * not the other is this repository's most repeated defect. */
-        seen = recordSighting(seen, { from: plan.from, subject: plan.subject, now: Date.now() });
+        /* Recorded only when this message could ever become a statement —
+         * see worthSighting() in wealthflow-mail-ingest.mjs for why: the
+         * Pub/Sub history this loop walks has no query, so before this gate
+         * every message the mailbox ever received, statement-shaped or not,
+         * added a row to the owner's senders list. gmail-scan.js's routine
+         * path applies the identical gate for the identical reason. */
+        if (worthSighting(plan)) {
+            seen = recordSighting(seen, { from: plan.from, subject: plan.subject, now: Date.now() });
+        }
 
         if (!plan.ok) {
             if (isWorthTelling(plan)) {

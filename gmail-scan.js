@@ -43,7 +43,9 @@ import {
 } from './wealthflow-mail-senders.mjs';
 import { monthKey } from './wealthflow-sender-discovery.js';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
-import { planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
+import {
+    planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
+} from './wealthflow-mail-ingest.mjs';
 import { MAIL_ROOT, windowFor, listUrl, boundedMax, pageResult } from './gmail-scan.mjs';
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -239,16 +241,20 @@ export default async function handler(req, res, deps) {
          * second place for a statement to be accepted that should not be. */
         const plan = planMessage(msg, policy);
 
-        /* THE GATHERING THE OWNER ASKED FOR.
-         *
-         * Recorded whether the message was taken or refused, and refused mail
-         * matters MORE: a sender nobody has approved yet is exactly the one to
-         * put in front of them. Without this the strict rule would be a wall —
-         * "not on your list" with no way to get on it. */
-        seen = recordSighting(seen, {
-            from: plan.from, subject: plan.subject, now: Date.now(),
-            month: monthKey(Number(msg.internalDate) || window.after),
-        });
+        /* THE GATHERING THE OWNER ASKED FOR — but only when this message
+         * could ever become a statement. See worthSighting() in
+         * wealthflow-mail-ingest.mjs: it still lets through anything held
+         * for a reason a tap fixes, so a real candidate is never a wall —
+         * "not on your list" with no way to get on it — but no longer records
+         * a newsletter or a personal mailbox as a "sender" the owner then has
+         * to go find and block. gmail-hook.js's push handler applies the
+         * identical gate for the identical reason. */
+        if (worthSighting(plan)) {
+            seen = recordSighting(seen, {
+                from: plan.from, subject: plan.subject, now: Date.now(),
+                month: monthKey(Number(msg.internalDate) || window.after),
+            });
+        }
 
         if (!plan.ok) {
             if (isWorthTelling(plan)) {
