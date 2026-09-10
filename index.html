@@ -25377,6 +25377,73 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
 
         /**
+         * The cheap half of a sync, safe to run unattended — including
+         * automatically on boot, which runMailSync() itself must never be.
+         *
+         * THE OWNER'S REPORT: "auto checking වෙන්නේ නෑ අලුතින් bank
+         * statements ඇවිල්ලද කියලා" — the app never says whether anything
+         * new has arrived until the owner opens the card and presses
+         * "Check now" by hand. The comment on runMailSync() below explains
+         * why that button exists at all: on a phone, with a mailbox holding
+         * dozens of pending statements, runMailSync() decrypts and parses
+         * every one of them, synchronously, in a tight loop — and running
+         * THAT unattended on every app open was what repeatedly crashed
+         * Safari's WebContent process (#189).
+         *
+         * But asking "is there anything new" was never the expensive part.
+         * It costs the SAME network round trips runMailSync() itself makes
+         * first (_recentSweep, then a read of the store) — no PDF is ever
+         * opened, no vault key is ever asked for, nothing is decrypted or
+         * parsed, and nothing pops up a review screen. So THIS half can run
+         * on every boot: the owner sees what is waiting, named and dated,
+         * the moment the app opens, and the heavy half stays exactly where
+         * #189 put it back — one tap away, on demand, with the owner
+         * watching it happen. */
+        async function _mailBootCheck() {
+            try {
+                _mailSyncState.connected = await _mailConnected();
+                if (!_mailSyncState.connected) { renderMailSync(); return; }
+                if (!window.WFMailIntake) { renderMailSync(); return; }
+
+                const swept = await _recentSweep(false);
+                if (swept > 0) {
+                    notify(String(swept) + ' new statement' + (swept === 1 ? '' : 's') + ' found in your mailbox', 'success');
+                }
+
+                const r = await _gmailLink('GET', null, '?items=1');
+                if (!r || !r.body || r.body.ok !== true) { renderMailSync(); return; }
+                const docs = Array.isArray(r.body.items) ? r.body.items : [];
+                _mailSyncState.filed = Number(r.body.filed) || 0;
+                _mailSyncState.decided = r.body.decided === true;
+                /* Same shape runMailSync() populates below — every field the
+                 * card reads to draw a row (bank, filename, known, verdict,
+                 * from, domain) comes straight off the stored manifest, which
+                 * is written when the statement first arrives, long before
+                 * anything decrypts it. Only `stage` stays 'waiting': that is
+                 * the truth here, and it is what tells the owner there is
+                 * something to open runMailSync() for. */
+                _mailSyncState.items = docs.map((d) => ({
+                    key: d.id,
+                    bank: d.manifest && d.manifest.bank,
+                    filename: d.manifest && d.manifest.filename,
+                    stage: 'waiting',
+                    note: null, reason: null,
+                    known: _mailKnownNow(d, _mailSyncState.decided),
+                    verdict: _mailVerdict(d, _mailSyncState.decided),
+                    from: (d.manifest && d.manifest.from) || '',
+                    domain: (d.sender && d.sender.domain) || '',
+                }));
+                renderMailSync();
+            } catch (_) {
+                /* A boot-time check failing costs visibility, not
+                 * correctness — the owner can still open the card and press
+                 * "Check now", which is the same tested path this always
+                 * used to require. */
+            }
+        }
+        window._mailBootCheck = _mailBootCheck;
+
+        /**
          * Fetch what is waiting and run it through the device-side intake.
          *
          * Every stage transition is rendered as it happens, which is the entire
@@ -27145,31 +27212,30 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 renderMailSync();
                 if (_mailSyncState.connected === null) {
-                    _mailConnected()
-                        .then((c) => {
-                            _mailSyncState.connected = c;
-                            renderMailSync();
+                    /* THE SECOND HALF OF THE SAME INCIDENT. #189's comment
+                     * (still a few lines below, inside runMailSync itself)
+                     * explains why the FULL sync — decrypt, parse, review —
+                     * was reverted off the boot path: it crashed the app.
+                     * But the owner's separate report was "auto checking
+                     * වෙන්නේ නෑ" — nothing on this screen ever changes until
+                     * they open it and press Check now by hand, so a
+                     * statement that arrived overnight looks identical to
+                     * one that never arrived at all.
+                     *
+                     * _mailBootCheck() is the cheap half runMailSync() itself
+                     * makes FIRST, before it ever opens a PDF: the same
+                     * recent-sweep network calls, then a read of the store.
+                     * Nothing is decrypted, nothing is parsed, no review
+                     * screen opens — only the list the card already knows how
+                     * to draw, populated the moment the app opens instead of
+                     * waiting for a tap. */
+                    _mailBootCheck()
+                        .then(() => {
                             /* And make sure Gmail is actually watching. This is
                              * the renewal: a watch lasts seven days, so a check
                              * on every load with a six-day margin is what keeps
-                             * the pipeline from quietly stopping on day eight.
-                             *
-                             * THIS USED TO ALSO auto-run runMailSync() here, on
-                             * the theory that nothing else ever PULLED what the
-                             * push had delivered. Reverted: on a phone, with a
-                             * mailbox holding dozens of pending statements, that
-                             * meant full PDF decrypt-and-parse work starting
-                             * unattended on every app open — competing with the
-                             * page's own boot for CPU and memory before the
-                             * owner had even seen a screen — and it was
-                             * repeatedly crashing Safari's WebContent process
-                             * (iOS's own "a problem repeatedly occurred" page)
-                             * within a day of shipping. An app that will not
-                             * reliably OPEN is a strictly worse failure than one
-                             * that needs a tap on "Check now", which still does
-                             * exactly this work, on demand, with the owner
-                             * watching it happen. */
-                            if (c) return _ensureMailWatch().then(() => renderMailSync());
+                             * the pipeline from quietly stopping on day eight. */
+                            if (_mailSyncState.connected) return _ensureMailWatch().then(() => renderMailSync());
                             return null;
                         })
                         .catch(() => { _mailSyncState.connected = false; renderMailSync(); });
