@@ -89,9 +89,32 @@
         wr(K_ALIVE, a);
     }
 
+    /* Every crash this has ever recorded reads "? page, 0 DOM nodes, 0 charts
+     * alive, survived 0s" — not because those were the real numbers, but
+     * because armSession() wrote exactly those placeholders and the FIRST
+     * heartbeat, 10 seconds later, never got to overwrite them. A crash
+     * inside that first window — which every recorded one has been — is
+     * therefore invisible by construction: the one report that would say
+     * WHAT was on screen and how big the DOM was when the process died is
+     * the one report this always threw away. */
+    var FAST_BEAT_MS = 1000;
+    var FAST_BEAT_TICKS = 12;   // 12s of dense coverage, then the normal 10s cadence
+
     function armSession() {
         wr(K_ALIVE, { start: Date.now(), last: Date.now(), build: build(), page: '?', dom: 0, charts: 0, heapMB: null });
-        try { setInterval(beat, HEARTBEAT_MS); } catch (_) {}
+        beat();   // real numbers from the first paint, not the boot placeholder
+        var ticks = 0;
+        var fast = null;
+        try {
+            fast = setInterval(function () {
+                beat();
+                ticks++;
+                if (ticks >= FAST_BEAT_TICKS) {
+                    clearInterval(fast);
+                    try { setInterval(beat, HEARTBEAT_MS); } catch (_) {}
+                }
+            }, FAST_BEAT_MS);
+        } catch (_) {}
         // pagehide is THE reliable "clean exit" signal on iOS (beforeunload is not).
         var clean = function () { del(K_ALIVE); };
         try { W.addEventListener('pagehide', clean); } catch (_) {}

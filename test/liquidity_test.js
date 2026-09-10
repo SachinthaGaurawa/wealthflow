@@ -355,6 +355,26 @@ describe('the owner can actually get to it', () => {
         }
     });
 
+    /* ── THE CRASH: DELETING A DEBTOR THREW, EVERY TIME ──────────────────
+     *
+     * A device's own diagnostics recorded the same error ten times in a row,
+     * all from this exact path: "null is not an object (evaluating
+     * '$('confMsg').textContent = msg')", thrown from showConfirm(), called
+     * from _deleteDebtor(). showConfirm() is shared by every destructive
+     * action in the app, not just this one — the one time its modal's own
+     * DOM was not where it expected, the confirmation (and whatever it was
+     * confirming) silently stopped working, with nothing on screen and no
+     * way to retry past it. */
+    it('showConfirm no longer throws when its own modal is missing — it falls back to window.confirm', () => {
+        const body = fn('showConfirm');
+        expect(body, 'no null-guard before touching the modal elements').toMatch(/if\s*\(\s*!modal\s*\|\|\s*!msgEl\s*\|\|\s*!detEl\s*\|\|\s*!btnEl\s*\)/);
+        expect(body, 'a destructive action must still be confirmable, not just fail silently')
+            .toContain('window.confirm(');
+        // The callback still runs on a native-confirm accept — deleting a
+        // debtor must actually complete, not merely avoid crashing.
+        expect(body).toMatch(/window\.confirm\([^)]*\)\)\s*\{\s*if\s*\(cb\)\s*cb\(\);/);
+    });
+
     it('A LOGGED REPAYMENT ARRIVES UNCONFIRMED, and money handed over does not', () => {
         /* The rule, at the two places that write. A repayment is a claim about
          * the bank; a further advance is something the owner just did, and
