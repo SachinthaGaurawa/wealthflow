@@ -109,14 +109,61 @@ describe('the listing decides against the list as it is NOW', () => {
         expect(byId(seen.body, 'a1').sender.verdict).toBe('approved');
     });
 
-    it('A SENDER BLOCKED AFTER THE FACT is blocked now, though the manifest says known', async () => {
-        /* The regression this closes: the flag was written when the statement
-         * arrived, so a block could never reach the mail already stored. */
+    it('A SENDER BLOCKED AFTER THE FACT is purged from the store, not merely relabelled', async () => {
+        /* THE REGRESSION THIS CLOSES, TWICE OVER. First: the flag was written
+         * when the statement arrived, so a block could never reach the mail
+         * already stored — fixed by recomputing the verdict on every listing
+         * (below). Second, and the one the owner kept reporting after that
+         * fix: recomputing the LABEL is not the same as removing the row. A
+         * blocked sender's old statements stayed in the pending queue
+         * forever, still offered for review, looking exactly like the block
+         * button had done nothing. Blocking now purges what that sender
+         * already put in the store, in the same request — see gmail-link.js. */
         store('b1', { bank: 'Utility', from: 'billing@utility.example', known: true });
+        await addSender('hnb.lk', 'approved');
+        const blocked = await addSender('utility.example', 'blocked');
+        expect(blocked.body.purged).toBe(1);
+        const seen = await list();
+        expect(byId(seen.body, 'b1')).toBeUndefined();
+    });
+
+    it('purging on block is scoped to the sender just blocked, nothing else', async () => {
+        store('b1', { bank: 'Utility', from: 'billing@utility.example' });
+        store('b2', { bank: 'HNB', from: 'statements@hnb.lk' });
         await addSender('hnb.lk', 'approved');
         await addSender('utility.example', 'blocked');
         const seen = await list();
-        expect(byId(seen.body, 'b1').sender.verdict).toBe('blocked');
+        expect(byId(seen.body, 'b1')).toBeUndefined();
+        expect(byId(seen.body, 'b2')).toBeTruthy();
+    });
+
+    it('a statement already filed is never purged by a later block', async () => {
+        store('b1', { bank: 'Utility', from: 'billing@utility.example', filed: true });
+        const blocked = await addSender('utility.example', 'blocked');
+        expect(blocked.body.purged).toBe(0);
+        expect(fake.docs.has(`${ITEMS}/b1`)).toBe(true);
+    });
+
+    it('approving a sender never purges anything — only a block does', async () => {
+        store('b1', { bank: 'HNB', from: 'statements@hnb.lk' });
+        const approved = await addSender('hnb.lk', 'approved');
+        expect(approved.body.purged).toBe(0);
+        expect(fake.docs.has(`${ITEMS}/b1`)).toBe(true);
+    });
+
+    it('a sender blocked through the Settings screen (status, not add) purges too', async () => {
+        /* The Senders screen blocks an EXISTING row through `action: status`,
+         * not `action: add` — the mailbox card's inline Block button uses
+         * `add` because the sender may not have a row yet at all. Both paths
+         * must clear the store the same way. */
+        store('b1', { bank: 'Utility', from: 'billing@utility.example' });
+        await addSender('utility.example', 'approved');
+        const blocked = await call({
+            method: 'POST', url: '/api/gmail-link?senders=1',
+            body: { action: 'status', value: 'utility.example', status: 'blocked' },
+        });
+        expect(blocked.body.purged).toBe(1);
+        expect(fake.docs.has(`${ITEMS}/b1`)).toBe(false);
     });
 
     it('A DOCUMENT STORED BEFORE THE FLAG EXISTED is judged by its sender, not by its silence', async () => {
@@ -484,6 +531,23 @@ describe('the card', () => {
         /* "Add sender" on a row the owner explicitly refused is an invitation
          * to undo their own decision by mistake. */
         expect(card).toMatch(/it\.verdict !== 'blocked' \? `<button[^`]*data-msadd/);
+    });
+
+    it('THE OWNER SHOULD NOT HAVE TO LEAVE THIS CARD TO BLOCK A SENDER', () => {
+        /* Before this, blocking meant reading the row's address, opening
+         * Senders, and retyping it there — one avoidable step per unwanted
+         * sender, on a screen that can list dozens of them. The button lives
+         * beside Add, on the same row, offered to the same population
+         * (not-yet-decided, never a sender already blocked). */
+        expect(card).toMatch(/it\.verdict !== 'blocked' \? `<button[^`]*data-msadd[\s\S]{0,300}data-msblock/);
+    });
+
+    it('the block button is wired, and uses `add` — the row may have no sender entry yet', () => {
+        expect(card).toMatch(/data-msblock[\s\S]{0,400}_sendersDo\('add',\s*it\.from,\s*\{\s*status:\s*'blocked'/);
+        /* And it re-syncs afterward, or the just-blocked row sits there until
+         * the owner does something else — the same "did this even work"
+         * confusion the block itself was meant to end. */
+        expect(card).toMatch(/data-msblock[\s\S]{0,500}runMailSync\(\)/);
     });
 
     it('nothing is hidden from the owner: the unapproved rows still draw', () => {

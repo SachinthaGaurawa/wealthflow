@@ -230,6 +230,43 @@ export default async function handler(req, res) {
             releasable = heldNow.filter((h) => releasedBy(h, decide));
         } catch (_) { releasable = []; }
 
+        /* ── BLOCKING A SENDER, AND WHAT WAS ALREADY THERE ────────────────
+         *
+         * THE OWNER'S REPORT: "I blocked it. It doesn't work." Blocking only
+         * ever stopped FUTURE mail being fetched — the GET items handler
+         * below recomputes each stored item's verdict against the CURRENT
+         * list on every read, so a blocked sender's old statements kept
+         * their place in the pending queue forever, still offered for
+         * review, looking exactly like the block button did nothing.
+         *
+         * So the one action here that unambiguously names a single sender —
+         * blocking it — also clears what that sender already put in the
+         * store. This is not the general "delete by rule" the comment two
+         * screens down refuses to add: the rule is not evaluated by this
+         * endpoint on its own initiative, it runs only as the direct,
+         * bounded consequence of the owner's own action, against the list
+         * their action just produced. */
+        let purged = 0;
+        const justBlocked = (action === 'status' && String((body && body.status) || '').toLowerCase() === 'blocked')
+            || (action === 'add' && body && body.status === 'blocked');
+        if (justBlocked) {
+            try {
+                const snap2 = await withDeadline(ref.collection('items').limit(ITEMS_SCAN_MAX).get(), 8000, 'wf-mail items');
+                for (const doc of (snap2 && snap2.docs) || []) {
+                    const manifest = doc.data();
+                    if (manifest && manifest.filed === true) continue;
+                    const from = String((manifest && manifest.from) || '').trim();
+                    if (!from || matchSender(result.list, from).verdict !== 'blocked') continue;
+                    try {
+                        const ps = await withDeadline(doc.ref.collection('parts').get(), 8000, 'parts');
+                        for (const part of (ps && ps.docs) || []) await part.ref.delete();
+                        await withDeadline(doc.ref.delete(), 8000, 'item');
+                        purged += 1;
+                    } catch (_) { /* left for the next block or a manual Remove; never fails the block itself */ }
+                }
+            } catch (_) { /* the block already saved; a failed sweep costs tidiness, not correctness */ }
+        }
+
         return j(res, 200, {
             ok: true, senders: result.list, knownBanks, ...groupForDisplay(result.list),
             /* Named so the screen can say it: "3 statements were waiting on
@@ -240,6 +277,9 @@ export default async function handler(req, res) {
                 messageId: h.messageId, from: h.from, subject: h.subject,
                 bank: h.bank || null, heldMs: h.heldMs || null,
             })).slice(0, 20),
+            /* How many already-stored statements were cleared out because
+             * this action blocked their sender. */
+            purged,
         });
     }
 
