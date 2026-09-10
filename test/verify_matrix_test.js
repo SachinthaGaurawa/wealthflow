@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import M, {
     VERIFY, LOOKBACK_MONTHS, LATE_AFTER_DAYS,
-    monthKeyOf, dueDateFor, periodMonths, paysInMonth,
+    monthKeyOf, dueDateFor, dayOfMonth, periodMonths, paysInMonth,
     receivedKey, billKey, pendingInflows, pendingOutflows, queueTotals,
 } from '../wealthflow-verify-matrix.js';
 
@@ -38,9 +38,15 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const AT = (iso) => new Date(iso + 'T09:00:00Z');
 
+/* `day` is a full 'YYYY-MM-DD' string here, on purpose: that is what
+ * saveIncome actually writes — `i_day` is a native date input (index.html,
+ * the "Payment Start Date" field), never a bare 1-31 number. An earlier
+ * version of this fixture used `day: '5'`, which happened to satisfy
+ * `Number()` and hid the bug below for as long as the fixture disagreed with
+ * production. */
 const monthly = (over = {}) => ({
     id: 'm1', name: 'Business profit', company: 'Acme',
-    monthly: 300000, day: '5', start: '2025-01-05', freq: 'monthly', ...over,
+    monthly: 300000, day: '2025-01-05', start: '2025-01-05', freq: 'monthly', ...over,
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -71,6 +77,52 @@ describe('the day a payout falls on', () => {
         expect(monthKeyOf(new Date(Date.UTC(2026, 8, 5)))).toBe('2026-09');
         expect(receivedKey('abc', '2026-09')).toBe('abc_2026-09');
         expect(billKey('abc', '2026-09')).toBe('abc_2026-09');
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE DATE BUG: `day` IS A DATE, NOT A DAY
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * THE OWNER'S REPORT: every row in the queue read "Expected <month>-01",
+ * whatever date was actually picked for a source.
+ *
+ * saveIncome writes `day: $('i_day').value` — index.html's "Payment Start
+ * Date" field is a native `<input type="date">`, so that value is always a
+ * full 'YYYY-MM-DD' string. dueDateFor's own contract is a bare 1-31 number:
+ * `Number('2026-09-15')` is NaN, its `|| 1` fallback then fires, and EVERY
+ * source silently clamped to the 1st. checkActionableReminders() (index.html)
+ * already extracts the day correctly for the pay-day banner
+ * (`parseInt(String(day).slice(-2))`); dayOfMonth is that same rule, so the
+ * banner and this queue can never disagree about which day a source pays on.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('dayOfMonth — what dueDateFor actually receives', () => {
+    it('pulls the day out of a full date string, the shape saveIncome writes', () => {
+        expect(dayOfMonth('2026-09-15')).toBe(15);
+        expect(dayOfMonth('2026-09-01')).toBe(1);
+        expect(dayOfMonth('2026-01-31')).toBe(31);
+    });
+
+    it('a bare 1-31 number or numeric string still works, unchanged', () => {
+        expect(dayOfMonth(5)).toBe(5);
+        expect(dayOfMonth('5')).toBe(5);
+        expect(dayOfMonth('31')).toBe(31);
+    });
+
+    it('a missing or nonsense value is the 1st, never a crash', () => {
+        expect(dayOfMonth(undefined)).toBe(1);
+        expect(dayOfMonth(null)).toBe(1);
+        expect(dayOfMonth('')).toBe(1);
+        expect(dayOfMonth('abc')).toBe(1);
+        expect(dayOfMonth(0)).toBe(1);
+    });
+
+    it('THE BUG, PINNED DIRECTLY: dueDateFor fed a raw date string is wrong', () => {
+        /* This is dueDateFor's own documented contract — a bare number — so
+         * it is not itself broken. The bug was every CALLER in this file
+         * handing it `source.day` unconverted. */
+        expect(dueDateFor('2026-09-15', 2026, 8).toISOString().slice(0, 10)).toBe('2026-09-01');
+        expect(dueDateFor(dayOfMonth('2026-09-15'), 2026, 8).toISOString().slice(0, 10)).toBe('2026-09-15');
     });
 });
 
@@ -155,6 +207,20 @@ describe('what is waiting to be answered', () => {
         expect(sep.state).toBe(VERIFY.PENDING);
         expect(sep.amount).toBe(300000);
         expect(sep.dueISO).toBe('2026-09-05');
+    });
+
+    it('THE OWNER\'S REPORT: an investment paying on the 15th shows the 15th, not the 1st', () => {
+        /* Every row in the "Awaiting your confirmation" queue read
+         * "Expected <month>-01" regardless of the date actually picked, for
+         * every income and investment source in the app — because `day` here
+         * is a full date string, and the pre-fix code read it with `Number()`.
+         * A fixture using day '15' would never have caught this; the point is
+         * that the DATE, not a bare number, is what production writes. */
+        const A = { income: [monthly({ id: 'inv1', day: '2025-01-15', start: '2025-01-15' })] };
+        const rows = pendingInflows(A, AT('2026-09-20'), { lookbackMonths: 0 });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].dueISO).toBe('2026-09-15');
+        expect(rows[0].monthKey).toBe('2026-09');
     });
 
     it('A DATE THAT HAS NOT ARRIVED IS NOT A QUESTION', () => {
