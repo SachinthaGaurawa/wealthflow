@@ -47,8 +47,11 @@
  *      `window` on load — one of them from a timer that fires after the import
  *      resolved. A deploy that dies on a stray timer is worse than no check.
  *   3. Stripping is checked to be idempotent — a second pass must find nothing.
- *   4. After the rename, every output file is scanned for any surviving
- *      reference to an original module filename. One hit FAILS THE BUILD.
+ *   4. After the rename, EVERY LOCAL .js/.mjs FILE THE DEPLOY SHIPS — not only
+ *      the renamed modules, index.html and sw.js — is scanned for a surviving
+ *      reference to an original module filename. One hit FAILS THE BUILD. See
+ *      step 3b below for why this had to widen, and what it broke in
+ *      production before it did.
  *   5. test/build_test.js runs the whole thing over a real copy of this
  *      repository, imports every stripped module and compares its exported
  *      names with the original's — the strong check, run where a thrown timer
@@ -103,6 +106,35 @@
  * explicitly. Both settings only make sense together, and build_test.js pins
  * that pairing.
  *
+ * ── THE BUG THAT REACHED PRODUCTION, AND WHY LOCAL TESTING MISSED IT ────────
+ *
+ * The rewrite step above — "modules reference each other by import specifier"
+ * — only ever rewrote references INSIDE the modules themselves, index.html and
+ * sw.js. It shipped, and the first real user hit "Connect Gmail" and got:
+ *
+ *     Cannot find module '/var/task/wealthflow-mail-ingest.mjs'
+ *     imported from /var/task/gmail-link.js
+ *
+ * gmail-link.js is a SERVER handler at the repo root — not a browser module,
+ * never listed in index.html, never touched by the rewrite above — and it
+ * `import`s wealthflow-mail-ingest.mjs BY ITS ORIGINAL NAME, because that is
+ * the only name it has ever needed until this build started deleting it out
+ * from under it. gmail-hook.js, gmail-scan.js, gmail-scan.mjs and
+ * api/telegram-approve.js (the Telegram one-tap approval bot) do the same
+ * thing. Every one of them kept resolving correctly in every test here,
+ * because build_test.js's own fixture copied only the modules, index.html and
+ * sw.js into its scratch directory — the exact files the old rewrite covered,
+ * and none of the ones it didn't. A test that only looks where the code
+ * already looks proves nothing about where it doesn't; this repository has
+ * shipped that exact shape of bug from the browser side more than once, and
+ * here it was this file's own.
+ *
+ * So step 3b below rewrites EVERY local .js/.mjs file the deploy ships, found
+ * by walking the tree rather than by naming the ones known to need it — the
+ * same lesson as the file this bug lived in. `.vercelignore` decides what "the
+ * deploy ships" means, and is read once, HERE, rather than copied a third time
+ * into a second test file: see vercelIgnoreRules()/ignoredBy() below.
+ *
  * USAGE
  *   node build.mjs                 report what would change, write nothing
  *   node build.mjs --write         strip and hash in place (what Vercel runs)
@@ -155,6 +187,37 @@ export function rewriteRefs(text, renames) {
     return out;
 }
 
+/**
+ * The same idea as rewriteRefs, narrowed to only what Node's module resolver
+ * actually reads: the quoted path inside an `import ... from`, `import(...)`
+ * or `require(...)`.
+ *
+ * rewriteRefs is deliberately loose text replacement, because index.html has a
+ * third shape neither of those cover — a filename built as a bare string and
+ * handed to `document.createElement('script').src` at runtime — and a rewrite
+ * that only understood import syntax would leave that one pointing at nothing.
+ *
+ * Every OTHER local file this build touches is a server module with none of
+ * that: gmail-link.js and its kind import a renamed module exactly once, as a
+ * literal specifier, and say nothing else about it FUNCTIONALLY — but they say
+ * a great deal about it in PROSE, in comments that name the file they are
+ * describing. The loose rewriter cannot tell "the specifier Node resolves"
+ * from "a sentence explaining what that file does", so an early version of
+ * this fix rewrote comments across a dozen files into nonsense like "kept in
+ * lock-step with wealthflow-route-a1b2c3d4.js" — true of nothing, since
+ * nobody's comment was ever about a hash. This one only touches the specifier.
+ */
+export function rewriteImportsOnly(text, renames) {
+    return String(text == null ? '' : text).replace(
+        /(\bfrom\s+|\bimport\(\s*|\brequire\(\s*)(['"])([^'"]+?)\2/g,
+        (whole, prefix, quote, spec) => {
+            const base = spec.split('/').pop();
+            if (!renames.has(base)) return whole;
+            return prefix + quote + spec.slice(0, spec.length - base.length) + renames.get(base) + quote;
+        },
+    );
+}
+
 /** Every original module filename still mentioned anywhere. Empty or the build fails. */
 export function survivors(text, originals) {
     const found = [];
@@ -166,6 +229,86 @@ export function survivors(text, originals) {
         if (re.test(text)) found.push(name);
     }
     return found;
+}
+
+/**
+ * The same check as survivors(), narrowed to import/require specifiers — the
+ * counterpart to rewriteImportsOnly(). A server file's COMMENTS are meant to
+ * still say the plain name after this build runs; that is not a leftover
+ * reference, it is prose, and survivors() would wrongly fail the build on
+ * every doc comment that names a file it is talking about.
+ */
+export function survivorsInImports(text, originals) {
+    const found = new Set();
+    const known = new Set(originals);
+    const re = /(?:\bfrom\s+|\bimport\(\s*|\brequire\(\s*)(['"])([^'"]+?)\1/g;
+    let m;
+    while ((m = re.exec(text))) {
+        const base = m[2].split('/').pop();
+        if (known.has(base)) found.add(base);
+    }
+    return [...found];
+}
+
+/**
+ * .vercelignore, read once and shared by the build and its own test.
+ *
+ * There used to be a second copy of this reader inside test/build_test.js,
+ * written to check that build.mjs's OWN import of build-strip.mjs survives the
+ * ignore file. Two copies of "what does a rule in this file mean" is how one
+ * of them drifts from the other and a check quietly stops checking anything —
+ * the same defect this file's header now has a story about. The test imports
+ * this one.
+ */
+export function vercelIgnoreRules(root) {
+    const p = path.join(root, '.vercelignore');
+    if (!fs.existsSync(p)) return [];
+    return fs.readFileSync(p, 'utf8').split('\n');
+}
+
+/** The rule that removes `relPath` before the build runs, or null if none does. */
+export function ignoredBy(rules, relPath) {
+    for (const raw of rules) {
+        const rule = raw.trim();
+        if (!rule || rule.startsWith('#')) continue;
+        if (rule.endsWith('/')) {                       // a whole directory
+            if (relPath.startsWith(rule) || relPath.startsWith(rule.slice(0, -1) + '/')) return rule;
+        } else if (rule.startsWith('*.')) {             // an extension
+            if (relPath.endsWith(rule.slice(1))) return rule;
+        } else if (relPath === rule || relPath.endsWith('/' + rule)) {
+            return rule;
+        }
+    }
+    return null;
+}
+
+/* Directories never walked, deploy-ignored or not: a VCS/tooling directory is
+ * never part of what ships, and node_modules is both enormous and something
+ * this build must never rewrite the inside of. */
+const NEVER_WALK = new Set(['node_modules', '.git', '.vercel']);
+
+/**
+ * Every local .js/.mjs file the deploy actually ships, found by walking rather
+ * than by naming the ones already known to matter — see the header on why that
+ * distinction is the whole fix.
+ */
+export function localJsFiles(root, rules) {
+    const out = [];
+    (function walk(dir) {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const rel = path.relative(root, path.join(dir, entry.name));
+            if (entry.isDirectory()) {
+                if (NEVER_WALK.has(entry.name)) continue;
+                if (ignoredBy(rules, rel + '/')) continue;
+                walk(path.join(dir, entry.name));
+                continue;
+            }
+            if (!/\.(?:js|mjs)$/.test(entry.name)) continue;
+            if (ignoredBy(rules, rel)) continue;
+            out.push(rel);
+        }
+    })(root);
+    return out;
 }
 
 const kb = (n) => (n / 1024).toFixed(0).padStart(6) + ' KB';
@@ -254,13 +397,52 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
     /* Modules reference each other by import specifier. */
     for (const f of modules) stripped.set(f, rewriteRefs(stripped.get(f), renames));
 
+    /* ── 3b. EVERY OTHER LOCAL FILE THAT REFERENCES A RENAMED MODULE ───────
+     *
+     * The production bug, closed at its actual size. gmail-link.js,
+     * gmail-hook.js, gmail-scan.js, gmail-scan.mjs and api/telegram-approve.js
+     * are server handlers — never listed in index.html, never one of the
+     * `modules` above — that `import` a wealthflow-*.js/mjs module by its
+     * plain name because that name has never changed before. They are found
+     * by WALKING what the deploy ships, per .vercelignore, rather than by
+     * being named — the same reason the walk exists at all is that naming them
+     * is exactly what missed them the first time.
+     *
+     * Comments are NOT stripped from these files, and neither are their OWN
+     * comments rewritten — that was never the ask for server code that never
+     * reaches a browser, and touching more than the broken reference is risk
+     * this fix does not need. rewriteImportsOnly() touches the specifier Node
+     * actually resolves and nothing else; a file untouched by any rename, or
+     * only mentioning one in prose, is untouched, full stop. */
+    const otherFiles = new Map();      // relPath -> rewritten text, only if it changed
+    let others = [];                   // every such file, walked once and reused below
+    if (hash) {
+        const rules = vercelIgnoreRules(root);
+        const moduleNames = new Set(modules);
+        others = localJsFiles(root, rules).filter((rel) => rel !== 'sw.js' && !moduleNames.has(rel));
+        for (const rel of others) {
+            const before2 = fs.readFileSync(path.join(root, rel), 'utf8');
+            const after2 = rewriteImportsOnly(before2, renames);
+            if (after2 !== before2) otherFiles.set(rel, after2);
+        }
+    }
+
     /* ── 4. nothing may still point at a name that will not exist ─────────── */
     if (hash) {
         const originals = modules;
-        const check = [['index.html', htmlOut], ...(swOut === null ? [] : [['sw.js', swOut]]),
-            ...modules.map((f) => [f, stripped.get(f)])];
-        for (const [name, text] of check) {
-            const left = survivors(text, originals);
+        const check = [['index.html', htmlOut, survivors], ...(swOut === null ? [] : [['sw.js', swOut, survivors]]),
+            ...modules.map((f) => [f, stripped.get(f), survivors]),
+            /* Every OTHER shipped .js/.mjs file, changed or not — a file this
+             * rewrite pass never touched must still be checked, because "it
+             * references nothing renamed" and "the rewrite silently failed to
+             * catch what it references" read identically without this. Checked
+             * with the specifier-scoped reader, so a comment that still names
+             * the plain file — which it is meant to — is not mistaken for the
+             * bug this exists to catch. */
+            ...others.map((rel) => [rel, otherFiles.has(rel) ? otherFiles.get(rel)
+                : fs.readFileSync(path.join(root, rel), 'utf8'), survivorsInImports])];
+        for (const [name, text, check1] of check) {
+            const left = check1(text, originals);
             if (left.length) problems.push(name + ' still references: ' + left.join(', '));
         }
     }
@@ -282,6 +464,10 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
              * an interrupted build leaves a working tree rather than a hole. */
             if (target !== f) fs.rmSync(path.join(root, f));
         }
+        /* Same discipline: a server handler's fixed reference is written back
+         * to the SAME path it already lives at — it is not renamed, it is not
+         * hashed, only the one broken line inside it changes. */
+        for (const [rel, text] of otherFiles) fs.writeFileSync(path.join(root, rel), text);
     }
 
     const total = { before: before.html + before.js, after: after.html + after.js };
@@ -292,10 +478,14 @@ export async function build({ root = process.cwd(), write = false, hash = true, 
     log('  shipped      ' + kb(total.before) + ' -> ' + kb(total.after)
         + '   (' + (100 * (1 - total.after / total.before)).toFixed(1) + '% smaller)');
     log(hash ? '  filenames    content-hashed, immutable' : '  filenames    unchanged');
+    if (otherFiles.size) {
+        log('  server refs  fixed in ' + otherFiles.size + ' file' + (otherFiles.size === 1 ? '' : 's')
+            + ': ' + [...otherFiles.keys()].join(', '));
+    }
     log(write ? '  written in place' : '  DRY RUN — nothing written (pass --write)');
     log('');
 
-    return { modules, renames, before, after, htmlOut, swOut, stripped };
+    return { modules, renames, before, after, htmlOut, swOut, stripped, otherFiles };
 }
 
 /**

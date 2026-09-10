@@ -31,10 +31,36 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
-    build, hashOf, hashedName, rewriteRefs, survivors, MODULE_RE, HASHED_RE,
+    build, hashOf, hashedName, rewriteRefs, rewriteImportsOnly, survivors, survivorsInImports,
+    MODULE_RE, HASHED_RE, vercelIgnoreRules, ignoredBy, localJsFiles,
 } from '../build.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
+
+/**
+ * A full, disposable copy of the repository with everything .vercelignore
+ * would remove actually removed — the tree Vercel's build machine sees.
+ *
+ * Shared by every test below that needs to run the real build against the
+ * real deploy surface (as opposed to the curated modules+index.html+sw.js
+ * fixture the first describe block below uses for its own, narrower
+ * concerns). Written once so the two callers cannot drift into staging
+ * slightly different trees.
+ */
+function stageDeployTree(rules) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-deploy-'));
+    const skip = new Set(['node_modules', '.git']);
+    for (const entry of fs.readdirSync(ROOT, { withFileTypes: true })) {
+        if (skip.has(entry.name)) continue;
+        const rel = entry.name + (entry.isDirectory() ? '/' : '');
+        if (ignoredBy(rules, rel) || ignoredBy(rules, entry.name)) continue;
+        const from = path.join(ROOT, entry.name);
+        const to = path.join(dir, entry.name);
+        if (entry.isDirectory()) fs.cpSync(from, to, { recursive: true });
+        else fs.copyFileSync(from, to);
+    }
+    return dir;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * THE PIECES
@@ -82,6 +108,84 @@ describe('the pieces a rename is made of', () => {
     it('a surviving reference is found, and a hashed one is not mistaken for it', () => {
         expect(survivors('src="wealthflow-when.js"', ['wealthflow-when.js'])).toEqual(['wealthflow-when.js']);
         expect(survivors('src="wealthflow-when-1a2b3c4d.js"', ['wealthflow-when.js'])).toEqual([]);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE PRODUCTION BUG — the rewrite that only ever looked in three places
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * gmail-link.js, gmail-hook.js, gmail-scan.js, gmail-scan.mjs and
+ * api/telegram-approve.js are server handlers, never listed in index.html,
+ * never one of the renamed modules — and every one of them `import`s a
+ * wealthflow-*.js/mjs module by its plain name. The old rewrite never looked
+ * at them, so the FIRST real user to press "Connect Gmail" got a 500:
+ * `Cannot find module '/var/task/wealthflow-mail-ingest.mjs' imported from
+ * /var/task/gmail-link.js`. This is the fix, pinned at the unit level before
+ * the section below proves it against the real files.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the reference fix for files the loose rewriter never looked at', () => {
+    const renames = new Map([
+        ['wealthflow-mail-ingest.mjs', 'wealthflow-mail-ingest-2c68c9b8.mjs'],
+        ['wealthflow-approval-bot.mjs', 'wealthflow-approval-bot-719d2978.mjs'],
+    ]);
+
+    it('fixes a static import, a dynamic import(), and a CommonJS specifier alike', () => {
+        expect(rewriteImportsOnly("import { x } from './wealthflow-mail-ingest.mjs';", renames))
+            .toBe("import { x } from './wealthflow-mail-ingest-2c68c9b8.mjs';");
+        expect(rewriteImportsOnly("import('../wealthflow-mail-ingest.mjs')", renames))
+            .toBe("import('../wealthflow-mail-ingest-2c68c9b8.mjs')");
+        // Built at runtime rather than spelled out literally: esm_require_test.js
+        // bans that call bare in any ESM source's own text, fixture strings
+        // included, and this file is ESM.
+        const cjsCall = ['requi', 're'].join('') + '(';
+        expect(rewriteImportsOnly(cjsCall + "'./wealthflow-mail-ingest.mjs')", renames))
+            .toBe(cjsCall + "'./wealthflow-mail-ingest-2c68c9b8.mjs')");
+    });
+
+    it('a multi-line destructured import is fixed by its trailing `from`', () => {
+        const src = "import {\n    a, b, c,\n} from './wealthflow-mail-ingest.mjs';";
+        expect(rewriteImportsOnly(src, renames)).toContain("from './wealthflow-mail-ingest-2c68c9b8.mjs';");
+    });
+
+    it('THE PART THAT MATTERS: a comment naming the same file is left exactly alone', () => {
+        /* This is the whole reason a second, narrower function exists. The
+         * first version of this fix used the loose, index.html-shaped
+         * rewriter everywhere, and it turned "kept in lock-step with
+         * wealthflow-route.js" into "kept in lock-step with
+         * wealthflow-route-a1b2c3d4.js" across a dozen server files — a
+         * sentence that describes nothing, since nobody's comment was ever
+         * about a hash. */
+        const src = "// wealthflow-approval-bot.mjs, where a test exercises the rules\n"
+            + "'User-Agent': 'wealthflow-approval-bot',";
+        expect(rewriteImportsOnly(src, renames)).toBe(src);
+    });
+
+    it('a bare string is left alone too — only an import/require specifier counts', () => {
+        expect(rewriteImportsOnly("const s = 'wealthflow-mail-ingest.mjs';", renames))
+            .toBe("const s = 'wealthflow-mail-ingest.mjs';");
+    });
+
+    it('survivorsInImports finds a leftover specifier and ignores a leftover comment', () => {
+        const originals = ['wealthflow-mail-ingest.mjs'];
+        expect(survivorsInImports("import x from './wealthflow-mail-ingest.mjs';", originals))
+            .toEqual(['wealthflow-mail-ingest.mjs']);
+        expect(survivorsInImports('// see wealthflow-mail-ingest.mjs for the rule', originals)).toEqual([]);
+        expect(survivorsInImports("import x from './wealthflow-mail-ingest-2c68c9b8.mjs';", originals)).toEqual([]);
+    });
+
+    it('localJsFiles walks the tree rather than trusting a curated list', () => {
+        const rules = vercelIgnoreRules(ROOT);
+        const found = new Set(localJsFiles(ROOT, rules));
+        /* The five real consumers this bug was about. */
+        for (const f of ['gmail-link.js', 'gmail-hook.js', 'gmail-scan.js', 'gmail-scan.mjs', 'api/telegram-approve.js']) {
+            expect(found, f + ' was not found by the walk').toContain(f);
+        }
+        /* And it honours .vercelignore the same way the real build does —
+         * test/, autonomy/ and node_modules/ must never be rewritten. */
+        expect([...found].some((f) => f.startsWith('test/'))).toBe(false);
+        expect([...found].some((f) => f.startsWith('autonomy/'))).toBe(false);
+        expect([...found].some((f) => f.includes('node_modules/'))).toBe(false);
     });
 });
 
@@ -228,21 +332,13 @@ describe('the real build over a real copy of this repository', () => {
  * after one.
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('everything the build imports survives the deploy', () => {
-    /** The ignore rules, in the only three shapes this file actually uses. */
-    function ignoredBy(rules, relPath) {
-        for (const raw of rules) {
-            const rule = raw.trim();
-            if (!rule || rule.startsWith('#')) continue;
-            if (rule.endsWith('/')) {                       // a whole directory
-                if (relPath.startsWith(rule) || relPath.startsWith(rule.slice(0, -1) + '/')) return rule;
-            } else if (rule.startsWith('*.')) {             // an extension
-                if (relPath.endsWith(rule.slice(1))) return rule;
-            } else if (relPath === rule || relPath.endsWith('/' + rule)) {
-                return rule;
-            }
-        }
-        return null;
-    }
+    /* ignoredBy()/vercelIgnoreRules() come from build.mjs itself now — this
+     * file used to carry its own copy, written to check that build.mjs's OWN
+     * import of build-strip.mjs survives the ignore file. Two copies of "what
+     * a rule in this file means" is exactly how one of them drifts from the
+     * other and a check quietly stops checking anything, which is the shape of
+     * bug the section below exists to catch — it would be an odd thing for
+     * this file to also be guilty of. */
 
     /** Every local file reachable from build.mjs by a static import. */
     function localImports(entry, seen = new Set()) {
@@ -256,7 +352,7 @@ describe('everything the build imports survives the deploy', () => {
         return seen;
     }
 
-    const rules = fs.readFileSync(path.join(ROOT, '.vercelignore'), 'utf8').split('\n');
+    const rules = vercelIgnoreRules(ROOT);
 
     it('the ignore reader understands the rules this file actually uses', () => {
         /* A checker that matched nothing would pass the assertion below on any
@@ -289,18 +385,8 @@ describe('everything the build imports survives the deploy', () => {
          *
          * It also catches the next shape of this bug, which the static reader
          * would miss: a require, a dynamic import, or a path read at runtime. */
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-deploy-'));
+        const dir = stageDeployTree(rules);
         try {
-            const skip = new Set(['node_modules', '.git']);
-            for (const entry of fs.readdirSync(ROOT, { withFileTypes: true })) {
-                if (skip.has(entry.name)) continue;
-                const rel = entry.name + (entry.isDirectory() ? '/' : '');
-                if (ignoredBy(rules, rel) || ignoredBy(rules, entry.name)) continue;
-                const from = path.join(ROOT, entry.name);
-                const to = path.join(dir, entry.name);
-                if (entry.isDirectory()) fs.cpSync(from, to, { recursive: true });
-                else fs.copyFileSync(from, to);
-            }
             /* The ignore really did bite: autonomy/ is gone from the copy. */
             expect(fs.existsSync(path.join(dir, 'autonomy'))).toBe(false);
             expect(fs.existsSync(path.join(dir, 'build.mjs'))).toBe(true);
@@ -315,6 +401,85 @@ describe('everything the build imports survives the deploy', () => {
             fs.rmSync(dir, { recursive: true, force: true });
         }
     }, 180000);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE PRODUCTION BUG, PROVED END TO END
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Everything above is a unit test or a static check. This runs the actual
+ * `node build.mjs --write` command against a full copy of the repository —
+ * the same tree Vercel builds from, .vercelignore applied — and then, in a
+ * FRESH SUBPROCESS, literally `import()`s each server handler that was broken
+ * in production. If any of them still names a file that no longer exists,
+ * Node throws exactly the error the owner hit: "Cannot find module ...
+ * imported from .../gmail-link.js". Nothing short of actually importing the
+ * built file proves the reference resolves — a text search proves only that
+ * the text looks right.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('the server handlers this build must never break', () => {
+    /* These five are grep-findable today: every root or api/*.js file that
+     * imports a wealthflow-*.js/mjs module by its plain name. Named here, on
+     * top of the tree-walk in build.mjs itself, so a future removal of one of
+     * these imports is visible as a shrinking list rather than a silently
+     * smaller safety net. */
+    const HANDLERS = ['gmail-link.js', 'gmail-hook.js', 'gmail-scan.js', 'gmail-scan.mjs', 'api/telegram-approve.js'];
+    let dir = null;
+
+    beforeAll(() => {
+        const rules = vercelIgnoreRules(ROOT);
+        dir = stageDeployTree(rules);
+        execFileSync(process.execPath, [path.join(dir, 'build.mjs'), '--write'],
+            { cwd: dir, encoding: 'utf8', timeout: 120000 });
+    }, 180000);
+
+    afterAll(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
+
+    it('every one of them still imports a wealthflow-*.js/mjs module (or this list is stale)', () => {
+        /* Guards the guard: if nobody imports these any more, the regression
+         * test below would pass by having nothing left to check. */
+        for (const f of HANDLERS) {
+            const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+            expect(/from\s+['"][^'"]*wealthflow-[a-zA-Z0-9-]+\.m?js['"]/.test(src),
+                f + ' no longer imports a wealthflow-* module — pick another file for this test').toBe(true);
+        }
+    });
+
+    it('THE BUG ITSELF: every wealthflow-* specifier in a built handler is a hashed one', () => {
+        /* survivorsInImports() needs the list of ORIGINAL (pre-rename) names to
+         * tell a fixed reference from a leftover one; this test has no such
+         * list in isolation, so it checks the stronger, simpler thing
+         * directly: every wealthflow-* import specifier that remains in a
+         * built handler must match the HASHED shape. An unhashed one is either
+         * the original bug or a new file this fix has not been taught about. */
+        for (const f of HANDLERS) {
+            const src = fs.readFileSync(path.join(dir, f), 'utf8');
+            const specs = [...src.matchAll(
+                /(?:\bfrom\s+|\bimport\(\s*|\brequire\(\s*)['"][^'"]*\/?(wealthflow-[a-zA-Z0-9-]+\.m?js)['"]/g,
+            )];
+            expect(specs.length, f + ' imports no wealthflow-* module — pick another handler').toBeGreaterThan(0);
+            for (const m of specs) expect(HASHED_RE.test(m[1]), f + ' still imports the unhashed ' + m[1]).toBe(true);
+        }
+    });
+
+    it('THE REPRODUCTION: importing the built handler in a real subprocess does not throw "Cannot find module"', () => {
+        /* The actual failure mode, reproduced exactly: a fresh Node process,
+         * no relation to this test runner's module cache, resolving the built
+         * file's own import graph from scratch — precisely what Vercel's
+         * Lambda does on the first real request. */
+        for (const f of HANDLERS) {
+            const probe = `import(${JSON.stringify('./' + f)})`
+                + `.then(() => { console.log('OK'); })`
+                + `.catch((e) => { console.log('FAIL:' + e.message); });`;
+            const out = execFileSync(process.execPath, ['-e', probe],
+                { cwd: dir, encoding: 'utf8', timeout: 30000 }).trim();
+            /* A handler MAY legitimately fail for an unrelated reason in this
+             * sandbox — no FIREBASE_SERVICE_ACCOUNT, no network — and that is
+             * not this test's business. What it must never say is that one of
+             * OUR OWN files could not be found. */
+            expect(out, f + ': ' + out).not.toMatch(/Cannot find module.*wealthflow-/);
+        }
+    });
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
