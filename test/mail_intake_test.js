@@ -144,7 +144,7 @@ describe('unlocking', () => {
         const open = (b, pw) => {
             if (pw != null) tried.push(pw);
             if (pw === 'third') return Promise.resolve({ pages: 1 });
-            return Promise.reject(new Error('no'));
+            return Promise.reject(Object.assign(new Error('wrong password'), { name: 'PasswordException' }));
         };
         const r = await unlock('b', ['first', 'second', 'third', 'fourth'], open);
         expect(r.usedIndex).toBe(2);
@@ -157,6 +157,14 @@ describe('unlocking', () => {
         const failed = await unlock('b', ['x'], openerFor(SECRET));
         expect(failed.reason, 'the two need different advice: add a key vs fix the key')
             .toBe(QUARANTINE.PASSWORD_FAILED);
+    });
+
+    it('quarantines a corrupt PDF without wasting every vault key', async () => {
+        let attempts = 0;
+        const open = async () => { attempts++; throw Object.assign(new Error('Invalid PDF structure'), { name: 'InvalidPDFException' }); };
+        const r = await unlock('b', ['one', 'two'], open);
+        expect(r.reason).toBe(QUARANTINE.PDF_UNREADABLE);
+        expect(attempts).toBe(1);
     });
 
     it('refuses to run without an injected opener rather than reaching for a global', async () => {

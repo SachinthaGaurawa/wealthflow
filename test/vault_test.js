@@ -215,16 +215,24 @@ describe('what counts as an entry', () => {
         expect(e.label).toBe('PDF');
     });
 
-    it('refuses an entry with no password or no bank', () => {
+    it('refuses an entry with no password but permits a universal credential', () => {
         expect(normaliseEntry({ bank: 'HNB', password: '' })).toBe(null);
-        expect(normaliseEntry({ bank: '', password: 'x' })).toBe(null);
+        expect(normaliseEntry({ bank: '', password: 'x' })).toMatchObject({ bank: '', password: 'x' });
         expect(normaliseEntry(null)).toBe(null);
     });
 
-    it('replaces rather than duplicates the same bank and label', () => {
+    it('does not silently discard distinct passwords with the same bank and label', () => {
         const out = normaliseAll([
             { bank: 'HNB', label: 'PDF', password: 'old' },
             { bank: 'hnb', label: 'pdf', password: 'new' },
+        ]);
+        expect(out.map((e) => e.password)).toEqual(['old', 'new']);
+    });
+
+    it('updates only the entry carrying the same stable id', () => {
+        const out = normaliseAll([
+            { id: 'pw-1', bank: 'HNB', label: 'PDF', password: 'old' },
+            { id: 'pw-1', bank: 'HNB', label: 'PDF', password: 'new' },
         ]);
         expect(out).toHaveLength(1);
         expect(out[0].password).toBe('new');
