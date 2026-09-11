@@ -1,6 +1,6 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 124,
+  "version": 125,
   "updated": "2026-09-11",
   "source": "wealthflow-auto",
   "taxonomy": {
@@ -44,8 +44,22 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 946,
+  "count": 948,
   "merchants": [
+    {
+      "key": "hnb",
+      "category": "Bank Charges",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "nation trust",
+      "category": "Bank Charges",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
     {
       "key": "bake house",
       "category": "Dining",
