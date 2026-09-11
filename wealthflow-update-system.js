@@ -144,6 +144,7 @@
     // — one history from its two legitimate writers. See _mergeManifests.)
 
     let _manifest = null;     // the RESOLVED view: version.json ∪ system/manifest
+    let _deployedManifest = null; // version.json: code actually on the origin
     // Why the feedback-status poll came back empty, when it was not simply
     // "nothing finished yet". Held so the reason is inspectable rather than
     // swallowed — see _checkFeedbackCompletions().
@@ -205,6 +206,12 @@
         };
     }
 
+    function _deploymentAllows(version, deployed) {
+        const target = _validVersion(version), live = _validVersion(deployed && deployed.latest);
+        return !!(target && live && _cmp(live, target) >= 0);
+    }
+    function _isDeployedVersion(version) { return _deploymentAllows(version, _deployedManifest); }
+
     async function _loadLocalManifest() {
         try {
             const r = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
@@ -229,12 +236,12 @@
     }
 
     async function _loadManifest() {
-        // An explicit developer override, honoured as-is. Nothing here sets
-        // it; redefining its meaning is not this fix's business.
-        if (window.wfVersionManifest) { _manifest = window.wfVersionManifest; return _manifest; }
-
-        // Parallel: neither a slow nor a failing source may stop the other.
-        const both = await Promise.all([_loadLocalManifest(), _loadRemoteManifest()]);
+        // Always fetch version.json: announcements do not prove deployment.
+        const announced = window.wfVersionManifest
+            ? Promise.resolve(window.wfVersionManifest)
+            : _loadRemoteManifest();
+        const both = await Promise.all([_loadLocalManifest(), announced]);
+        _deployedManifest = both[0];
         _manifest = _mergeManifests(both[0], both[1]);
         return _manifest;
     }
@@ -615,6 +622,7 @@
         if (!_autoSecurityOn()) return false;
         const v = _latestVersion();
         if (!_updateAvailable()) return false;
+        if (!_isDeployedVersion(v)) return false; // announcement is not deployment
         if (_recentlyFailedTarget(v)) return false;
         if (!(_isMandatory(v) && _updateType(v) === 'security')) return false;
         _notify('Installing urgent security update v' + v + '…', 'warn');
@@ -1699,7 +1707,7 @@
             // mandatory-update handling, after we know the real latest version.
             // Skipped for a target that just failed to settle (see below).
             try {
-                if (_updateAvailable() && _isMandatory(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
+                if (_updateAvailable() && _isMandatory(_latestVersion()) && _isDeployedVersion(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
                     if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
                     else setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
                 }
