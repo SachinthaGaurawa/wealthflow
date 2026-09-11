@@ -376,11 +376,26 @@ describe('a search engine may name a merchant and may never decide a direction',
         expect(MODULE_DIRECTION[r.routed.module]).toBe('debit');
     });
 
-    it('never lowers a confidence the router had already earned', () => {
+    it('merchant research cannot move a credit-card charge into cash expenses', () => {
+        const r = applyFinding({ module: 'cconetime', confidence: 0.4, needsReview: true },
+            { category: 'Dining', module: 'expenses', confidence: 0.88, provider: 'brave' },
+            { direction: 'debit', directionSource: 'balance' });
+        expect(r.ok).toBe(true);
+        expect(r.routed).toMatchObject({ module: 'cconetime', category: 'Dining' });
+    });
+
+    it('does not file a low-confidence lookup', () => {
+        const r = applyFinding({ module: 'expenses', confidence: 0.4, needsReview: true },
+            { category: 'Dining', module: 'expenses', confidence: 0.2, provider: 'brave' },
+            { direction: 'debit', directionSource: 'balance' });
+        expect(r).toMatchObject({ ok: false, reason: OSINT.LOW_CONFIDENCE });
+    });
+
+    it('rejects a weak finding even when the router was just below threshold', () => {
         const r = applyFinding({ module: 'expenses', confidence: 0.74 },
             { category: 'Dining', module: 'expenses', confidence: 0.5 },
             { direction: 'debit', directionSource: 'balance' });
-        expect(r.routed.confidence).toBe(0.74);
+        expect(r).toMatchObject({ ok: false, reason: OSINT.LOW_CONFIDENCE });
     });
 
     it('never lifts a row to certainty', () => {

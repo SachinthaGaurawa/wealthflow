@@ -267,6 +267,22 @@ describe('a statement is marked done only when something was written', () => {
         expect(body).toMatch(/bank\b/);
     });
 
+    it('separates accounts at the same bank and preserves row provenance', () => {
+        const body = fn('_reviewMailStatements');
+        expect(body).toContain("bank.toLowerCase() + '|' + String(r.last4 || '')");
+        expect(body).toContain('reviewRow._statementKey');
+        expect(body).toContain('reviewRow._statementRow');
+    });
+
+    it('marks ciphertext filed only after a durable cloud acknowledgement', () => {
+        const driver = fn('_reviewMailStatements');
+        const modal = fn('_showCCReviewModal');
+        expect(driver).toContain('filed.durable !== true');
+        expect(driver.indexOf('_markMailFiled')).toBeGreaterThan(driver.indexOf('filed.durable'));
+        expect(modal).toContain('(await Promise.resolve(syncToCloud())) === true');
+        expect(modal).toContain('durable && typeof onFiled');
+    });
+
     it('a failure to mark is said out loud, not swallowed', () => {
         /* A statement filed but not marked comes back on the next check, and
          * the owner cannot tell that from a duplicate import — which is the

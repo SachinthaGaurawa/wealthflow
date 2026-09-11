@@ -60,6 +60,7 @@ export const QUARANTINE = {
     CHUNKS_MISSING: 'chunks-missing',
     PASSWORD_FAILED: 'password-failed',
     NO_VAULT_KEYS: 'no-vault-keys',
+    PDF_UNREADABLE: 'pdf-unreadable',
     NO_TEXT_LAYER: 'no-text-layer',
     UNPARSEABLE: 'unparseable',
     /* UNPARSEABLE used to mean all three of these at once, and the three want
@@ -85,6 +86,7 @@ export const QUARANTINE_TEXT = {
     [QUARANTINE.CHUNKS_MISSING]: 'the statement did not arrive complete',
     [QUARANTINE.PASSWORD_FAILED]: 'none of your saved vault keys opened it',
     [QUARANTINE.NO_VAULT_KEYS]: 'it is password-protected and your vault is empty',
+    [QUARANTINE.PDF_UNREADABLE]: 'the PDF could not be read; changing its password will not fix this error',
     [QUARANTINE.NO_TEXT_LAYER]: 'the pages are images, so there is no text to read',
     [QUARANTINE.UNPARSEABLE]: 'the layout did not yield any transaction rows',
     [QUARANTINE.NOT_A_STATEMENT]: 'it is not a bank statement — it reads as something else',
@@ -170,11 +172,15 @@ export function assemble(manifest, parts) {
 export async function unlock(bytes, candidates, openPdf) {
     if (typeof openPdf !== 'function') throw new TypeError('unlock(): openPdf must be injected');
 
+    const passwordError = (e) => !!(e && (e.name === 'PasswordException'
+        || /password|^locked$/i.test(String(e.message || ''))));
+    const unreadable = () => ({ ok: false, reason: QUARANTINE.PDF_UNREADABLE, detail: {} });
     // An unencrypted statement needs no key at all, and must not consume one.
     try {
         const doc = await openPdf(bytes, null);
         if (doc) return { ok: true, doc, usedIndex: -1, encrypted: false };
-    } catch (_) { /* encrypted, or unreadable — the loop below decides which */ }
+        return unreadable();
+    } catch (e) { if (!passwordError(e)) return unreadable(); }
 
     const keys = arr(candidates).filter((k) => typeof k === 'string' && k.length > 0);
     if (!keys.length) return { ok: false, reason: QUARANTINE.NO_VAULT_KEYS, detail: { tried: 0 } };
@@ -183,7 +189,8 @@ export async function unlock(bytes, candidates, openPdf) {
         try {
             const doc = await openPdf(bytes, keys[i]);
             if (doc) return { ok: true, doc, usedIndex: i, encrypted: true };
-        } catch (_) { /* wrong key; the next one */ }
+            return unreadable();
+        } catch (e) { if (!passwordError(e)) return unreadable(); }
     }
     return { ok: false, reason: QUARANTINE.PASSWORD_FAILED, detail: { tried: keys.length } };
 }
@@ -317,6 +324,10 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
 
     let text = '';
     try { text = String(await extractText(opened.doc) || ''); } catch (_) { text = ''; }
+    finally {
+        // Release PDF.js workers and buffers before parsing the extracted text.
+        try { if (typeof opened.doc.destroy === 'function') await opened.doc.destroy(); } catch (_) {}
+    }
     if (text.trim().length < 40) return fail(QUARANTINE.NO_TEXT_LAYER, { chars: text.trim().length });
 
     /* ── IS IT A BANK STATEMENT AT ALL? ──────────────────────────────────

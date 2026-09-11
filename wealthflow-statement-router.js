@@ -121,10 +121,12 @@ export function routeRow(row, ctx = {}) {
   let module, tabLabel, confidence, subtype = null, allocation = null;
 
   if (dir === 'credit') {
-    if (RE.salary.test(desc)) {
-      module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.9;
-    } else if (onCard || RE.ccPayment.test(desc)) {
+    // The account type is stronger evidence than narration. A card-side credit
+    // (including an "interest credit") settles the card; it is not cash income.
+    if (onCard || RE.ccPayment.test(desc)) {
       module = 'cc_payment'; tabLabel = 'CC Payment → FIFO reconcile'; confidence = 0.92;
+    } else if (RE.salary.test(desc)) {
+      module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.9;
     } else if (loanHit) {
       module = 'loans'; tabLabel = 'Loan Repayment'; confidence = 0.6 + 0.35 * loanHit.score; allocation = loanHit;
     } else if (targetHit) {

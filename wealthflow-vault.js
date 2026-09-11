@@ -94,7 +94,7 @@ export function normaliseEntry(raw, now = Date.now()) {
     const r = raw || {};
     const password = r.password == null ? '' : String(r.password);
     const bank = s(r.bank);
-    if (!password || !bank) return null;
+    if (!password) return null;
     return {
         id: s(r.id) || `pw_${now.toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
         bank,
@@ -110,21 +110,21 @@ export function normaliseEntry(raw, now = Date.now()) {
     };
 }
 
-/** Drop anything unusable, and keep one entry per bank+label. */
+/** Preserve independent credentials; an explicit entry id identifies an edit. */
 export function normaliseAll(list, now = Date.now()) {
     const out = [];
-    const seen = new Set();
+    const seen = new Map();
     for (const raw of Array.isArray(list) ? list : []) {
         const e = normaliseEntry(raw, now);
         if (!e) continue;
-        const k = `${e.bank.toLowerCase()}|${e.label.toLowerCase()}`;
+        const k = s(raw && raw.id) ? `id:${e.id}` : `legacy:${JSON.stringify([
+            e.bank.toLowerCase(), e.label.toLowerCase(), e.password, e.kind, e.format,
+        ])}`;
         if (seen.has(k)) {
-            // Last write wins, matching what an editor would expect.
-            const i = out.findIndex((x) => `${x.bank.toLowerCase()}|${x.label.toLowerCase()}` === k);
-            out[i] = e;
+            out[seen.get(k)] = e;
             continue;
         }
-        seen.add(k);
+        seen.set(k, out.length);
         out.push(e);
     }
     return out;

@@ -141,8 +141,13 @@
     async function openPdf(arrayBuffer, askPassword, opts) {
         opts = opts || {};
         var lib = await ensurePdfJs();
-        var open = function (pw) {
-            return lib.getDocument({ data: _copy(arrayBuffer), password: pw }).promise;
+        var open = async function (pw) {
+            var task = lib.getDocument({ data: _copy(arrayBuffer), password: pw });
+            try { return await task.promise; }
+            catch (e) {
+                try { if (typeof task.destroy === 'function') await task.destroy(); } catch (_) {}
+                throw e;
+            }
         };
 
         /* Unencrypted opens straight away and no vault is consulted: a normal
@@ -219,7 +224,9 @@
         var buf = await file.arrayBuffer();
         var pdf = await openPdf(buf, askPassword, opts);
         if (!pdf) return { cancelled: true, text: '', encrypted: true };
-        var text = await extractText(pdf);
+        var text;
+        try { text = await extractText(pdf); }
+        finally { try { if (typeof pdf.destroy === 'function') await pdf.destroy(); } catch (_) {} }
         return {
             cancelled: false, text: text, encrypted: !!pdf.__wasEncrypted,
             /* 'vault' | 'typed' | null. The SOURCE, never the password — so a

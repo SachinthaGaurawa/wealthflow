@@ -14994,11 +14994,11 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
         }
 
-        // ===== 6-Digit OTP via Firebase email-link (treats first 6 chars of oobCode as OTP) =====
-        // We generate a code locally, hash+store it in Firestore, then send the user a link
-        // that contains the code. They can click the link OR type the code back. Either works.
-        function _generateOTP() {
-            return Math.floor(100000 + Math.random() * 900000).toString();
+        async function _recoveryHeaders() {
+            const user = typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser;
+            const token = user && await user.getIdToken();
+            if (!token) throw new Error('Sign in to your Google account to recover your PIN.');
+            return { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token };
         }
 
         async function sendRecoveryOTP() {
@@ -15014,7 +15014,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             try {
                 const response = await fetch('/api/send-otp', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: await _recoveryHeaders(),
                     body: JSON.stringify({ email })
                 });
                 const data = await response.json();
@@ -15045,7 +15045,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         async function verifyRecoveryOTP() {
             const email = $('recovOtpEmail').value.trim().toLowerCase() || sessionStorage.getItem('wf_otp_email');
             const code = $('recovOtpCode').value.trim();
-            if (code.length !== 6) {
+            if (!/^\d{6}$/.test(code)) {
                 $('recovErr').textContent = 'Please enter the 6-digit code.';
                 return;
             }
@@ -15061,7 +15061,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             try {
                 const response = await fetch('/api/verify-otp', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: await _recoveryHeaders(),
                     body: JSON.stringify({ email, otp: code, hash, expiresAt })
                 });
                 const data = await response.json();
@@ -25887,36 +25887,26 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window._mailRowForReview = _mailRowForReview;
 
-        /**
-         * Hand parsed statements to the review screen, one bank at a time.
-         *
-         * ONE BANK PER SCREEN, and not for tidiness. That screen decides
-         * credit-card-versus-bank-account for the whole batch and pre-routes
-         * every row from it; mixing two banks would pre-route one of them
-         * wrongly, and a wrong default that someone has to notice is worse than
-         * a second screen.
-         *
-         * NOT A CHAIN OF AWAITS. The screen has no "closed without filing"
-         * signal — deliberately, since only a real commit may mark a statement
-         * done — so awaiting each one in a loop would hang forever the moment
-         * someone closed one. Instead the first group is offered, and filing it
-         * runs the sync again, which offers the next. Closing simply leaves
-         * everything pending, which is the honest outcome.
-         */
         function _reviewMailStatements(ready) {
             const groups = new Map();
             for (const r of (Array.isArray(ready) ? ready : [])) {
                 const bank = r.bank || 'Statement';
-                if (!groups.has(bank)) groups.set(bank, { bank, keys: [], rows: [], last4: r.last4 || '' });
-                const g = groups.get(bank);
+                const groupKey = bank.toLowerCase() + '|' + String(r.last4 || '');
+                if (!groups.has(groupKey)) groups.set(groupKey, { bank, keys: [], rows: [], last4: r.last4 || '' });
+                const g = groups.get(groupKey);
                 g.keys.push(r.key);
                 const doubts = (r.doubts instanceof Map) ? r.doubts : new Map();
-                for (const row of (Array.isArray(r.rows) ? r.rows : [])) {
-                    g.rows.push(_mailRowForReview(
+                (Array.isArray(r.rows) ? r.rows : []).forEach((row, rowIndex) => {
+                    const reviewRow = _mailRowForReview(
                         row,
                         doubts.get(_mailRowKey(row.date, row.amount, row.description || row.narration)) || '',
-                    ));
-                }
+                    );
+                    reviewRow._statementKey = r.key || '';
+                    reviewRow._statementRow = rowIndex;
+                    reviewRow._bank = bank;
+                    reviewRow._ccLast4 = r.last4 || '';
+                    g.rows.push(reviewRow);
+                });
                 if (!g.last4 && r.last4) g.last4 = r.last4;
             }
             const first = groups.values().next().value;
@@ -25927,13 +25917,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify('The statement review screen is not loaded', 'error');
                 return;
             }
-            /* Concatenated, not a template literal. test/resilience_test.js
-             * forbids a bare record field inside `${...}` ANYWHERE in this
-             * file, with no exceptions — because a template that is a
-             * notification body today becomes an innerHTML template tomorrow,
-             * and the field would then be markup. notify() is a textContent
-             * sink, so the value must NOT be escaped either; concatenation
-             * satisfies both. */
             notify(String(first.rows.length) + ' transaction' + (first.rows.length === 1 ? '' : 's')
                 + ' from ' + first.bank + ' are ready to check', 'info');
             window._showCCReviewModal(
@@ -25943,8 +25926,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                     card_last4: first.last4 || '',
                 },
                 first.bank,
-                async () => {
-                    await _markMailFiled(first.keys);
+                async (filed) => {
+                    if (!filed || filed.durable !== true) return;
+                    const marked = await _markMailFiled(first.keys);
+                    if (!marked) return;
                     /* Re-run either way. With another bank pending it offers
                      * the next screen; with none it redraws a card that should
                      * now be one statement shorter — which is also the proof
@@ -33758,17 +33743,6 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 return null;
             } catch (_) { return null; }
         }
-        /**
-         * The review-and-file screen for a parsed statement.
-         *
-         * `onFiled` is called ONLY after the rows have actually been written and
-         * the batch committed — never when the screen is merely closed. The mail
-         * pipeline uses it to mark a statement as dealt with, and marking one
-         * that was not filed would hide a statement whose transactions never
-         * landed. Closing without filing must therefore leave it pending, which
-         * is what happens: the callback lives at the end of the file action and
-         * nowhere else.
-         */
         function _showCCReviewModal(parsed, bank, onFiled) {
             const txns = parsed.transactions.map((t, i) => ({
                 ...t,
@@ -34108,7 +34082,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 const _isPast = (d) => { try { const dt = new Date(d + 'T23:59:59'); return dt < new Date(); } catch (_) { return false; } };
                 const _nz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                 // Re-import / mandatory-fee de-dupe: same date + amount + merchant already filed?
-                const _dupIn = (list, d, a, name, amtKey) => list.some(r => r.date === d && Math.abs(((r[amtKey] != null ? r[amtKey] : r.amount) || 0) - a) < 0.01 && _nz(r.desc || r.name) === _nz(name));
+                const _dupIn = (list, d, a, name, amtKey, src) => list.some(r => {
+                    if (r.date !== d || Math.abs(((r[amtKey] != null ? r[amtKey] : r.amount) || 0) - a) >= 0.01 || _nz(r.desc || r.name) !== _nz(name)) return false;
+                    src = src || {};
+                    if (src.ref && r.ref) return String(src.ref).toUpperCase() === String(r.ref).toUpperCase();
+                    if (src.card_last4 && r.card_last4 && String(src.card_last4) !== String(r.card_last4)) return false;
+                    if (src.bank && r.bank && _nz(src.bank) !== _nz(r.bank)) return false;
+                    if (src.statementKey && r.statementKey && src.statementKey === r.statementKey) return Number(src.statementRow) === Number(r.statementRow);
+                    return true;
+                });
 
                 // ── AI authors a useful note per row (it decides which need one) ──
                 // Gather the rows we'll actually file, ask the AI once, then look up
@@ -34146,9 +34128,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     if (!desc || !amount) { skipped++; return; }
                     const month = (date || '').slice(0, 7);
                     const past = _isPast(date);
+                    const _sourceRow = (typeof txns !== 'undefined' && txns[+(tr.dataset.idx)]) || {};
+                    const _source = { statementKey: _sourceRow._statementKey || '', statementRow: _sourceRow._statementRow,
+                        bank: _sourceRow._bank || bank || '', card_last4: _sourceRow._ccLast4 || _last4 || '', ref: _sourceRow.ref || '' };
 
                     if (dest === 'cconetime') {
-                        if (_dupIn(ccArr, date, amount, desc, 'amount')) { dup++; return; }   // e.g. re-imported ATM/CEFT fee
+                        if (_dupIn(ccArr, date, amount, desc, 'amount', _source)) { dup++; return; }   // e.g. re-imported ATM/CEFT fee
                         const dl = new Date(date + 'T00:00:00'); dl.setDate(dl.getDate() + 50);
                         // Statement imports carry the bank's REAL mandatory charges
                         // (ATM withdrawal fee, CEFT charge, fuel surcharge…) as their
@@ -34162,26 +34147,26 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // previous `paid: past` wrongly marked EVERY imported charge
                         // "Paid" because statement dates are always in the past.
                         const serviceFee = 0, feeMeta = { source: 'statement' }, combinedTotal = amount;
-                        const _rec = { id: uid(), desc, bank, card_last4: _last4 || '', type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: false, createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), desc, ..._source, type: (type === 'fuel') ? 'fuel' : type, amount, serviceFee, feeMeta, combinedTotal, date, deadline: dl.toISOString().split('T')[0], notes: _noteFor(date, desc, amount), paid: false, createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'cconetime', _rec.id); }
                         ccArr.push(_rec);
                         cc++;
                     } else if (dest === 'expenses') {
-                        if (_dupIn(expArr, date, amount, desc, 'amount')) { dup++; return; }
+                        if (_dupIn(expArr, date, amount, desc, 'amount', _source)) { dup++; return; }
                         const _mi = +(tr.dataset.idx); const _mt = (typeof txns !== 'undefined' && txns[_mi]) || {};
                         const cat = (_mt._cat && _mt._cat !== 'Other') ? _mt._cat : ((window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other');
                         try { if (window.WFMerchants) window.WFMerchants.learn(desc, 'expenses', cat); } catch (_) {}
-                        const _rec = { id: uid(), desc, cat, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, source: 'statement', createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), desc, cat, ..._source, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'expenses', _rec.id); }
                         expArr.push(_rec);
                         exp++;
                     } else if (dest === 'income') {
                         // RECEIVED income → the Income tab (expense-style record). Past-dated ⇒ received.
-                        if (_dupIn(incRecvArr, date, amount, desc, 'amount')) { dup++; return; }
+                        if (_dupIn(incRecvArr, date, amount, desc, 'amount', _source)) { dup++; return; }
                         let it = (window.WFRoute ? window.WFRoute.incomeKind(desc) : 'other') || 'other';
                         it = it.charAt(0).toUpperCase() + it.slice(1);
                         if (INC_TYPES.indexOf(it) < 0) it = 'Other';
-                        const _rec = { id: uid(), name: desc, type: it, amount, month, date, received: past, source: 'statement', notes: _noteFor(date, desc, amount), createdAt: new Date().toISOString() };
+                        const _rec = { id: uid(), name: desc, type: it, ..._source, amount, month, date, received: past, source: 'statement', notes: _noteFor(date, desc, amount), createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _rec); WFBatch.record(_batch, 'incomeRecv', _rec.id); }
                         incRecvArr.push(_rec);
                         inc++;
@@ -34205,9 +34190,9 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // A credit / payment made TO the card (e.g. "CASH PAYMENT FINACLE",
                         // "PAYMENT - THANK YOU"). Stored like a charge so it auto-settles
                         // outstanding charges, oldest first. NOT a ledger income/expense.
-                        if (_dupIn(ccPayArr, date, amount, desc, 'amount')) { dup++; return; }
+                        if (_dupIn(ccPayArr, date, amount, desc, 'amount', _source)) { dup++; return; }
                         const _payT = (typeof txns !== 'undefined' && txns[+(tr.dataset.idx)]) || {};
-                        const _pay = { id: uid(), bank, card_last4: _payT._ccLast4 || (parsed && (parsed.card_last4 || parsed.last4)) || '', amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
+                        const _pay = { id: uid(), ..._source, card_last4: _payT._ccLast4 || _source.card_last4, amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _pay); WFBatch.record(_batch, 'ccPayments', _pay.id); }
                         ccPayArr.push(_pay);
                         ccPay++;
@@ -34290,12 +34275,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                  * is nothing left to import from it. Offering it again forever
                  * because everything in it was already known is the exact loop
                  * the owner reported. */
-                try {
-                    if (typeof onFiled === 'function') {
-                        onFiled({ cc, ccPay, exp, inc, sub, loanCnt, chq, dup, skipped,
-                            total: cc + ccPay + exp + inc + sub + loanCnt + chq });
-                    }
-                } catch (_) { /* a caller's bookkeeping must not undo a good import */ }
+                const total = cc + ccPay + exp + inc + sub + loanCnt + chq;
+                let durable = false;
+                if (!skipped && total + dup > 0) {
+                    try { setDirty(true); durable = (await Promise.resolve(syncToCloud())) === true; } catch (_) {}
+                }
+                if (!durable && total + dup > 0) notify('Saved on this device, but the statement remains pending until cloud sync succeeds.', 'warn');
+                try { if (durable && typeof onFiled === 'function') await onFiled({ cc, ccPay, exp, inc, sub, loanCnt, chq, dup, skipped, total, durable }); }
+                catch (_) { /* a caller's bookkeeping must not undo a good import */ }
             };
             overlay.addEventListener('click', (ev) => { if (ev.target === overlay) closeOvl(); });
         }

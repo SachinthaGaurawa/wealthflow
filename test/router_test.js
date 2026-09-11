@@ -136,6 +136,11 @@ describe('routeRow: business rules (the original misrouting bug)', () => {
     expect(r.module).toBe('cc_payment');
   });
 
+  it('a card-side interest credit settles the card rather than becoming income', () => {
+    const r = routeRow({ description: 'INTEREST CREDIT', amount: 125, direction: 'credit' }, { statementType: 'credit_card' });
+    expect(r.module).toBe('cc_payment');
+  });
+
   it('a subscription debit (Netflix) routes to subscriptions, not cconetime', () => {
     const r = routeRow({ description: 'NETFLIX.COM MONTHLY', amount: 1490, drcr: 'DR' }, { statementType: 'bank_account' });
     expect(r.module).toBe('subscriptions');

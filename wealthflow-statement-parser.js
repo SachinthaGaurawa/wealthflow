@@ -110,6 +110,13 @@
     function _y4(y) { y = String(y); return y.length === 2 ? ('20' + y) : y; }
     function _r2(n) { return Math.round(n * 100) / 100; }
     function _eq(a, b) { return Math.abs(a - b) < EPS; }
+    function calendarDate(y, m, d) {
+        y = +y; m = +m; d = +d;
+        if (y < 1900 || y > 2199 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+        var date = new Date(Date.UTC(y, m - 1, d));
+        return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+            ? y + '-' + _p2(m) + '-' + _p2(d) : '';
+    }
 
     // ── dates ────────────────────────────────────────────────────────────────
     // Which way round a numeric date is written, decided from the whole document.
@@ -128,19 +135,19 @@
     function normDate(s, order) {
         s = String(s || '').trim();
         var m;
-        if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/))) return m[1] + '-' + _p2(m[2]) + '-' + _p2(m[3]);
+        if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/))) return calendarDate(m[1], m[2], m[3]);
         if ((m = s.match(/^(\d{1,2})[\/\-.\s]+([A-Za-z]{3,})[\/\-.\s]+(\d{2,4})$/))) {
             var mo = MONTHS[m[2].toLowerCase().slice(0, 3)];
-            if (mo) return _y4(m[3]) + '-' + mo + '-' + _p2(m[1]);
+            if (mo) return calendarDate(_y4(m[3]), mo, m[1]);
         }
         if ((m = s.match(/^(\d{1,2})[\/\-.\s]+(\d{1,2})[\/\-.\s]+(\d{2,4})$/))) {
             var d = m[1], mth = m[2];
             // An out-of-range field settles it regardless of the document-wide guess.
             if (+mth > 12 && +d <= 12) { var t = d; d = mth; mth = t; }
             else if (order === 'mdy' && +d <= 12) { var t2 = d; d = mth; mth = t2; }
-            return _y4(m[3]) + '-' + _p2(mth) + '-' + _p2(d);
+            return calendarDate(_y4(m[3]), mth, d);
         }
-        return s;
+        return '';
     }
 
     // The row's own date: the first date token starting within LEAD_SLACK
@@ -296,6 +303,7 @@
         var order = detectDateOrder(src);
         var lines = src.split(/\r?\n/);
         var cands = [];
+        var invalidDates = 0, balanceMismatches = 0;
 
         // pass 1 — tokenise candidate rows
         for (var i = 0; i < lines.length; i++) {
@@ -338,10 +346,12 @@
 
             var tokens = moneyTokens(rest);
             if (!tokens.length) continue;
+            var normalizedDate = normDate(d.text, order);
+            if (!normalizedDate) { invalidDates++; continue; }
 
             cands.push({
                 line: line,
-                date: normDate(d.text, order),
+                date: normalizedDate,
                 rest: rest,
                 block: trailingBlock(tokens, rest),
                 opening: isOpening,
@@ -404,7 +414,7 @@
                     direction = delta > 0 ? 'credit' : 'debit';
                     source = 'balance';
                     if (_eq(Math.abs(delta), amount)) balanceVerified = true;
-                    else { amount = Math.abs(delta); balanceVerified = true; } // the bank's own running total wins
+                    else { source = 'balance-mismatch'; balanceMismatches++; }
                 }
             }
             if (!direction) {
@@ -422,7 +432,7 @@
             }
 
             // A zero amount is never a usable transaction.
-            if (amount === 0 && delta !== null && Math.abs(delta) >= EPS) amount = Math.abs(delta);
+            if (amount === 0 && !amountToks.length && delta !== null && Math.abs(delta) >= EPS) amount = Math.abs(delta);
             var amountKnown = amount > 0;
 
             rows.push({
@@ -439,7 +449,7 @@
                 valid: amountKnown && !!direction,
                 balanceVerified: balanceVerified,
                 directionSource: source,       // balance | marker | column | sign | keyword | assumed | ''
-                needsReview: !amountKnown || !direction || source === 'keyword' || source === 'assumed'
+                needsReview: !amountKnown || !direction || source === 'keyword' || source === 'assumed' || source === 'balance-mismatch'
             });
 
             if (direction === 'credit') credits += amount;
@@ -503,7 +513,7 @@
 
         var verdict;
         if (!hasText) verdict = 'no-text';
-        else if (rows.length && reconciliation.ok === false) verdict = 'unverified';
+        else if (invalidDates || balanceMismatches || (rows.length && reconciliation.ok === false)) verdict = 'unverified';
         else if (rows.length) verdict = 'parsed';
         /* MONEY ON THE PAGE AND NOT ONE ROW ASSEMBLED. That is the signature of
          * a layout nobody taught this parser, whether it failed on the dates or
@@ -560,6 +570,8 @@
             reason: VERDICT_TEXT[verdict] || '',
             moneyLines: moneyLines,
             candidateRows: cands.length,
+            invalidDates: invalidDates,
+            balanceMismatches: balanceMismatches,
         };
     }
 

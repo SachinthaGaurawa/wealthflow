@@ -127,6 +127,32 @@ describe('statement parser: cross-validation catches what a regex cannot', () =>
     });
 });
 
+describe('statement parser: calendar dates and printed amounts fail closed', () => {
+    it.each(['31/02/2026', '29/02/2025', '2026-13-01'])('rejects impossible date %s', (date) => {
+        const result = P.parseStatement(`${date} COFFEE SHOP 100.00 900.00\n`);
+        expect(result.rows).toHaveLength(0);
+        expect(result.invalidDates).toBeGreaterThan(0);
+        expect(result.understood).toBe(false);
+    });
+
+    it('accepts a real leap day', () => {
+        const result = P.parseStatement('29/02/2024 COFFEE SHOP 100.00\n');
+        expect(result.rows[0].date).toBe('2024-02-29');
+    });
+
+    it('preserves the printed amount and quarantines a balance contradiction', () => {
+        const result = P.parseStatement([
+            '01/07/2026 OPENING BALANCE 1,000.00',
+            '02/07/2026 COFFEE SHOP 100.00 0.00 800.00',
+            '03/07/2026 CLOSING BALANCE 800.00',
+        ].join('\n'));
+        expect(result.rows[0].amount).toBe(100);
+        expect(result.rows[0]).toMatchObject({ balanceVerified: false, needsReview: true, directionSource: 'balance-mismatch' });
+        expect(result.balanceMismatches).toBe(1);
+        expect(result.understood).toBe(false);
+    });
+});
+
 describe('statement parser: undated opening/closing balance lines', () => {
     // Real statements often print "Opening Balance 10,000.00" with no date at
     // all. The parser's date gate used to drop those lines before OPENING_RE ever
@@ -185,7 +211,7 @@ describe('statement parser: header and summary lines are not transactions', () =
 });
 
 describe('statement parser: the balance is ground truth over the printed amount', () => {
-    it('corrects a misread amount from the running balance', () => {
+    it('preserves a printed amount that contradicts the running balance for review', () => {
         // A digit misread by OCR ("4,Z50.00" → 450.00) is invisible to any regex:
         // the token is well formed, just wrong. The bank's own running total is
         // the only thing that can catch it, and it wins.
@@ -193,8 +219,10 @@ describe('statement parser: the balance is ground truth over the printed amount'
             '01/07/2026 OPENING BALANCE 100,000.00\n'
             + '02/07/2026 KEELLS SUPER 450.00 95,750.00\n'
         ).rows;
-        expect(rows[0].amount).toBeCloseTo(4250, 2);
-        expect(rows[0].balanceVerified).toBe(true);
+        expect(rows[0].amount).toBeCloseTo(450, 2);
+        expect(rows[0].balanceVerified).toBe(false);
+        expect(rows[0].needsReview).toBe(true);
+        expect(rows[0].directionSource).toBe('balance-mismatch');
     });
 
     it('does not mark a row balance-verified when there is no balance to verify against', () => {
