@@ -52,6 +52,17 @@
     const LS_CLAIM = 'wf_update_claimed';     // a CLAIM to have updated, settled against reality on the next boot
     const LS_ANOMALY = 'wf_version_anomaly';  // stored version was ahead of the running code — kept as evidence
     const LS_AUTOSEC = 'wf_auto_security';    // user opted in to auto-install security updates
+    const LS_FAILED_TARGET = 'wf_update_failed_target';  // a target that just demonstrably failed to land
+    // An announced version can outrun its own code by a whole deploy cycle —
+    // that gap used to retry the same doomed target every boot. 6h breaks the
+    // loop, short enough to retry once the real deploy lands.
+    const FAILED_TARGET_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+    function _recentlyFailedTarget(v) {
+        try {
+            const f = JSON.parse(localStorage.getItem(LS_FAILED_TARGET) || 'null');
+            return !!(f && f.target === v && (Date.now() - (f.at || 0)) < FAILED_TARGET_COOLDOWN_MS);
+        } catch (_) { return false; }
+    }
 
     function _esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
     // A message the user must actually see. The original swallowed everything: if
@@ -323,12 +334,15 @@
 
         if (_cmp(CURRENT_VERSION, c.target) >= 0) {
             _markInstalled(CURRENT_VERSION);
+            try { localStorage.removeItem(LS_FAILED_TARGET); } catch (_) {}
             try { console.log('[WFUpdate] ✓ update to ' + c.target + ' landed — running ' + CURRENT_VERSION); } catch (_) {}
             return { ok: true, target: c.target, running: CURRENT_VERSION };
         }
 
         // The claim did not come true. Say so, and do NOT write the target into
         // LS_INSTALLED — that write is precisely what made the failure permanent.
+        // Record which target failed, so it is not auto-retried next boot.
+        try { localStorage.setItem(LS_FAILED_TARGET, JSON.stringify({ target: c.target, at: Date.now() })); } catch (_) {}
         try {
             console.error('[WFUpdate] ✗ update to ' + c.target + ' did NOT land — still running '
                 + CURRENT_VERSION + ' (' + c.fetched + '/' + c.total + ' files fetched)');
@@ -601,6 +615,7 @@
         if (!_autoSecurityOn()) return false;
         const v = _latestVersion();
         if (!_updateAvailable()) return false;
+        if (_recentlyFailedTarget(v)) return false;
         if (!(_isMandatory(v) && _updateType(v) === 'security')) return false;
         _notify('Installing urgent security update v' + v + '…', 'warn');
         await _runProgress(v);   // backup → swap → reload, no prompts
@@ -1681,9 +1696,10 @@
         // Firestore/network call must never stall card injection.
         _loadManifest().then(() => {
             try { _refreshDashboardPill(); _renderSettingsCard(); } catch (_) {}
-            // mandatory-update handling, after we know the real latest version
+            // mandatory-update handling, after we know the real latest version.
+            // Skipped for a target that just failed to settle (see below).
             try {
-                if (_updateAvailable() && _isMandatory(_latestVersion())) {
+                if (_updateAvailable() && _isMandatory(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
                     if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
                     else setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
                 }
@@ -1833,7 +1849,7 @@
         // never verified is the defect these exist to remove, so a test has to be
         // able to drive both halves: write a claim, then settle it against the
         // version actually running.
-        _claimUpdate, _settleClaim,
+        _claimUpdate, _settleClaim, _recentlyFailedTarget, _autoApplyIfSecurity,
         // Exposed so the test harness can prove which words a given server
         // response produces. The bug these replace was invisible to every test
         // that only read the source, because the logic was inline in an async

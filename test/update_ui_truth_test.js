@@ -332,3 +332,71 @@ describe('an update is claimed, then settled against the code that loaded', () =
             .toBeLessThan(readAt);
     });
 });
+
+describe('a target that just failed to land is not retried on the very next boot', () => {
+    /* THE OWNER'S REPORT: approving a release in Settings → Autonomous Release
+     * announces its version to system/manifest immediately, but the code that
+     * would MAKE that version true only ships on a later, separate deploy. Every
+     * boot in between claimed the same doomed target, failed to settle it, and
+     * — for a mandatory update — was retried automatically on the very next
+     * boot: "Auto restart වෙනවා. ආයෙ update වෙනව පෙන්නනවා. Auto restart වෙනවා
+     * නැවතත්." (auto-restarts, shows update again, auto-restarts again). */
+
+    it('nothing is flagged before any claim has ever failed', () => {
+        const { api } = loadModule({ stored: null });
+        expect(api._recentlyFailedTarget('9.9.9')).toBe(false);
+    });
+
+    it('a failed settle flags exactly the target that failed', () => {
+        const { api } = loadModule({ stored: null });
+        api._claimUpdate('9.9.9', { fetched: 0, total: 40 });
+        expect(api._settleClaim().ok).toBe(false);
+        expect(api._recentlyFailedTarget('9.9.9')).toBe(true);
+        expect(api._recentlyFailedTarget('9.9.8'), 'a different, unrelated version was also flagged')
+            .toBe(false);
+    });
+
+    it('a claim that DID land clears any earlier failure', () => {
+        const { api, store } = loadModule({ stored: null });
+        store.set('wf_update_failed_target', JSON.stringify({ target: '9.9.9', at: Date.now() }));
+        api._claimUpdate(api.CURRENT_VERSION, { fetched: 40, total: 40 });
+        expect(api._settleClaim().ok).toBe(true);
+        expect(api._recentlyFailedTarget('9.9.9'), 'a landed update left a stale failure on record')
+            .toBe(false);
+    });
+
+    it('the flag expires — a long-stale failure does not block forever', () => {
+        const { api, store } = loadModule({ stored: null });
+        const sevenHoursAgo = Date.now() - 7 * 60 * 60 * 1000;
+        store.set('wf_update_failed_target', JSON.stringify({ target: '9.9.9', at: sevenHoursAgo }));
+        expect(api._recentlyFailedTarget('9.9.9')).toBe(false);
+    });
+
+    it('_autoApplyIfSecurity refuses to silently re-apply a target that just failed', async () => {
+        const { api, store } = loadModule({ stored: null });
+        store.set('wf_auto_security', '1');
+        store.set('wf_update_failed_target', JSON.stringify({ target: '9.9.9', at: Date.now() }));
+        // No manifest is loaded in this harness, so _latestVersion() falls back
+        // to CURRENT_VERSION regardless — the guard itself is what this proves,
+        // via the source anchor below, together with the behavioural half here:
+        // the function must not throw and must return false with nothing to do.
+        await expect(api._autoApplyIfSecurity()).resolves.toBe(false);
+    });
+
+    it('both auto-trigger sites actually check the guard, not just declare it', () => {
+        const autoApplyAt = SRC.indexOf('async function _autoApplyIfSecurity()');
+        const autoApplyEnd = SRC.indexOf('\n    }', autoApplyAt);
+        const autoApplyBody = SRC.slice(autoApplyAt, autoApplyEnd);
+        expect(autoApplyBody, '_autoApplyIfSecurity no longer checks _recentlyFailedTarget before acting')
+            .toMatch(/if \(_recentlyFailedTarget\(v\)\) return false;/);
+
+        const initAt = SRC.indexOf('async function init()');
+        const mandatoryAt = SRC.indexOf('_isMandatory(_latestVersion())', initAt);
+        expect(mandatoryAt, 'init() no longer gates mandatory-update handling on the latest version')
+            .toBeGreaterThan(-1);
+        const mandatoryLine = SRC.slice(SRC.lastIndexOf('\n', mandatoryAt), SRC.indexOf('\n', mandatoryAt));
+        expect(mandatoryLine, 'init() no longer skips a target that just failed to settle — the '
+            + 'automatic reload loop this fix exists to end is back')
+            .toContain('!_recentlyFailedTarget(_latestVersion())');
+    });
+});
