@@ -5,6 +5,7 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const source = html.slice(html.indexOf('async function _recoveryHeaders()'), html.indexOf('function proceedToNewPin()'));
 expect(source).toContain('async function verifyRecoveryOTP()');
+const verifyHandler = readFileSync(new URL('../verify-otp.js', import.meta.url), 'utf8');
 
 function harness(user) {
     const nodes = new Map();
@@ -46,6 +47,16 @@ test('both OTP requests attach the current Firebase token and preserve the serve
     });
     expect(h.context.advanced).toBe(true);
     expect(h.storage.has('wf_otp_hash')).toBe(false);
+});
+
+test('the server authenticates before reading or verifying the recovery proof', () => {
+    const auth = verifyHandler.indexOf('authenticateAccount(req');
+    const body = verifyHandler.indexOf("const body = req.body");
+    const proof = verifyHandler.indexOf('verifyRecoveryProof(hash');
+    expect(auth).toBeGreaterThan(-1);
+    expect(body).toBeGreaterThan(auth);
+    expect(proof).toBeGreaterThan(body);
+    expect(verifyHandler).toContain("canonicalEmail(body.email) !== account.email");
 });
 
 for (const [name, user] of [['SDK unavailable', undefined], ['signed out', null], ['empty token', { getIdToken: async () => '' }]]) {

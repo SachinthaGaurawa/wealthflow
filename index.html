@@ -14997,7 +14997,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         async function _recoveryHeaders() {
             const user = typeof firebase !== 'undefined' && firebase.auth && firebase.auth().currentUser;
             const token = user && await user.getIdToken();
-            if (!token) throw new Error('Sign in to your Google account to recover your PIN.');
+            if (!token) throw new Error('Your secure session has expired. Sign in again to recover your PIN.');
             return { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token };
         }
 
