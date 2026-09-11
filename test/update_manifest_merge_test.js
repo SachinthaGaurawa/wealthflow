@@ -63,9 +63,10 @@ const evaluated = new Function(`
     ${lift('_validVersion')}
     ${lift('_maxVersion')}
     ${lift('_mergeManifests')}
-    return { _cmp, _validVersion, _maxVersion, _mergeManifests };
+    ${lift('_deploymentAllows')}
+    return { _cmp, _validVersion, _maxVersion, _mergeManifests, _deploymentAllows };
 `)();
-const { _cmp, _validVersion, _maxVersion, _mergeManifests } = evaluated;
+const { _cmp, _validVersion, _maxVersion, _mergeManifests, _deploymentAllows } = evaluated;
 
 const local = (latest, over) => Object.assign({ latest, mandatory: [], notes: {} }, over || {});
 const remote = local;
@@ -73,7 +74,7 @@ const remote = local;
 describe('the lift actually got the shipped code', () => {
     it('found all three helpers and _cmp', () => {
         // Without this the whole file could pass against an empty sandbox.
-        for (const f of [_cmp, _validVersion, _maxVersion, _mergeManifests]) {
+        for (const f of [_cmp, _validVersion, _maxVersion, _mergeManifests, _deploymentAllows]) {
             expect(typeof f).toBe('function');
         }
     });
@@ -210,6 +211,36 @@ describe('notes follow the resolved version, whichever source knows them', () =>
     });
 });
 
+
+describe('automatic execution waits for deployed version.json truth', () => {
+    it('allows a target that version.json confirms is live', () => {
+        expect(_deploymentAllows('7.70.0', { latest: '7.70.0' })).toBe(true);
+        expect(_deploymentAllows('7.69.9', { latest: '7.70.0' })).toBe(true);
+    });
+
+    it('blocks a Firestore announcement that is ahead of deployed code', () => {
+        expect(_deploymentAllows('7.70.0', { latest: '7.69.24' })).toBe(false);
+    });
+
+    it('fails closed when version.json is missing or malformed', () => {
+        expect(_deploymentAllows('7.70.0', null)).toBe(false);
+        expect(_deploymentAllows('7.70.0', { latest: 'announced' })).toBe(false);
+        expect(_deploymentAllows('announced', { latest: '7.70.0' })).toBe(false);
+    });
+
+    it('guards both automatic trigger sites in the shipped browser code', () => {
+        const autoAt = SRC.indexOf('async function _autoApplyIfSecurity()');
+        const autoEnd = SRC.indexOf('\n    }', autoAt);
+        expect(SRC.slice(autoAt, autoEnd)).toContain('if (!_isDeployedVersion(v)) return false;');
+
+        const initAt = SRC.indexOf('async function init()');
+        const mandatoryAt = SRC.indexOf('if (_updateAvailable() && _isMandatory(_latestVersion())', initAt);
+        expect(mandatoryAt).toBeGreaterThan(-1);
+        expect(SRC.slice(mandatoryAt, mandatoryAt + 300))
+            .toContain('&& _isDeployedVersion(_latestVersion())');
+    });
+});
+
 describe('the loader consults both sources, and cannot return early on one', () => {
     /* Source-level assertions: the merge above is only correct if both inputs
      * actually get fetched. The original defect was precisely an early return,
@@ -219,7 +250,7 @@ describe('the loader consults both sources, and cannot return early on one', () 
         .split('\n').map((l) => l.replace(/(^|[^:'"`\\])\/\/.*$/, '$1')).join('\n');
 
     it('fetches them in parallel, not one-then-maybe-the-other', () => {
-        expect(CODE).toMatch(/Promise\.all\(\[_loadLocalManifest\(\), _loadRemoteManifest\(\)\]\)/);
+        expect(CODE).toMatch(/Promise\.all\(\[_loadLocalManifest\(\), announced\]\)/);
     });
 
     it('no longer returns the remote manifest directly', () => {
