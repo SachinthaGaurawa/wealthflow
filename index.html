@@ -32581,7 +32581,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const isBirthday = (row.kind || '') === (S ? S.PW_KIND.BIRTHDAY : 'birthday');
                         card.innerHTML = `
                             <div style="display:flex;gap:8px;margin-bottom:8px;">
-                                <input class="fi _bv_bank" list="_bv_banks" placeholder="Bank (e.g. HNB)" style="flex:1;">
+                                <input class="fi _bv_bank" list="_bv_banks" placeholder="Bank (e.g. HNB) — optional" style="flex:1;">
                                 <input class="fi _bv_label" placeholder="Label (optional)" style="flex:1;">
                                 <button class="btn btn-ghost btn-sm _bv_del" aria-label="Remove this password" title="Remove" style="color:var(--red);flex:0 0 auto;">${(window.WFIcon ? WFIcon('x') : '')}</button>
                             </div>
@@ -32652,7 +32652,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             });
                     };
                     body.querySelector('#_bv_save').onclick = async () => {
-                        const usable = rows.filter(r => r.bank && r.bank.trim() && r.password);
+                        /* A blank Bank used to drop the row here, silently — even
+                         * though candidatesFor() tries every password regardless
+                         * of bank match; Bank only orders the trial there. */
+                        const usable = rows.filter(r => r.password && r.password.trim());
                         const r = await window.WFVault.save(usable);
                         if (!r.ok) { notify('Could not save — secure storage refused the write', 'error'); return; }
                         try { triggerHaptic('success'); } catch (_) {}
