@@ -127,6 +127,21 @@ describe('statement parser: cross-validation catches what a regex cannot', () =>
     });
 });
 
+describe('statement parser: calendar dates are facts, not formatted guesses', () => {
+    it('rejects impossible calendar dates', () => {
+        expect(P.normDate('31/02/2026', 'dmy')).toBe('');
+        expect(P.normDate('2026-13-01', 'dmy')).toBe('');
+        expect(P.normDate('29/02/2025', 'dmy')).toBe('');
+        expect(P.normDate('29/02/2024', 'dmy')).toBe('2024-02-29');
+    });
+
+    it('never emits a transaction carrying an impossible date', () => {
+        const out = P.parseStatement('31/02/2026 IMPOSSIBLE MERCHANT 1,000.00 DR\n');
+        expect(out.rows).toEqual([]);
+        expect(out.verdict).not.toBe('parsed');
+    });
+});
+
 describe('statement parser: undated opening/closing balance lines', () => {
     // Real statements often print "Opening Balance 10,000.00" with no date at
     // all. The parser's date gate used to drop those lines before OPENING_RE ever

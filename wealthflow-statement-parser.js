@@ -111,6 +111,14 @@
     function _r2(n) { return Math.round(n * 100) / 100; }
     function _eq(a, b) { return Math.abs(a - b) < EPS; }
 
+    function _date(y, m, d) {
+        y = +y; m = +m; d = +d;
+        if (y < 1900 || y > 2199 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+        var value = new Date(Date.UTC(y, m - 1, d));
+        return value.getUTCFullYear() === y && value.getUTCMonth() === m - 1
+            && value.getUTCDate() === d ? y + '-' + _p2(m) + '-' + _p2(d) : '';
+    }
+
     // ── dates ────────────────────────────────────────────────────────────────
     // Which way round a numeric date is written, decided from the whole document.
     // A single "25/07/2026" proves day-first for every row in the file, which is
@@ -128,17 +136,17 @@
     function normDate(s, order) {
         s = String(s || '').trim();
         var m;
-        if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/))) return m[1] + '-' + _p2(m[2]) + '-' + _p2(m[3]);
+        if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/))) return _date(m[1], m[2], m[3]);
         if ((m = s.match(/^(\d{1,2})[\/\-.\s]+([A-Za-z]{3,})[\/\-.\s]+(\d{2,4})$/))) {
             var mo = MONTHS[m[2].toLowerCase().slice(0, 3)];
-            if (mo) return _y4(m[3]) + '-' + mo + '-' + _p2(m[1]);
+            if (mo) return _date(_y4(m[3]), mo, m[1]);
         }
         if ((m = s.match(/^(\d{1,2})[\/\-.\s]+(\d{1,2})[\/\-.\s]+(\d{2,4})$/))) {
             var d = m[1], mth = m[2];
             // An out-of-range field settles it regardless of the document-wide guess.
             if (+mth > 12 && +d <= 12) { var t = d; d = mth; mth = t; }
             else if (order === 'mdy' && +d <= 12) { var t2 = d; d = mth; mth = t2; }
-            return _y4(m[3]) + '-' + _p2(mth) + '-' + _p2(d);
+            return _date(_y4(m[3]), mth, d);
         }
         return s;
     }
@@ -339,9 +347,11 @@
             var tokens = moneyTokens(rest);
             if (!tokens.length) continue;
 
+            var normalizedDate = normDate(d.text, order);
+            if (!normalizedDate) continue;
             cands.push({
                 line: line,
-                date: normDate(d.text, order),
+                date: normalizedDate,
                 rest: rest,
                 block: trailingBlock(tokens, rest),
                 opening: isOpening,

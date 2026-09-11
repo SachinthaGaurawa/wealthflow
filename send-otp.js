@@ -1,11 +1,12 @@
 import nodemailer from 'nodemailer';
-import crypto from 'crypto';
+import { randomInt } from 'node:crypto';
+import { normalizeEmail, otpIdentity, otpProof, otpSecret, OTP_TTL_MS } from './otp-auth.mjs';
 
 export default async function handler(req, res) {
     // CORS configuration
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
@@ -15,21 +16,26 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { email } = req.body;
+    const email = normalizeEmail(req && req.body && req.body.email);
     if (!email) {
-        return res.status(400).json({ error: 'Email is required' });
+        return res.status(400).json({ error: 'A valid email is required' });
     }
+
+    const who = await otpIdentity(req);
+    if (!who.ok) return res.status(who.status).json({ error: 'Authenticated account required' });
+    if (who.email !== email) return res.status(403).json({ error: 'Recovery email does not match the authenticated account' });
+
+    const secret = otpSecret();
+    if (!secret) return res.status(503).json({ error: 'OTP recovery is not configured' });
 
     try {
         // Generate a 6-digit OTP
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = randomInt(100000, 1000000).toString();
 
         // Create a secure hash of the OTP + email to return to the client
         // This allows stateless verification on the frontend without a DB
-        const secret = process.env.OTP_SECRET || 'wealthflow_default_secret_998877';
-        const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
-        const dataToHash = `${email}:${otp}:${expiresAt}:${secret}`;
-        const hash = crypto.createHash('sha256').update(dataToHash).digest('hex');
+        const expiresAt = Date.now() + OTP_TTL_MS;
+        const hash = otpProof(email, otp, expiresAt, secret);
 
         // Setup Nodemailer transport
         // Expects environment variables in Vercel: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
@@ -77,7 +83,7 @@ export default async function handler(req, res) {
         });
 
     } catch (error) {
-        console.error('[OTP Error]:', error);
-        return res.status(500).json({ error: 'Failed to send OTP. Ensure SMTP credentials are set in Vercel.', details: error.message });
+        console.error('[OTP Error]: email delivery failed');
+        return res.status(500).json({ error: 'Failed to send OTP. Ensure SMTP credentials are set in Vercel.' });
     }
 }

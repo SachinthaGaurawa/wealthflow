@@ -14997,10 +14997,6 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         // ===== 6-Digit OTP via Firebase email-link (treats first 6 chars of oobCode as OTP) =====
         // We generate a code locally, hash+store it in Firestore, then send the user a link
         // that contains the code. They can click the link OR type the code back. Either works.
-        function _generateOTP() {
-            return Math.floor(100000 + Math.random() * 900000).toString();
-        }
-
         async function sendRecoveryOTP() {
             const email = $('recovOtpEmail').value.trim().toLowerCase();
             if (!email || !email.includes('@')) {
@@ -15012,9 +15008,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
 
             try {
+                const user = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+                const idToken = user && user.getIdToken ? await user.getIdToken() : '';
+                if (!idToken) throw new Error('Sign in to your Google account before requesting a recovery code.');
                 const response = await fetch('/api/send-otp', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
                     body: JSON.stringify({ email })
                 });
                 const data = await response.json();
@@ -15059,9 +15058,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             }
 
             try {
+                const user = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
+                const idToken = user && user.getIdToken ? await user.getIdToken() : '';
+                if (!idToken) throw new Error('Your Google session expired. Sign in again before verifying the code.');
                 const response = await fetch('/api/verify-otp', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + idToken },
                     body: JSON.stringify({ email, otp: code, hash, expiresAt })
                 });
                 const data = await response.json();

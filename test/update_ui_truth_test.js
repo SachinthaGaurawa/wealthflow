@@ -372,6 +372,29 @@ describe('a target that just failed to land is not retried on the very next boot
         expect(api._recentlyFailedTarget('9.9.9')).toBe(false);
     });
 
+    it('a clock-skewed future failure cannot block the target forever', () => {
+        const { api, store } = loadModule({ stored: null });
+        store.set('wf_update_failed_target', JSON.stringify({
+            target: '9.9.9', at: Date.now() + 24 * 60 * 60 * 1000,
+        }));
+        expect(api._recentlyFailedTarget('9.9.9')).toBe(false);
+    });
+
+    it('rejects malformed version claims instead of settling a prefix as real', () => {
+        const { api, store } = loadModule({ stored: null });
+        api._claimUpdate(api.CURRENT_VERSION + '-forged', { fetched: 1, total: 1 });
+        expect(store.has('wf_update_claimed')).toBe(false);
+        expect(api._settleClaim()).toBe(null);
+    });
+
+    it('does not treat an announcement as proof that update bytes deployed', () => {
+        const { api } = loadModule({ stored: null });
+        expect(api._targetIsDeployed('7.70.0', '7.69.24')).toBe(false);
+        expect(api._targetIsDeployed('7.70.0', '7.70.0')).toBe(true);
+        expect(api._targetIsDeployed('7.70.0', '7.71.0')).toBe(true);
+        expect(api._targetIsDeployed('7.70.0', null)).toBe(false);
+    });
+
     it('_autoApplyIfSecurity refuses to silently re-apply a target that just failed', async () => {
         const { api, store } = loadModule({ stored: null });
         store.set('wf_auto_security', '1');
@@ -389,6 +412,8 @@ describe('a target that just failed to land is not retried on the very next boot
         const autoApplyBody = SRC.slice(autoApplyAt, autoApplyEnd);
         expect(autoApplyBody, '_autoApplyIfSecurity no longer checks _recentlyFailedTarget before acting')
             .toMatch(/if \(_recentlyFailedTarget\(v\)\) return false;/);
+        expect(autoApplyBody, 'an announced-but-not-deployed target can auto-install')
+            .toMatch(/if \(!_targetIsDeployed\(v\)\) return false;/);
 
         const initAt = SRC.indexOf('async function init()');
         const mandatoryAt = SRC.indexOf('_isMandatory(_latestVersion())', initAt);
@@ -398,5 +423,7 @@ describe('a target that just failed to land is not retried on the very next boot
         expect(mandatoryLine, 'init() no longer skips a target that just failed to settle — the '
             + 'automatic reload loop this fix exists to end is back')
             .toContain('!_recentlyFailedTarget(_latestVersion())');
+        expect(mandatoryLine, 'mandatory UI can auto-open before version.json proves the deployment exists')
+            .toContain('_targetIsDeployed(_latestVersion())');
     });
 });

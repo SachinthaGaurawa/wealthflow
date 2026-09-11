@@ -60,7 +60,9 @@
     function _recentlyFailedTarget(v) {
         try {
             const f = JSON.parse(localStorage.getItem(LS_FAILED_TARGET) || 'null');
-            return !!(f && f.target === v && (Date.now() - (f.at || 0)) < FAILED_TARGET_COOLDOWN_MS);
+            const age = Date.now() - Number(f && f.at);
+            return !!(f && f.target === v && Number.isFinite(age) && age >= 0
+                && age < FAILED_TARGET_COOLDOWN_MS);
         } catch (_) { return false; }
     }
 
@@ -143,7 +145,8 @@
     // version, remote winning where both describe one. Not a duplicate history
     // — one history from its two legitimate writers. See _mergeManifests.)
 
-    let _manifest = null;     // the RESOLVED view: version.json ∪ system/manifest
+    let _manifest = null;
+    let _deployedVersion = null;
     // Why the feedback-status poll came back empty, when it was not simply
     // "nothing finished yet". Held so the reason is inspectable rather than
     // swallowed — see _checkFeedbackCompletions().
@@ -231,12 +234,21 @@
     async function _loadManifest() {
         // An explicit developer override, honoured as-is. Nothing here sets
         // it; redefining its meaning is not this fix's business.
-        if (window.wfVersionManifest) { _manifest = window.wfVersionManifest; return _manifest; }
+        if (window.wfVersionManifest) {
+            _manifest = window.wfVersionManifest;
+            _deployedVersion = _validVersion(_manifest && _manifest.latest);
+            return _manifest;
+        }
 
-        // Parallel: neither a slow nor a failing source may stop the other.
         const both = await Promise.all([_loadLocalManifest(), _loadRemoteManifest()]);
+        _deployedVersion = _validVersion(both[0] && both[0].latest);
         _manifest = _mergeManifests(both[0], both[1]);
         return _manifest;
+    }
+
+    function _targetIsDeployed(v, deployed) {
+        const target = _validVersion(v), shipped = _validVersion(arguments.length > 1 ? deployed : _deployedVersion);
+        return !!(target && shipped && _cmp(shipped, target) >= 0);
     }
 
     function _installedVersion() {
@@ -321,7 +333,7 @@
     // already true, so this was never exploitable; it was a malformed record
     // being reported as a successful update, which is the one thing this whole
     // change exists to stop. A claim must name a version or it is not a claim.
-    function _isVersion(v) { return typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v); }
+    function _isVersion(v) { return typeof v === 'string' && /^\d+\.\d+\.\d+$/.test(v); }
 
     function _settleClaim() {
         var raw = null;
@@ -616,6 +628,7 @@
         const v = _latestVersion();
         if (!_updateAvailable()) return false;
         if (_recentlyFailedTarget(v)) return false;
+        if (!_targetIsDeployed(v)) return false;
         if (!(_isMandatory(v) && _updateType(v) === 'security')) return false;
         _notify('Installing urgent security update v' + v + '…', 'warn');
         await _runProgress(v);   // backup → swap → reload, no prompts
@@ -1699,7 +1712,7 @@
             // mandatory-update handling, after we know the real latest version.
             // Skipped for a target that just failed to settle (see below).
             try {
-                if (_updateAvailable() && _isMandatory(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
+                if (_updateAvailable() && _isMandatory(_latestVersion()) && !_recentlyFailedTarget(_latestVersion()) && _targetIsDeployed(_latestVersion())) {
                     if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
                     else setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
                 }
@@ -1849,7 +1862,7 @@
         // never verified is the defect these exist to remove, so a test has to be
         // able to drive both halves: write a claim, then settle it against the
         // version actually running.
-        _claimUpdate, _settleClaim, _recentlyFailedTarget, _autoApplyIfSecurity,
+        _claimUpdate, _settleClaim, _recentlyFailedTarget, _targetIsDeployed, _autoApplyIfSecurity,
         // Exposed so the test harness can prove which words a given server
         // response produces. The bug these replace was invisible to every test
         // that only read the source, because the logic was inline in an async
