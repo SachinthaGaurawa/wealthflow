@@ -282,7 +282,32 @@ jobs:
           printf 'running: node release.cjs'
           printf ' %q' "${ARGS[@]}"
           printf '\n'
+          # release.cjs's own documented contract (see its header comment):
+          # 0 ok, 2 nothing-to-do (skipped), 1 hard error. This step used to
+          # run it as the last command of the block, so bash's default
+          # (GitHub Actions runs `run:` under `set -e`) propagated ANY
+          # non-zero exit as a step failure — including the fully
+          # intentional exit 2 a proposal awaiting human approval via
+          # /api/approve-release returns every single day until someone
+          # approves it. A daily cron workflow going red for a state that
+          # is not an error trains everyone watching it to ignore "Auto
+          # Release failed" notifications, which defeats the point of
+          # having them for the runs that are genuinely broken.
+          set +e
           node release.cjs "${ARGS[@]}"
+          RC=$?
+          set -e
+          if [ "$RC" = "2" ]; then
+            echo "release.cjs declined to ship — see the [release] line above for why (not due, already consumed, or awaiting approval). This is a deliberate no-op, not a failure."
+            {
+              echo "### Release skipped (not a failure)"
+              echo ""
+              echo "\`release.cjs\` exited 2 — its own documented \"nothing to do\" code. See the log above for the exact reason (not due / already consumed / awaiting approval via /api/approve-release)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$RC" != "0" ]; then
+            echo "::error::release.cjs failed (exit $RC) — see log above."
+            exit "$RC"
+          fi
 
       - name: Tag the release
         if: steps.due.outputs.due == 'yes'
