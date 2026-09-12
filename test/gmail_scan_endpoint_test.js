@@ -131,7 +131,7 @@ async function call({ method = 'POST', token = 'good-token', body = {}, gmail = 
  * hit against the built-in BANKS list buys a nicer name, never admission, so
  * every test in this file that expects hnb.lk mail to be STORED needs this
  * seeded, exactly as a real owner would have to approve it once first. */
-const HNB_APPROVED = [{ id: 'hnb.lk', kind: 'domain', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 }];
+const HNB_APPROVED = [{ id: 'no-reply@hnb.lk', kind: 'address', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 }];
 
 function connect(extra = {}) {
     fake.docs.set(`wf-mail/${KEY}`, { refresh_token: TOKEN, email: OWNER, senders: HNB_APPROVED, ...extra });
@@ -153,6 +153,24 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         const att = bankMessage('m1').payload.parts.find((x) => x.filename);
         const key = stableItemKey('m1', { filename: att.filename, size: att.body.size, attachmentId: att.body.attachmentId });
         expect(fake.docs.has(`wf-mail/${KEY}/items/${key}`), 'the manifest is not where the device looks').toBe(true);
+        expect(fake.docs.get(`wf-mail/${KEY}/items/${key}`)).toMatchObject({ uid: 'u1', status: 'pending' });
+    });
+
+    it('an empty whitelist fails before any Gmail request', async () => {
+        connect({ senders: [] });
+        const seen = await call({ body: WINDOW, gmail: { messages: ['m1'], byId: { m1: bankMessage('m1') } } });
+        expect(seen.status).toBe(400);
+        expect(calls).toEqual([]);
+    });
+
+    it('a sibling mailbox on an approved domain cannot fetch an attachment', async () => {
+        connect();
+        const other = bankMessage('m2');
+        other.payload.headers.find((h) => h.name === 'From').value = 'HNB <billing@hnb.lk>';
+        const seen = await call({ body: WINDOW, gmail: { messages: ['m2'], byId: { m2: other } } });
+        expect(seen.status).toBe(200);
+        expect(seen.body.statements).toBe(0);
+        expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(false);
     });
 
     it('does not re-store a statement held under the OLD key', async () => {
@@ -272,7 +290,7 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         expect(seen.body.window.label).toBe('2026-05');
         const list = calls.find((c) => c.url.includes('/messages?'));
         expect(decodeURIComponent(list.url)).toContain('after:2026/05/01');
-        expect(decodeURIComponent(list.url)).toContain('from:hnb.lk');
+        expect(decodeURIComponent(list.url)).toContain('from:no-reply@hnb.lk');
     });
 });
 
@@ -292,7 +310,7 @@ describe('what it refuses', () => {
         expect(seen.status).toBe(200);
         const list = calls.find((c) => c.url.includes('/messages?'));
         expect(decodeURIComponent(list.url)).not.toContain('from:anyone');
-        expect(decodeURIComponent(list.url)).toContain('from:hnb.lk');
+        expect(decodeURIComponent(list.url)).toContain('from:no-reply@hnb.lk');
     });
 
     it('no connected mailbox is 409, not a crash', async () => {

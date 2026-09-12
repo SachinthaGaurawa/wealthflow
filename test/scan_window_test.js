@@ -98,7 +98,7 @@ beforeEach(async () => {
     fake.docs.set('wf-mail/' + KEY, {
         refresh_token: TOKEN,
         email: OWNER,
-        senders: [{ id: 'hnb.lk', kind: 'domain', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 }],
+        senders: [{ id: 'no-reply@hnb.lk', kind: 'address', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 }],
     });
     globalThis.fetch = async (i) => { throw new Error('network blocked in tests: ' + String(i)); };
 });
@@ -173,7 +173,7 @@ describe('a scan imports the month it was asked for and no other', () => {
          * seen in this window. Recording it would report recurrence that the
          * scan did not actually observe. */
         await scan({ early: message('early', JUL) });
-        const hnb = sendersOf().find((e) => e.id === 'hnb.lk');
+        const hnb = sendersOf().find((e) => e.id === 'no-reply@hnb.lk');
         expect(hnb.months || []).not.toContain('2026-08');
     });
 

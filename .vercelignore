@@ -9,6 +9,7 @@ scratch_filebin.cjs
 scratch_firebase.cjs
 scratch_gofile.cjs
 scratch_puppeteer.cjs
+provision-statement-cloud.mjs
 *.map
 
 # Test configurations and test folders

@@ -97,24 +97,21 @@ describe('the routine scan is untouched', () => {
         expect(q).not.toContain('-from:gmail.com');
     });
 
-    it('a first-time owner still gets the vocabulary, not just the four built-ins', () => {
+    it('a first-time owner must approve exact senders before importing', () => {
         // THE REGRESSION THIS CATCHES: the caller substitutes the built-in bank
         // domains when nobody is approved, so `fromClauses` is never empty and
         // a naive "use terms when there are no senders" test would silently
         // limit a first scan to the four banks this pipeline ships with.
-        const q = windowFor({ ...base }).query;
-        expect(q).toContain('"statement"');
-        expect(q).toContain('from:hnb.lk');
-        expect(q).toContain('filename:pdf');
+        expect(windowFor({ ...base })).toBeNull();
     });
 
     it('an ordinary scan is NEVER a discovery run', () => {
         // A discovery window reads headers only and stores nothing. If an
         // ordinary scan became one, a first-time owner would scan their whole
         // mailbox, import not one statement, and be told the scan finished.
-        expect(windowFor({ ...base }).discovery).toBeUndefined();
+        expect(windowFor({ ...base })).toBeNull();
         expect(windowFor({ ...base, senders: ['from:hnb.lk'] }).discovery).toBeUndefined();
-        expect(windowFor({ ...base, discover: null }).discovery).toBeUndefined();
+        expect(windowFor({ ...base, discover: null })).toBeNull();
     });
 
     it('only an explicit request is a discovery run, and it is marked as one', () => {

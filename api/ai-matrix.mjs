@@ -318,6 +318,7 @@ export function fieldVote(objects) {
  * answer is returned as `solo` only when it was the only answer there was.
  */
 export function decide(results, opts = {}) {
+    if (opts.unanimous === true) return unanimousDecision(results, opts);
     const task = opts.task || TASK.PROSE;
     const wantJson = opts.json === true;
     const threshold = typeof opts.sameClaim === 'number' ? opts.sameClaim : SAME_CLAIM;
@@ -456,6 +457,8 @@ export function decide(results, opts = {}) {
 export function trustworthy(decision, opts = {}) {
     const min = typeof opts.minAgreed === 'number' ? opts.minAgreed : 2;
     if (!decision || !decision.reply) return false;
+    if (decision.mode === 'unanimous') return decision.unanimous === true && decision.corroboration.agreed >= min;
+    if (decision.mode === 'needs_review') return false;
     if (decision.mode === 'solo' || decision.mode === 'split') return false;
     // A near miss is a refusal even when the cluster is large: an answer that
     // reads like the others and names a different figure must reach a person.
@@ -464,8 +467,53 @@ export function trustworthy(decision, opts = {}) {
     return decision.corroboration.agreed >= min;
 }
 
+// Financial unanimity compares complete typed values, never a manufactured
+// field-majority object. Key order is immaterial; array order and types are not.
+function canonical(value) {
+    if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+    if (value && typeof value === 'object') return '{' + Object.keys(value).sort()
+        .map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
+    return JSON.stringify(value);
+}
+
+export function unanimousDecision(results, opts = {}) {
+    const all = Array.isArray(results) ? results : [];
+    const expected = Array.isArray(opts.expected) ? opts.expected : [];
+    const roster = [...new Set(expected)];
+    const rosterValid = roster.length >= 2 && roster.length === expected.length && roster.every(n => typeof n === 'string' && n.trim());
+    const answered = [], failed = [], invalid = [], values = [];
+    for (const name of roster) {
+        const matches = all.filter(r => r && r.name === name);
+        if (matches.length !== 1 || !matches[0].ok) { failed.push(name); continue; }
+        const r = matches[0];
+        let value = null;
+        try {
+            // Strict JSON only: accepting prose surrounding an object can hide
+            // a refusal or qualification that must prevent automatic filing.
+            const raw = String(r.reply || '').trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+            value = JSON.parse(raw);
+            if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length) throw new Error('empty decision');
+        } catch (_) { invalid.push(name); continue; }
+        answered.push(name);
+        values.push({ result: r, value, key: canonical(value) });
+    }
+    const unexpected = all.some(r => !r || !roster.includes(r.name));
+    const agrees = values.length > 0 && values.every(v => v.key === values[0].key);
+    const unanimous = Boolean(rosterValid && !unexpected && !failed.length && !invalid.length && values.length === roster.length && agrees);
+    return {
+        reply: unanimous ? JSON.stringify(values[0].value) : null,
+        provider: unanimous ? 'parallel-unanimous-board' : null,
+        mode: unanimous ? 'unanimous' : 'needs_review', task: opts.task || TASK.EXTRACTION,
+        unanimous, needsReview: !unanimous, expected: roster, answered, failed, invalid,
+        reason: unanimous ? null : !rosterValid ? 'insufficient_or_invalid_roster' : unexpected ? 'unexpected_provider' : failed.length ? 'provider_unavailable' : invalid.length ? 'invalid_response' : 'provider_disagreement',
+        fields: unanimous ? values[0].value : null,
+        corroboration: { agreed: unanimous ? roster.length : 0, of: roster.length, score: unanimous ? 1 : 0,
+            dissent: agrees ? [] : values.map(v => ({ name: v.result.name })), nearMisses: [], numericConflict: !agrees },
+    };
+}
+
 export default {
     TASK, SPECIALISTS, DEFAULT_QUORUM, SAME_CLAIM, orderFor, normaliseReply, tokensOf, similarity,
     numbersOf, numbersAgree, ordinalsOf, monthsOf, contradicts, sameClaim, isNearMiss,
-    parseJson, fieldVote, decide, trustworthy,
+    parseJson, fieldVote, decide, trustworthy, unanimousDecision,
 };

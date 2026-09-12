@@ -14,6 +14,7 @@ import { SCAN, scanSenders, windowFor, boundedMax, listUrl, pageResult } from '.
 import { BANKS } from '../wealthflow-mail-ingest.mjs';
 
 const NOW = Date.parse('2026-08-28T10:00:00Z');
+const SENDERS = ['from:no-reply@hnb.lk'];
 
 describe('the senders come from the live allowlist, not a copy', () => {
     it('is exactly the BANKS domains', () => {
@@ -29,17 +30,17 @@ describe('the senders come from the live allowlist, not a copy', () => {
 
 describe('the window is derived, never accepted', () => {
     it('builds a bounded query for the month at that index', () => {
-        const w = windowFor({ months: 6, index: 0, now: NOW });
+        const w = windowFor({ months: 6, index: 0, now: NOW, senders: SENDERS });
         expect(w.label).toBe('2026-08');
         expect(w.query).toContain('has:attachment');
         expect(w.query).toContain('after:2026/08/01');
         expect(w.query).toContain('before:2026/09/01');
-        for (const d of scanSenders()) expect(w.query).toContain(`from:${d}`);
+        expect(w.query).toContain('from:no-reply@hnb.lk');
     });
 
     it('walks backwards month by month', () => {
-        expect(windowFor({ months: 6, index: 1, now: NOW }).label).toBe('2026-07');
-        expect(windowFor({ months: 6, index: 5, now: NOW }).label).toBe('2026-03');
+        expect(windowFor({ months: 6, index: 1, now: NOW, senders: SENDERS }).label).toBe('2026-07');
+        expect(windowFor({ months: 6, index: 5, now: NOW, senders: SENDERS }).label).toBe('2026-03');
     });
 
     it('returns null past the end of the plan', () => {
@@ -65,23 +66,23 @@ describe('the window is derived, never accepted', () => {
 
     it('the same inputs give the same window on both sides', async () => {
         const { planWindows } = await import('../wealthflow-backfill.js');
-        const mine = windowFor({ months: 12, index: 4, now: NOW });
+        const mine = windowFor({ months: 12, index: 4, now: NOW, senders: SENDERS });
         /* includeTerms mirrors what windowFor passes for an owner with nobody
          * approved: the built-in domains AND the statement vocabulary. Leaving
          * it out here would compare two different questions and call them
          * equal. */
-        const theirs = planWindows({ months: 12, now: NOW, senders: scanSenders(), includeTerms: true })[4];
+        const theirs = planWindows({ months: 12, now: NOW, senders: SENDERS, includeTerms: false })[4];
         expect(mine).toEqual(theirs);
     });
 
     it('clamps depth rather than refusing a big number', () => {
-        expect(windowFor({ months: 100000, index: 0, now: NOW })).toBeTruthy();
+        expect(windowFor({ months: 100000, index: 0, now: NOW, senders: SENDERS })).toBeTruthy();
         expect(windowFor({ months: 100000, index: SCAN.MAX_MONTHS, now: NOW })).toBe(null);
     });
 
     it('a zero or negative depth still yields one window', () => {
-        expect(windowFor({ months: 0, index: 0, now: NOW })).toBeTruthy();
-        expect(windowFor({ months: -5, index: 1, now: NOW })).toBe(null);
+        expect(windowFor({ months: 0, index: 0, now: NOW, senders: SENDERS })).toBeTruthy();
+        expect(windowFor({ months: -5, index: 1, now: NOW, senders: SENDERS })).toBe(null);
     });
 });
 

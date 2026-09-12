@@ -51,7 +51,7 @@ export const config = {
  * a missing one costs a vote rather than an answer. */
 
 // Helper: fetch with timeout — prevents one slow provider from blocking the chain
-async function fetchWithTimeout(url, options, timeoutMs = 22000) {
+async function transportWithTimeout(url, options, timeoutMs = 22000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -72,6 +72,9 @@ export default async function handler(req, res) {
 
     const { prompt, image, temperature, maxTokens, preferredProvider } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+    const requestedDeadline = req.body?.deadlineMs;
+    const deadlineMs = Number.isInteger(requestedDeadline) ? Math.max(2000, Math.min(24000, requestedDeadline)) : 24000;
+    const fetchWithTimeout = (url, options, timeoutMs = 22000) => transportWithTimeout(url, options, Math.min(timeoutMs, deadlineMs));
 
     // Pull keys ONLY from environment (Ollama has an embedded fallback)
     const geminiKey   = process.env.WealthFlow_API_Key || process.env.GEMINI_API_KEY;
@@ -400,6 +403,15 @@ export default async function handler(req, res) {
         ];
     }
 
+    // A missing credential is not a configured board member. A configured
+    // provider that fails remains in the roster and prevents unanimity.
+    const configured = { Gemini: geminiKey, DeepSeek: deepseekKey, Groq: groqKey, Ollama: ollamaKey,
+        Anthropic: anthropicKey, xAI: xaiKey, Mistral: mistralKey, Together: togetherKey,
+        Fireworks: fireworksKey, OpenRouter: openrouterKey, Cerebras: cerebrasKey,
+        SambaNova: sambanovaKey, NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey };
+    engines = engines.filter(engine => Boolean(configured[engine.name]));
+    if (!engines.length) return res.status(503).json({ error: 'No AI providers configured.', needsReview: true, trustworthy: false, corroboration: { agreed: 0, of: 0, score: 0 } });
+
     // Wants JSON (receipt extraction etc.) → use consensus for max accuracy.
     const wantsJSON = /\{[^}]*"vendor"[^}]*\}|return only.*json|extract.*json/i.test(prompt);
     const requestedMode = (req.body && req.body.mode) ? String(req.body.mode) : null;
@@ -408,20 +420,25 @@ export default async function handler(req, res) {
     // `corroborated`. An explicit mode:'fastest' from a caller is still served —
     // latency is a legitimate thing to ask for — but the reply is labelled with
     // what actually backed it, so nothing can present one engine as agreement.
-    const mode = requestedMode || ((isVision || wantsJSON) ? 'consensus' : 'corroborated');
+    // Financial extraction may never opt into the fastest/quorum shortcut.
+    const mode = (isVision || wantsJSON) ? 'unanimous' : (requestedMode || 'corroborated');
     const task = isVision ? Matrix.TASK.VISION : wantsJSON ? Matrix.TASK.EXTRACTION : Matrix.TASK.PROSE;
 
     // Wrap each engine call so a rejection becomes a tagged result, never throws.
     function run(engine) {
         const started = Date.now();
-        return Promise.resolve()
+        let timer;
+        const deadline = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Provider response deadline exceeded')), deadlineMs);
+        });
+        return Promise.race([Promise.resolve()
             .then(() => engine.fn())
-            .then(r => ({ ok: true, name: engine.name, reply: r.reply, provider: r.provider, ms: Date.now() - started }))
+            .then(r => ({ ok: true, name: engine.name, reply: r.reply, provider: r.provider, ms: Date.now() - started })), deadline])
             .catch(e => {
                 console.warn(`[AI] ${engine.name} failed:`, e.message);
                 errorLog.push(`${engine.name}: ${e.message}`);
                 return { ok: false, name: engine.name, error: e.message, ms: Date.now() - started };
-            });
+            }).finally(() => clearTimeout(timer));
     }
 
     const isValid = (txt) => typeof txt === 'string' && txt.trim().length > 1;
@@ -470,6 +487,17 @@ export default async function handler(req, res) {
 
     // ---- MODE: CONSENSUS (gather all, choose the best) ----
     const results = await Promise.all(engines.map(run));
+    if (mode === 'unanimous') {
+        const decision = Matrix.unanimousDecision(results, { task, expected: engines.map(e => e.name) });
+        // Preserve a machine-readable quarantine outcome; no partial answer is
+        // released to consumers that might otherwise file a majority guess.
+        return res.status(decision.unanimous ? 200 : 422).json({
+            ...decision, trustworthy: Matrix.trustworthy(decision),
+            engines: engines.map(e => e.name), consensusOf: decision.answered.length,
+            consensusConfidence: decision.unanimous ? 1 : 0,
+            error: decision.unanimous ? null : 'AI consensus requires review.'
+        });
+    }
     const good = results.filter(r => r.ok && isValid(r.reply));
 
     if (good.length === 0) {

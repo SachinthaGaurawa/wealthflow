@@ -298,6 +298,8 @@ export default async function handler(req, res, deps) {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
                     backfilled: true,
+                    uid: who.uid,
+                    status: 'pending',
                     /* FINALLY STORED. planMessage computed `known` from the
                      * first day and no manifest had a place for it, so the
                      * device could not tell a confirmed bank from a merely

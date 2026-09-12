@@ -52,7 +52,7 @@
 import {
     planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
 } from './wealthflow-mail-ingest.mjs';
-import { normalizeList, policyFrom, recordSighting } from './wealthflow-mail-senders.mjs';
+import { normalizeList, policyFrom, recordSighting, approvedClauses } from './wealthflow-mail-senders.mjs';
 import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
@@ -145,23 +145,52 @@ export function decodeEnvelope(body) {
 export async function messagesSince(token, startHistoryId, f) {
     const url = `${GMAIL}/history?startHistoryId=${encodeURIComponent(startHistoryId)}`
         + '&historyTypes=messageAdded&maxResults=200';
-    const r = await f(url, { headers: authed(token) });
-    if (r.status === 404) return { ok: false, reason: 'history-too-old' };
-    if (!r.ok) return { ok: false, reason: 'history-unavailable', status: r.status };
-    const out = await r.json();
     const ids = new Set();
-    for (const h of out.history || []) {
-        for (const a of h.messagesAdded || []) if (a.message && a.message.id) ids.add(a.message.id);
+    const pages = new Set();
+    let pageToken = '', historyId = startHistoryId;
+    for (let page = 0; page < 100; page += 1) {
+        let r, out;
+        try {
+            r = await f(url + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
+            if (r.status === 404) return { ok: false, reason: 'history-too-old' };
+            if (!r.ok) return { ok: false, reason: 'history-unavailable', status: r.status };
+            out = await r.json();
+            if (!out || !Array.isArray(out.history || [])) throw new Error('invalid history');
+            for (const h of out.history || []) {
+                for (const a of h.messagesAdded || []) if (a.message && a.message.id) ids.add(a.message.id);
+            }
+        } catch (_) { return { ok: false, reason: 'history-unavailable' }; }
+        // A cursor is safe to commit only after every page has been collected.
+        historyId = out.historyId || historyId;
+        pageToken = out.nextPageToken;
+        if (!pageToken) return { ok: true, ids: [...ids], historyId };
+        if (typeof pageToken !== 'string' || pages.has(pageToken)) break;
+        pages.add(pageToken);
     }
-    return { ok: true, ids: [...ids], historyId: out.historyId || startHistoryId };
+    return { ok: false, reason: 'history-pagination-incomplete' };
 }
 
 /** The fallback when history is too old: the most recent messages, bounded. */
-export async function recentMessages(token, f, max = 25) {
-    const r = await f(`${GMAIL}/messages?maxResults=${max}&q=has:attachment`, { headers: authed(token) });
-    if (!r.ok) return { ok: false, reason: 'list-unavailable', status: r.status };
-    const out = await r.json();
-    return { ok: true, ids: (out.messages || []).map((m) => m.id) };
+export async function recentMessages(token, f, max = 25, clauses = null) {
+    if (Array.isArray(clauses) && !clauses.length) return { ok: true, ids: [] };
+    const query = 'has:attachment' + (clauses ? ' {' + clauses.join(' ') + '}' : '');
+    const base = `${GMAIL}/messages?maxResults=${Math.max(1, Math.min(50, max))}&q=${encodeURIComponent(query)}`;
+    const ids = new Set(), seen = new Set();
+    let pageToken = '';
+    for (let page = 0; page < 100; page += 1) {
+        let out;
+        try {
+            const r = await f(base + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
+            if (!r.ok) return { ok: false, reason: 'list-unavailable', status: r.status };
+            out = await r.json();
+            for (const m of out.messages || []) if (m.id) ids.add(m.id);
+        } catch (_) { return { ok: false, reason: 'list-unavailable' }; }
+        pageToken = out.nextPageToken;
+        if (!pageToken) return { ok: true, ids: [...ids] };
+        if (typeof pageToken !== 'string' || seen.has(pageToken)) break;
+        seen.add(pageToken);
+    }
+    return { ok: false, reason: 'list-pagination-incomplete' };
 }
 
 /* ── 4. the handler ───────────────────────────────────────────────────────── */
@@ -196,6 +225,21 @@ export default async function handler(req, res) {
     const { db, reason } = await getInboxDb();
     if (!db) return j(res, 500, { ok: false, error: String(reason || 'database unavailable').slice(0, 300) });
 
+    return ingestMailbox(db, note, env, f, res);
+}
+
+/** Shared collection path for verified push, authenticated login, and scheduled catch-up. */
+export async function syncMailbox(db, note, { env = process.env, f = fetch } = {}) {
+    let result;
+    const response = { status(code) { this.code = code; return this; }, json(body) { result = { status: this.code, body }; return result; } };
+    await ingestMailbox(db, note, env, f, response);
+    return result;
+}
+
+async function ingestMailbox(db, note, env, f, res) {
+    const transport = f;
+    f = (url, options = {}) => transport(url, { ...options, signal: options.signal || AbortSignal.timeout(8000) });
+
     const userKey = note.emailAddress.replace(/[^a-z0-9]/g, '_');
     const stateRef = db.collection(MAIL_ROOT).doc(userKey);
 
@@ -206,7 +250,7 @@ export default async function handler(req, res) {
     } catch (_) {
         return j(res, 500, { ok: false, error: 'state unreadable' });
     }
-    if (!state || !state.refresh_token) {
+    if (!state || !state.refresh_token || (state.email && state.email !== note.emailAddress)) {
         // Nothing this endpoint can do, and retrying will not change it.
         return j(res, 204, { ok: true, skipped: 'mailbox-not-connected' });
     }
@@ -221,6 +265,7 @@ export default async function handler(req, res) {
     const held = [];
     const policy = policyFrom(senderList);
     let seen = senderList;
+    const sightings = [];
 
     let token;
     try {
@@ -229,19 +274,39 @@ export default async function handler(req, res) {
         return j(res, 500, { ok: false, error: 'could not mint an access token' });
     }
 
-    let listed = await messagesSince(token, state.historyId || note.historyId, f);
-    if (!listed.ok && listed.reason === 'history-too-old') listed = await recentMessages(token, f);
-    if (!listed.ok) return j(res, 500, { ok: false, error: listed.reason });
+    let pending = state.pendingCollection;
+    if (!pending || !Array.isArray(pending.ids) || !Number.isSafeInteger(pending.cursor)) {
+        let listed = state.historyId
+            ? await messagesSince(token, state.historyId, f)
+            : await recentMessages(token, f, 50, approvedClauses(senderList));
+        if (!listed.ok && listed.reason === 'history-too-old') listed = await recentMessages(token, f, 50, approvedClauses(senderList));
+        if (!listed.ok) return j(res, 500, { ok: false, error: listed.reason });
+        // Stage the complete collection before downloading. A slow historical
+        // mailbox resumes in bounded batches without prematurely moving history.
+        const candidate = { id: globalThis.crypto.randomUUID(), ids: listed.ids,
+            cursor: 0, target: String(listed.historyId || note.historyId || '') };
+        try {
+            pending = await db.runTransaction(async tx => {
+                const current = await tx.get(stateRef);
+                const existing = current.data()?.pendingCollection;
+                if (existing && Array.isArray(existing.ids)) return existing;
+                tx.set(stateRef, { pendingCollection: candidate }, { merge: true });
+                return candidate;
+            });
+        } catch (_) { return j(res, 503, { ok: false, error: 'collection staging failed' }); }
+    }
+    const batchEnd = Math.min(pending.ids.length, pending.cursor + 10);
 
     const stored = [];
     const notable = [];
-    for (const id of listed.ids) {
+    for (const id of pending.ids.slice(pending.cursor, batchEnd)) {
         let msg;
         try {
             const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`, { headers: authed(token) });
-            if (!r.ok) continue;                       // one unreadable message is not a failed push
+            if (r.status === 404) continue; // Deleted mail no longer exists.
+            if (!r.ok) return j(res, 503, { ok: false, error: 'message fetch failed' });
             msg = await r.json();
-        } catch (_) { continue; }
+        } catch (_) { return j(res, 503, { ok: false, error: 'message fetch failed' }); }
 
         const plan = planMessage(msg, policy);
 
@@ -252,7 +317,9 @@ export default async function handler(req, res) {
          * added a row to the owner's senders list. gmail-scan.js's routine
          * path applies the identical gate for the identical reason. */
         if (worthSighting(plan)) {
-            seen = recordSighting(seen, { from: plan.from, subject: plan.subject, now: Date.now() });
+            const sighting = { from: plan.from, subject: plan.subject, now: Date.now() };
+            sightings.push(sighting);
+            seen = recordSighting(seen, sighting);
         }
 
         if (!plan.ok) {
@@ -293,7 +360,7 @@ export default async function handler(req, res) {
                     + `/attachments/${encodeURIComponent(item.attachmentId)}`,
                     { headers: authed(token) },
                 );
-                if (!ar.ok) continue;
+                if (!ar.ok) return j(res, 503, { ok: false, error: 'attachment fetch failed' });
                 const att = await ar.json();
                 // Gmail returns base64url; the store and the device both want base64.
                 const b64 = String(att.data || '').replace(/-/g, '+').replace(/_/g, '/');
@@ -319,7 +386,8 @@ export default async function handler(req, res) {
                 for (const p of write.parts) {
                     await ref.collection('parts').doc(String(p.i)).set({ i: p.i, d: p.d });
                 }
-                await ref.set(write.manifest);
+                await ref.set({ ...write.manifest, status: 'pending', filed: false,
+                    ...(state.uid ? { uid: state.uid } : {}) });
                 stored.push({ key: item.key, bank: item.bank, chunked: write.chunked });
             } catch (_) {
                 // A failure on ONE attachment is retryable; the manifest was not
@@ -330,8 +398,7 @@ export default async function handler(req, res) {
     }
 
     try {
-        await stateRef.set({
-            historyId: listed.historyId || note.historyId,
+        const updates = {
             lastPushMs: Date.now(),
             ...(notable.length ? { notable: notable.slice(0, 10) } : {}),
             /* Folded into the write that was already happening rather than
@@ -342,8 +409,36 @@ export default async function handler(req, res) {
              * into the write that was already happening rather than costing a
              * second one. */
             ...(held.length ? { [HELD_FIELD]: mergeHeld(state && state[HELD_FIELD], held) } : {}),
-        }, { merge: true });
-    } catch (_) { /* the statements landed; the bookmark can catch up next push */ }
+        };
+        await db.runTransaction(async tx => {
+            const current = await tx.get(stateRef);
+            const previous = current.exists && current.data().historyId;
+            const active = current.data()?.pendingCollection;
+            if (active?.id !== pending.id) return;
+            // A concurrent Settings approval/revocation must survive collection.
+            if (sightings.length) {
+                let latest = normalizeList(sendersOf(current.data() || {}));
+                for (const sighting of sightings) latest = recordSighting(latest, sighting);
+                updates[SENDERS_FIELD] = latest;
+            }
+            if (held.length) updates[HELD_FIELD] = mergeHeld(current.data()?.[HELD_FIELD], held);
+            const complete = batchEnd === pending.ids.length;
+            const next = complete ? pending.target : '';
+            updates.pendingCollection = complete ? null : { ...pending, cursor: Math.max(active.cursor || 0, batchEnd) };
+            // Concurrent redeliveries cannot move a durable cursor backwards.
+            if (/^\d+$/.test(next) && (!/^\d+$/.test(String(previous || '')) || BigInt(next) > BigInt(previous))) updates.historyId = next;
+            tx.set(stateRef, updates, { merge: true });
+        });
+    } catch (_) { return j(res, 503, { ok: false, error: 'cursor persistence failed' }); }
 
-    return j(res, 200, { ok: true, stored: stored.length, notable: notable.length, held: held.length });
+    let queued = false;
+    if (state.autonomous && state.uid === env.WEALTHFLOW_OWNER_UID && stored.some(item => !item.duplicate)) {
+        try {
+            const { enqueueStatementSync } = await import('./statement-cloud-queue.mjs');
+            await enqueueStatementSync({ env, f });
+            queued = true;
+        } catch (_) { /* Durable manifests remain pending; scheduled catch-up retries them. */ }
+    }
+    return j(res, 200, { ok: true, stored: stored.length, notable: notable.length, held: held.length, queued,
+        collectionPending: batchEnd < pending.ids.length });
 }

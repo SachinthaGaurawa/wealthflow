@@ -209,7 +209,7 @@ export function rewriteRefs(text, renames) {
  */
 export function rewriteImportsOnly(text, renames) {
     return String(text == null ? '' : text).replace(
-        /(\bfrom\s+|\bimport\(\s*|\brequire\(\s*)(['"])([^'"]+?)\2/g,
+        /(\bfrom\s+|\bimport\(\s*|\brequire\(\s*|\bnew\s+URL\(\s*)(['"])([^'"]+?)\2/g,
         (whole, prefix, quote, spec) => {
             const base = spec.split('/').pop();
             if (!renames.has(base)) return whole;
@@ -241,7 +241,7 @@ export function survivors(text, originals) {
 export function survivorsInImports(text, originals) {
     const found = new Set();
     const known = new Set(originals);
-    const re = /(?:\bfrom\s+|\bimport\(\s*|\brequire\(\s*)(['"])([^'"]+?)\1/g;
+    const re = /(?:\bfrom\s+|\bimport\(\s*|\brequire\(\s*|\bnew\s+URL\(\s*)(['"])([^'"]+?)\1/g;
     let m;
     while ((m = re.exec(text))) {
         const base = m[2].split('/').pop();

@@ -358,8 +358,15 @@ describe('feedback-triage: no false confirmations', () => {
             status(c) { status = c; return this; },
             json(o) { body = o; return this; },
         };
-        await handler({ body: { text: 'the Add your income button is broken' } }, res);
-        for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+        // Configuration diagnostics must never probe a real repository using
+        // illustrative credentials. Model GitHub's denied-access response.
+        const savedFetch = globalThis.fetch;
+        globalThis.fetch = async () => new Response(JSON.stringify({ message: 'Not Found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+        try { await handler({ body: { text: 'the Add your income button is broken' } }, res); }
+        finally {
+            globalThis.fetch = savedFetch;
+            for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+        }
         return { status, body };
     };
 

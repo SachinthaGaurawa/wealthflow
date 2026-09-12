@@ -194,7 +194,7 @@ describe('asking Gmail what changed', () => {
         await recentMessages('tok', async (url) => { seen = String(url); return resp(200, { messages: [{ id: 'A' }] }); });
         expect(seen).toMatch(/maxResults=\d+/);
         expect(Number(/maxResults=(\d+)/.exec(seen)[1])).toBeLessThanOrEqual(50);
-        expect(seen, 'listing everything would scan mail that cannot be a statement')
+        expect(decodeURIComponent(seen), 'listing everything would scan mail that cannot be a statement')
             .toContain('has:attachment');
     });
 

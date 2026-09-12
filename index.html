@@ -370,6 +370,7 @@
          never reach the Firestore sync — test/vault_test.js asserts that against
          the module's own source. ESM; window.WFVault. -->
     <script type="module" src="wealthflow-vault.js"></script>
+    <script type="module" src="wealthflow-statement-cloud.js"></script>
     <!-- Ledger audit (Step 2) is loaded ON DEMAND, not here: see
          _wfLoadLedgerAudit(). It is an occasional maintenance tool, and the
          payload budget counts script requests for a reason — a 51st request on
@@ -15806,6 +15807,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                         }).catch(() => {});
 
                         firebase.auth().onAuthStateChanged(async (user) => {
+                            if (window.WFStatementCloud) window.WFStatementCloud.authChanged(user);
                             // v7.5.7 — fixed Google-sign-in-not-logging-in bug.
                             //
                             // Previous behaviour: _authCallbackFired was a one-shot
@@ -24906,7 +24908,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                 _senders.error = (r && r.body && r.body.error) || 'the sender list could not be reached';
                 return false;
             }
-            _senders.approved = Array.isArray(r.body.approved) ? r.body.approved : [];
+            const approvals = Array.isArray(r.body.approved) ? r.body.approved : [];
+            _senders.approved = approvals.filter(e => _exactStatementAddress(e.id));
+            _senders.legacyApproved = approvals.filter(e => !_exactStatementAddress(e.id));
             _senders.blocked = Array.isArray(r.body.blocked) ? r.body.blocked : [];
             _senders.pending = Array.isArray(r.body.pending) ? r.body.pending : [];
             /* Served by the endpoint, never kept here. A third copy of the bank
@@ -24953,6 +24957,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify('Added. The next scan will search this sender.', 'success');
             }
             renderSenderList();
+            return !!(r && r.body && r.body.ok);
+        }
+
+        function _exactStatementAddress(value) {
+            const raw = String(value || '').trim().toLowerCase();
+            if (!raw || raw.length > 254) return false;
+            if (window.WFMailSenders && typeof window.WFMailSenders.normalizeSender === 'function') {
+                const parsed = window.WFMailSenders.normalizeSender(raw);
+                return parsed.ok && parsed.kind === 'address' && parsed.id === raw;
+            }
+            return /^[a-z0-9._%+-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(raw);
         }
 
         function _senderRow(e, buttons, scored) {
@@ -25039,7 +25054,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         + (r.best.why && r.best.why.length
                             ? '<div class="wf-hunt-why">' + _wfEsc(r.best.why.join(' \u00b7 ')) + '</div>' : '')
                     : '<div class="wf-hunt-none">not found in the months searched so far</div>';
-                const act = r.best
+                const act = r.best && _exactStatementAddress(r.best.address)
                     ? '<button class="btn btn-primary btn-sm" data-hact="add"'
                         + ' data-haddr="' + _wfEsc(r.best.address) + '"'
                         + ' data-hbank="' + _wfEsc(r.bank) + '">'
@@ -25071,12 +25086,10 @@ table.amort tbody tr { page-break-inside: avoid; }
             const banks = _ownedBanks();
             if (!banks.length) return null;
 
-            const known = Array.isArray(_senders.knownBanks) ? _senders.knownBanks : [];
-            const approved = Array.isArray(_senders.approved) ? _senders.approved : [];
+            const approved = (Array.isArray(_senders.approved) ? _senders.approved : []).filter(e => _exactStatementAddress(e.id));
             const uncovered = banks.filter((bank) => {
                 const byOwn = approved.some((e) => e && e.name && A.bankNamesMatch(bank, e.name));
-                const byBuiltIn = known.some((n) => A.bankNamesMatch(bank, n));
-                return !byOwn && !byBuiltIn;
+                return !byOwn;
             });
             return { of: banks.length, covered: banks.length - uncovered.length, uncovered };
         }
@@ -25089,12 +25102,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             if (!c.uncovered.length) {
                 return '<div class="wf-sender-cover ok">'
                     + (window.WFIcon && WFIcon.has('check') ? WFIcon('check') : '')
-                    + ' <b>All ' + c.of + ' of your banks</b> can send you statements.'
+                    + ' <b>All ' + c.of + ' of your banks</b> have an approved exact statement address.'
                     + '</div>';
             }
             return '<div class="wf-sender-cover warn">'
-                + '<div><b>' + c.covered + ' of your ' + c.of + ' banks</b> can send you statements. '
-                + 'These cannot yet:</div>'
+                + '<div><b>' + c.covered + ' of your ' + c.of + ' banks</b> have an approved exact statement address. '
+                + 'Add and label an exact address for these banks:</div>'
                 + '<div class="wf-sender-cover-list">'
                 + c.uncovered.map((b) => '<span class="wf-cover-chip">' + _wfEsc(b) + '</span>').join('')
                 + '</div>'
@@ -25128,7 +25141,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 ? WFDiscovery.discoveryReport(_senders.pending) : null;
             const byId = new Map(_senders.pending.map((e) => [String(e.id).toLowerCase(), e]));
             const rowFor = (e, scored) => _senderRow(e,
-                _senderBtn('approve', e.id, 'This is my bank', 'check', 'primary')
+                (_exactStatementAddress(e.id) ? _senderBtn('approve', e.id, 'This is my bank', 'check', 'primary') : '<span class="wf-sender-note">Add the bank\'s exact statement email address below. A domain cannot be approved.</span>')
                 + _senderBtn('block', e.id, 'Never', 'x', 'secondary'), scored);
 
             /* ── THE SCORE WAS COMPUTED AND THEN IGNORED ──────────────────
@@ -25219,7 +25232,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + section(
                     'Waiting for you to decide'
                         + (likelyRows && likelyRows.length ? ' (' + likelyRows.length + ')' : ''),
-                    'Senders that have mailed you a PDF and look like a bank. Nothing from these is filed until you say so.',
+                    'Senders seen with PDF or HTML attachments that look like a bank. Only exact email addresses can be approved; nothing is processed until you approve one.',
                     pending,
                     likelyRows && !likelyRows.length && restRows && restRows.length
                         /* Not "nothing new" — there IS mail waiting, it just
@@ -25237,7 +25250,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     'Your statement senders' + (_senders.approved.length ? ' (' + _senders.approved.length + ')' : ''),
                     'Only these are searched for. Everything else is left alone.',
                     approved,
-                    'None yet — until you approve one, WealthFlow has to guess, which is how bills and receipts got in.')
+                    'None yet. Statement processing is stopped until you approve an exact bank statement email address.')
+                + ((_senders.legacyApproved || []).length ? section('Inactive domain approvals', 'These old domain approvals cannot authorize statement processing. Add each exact statement email address instead.', (_senders.legacyApproved || []).map(e => _senderRow(e, _senderBtn('block', e.id, 'Block domain', 'x', 'secondary') + _senderBtn('remove', e.id, 'Remove', 'trash', 'secondary'))).join(''), '') : '')
                 + (_senders.blocked.length ? section('Blocked', 'Refused before anything else is considered.', blocked, '') : '');
 
             const find = host.querySelector('#_sl_find');
@@ -25286,23 +25300,16 @@ table.amort tbody tr { page-break-inside: avoid; }
                 + '<div style="font-size:12.5px;color:var(--text3);line-height:1.65;margin:2px 0 14px;">'
                 +   'WealthFlow searches your mailbox for these senders only — everything else '
                 +   'stays out, including bills and receipts. Add the address your bank sends '
-                +   'statements from, or just its domain, like <b>hnb.lk</b>.'
+                +   'statements from, for example <b>statements@hnb.lk</b>. Domain-wide approvals are not allowed.'
                 + '</div>'
-                /* SAID OUT LOUD, because it is the difference between a bank
-                 * whose statements arrive and one whose do not. Banks change the
-                 * address they send from — statements@, estatement@, no-reply@ —
-                 * and an exact-address search misses every one it does not name.
-                 * So the search covers the whole domain while the list still
-                 * decides: a different address there is offered, not filed. */
                 + '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin:0 0 14px;">'
-                +   'Adding one address searches its whole domain, because banks change which '
-                +   'address they send from. Anything from a different address there is shown '
-                +   'here for you to accept — it is never filed on its own.'
+                +   'Only the exact approved email address is searched and processed. If your bank changes '
+                +   'its statement address, approve that new address separately. Domain blocks still reject every address in that domain.'
                 + '</div>'
                 + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">'
                 +   '<div style="flex:1;min-width:170px;">'
-                +     '<label for="_sl_addr" class="wf-sender-lbl">Address or domain</label>'
-                +     '<input id="_sl_addr" class="inp" type="text" autocomplete="off" spellcheck="false" placeholder="statements@hnb.lk">'
+                +     '<label for="_sl_addr" class="wf-sender-lbl">Exact statement email address</label>'
+                +     '<input id="_sl_addr" class="inp" type="email" maxlength="254" autocomplete="off" spellcheck="false" placeholder="statements@hnb.lk">'
                 +   '</div>'
                 +   '<div style="width:140px;">'
                 +     '<label for="_sl_name" class="wf-sender-lbl">Name (optional)</label>'
@@ -25326,13 +25333,14 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const addr = overlay.querySelector('#_sl_addr');
             const nameEl = overlay.querySelector('#_sl_name');
-            const submit = () => {
+            const submit = async () => {
                 const v = (addr && addr.value || '').trim();
-                if (!v) { notify('Type an address or a domain first', 'error'); return; }
+                if (!_exactStatementAddress(v)) { notify('Enter the exact bank statement email address. Domain approvals are not allowed.', 'error'); return; }
                 const name = (nameEl && nameEl.value || '').trim();
-                if (addr) addr.value = '';
-                if (nameEl) nameEl.value = '';
-                _sendersDo('add', v, { status: 'approved', name });
+                if (await _sendersDo('add', v, { status: 'approved', name })) {
+                    if (addr) addr.value = '';
+                    if (nameEl) nameEl.value = '';
+                }
             };
             overlay.querySelector('#_sl_add').onclick = submit;
             /* Enter submits. Typing an address and pressing Enter is what
@@ -25460,6 +25468,18 @@ table.amort tbody tr { page-break-inside: avoid; }
          * filed rather than being told afterwards that something occurred.
          */
         async function runMailSync() {
+            let cloud = window.WFStatementCloud && window.WFStatementCloud.getState();
+            if (cloud && cloud.configured == null) {
+                try { await window.WFStatementCloud.status(); cloud = window.WFStatementCloud.getState(); }
+                catch (_) { notify('Could not verify background statement processing. No competing device import was started; retry while signed in.', 'warn'); return; }
+                if (cloud.configured == null) { notify('Background statement processing is still being checked. Retry shortly.', 'warn'); return; }
+            }
+            if (cloud && cloud.configured === true && cloud.saved === true) {
+                try { await window.WFStatementCloud.sync(); }
+                catch (_) { notify('Background statement sync could not complete. Statements remain pending for retry.', 'warn'); }
+                window.WFStatementCloud.openReview();
+                return;
+            }
             if (_mailSyncState.stage === 'running') return;
             _mailSyncState = { ..._mailSyncState, stage: 'running', error: null };
             renderMailSync();
@@ -27954,9 +27974,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                  ciphertext, which is a fair trade for a NIC and not one for a
                  bank password. See wealthflow-vault.js. -->
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Bank Statement Passwords</div><div class="setting-desc">Passwords your banks put on statement PDFs. Encrypted with your PIN — never uploaded, never synced.</div></div>
+                <div class="setting-info"><div class="setting-label">Bank Statement Passwords</div><div class="setting-desc">PDF and HTML statement passwords. PIN-encrypted on this device; securely sealed in your private cloud vault when background processing is configured.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="openBankVault()">${(window.WFIcon ? WFIcon('lock') : '')} ${(window.WFVault && window.WFVault.isSet()) ? 'Manage' : 'Set Up'}</button>
             </div>
+            <div class="setting-row"><div class="setting-info"><div class="setting-label">Background Statement Sync</div><div class="setting-desc" id="_statement_cloud_status">${window.WFStatementCloud?.getState().saved ? 'Private cloud vault saved. Background decryption is enabled.' : 'Save your statement passwords to enable processing while this app is closed.'}</div></div><button class="btn btn-secondary btn-sm" onclick="window.WFStatementCloud?.openReview()">Needs Review</button></div>
             <!-- The ID-details vault has existed since v7.7.0 and had NO caller:
                  openVaultModal was defined, exported on window.wfVault, and
                  reachable from nothing. Locked PDFs could never be auto-opened
@@ -32627,8 +32648,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     const wipe = body.querySelector('#_bv_wipe');
                     if (wipe) wipe.onclick = () => {
                         showConfirm('trash', 'Delete the password vault?',
-                            'Every saved statement password is erased from this device. This cannot be undone.',
-                            'btn-danger', 'Delete', () => {
+                            'Every saved statement password is erased from this device and the configured private cloud vault. Background decryption stops. This cannot be undone.',
+                            'btn-danger', 'Delete', async () => {
+                                try { if (!window.WFStatementCloud) throw new Error('cloud-module-unavailable'); await window.WFStatementCloud.remove(); }
+                                catch (error) { notify('Cloud deletion failed. The device vault has been retained; retry while signed in.', 'error'); return; }
                                 window.WFVault.destroy();
                                 window.WFVault.lock();
                                 notify('Password vault deleted', 'info');
@@ -32644,7 +32667,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         const r = await window.WFVault.save(usable);
                         if (!r.ok) { notify('Could not save — secure storage refused the write', 'error'); return; }
                         try { triggerHaptic('success'); } catch (_) {}
-                        notify(`${usable.length} password${usable.length === 1 ? '' : 's'} encrypted on this device`, 'success');
+                        let cloud;
+                        try { if (!window.WFStatementCloud) throw new Error('cloud-module-unavailable'); cloud = await window.WFStatementCloud.save(usable); }
+                        catch (error) { notify('Saved encrypted on this device, but cloud vault saving failed. Background decryption is not enabled for these changes. Retry saving.', 'warn'); return; }
+                        notify(cloud.localOnly ? `${usable.length} passwords encrypted on this device. Cloud processing is not configured.` : `${usable.length} passwords saved securely on this device and in your private cloud vault.`, 'success');
                         close();
                         try { renderSettings(); } catch (_) {}
                     };
@@ -33811,7 +33837,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     // ── v7.61.0 — anything still unidentified is queued for the
                     //    Autonomous Merchant Verification Engine (resolved right after
                     //    this pass, from YOUR real statement — never a guessed name).
-                    try { if (window.WFMerchants && window.WFMerchants.discover) window.WFMerchants.discover(t.description, t.direction); } catch (_) {}
+                    try { if (!parsed.cloudReview && window.WFMerchants && window.WFMerchants.discover) window.WFMerchants.discover(t.description, t.direction); } catch (_) {}
                     if (_acctType === 'bank_account') {
                         // For a bank account the "Type" column is only meaningful for
                         // fees and fuel — everything else is blank (the "Goes to"
@@ -33891,13 +33917,13 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 ['loan', 'Loan Payment'],
                 ['cheque', 'Cheque'],
                 ['skip', 'Skip']
-            ].map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
+            ].filter(([v]) => !parsed.cloudReview || !['loan', 'cheque'].includes(v)).map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
             const renderRows = () => txns.map((t, idx) => `
                 <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);${t._review ? 'background:rgba(245,166,35,.07);box-shadow:inset 3px 0 0 var(--accent,#f5a623);' : ''}">
                     <td style="padding:6px 6px;"><input type="checkbox" class="_ccr_keep" ${t._keep ? 'checked' : ''}></td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${t.date || ''}" style="width:130px;font-size:12px;"></td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — ' + String(t._reviewWhy || 'AI wasn\'t sure').replace(/[<>&]/g, '') + '</div>' : ''}</td>
-                    <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select></td>
+                    <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select>${parsed.cloudReview ? `<label>Category<input class="fi _ccr_cloud_category" value="${_wfEsc(t._cloudCategory || t._cat || 'Other')}" maxlength="100"></label><label>Direction<select class="fs _ccr_cloud_direction"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></label><label>Subscription allocation<select class="fs _ccr_cloud_allocation"><option value="">Choose an existing subscription when routing to Subscription</option>${(DB.get('subscriptions') || []).map(s => `<option value="${_wfEsc(s.id)}">${_wfEsc(s.name || s.id)}</option>`).join('')}</select></label>` : ''}</td>
                     <td style="padding:6px 6px;">
                         ${_acctType === 'bank_account'
                             ? `<select class="fs _ccr_type" style="font-size:11px;">
@@ -33968,7 +33994,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         <button class="btn btn-secondary" id="_ccr_ai" type="button" style="flex:2;min-width:150px;"><i data-wfi="bot"></i> Let AI auto-sort</button>
                         <button class="btn btn-primary" id="_ccr_save" type="button" style="flex:2;min-width:150px;"><i data-wfi="check"></i> Save &amp; file each row</button>
                     </div>
-                    <div style="padding:0 16px 12px;font-size:11px;color:var(--text3);line-height:1.5;">🤖 <b>Auto-sort</b> sends the ticked rows to the background AI, which routes each to its correct tab (groceries → Expenses, salary → Income, etc.), learns merchants, and removes duplicates — you can close this and keep working.</div>
+                    <div style="padding:0 16px 12px;font-size:11px;color:var(--text3);line-height:1.5;">${parsed.cloudReview ? 'Confirm the category, amount, date and direction. Cloud review remains pending until the server confirms the transaction was saved.' : '🤖 <b>Auto-sort</b> sends the ticked rows to the background AI, which routes each to its correct tab (groceries → Expenses, salary → Income, etc.), learns merchants, and removes duplicates — you can close this and keep working.'}</div>
                 </div>`;
 
             const $ovl = (sel) => overlay.querySelector(sel);
@@ -34018,6 +34044,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             // overrides a deterministically-certain fee/fuel/cash-advance type, and
             // leaves any cell the user already changed untouched.
             (async () => {
+                if (parsed.cloudReview) return;
                 try {
                     const items = txns.filter(t => t.description && (parseFloat(t.amount) || 0)).map(t => ({ date: t.date, desc: t.description, amount: t.amount }));
                     if (!items.length || typeof _aiClassifyRows !== 'function') return;
@@ -34043,6 +34070,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
             // 🤖 Let AI auto-sort — hand the ticked rows to the background queue
             const aiBtn = $ovl('#_ccr_ai');
+            if (aiBtn && parsed.cloudReview) aiBtn.style.display = 'none';
             if (aiBtn) aiBtn.onclick = () => {
                 if (!window.wfQueue || typeof window.wfStatementToQueue !== 'function') {
                     notify('Background AI engine still loading — try the save button, or retry in a moment.', 'warn');
@@ -34067,6 +34095,20 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             };
 
             $ovl('#_ccr_save').onclick = async () => {
+                if (typeof parsed.cloudReview === 'function') {
+                    const button = $ovl('#_ccr_save'); button.disabled = true;
+                    try {
+                        const choices = Array.from(overlay.querySelectorAll('#_ccr_body tr')).filter(tr => tr.querySelector('._ccr_keep').checked).map(tr => {
+                            return { row: { date: tr.querySelector('._ccr_date').value, description: tr.querySelector('._ccr_desc').value.trim(), amount: parseMoney(tr.querySelector('._ccr_amount').value), direction: tr.querySelector('._ccr_cloud_direction').value, type: tr.querySelector('._ccr_type').value }, decision: { module: tr.querySelector('._ccr_dest').value, category: tr.querySelector('._ccr_cloud_category').value.trim(), allocationId: tr.querySelector('._ccr_cloud_allocation').value } };
+                        });
+                        if (!choices.length) throw new Error('review-selection-required');
+                        if (choices.some(c => c.decision.module === 'subscription' && !c.decision.allocationId)) throw new Error('subscription-allocation-required');
+                        await parsed.cloudReview(choices);
+                        closeOvl();
+                    } catch (error) { notify(error.message === 'subscription-allocation-required' ? 'Choose the existing subscription for this payment.' : 'Cloud review was not completed. Your transaction remains pending; retry.', 'error'); }
+                    finally { button.disabled = false; }
+                    return;
+                }
                 // Route every ticked row to the destination chosen in its "Goes to" cell.
                 const rows = overlay.querySelectorAll('#_ccr_body tr');
                 const ccArr = DB.get('cconetime');

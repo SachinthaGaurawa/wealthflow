@@ -44,8 +44,8 @@ describe('what a discovery window asks Gmail for', () => {
         /* Not a bug — the reason receipts stopped arriving. It is also why a
          * bank the owner has not approved can never be seen, which is what
          * discovery exists for. */
-        const q = windowFor({ ...base, senders: ['from:hnb.lk'] }).query;
-        expect(q).toContain('from:hnb.lk');
+        const q = windowFor({ ...base, senders: ['from:no-reply@hnb.lk'] }).query;
+        expect(q).toContain('from:no-reply@hnb.lk');
         for (const t of STATEMENT_TERMS) expect(q).not.toContain(`"${t}"`);
     });
 
@@ -95,7 +95,8 @@ describe('what a discovery window asks Gmail for', () => {
         expect(explicit).toBe(withList);
         /* And with nobody approved it still discovers, because that is the only
          * way to find out what to approve. */
-        expect(windowFor({ ...base, senders: [] }).query).toContain('"statement"');
+        expect(windowFor({ ...base, senders: [] })).toBeNull();
+        expect(windowFor({ ...base, senders: [], discover: true }).query).toContain('has:attachment');
     });
 
     it('a bad index or clock is still refused, discovery or not', () => {
@@ -194,7 +195,7 @@ function connectWithApproved() {
     fake.docs.set(`wf-mail/${KEY}`, {
         refresh_token: TOKEN,
         email: OWNER,
-        senders: [{ id: 'hnb.lk', kind: 'domain', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 }],
+        senders: [{ id: 'no-reply@hnb.lk', kind: 'address', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 }],
     });
 }
 
@@ -247,7 +248,7 @@ describe('a discovery run lists the unknown bank without importing it', () => {
         connectWithApproved();
         await scan({ months: 6, index: 0, now: NOW, discover: true }, byId);
         const ids = sendersOf().map((e) => e.id);
-        expect(ids).toContain('hnb.lk');
+        expect(ids).toContain('no-reply@hnb.lk');
         expect(ids).toContain('sampath.lk');
     });
 
@@ -255,7 +256,7 @@ describe('a discovery run lists the unknown bank without importing it', () => {
         connectWithApproved();
         await scan({ months: 6, index: 0, now: NOW }, byId);
         const listed = calls.find((u) => u.includes('/messages?'));
-        expect(decodeURIComponent(listed)).toContain('from:hnb.lk');
+        expect(decodeURIComponent(listed)).toContain('from:no-reply@hnb.lk');
         expect(decodeURIComponent(listed)).not.toContain('"statement"');
     });
 
@@ -264,7 +265,7 @@ describe('a discovery run lists the unknown bank without importing it', () => {
             refresh_token: TOKEN,
             email: OWNER,
             senders: [
-                { id: 'hnb.lk', kind: 'domain', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 },
+                { id: 'no-reply@hnb.lk', kind: 'address', domain: 'hnb.lk', name: 'HNB', status: 'approved', source: 'manual', addedMs: 1 },
                 { id: 'sampath.lk', kind: 'domain', domain: 'sampath.lk', name: 'Sampath', status: 'blocked', source: 'manual', addedMs: 1 },
             ],
         });

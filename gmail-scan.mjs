@@ -118,7 +118,10 @@ export function windowFor({ months, index, now, senders = null, discover = null,
      * refused before a single attachment is fetched, and all a discovery run
      * can do is put that sender's address on the list for the owner to decide
      * about. The default is unchanged for every existing caller. */
-    const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();
+    const chosen = Array.isArray(senders) ? senders : [];
+    // Ordinary imports require the owner's explicit mailbox whitelist. Only
+    // an intentional metadata-only discovery call may search beyond it.
+    if (discover !== true && chosen.length === 0) return null;
     /* ── ONLY AN EXPLICIT REQUEST IS A DISCOVERY RUN ──────────────────────
      *
      * This used to read `discover === null ? !senders.length : discover === true`
@@ -147,7 +150,7 @@ export function windowFor({ months, index, now, senders = null, discover = null,
          * as the built-in domains, so their first scan is not limited to the
          * four banks this pipeline happens to ship with. Someone who HAS
          * curated a list gets exactly that list and no guessing. */
-        includeTerms: !owns,
+        includeTerms: discover === true && !owns,
     });
     return windows[i] || null;
 }

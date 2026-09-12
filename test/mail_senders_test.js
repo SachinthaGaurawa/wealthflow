@@ -63,7 +63,7 @@ describe('the exact mail the owner complained about', () => {
     const statement = msg('estatement@hnb.lk', 'Account Statement August 2026', 'stmt.pdf');
 
     it('BEFORE: a curated owner no longer takes the bill or the receipt', () => {
-        const list = addSender([], 'hnb.lk', { name: 'HNB', now: NOW }).list;
+        const list = addSender([], 'estatement@hnb.lk', { name: 'HNB', now: NOW }).list;
         const policy = policyFrom(list);
 
         expect(planMessage(bill, policy).ok).toBe(false);
@@ -73,7 +73,7 @@ describe('the exact mail the owner complained about', () => {
     });
 
     it('and still takes the statement, labelled with the owner’s own name for it', () => {
-        const list = addSender([], 'hnb.lk', { name: 'HNB', now: NOW }).list;
+        const list = addSender([], 'estatement@hnb.lk', { name: 'HNB', now: NOW }).list;
         const plan = planMessage(statement, policyFrom(list));
         expect(plan.ok).toBe(true);
         expect(plan.bank).toBe('HNB');
@@ -109,7 +109,7 @@ describe('the exact mail the owner complained about', () => {
     });
 
     it('`known` reaches the item once approved — the field that was once computed and dropped', () => {
-        const approved = planMessage(statement, policyFrom(addSender([], 'hnb.lk', { now: NOW }).list));
+        const approved = planMessage(statement, policyFrom(addSender([], 'estatement@hnb.lk', { now: NOW }).list));
         expect(approved.items[0].known).toBe(true);
         /* An unapproved stranger never reaches an item to carry the flag on
          * at all now; identifyBank alone still reports what it would be. */
@@ -187,8 +187,8 @@ describe('a raw From header is what the Add button hands in', () => {
 
     it('the ordinary shapes are unchanged', () => {
         expect(addSender([], 'HNB <statements@hnb.lk>', { now: 1 }).entry.id).toBe('statements@hnb.lk');
-        expect(addSender([], 'hnb.lk', { now: 1 }).entry.id).toBe('hnb.lk');
-        expect(addSender([], '@hnb.lk', { now: 1 }).entry.id).toBe('hnb.lk');
+        expect(addSender([], 'hnb.lk', { now: 1 }).reason).toBe(REASON.EXACT_ADDRESS);
+        expect(addSender([], '@hnb.lk', { now: 1 }).reason).toBe(REASON.EXACT_ADDRESS);
     });
 });
 
@@ -199,26 +199,26 @@ describe('matchSender: most specific wins, and a block wins a tie', () => {
         { id: 'netflix.com', status: STATUS.BLOCKED },
     ]);
 
-    it('an approved domain covers its subdomains', () => {
-        expect(matchSender(list, 'x@e.mail.hnb.lk').verdict).toBe(STATUS.APPROVED);
+    it('legacy domain approvals cannot authorize subdomains', () => {
+        expect(matchSender(list, 'x@e.mail.hnb.lk').verdict).toBe(STATUS.BLOCKED);
     });
 
     it('a blocked ADDRESS beats an approved domain', () => {
         /* The point of the rule: keep a bank's statements, lose its marketing. */
         expect(matchSender(list, 'promo@hnb.lk').verdict).toBe(STATUS.BLOCKED);
-        expect(matchSender(list, 'estatement@hnb.lk').verdict).toBe(STATUS.APPROVED);
+        expect(matchSender(list, 'estatement@hnb.lk').verdict).toBe(STATUS.BLOCKED);
     });
 
     it('a lookalike is NOT covered by the approved domain', () => {
         expect(matchSender(list, 'x@hnb.lk.attacker.net').verdict).toBe(STATUS.NEW);
     });
 
-    it('a longer approved domain beats a shorter blocked one', () => {
+    it('a legacy domain approval cannot override a domain block', () => {
         const l = normalizeList([
             { id: 'example.com', status: STATUS.BLOCKED },
             { id: 'bank.example.com', status: STATUS.APPROVED },
         ]);
-        expect(matchSender(l, 'x@bank.example.com').verdict).toBe(STATUS.APPROVED);
+        expect(matchSender(l, 'x@bank.example.com').verdict).toBe(STATUS.BLOCKED);
         expect(matchSender(l, 'x@shop.example.com').verdict).toBe(STATUS.BLOCKED);
     });
 
@@ -293,7 +293,7 @@ describe('a blocked ADDRESS also catches its siblings, unless the domain says ot
         expect(matchSender(l, 'someone@ceb.lk').verdict).toBe(STATUS.NEW);
     });
 
-    it('does NOT widen when the domain is separately approved — statements survive, marketing does not', () => {
+    it('a legacy domain approval does not bypass a sibling block', () => {
         /* The exact scenario the specificity rule exists for, unchanged: an
          * address-level block of a bank's marketing line must not take the
          * bank's own statements down with it. */
@@ -302,8 +302,8 @@ describe('a blocked ADDRESS also catches its siblings, unless the domain says ot
             { id: 'promo@hnb.lk', status: STATUS.BLOCKED },
         ]);
         expect(matchSender(l, 'promo@hnb.lk').verdict).toBe(STATUS.BLOCKED);
-        expect(matchSender(l, 'estatement@hnb.lk').verdict).toBe(STATUS.APPROVED);
-        expect(matchSender(l, 'a-third-address@hnb.lk').verdict).toBe(STATUS.APPROVED);
+        expect(matchSender(l, 'estatement@hnb.lk').verdict).toBe(STATUS.BLOCKED);
+        expect(matchSender(l, 'a-third-address@hnb.lk').verdict).toBe(STATUS.BLOCKED);
     });
 
     it('an ACTUAL domain-kind block for the same domain is unaffected — no double-counting', () => {
@@ -331,31 +331,31 @@ describe('a blocked ADDRESS also catches its siblings, unless the domain says ot
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('adding, blocking, removing', () => {
     it('add is idempotent and keeps the first added time', () => {
-        const a = addSender([], 'hnb.lk', { name: 'HNB', now: 100 }).list;
-        const b = addSender(a, 'HNB.LK', { name: 'HNB Bank', now: 900 }).list;
+        const a = addSender([], 'x@hnb.lk', { name: 'HNB', now: 100 }).list;
+        const b = addSender(a, 'X@HNB.LK', { name: 'HNB Bank', now: 900 }).list;
         expect(b.length).toBe(1);
         expect(b[0].addedMs).toBe(100);
         expect(b[0].name).toBe('HNB Bank');
     });
 
     it('a rejected add leaves the list untouched', () => {
-        const before = addSender([], 'hnb.lk', { now: NOW }).list;
+        const before = addSender([], 'x@hnb.lk', { now: NOW }).list;
         const r = addSender(before, 'gmail.com', { now: NOW });
         expect(r.ok).toBe(false);
         expect(r.list).toEqual(before);
     });
 
     it('blocking an approved sender does not delete it', () => {
-        const a = addSender([], 'hnb.lk', { now: NOW }).list;
-        const r = setStatus(a, 'hnb.lk', STATUS.BLOCKED, { now: NOW });
+        const a = addSender([], 'x@hnb.lk', { now: NOW }).list;
+        const r = setStatus(a, 'x@hnb.lk', STATUS.BLOCKED, { now: NOW });
         expect(r.ok).toBe(true);
         expect(r.list.length).toBe(1);
         expect(matchSender(r.list, 'x@hnb.lk').verdict).toBe(STATUS.BLOCKED);
     });
 
     it('removing forgets it, so it can be discovered again', () => {
-        const a = addSender([], 'hnb.lk', { now: NOW }).list;
-        const r = removeSender(a, 'hnb.lk');
+        const a = addSender([], 'x@hnb.lk', { now: NOW }).list;
+        const r = removeSender(a, 'x@hnb.lk');
         expect(r.ok).toBe(true);
         expect(r.list).toEqual([]);
         expect(recordSighting(r.list, { from: 'x@hnb.lk', now: NOW })[0].status).toBe(STATUS.NEW);
@@ -369,7 +369,7 @@ describe('adding, blocking, removing', () => {
     it('a hand-typed entry is never demoted to discovered by a later sighting', () => {
         /* Manual entries are the ones that survive eviction. A sighting that
          * flipped the source would make the owner's own list evictable. */
-        const a = addSender([], 'hnb.lk', { now: NOW }).list;
+        const a = addSender([], 'x@hnb.lk', { now: NOW }).list;
         const after = recordSighting(a, { from: 'x@hnb.lk', now: NOW + 1 });
         expect(after[0].source).toBe('manual');
         expect(after[0].status).toBe(STATUS.APPROVED);
@@ -398,9 +398,9 @@ describe('recordSighting is the gathering the owner asked for', () => {
 
     it('NEVER changes a decision the owner already made', () => {
         /* The one property that makes this safe to run on every message. */
-        const approved = addSender([], 'hnb.lk', { now: NOW }).list;
+        const approved = addSender([], 'x@hnb.lk', { now: NOW }).list;
         expect(recordSighting(approved, { from: 'x@hnb.lk', now: NOW })[0].status).toBe(STATUS.APPROVED);
-        const blocked = setStatus(approved, 'hnb.lk', STATUS.BLOCKED).list;
+        const blocked = setStatus(approved, 'x@hnb.lk', STATUS.BLOCKED).list;
         expect(recordSighting(blocked, { from: 'x@hnb.lk', now: NOW })[0].status).toBe(STATUS.BLOCKED);
     });
 
@@ -413,7 +413,7 @@ describe('recordSighting is the gathering the owner asked for', () => {
     it('a flood of discovered senders cannot push out the owner’s own entries', () => {
         /* The list is written from what arrives in a mailbox. Without separate
          * ceilings, a mail loop is a way to evict somebody's banks. */
-        let l = addSender([], 'hnb.lk', { now: NOW }).list;
+        let l = addSender([], 'x@hnb.lk', { now: NOW }).list;
         for (let i = 0; i < MAX_NEW * 3; i += 1) {
             l = recordSighting(l, { from: `x@flood${i}.example`, now: NOW + i });
         }
@@ -425,7 +425,7 @@ describe('recordSighting is the gathering the owner asked for', () => {
     it('the decided list is bounded too', () => {
         let l = [];
         for (let i = 0; i < MAX_DECIDED + 40; i += 1) {
-            l = addSender(l, `bank${i}.example`, { now: NOW + i }).list;
+            l = addSender(l, `statement@bank${i}.example`, { now: NOW + i }).list;
         }
         expect(l.length).toBeLessThanOrEqual(MAX_DECIDED + MAX_NEW);
         expect(l.filter((e) => e.status === STATUS.APPROVED).length).toBeLessThanOrEqual(MAX_DECIDED);
@@ -437,12 +437,12 @@ describe('recordSighting is the gathering the owner asked for', () => {
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('the approved list becomes the question, not a filter after it', () => {
     it('a curated scan asks only for those senders', () => {
-        const list = addSender(addSender([], 'hnb.lk', { now: NOW }).list, 'dfcc.lk', { now: NOW }).list;
+        const list = addSender(addSender([], 'x@hnb.lk', { now: NOW }).list, 'statements@dfcc.lk', { now: NOW }).list;
         const q = planWindows({
             months: 1, now: NOW, senders: approvedClauses(list), discover: false,
         })[0].query;
-        expect(q).toContain('from:hnb.lk');
-        expect(q).toContain('from:dfcc.lk');
+        expect(q).toContain('from:x@hnb.lk');
+        expect(q).toContain('from:statements@dfcc.lk');
         /* The keyword branch is what dragged in everything else. */
         expect(q).not.toContain('"statement"');
     });
@@ -461,7 +461,7 @@ describe('the approved list becomes the question, not a filter after it', () => 
         expect(approvedClauses(list)).toEqual([]);
     });
 
-    it('an address entry asks for its DOMAIN — fetch wide, decide narrow', () => {
+    it('each address entry asks only for its exact mailbox', () => {
         /* THIS TEST USED TO PIN THE BUG. It asserted `from:statements@hnb.lk`,
          * an exact-address query — so when the bank sent the next statement
          * from `estatement@hnb.lk`, it was never asked for. Not filtered out,
@@ -469,8 +469,8 @@ describe('the approved list becomes the question, not a filter after it', () => 
          *
          * Widening the QUERY cannot file anything, which is what makes it safe;
          * the policy below still decides. */
-        const l = addSender(addSender([], 'statements@hnb.lk', { now: NOW }).list, 'dfcc.lk', { now: NOW }).list;
-        expect(approvedClauses(l).sort()).toEqual(['from:dfcc.lk', 'from:hnb.lk']);
+        const l = addSender(addSender([], 'statements@hnb.lk', { now: NOW }).list, 'statements@dfcc.lk', { now: NOW }).list;
+        expect(approvedClauses(l).sort()).toEqual(['from:statements@dfcc.lk', 'from:statements@hnb.lk']);
     });
 
     it('and the POLICY is still the address, not the domain', () => {
@@ -478,14 +478,14 @@ describe('the approved list becomes the question, not a filter after it', () => 
          * domain must arrive as a decision, never as a filed statement. */
         const l = addSender([], 'statements@hnb.lk', { now: NOW }).list;
         expect(matchSender(l, 'statements@hnb.lk').verdict).toBe(STATUS.APPROVED);
-        expect(matchSender(l, 'estatement@hnb.lk').verdict).toBe(STATUS.NEW);
+        expect(matchSender(l, 'x@hnb.lk').verdict).toBe(STATUS.NEW);
         expect(policyFrom(l).curated).toBe(true);
     });
 
-    it('two addresses at one domain make ONE clause', () => {
+    it('two approved addresses at one domain make two exact clauses', () => {
         let l = addSender([], 'statements@hnb.lk', { now: NOW }).list;
         l = addSender(l, 'alerts@hnb.lk', { now: NOW }).list;
-        expect(approvedClauses(l)).toEqual(['from:hnb.lk']);
+        expect(approvedClauses(l)).toEqual(['from:alerts@hnb.lk', 'from:statements@hnb.lk']);
     });
 
     it('a blocked address does not drag its domain into the query', () => {
@@ -504,7 +504,7 @@ describe('approval does not replace the signature check', () => {
         /* The whole point. "This is one of mine" is not "trust this", and a
          * list that could wave DKIM through would be a way to make a phishing
          * domain trusted by adding one row. */
-        const list = addSender([], 'hnb.lk', { now: NOW }).list;
+        const list = addSender([], 'x@hnb.lk', { now: NOW }).list;
         const who = identifyBank({
             from: 'x@hnb.lk',
             'authentication-results': 'mx.google.com; dkim=fail header.i=@hnb.lk',
@@ -514,7 +514,7 @@ describe('approval does not replace the signature check', () => {
     });
 
     it('an approved sender signed by SOMEONE ELSE is still refused', () => {
-        const list = addSender([], 'hnb.lk', { now: NOW }).list;
+        const list = addSender([], 'x@hnb.lk', { now: NOW }).list;
         const who = identifyBank({
             from: 'x@hnb.lk',
             'authentication-results': 'mx.google.com; dkim=pass header.i=@attacker.net',
@@ -526,7 +526,7 @@ describe('approval does not replace the signature check', () => {
     it('approving a domain makes its LOOKALIKE a refusal, not an unknown', () => {
         /* An approved domain is a domain worth impersonating, and it is the one
          * the owner will read least carefully in a list of their own banks. */
-        const list = addSender([], 'sampathbank.lk', { now: NOW }).list;
+        const list = addSender([], 'x@sampathbank.lk', { now: NOW }).list;
         const who = identifyBank({
             from: 'x@sampathbank.lk.attacker.net',
             'authentication-results': dkim('sampathbank.lk.attacker.net'),
@@ -536,7 +536,7 @@ describe('approval does not replace the signature check', () => {
     });
 
     it('a BLOCK is obeyed before anything else is considered', () => {
-        const list = setStatus(addSender([], 'hnb.lk', { now: NOW }).list, 'hnb.lk', STATUS.BLOCKED).list;
+        const list = setStatus(addSender([], 'x@hnb.lk', { now: NOW }).list, 'x@hnb.lk', STATUS.BLOCKED).list;
         const who = identifyBank({ from: 'x@hnb.lk', 'authentication-results': dkim('hnb.lk') }, policyFrom(list));
         expect(who.ok).toBe(false);
         expect(who.reason).toBe(REJECT.SENDER_BLOCKED);
@@ -555,24 +555,24 @@ describe('the shape the rest of the app consumes', () => {
     it('policyFrom reports curated only once something is APPROVED', () => {
         expect(policyFrom([]).curated).toBe(false);
         expect(policyFrom(recordSighting([], { from: 'x@a.lk', now: NOW })).curated).toBe(false);
-        expect(policyFrom(addSender([], 'a.lk', { now: NOW }).list).curated).toBe(true);
-        const blockedOnly = setStatus(addSender([], 'a.lk', { now: NOW }).list, 'a.lk', STATUS.BLOCKED).list;
+        expect(policyFrom(addSender([], 'x@a.lk', { now: NOW }).list).curated).toBe(true);
+        const blockedOnly = setStatus(addSender([], 'x@a.lk', { now: NOW }).list, 'x@a.lk', STATUS.BLOCKED).list;
         expect(policyFrom(blockedOnly).curated).toBe(false);
     });
 
     it('groupForDisplay puts every entry in exactly one bucket', () => {
-        let l = addSender([], 'hnb.lk', { now: NOW }).list;
-        l = setStatus(addSender(l, 'netflix.com', { now: NOW }).list, 'netflix.com', STATUS.BLOCKED).list;
+        let l = addSender([], 'x@hnb.lk', { now: NOW }).list;
+        l = addSender(l, 'netflix.com', { now: NOW, status: STATUS.BLOCKED }).list;
         l = recordSighting(l, { from: 'x@new.lk', now: NOW });
         const g = groupForDisplay(l);
         expect(g.approved.length + g.blocked.length + g.pending.length).toBe(l.length);
-        expect(g.approved.map((e) => e.id)).toEqual(['hnb.lk']);
+        expect(g.approved.map((e) => e.id)).toEqual(['x@hnb.lk']);
         expect(g.blocked.map((e) => e.id)).toEqual(['netflix.com']);
         expect(g.pending.map((e) => e.id)).toEqual(['new.lk']);
     });
 
     it('hasApproved is the same question policyFrom asks', () => {
-        for (const l of [[], addSender([], 'a.lk', { now: NOW }).list]) {
+        for (const l of [[], addSender([], 'x@a.lk', { now: NOW }).list]) {
             expect(hasApproved(l)).toBe(policyFrom(l).curated);
         }
     });
