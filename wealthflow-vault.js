@@ -49,6 +49,39 @@
  * has no other storage of any kind. There is a test asserting the string
  * 'DB.set' does not appear in this file, because that is the mistake that would
  * quietly upload every password in it.
+ *
+ * ── CROSS-DEVICE SYNC (v7.71.0) ─────────────────────────────────────────────
+ *
+ * The owner asked for this vault to stop being pinned to the device it was
+ * saved on: a password added on the phone must be usable from a laptop, and
+ * vice versa, on the same account. That does NOT mean the security model
+ * above changes — it means the same ciphertext this file already writes to
+ * ONE localStorage key is now also written to ONE private Firestore document
+ * the owner alone can read (`users/{uid}/vault/bankpw`, covered by the
+ * existing owner-only rule for `users/{uid}/**` — no rules change needed).
+ *
+ * What travels is EXACTLY what already sits on disk: `{v, kdf, salt, iv, ct,
+ * savedAt}`. The PIN never travels. The derived key never travels — it is
+ * non-extractable and this file could not export it if it wanted to. A device
+ * that has never seen this vault before still needs the correct PIN to read
+ * a single entry out of the blob it downloads; an attacker with full read
+ * access to the owner's Firestore document is in exactly the position this
+ * file already defends against for someone with full read access to
+ * localStorage, because it is the same ciphertext either way.
+ *
+ * `savedAt` is the one new field, and it is deliberately OUTSIDE the
+ * ciphertext: recency has to be comparable ACROSS DEVICES before either side
+ * knows the PIN, or two devices editing offline would have no way to decide
+ * whose copy is newer without asking for the PIN just to find out. A save
+ * timestamp is not a secret.
+ *
+ * The sync itself is injected as `deps.cloud = { pull, push }`, exactly like
+ * `deps.subtle` and `deps.storage` above — this file still does not import
+ * Firestore, know a project id, or hold a `db` handle. The real
+ * implementation is wired in index.html, next to every other Firestore call
+ * in the app; this file only ever sees two functions it can await, and both
+ * are optional (no `deps.cloud` — nothing changes, the vault behaves exactly
+ * as it always did, e.g. under test or before login).
  * ===========================================================================*/
 
 /* What a password is MADE OF, which the vault now records alongside it. A
@@ -207,7 +240,8 @@ export async function seal(key, entries, saltB64, deps = {}) {
     const subtle = subtleOf(deps);
     if (!subtle || !key) return null;
     const iv = randomOf(deps, KDF.IV_BYTES);
-    const body = enc.encode(JSON.stringify({ entries: normaliseAll(entries), savedAt: Date.now() }));
+    const savedAt = Date.now();
+    const body = enc.encode(JSON.stringify({ entries: normaliseAll(entries), savedAt }));
     const ct = await subtle.encrypt({ name: 'AES-GCM', iv }, key, body);
     return {
         v: 1,
@@ -215,6 +249,12 @@ export async function seal(key, entries, saltB64, deps = {}) {
         salt: saltB64,
         iv: bytesToB64(iv),
         ct: bytesToB64(new Uint8Array(ct)),
+        // Deliberately OUTSIDE the ciphertext (see the cross-device sync note
+        // atop this file): two devices need to agree on whose copy is newer
+        // BEFORE either one knows the PIN, and a save timestamp is not a
+        // secret. Duplicated from the encrypted `savedAt` above only for that
+        // reason — the encrypted one remains the source of truth once opened.
+        savedAt,
     };
 }
 
@@ -352,9 +392,50 @@ let _sessionKey = null;
 let _sessionSalt = null;
 
 /**
+ * The newer of a local and a cloud copy, by the plaintext `savedAt` each
+ * carries — never by trusting whichever one happened to answer first. A
+ * missing blob loses to a present one; a missing `savedAt` (a blob saved
+ * before this field existed) counts as the oldest possible time rather than
+ * throwing, so an old local vault does not out-rank a real cloud copy just
+ * because `undefined > n` is always false anyway — being explicit here means
+ * that stays true on purpose, not by accident of JS comparison rules.
+ */
+function _newer(a, b) {
+    if (!a) return b || null;
+    if (!b) return a;
+    return (Number(b.savedAt) || 0) > (Number(a.savedAt) || 0) ? b : a;
+}
+
+/**
+ * Best-effort pull from the cloud. Never throws, never blocks unlocking with
+ * whatever is already on this device — a device with no network, or a
+ * signed-out session, must keep working exactly as it did before sync
+ * existed.
+ */
+async function _cloudPull(deps) {
+    try {
+        if (deps && deps.cloud && typeof deps.cloud.pull === 'function') return (await deps.cloud.pull()) || null;
+    } catch (_) {}
+    return null;
+}
+
+/** Best-effort push. A failed push never fails the (already-completed) local save. */
+async function _cloudPush(blob, deps) {
+    try {
+        if (deps && deps.cloud && typeof deps.cloud.push === 'function') await deps.cloud.push(blob);
+    } catch (_) {}
+}
+
+/**
  * Derive and cache the key for this session, verifying it against the stored
  * blob when one exists so a wrong PIN is refused up front rather than silently
  * caching a key that decrypts nothing.
+ *
+ * Cross-device: pulls the cloud copy (if `deps.cloud` is wired) and unlocks
+ * with whichever of {local, cloud} carries the later `savedAt`, caching the
+ * winner locally so the device stays usable offline afterwards. A device
+ * opening this vault for the very first time therefore does not need a local
+ * blob at all — only the same PIN used to create it elsewhere.
  */
 export async function unlock(pin, deps = {}) {
     const st = deps.storage || (typeof localStorage !== 'undefined' ? localStorage : null);
@@ -362,13 +443,18 @@ export async function unlock(pin, deps = {}) {
     if (p.length < MIN_PIN) return { ok: false, reason: VAULT.BAD_PIN, entries: [] };
     if (!subtleOf(deps)) return { ok: false, reason: VAULT.NO_CRYPTO, entries: [] };
 
-    const blob = readBlob(st);
+    const local = readBlob(st);
+    const remote = await _cloudPull(deps);
+    const blob = _newer(local, remote);
+    if (blob && blob === remote) writeBlob(blob, st); // cache the winning cloud copy for offline use
+
     const saltB64 = blob ? blob.salt : newSalt(deps);
     const key = await deriveKey(p, b64ToBytes(saltB64), deps);
     if (!key) return { ok: false, reason: VAULT.NO_CRYPTO, entries: [] };
 
     if (!blob) {
-        // First use: nothing to verify against, so this PIN defines the vault.
+        // First use anywhere on this account: nothing to verify against, so
+        // this PIN defines the vault.
         _sessionKey = key; _sessionSalt = saltB64;
         return { ok: true, reason: VAULT.OK, entries: [], fresh: true };
     }
@@ -391,13 +477,23 @@ export async function list(deps = {}) {
     return openSealed(_sessionKey, blob, deps);
 }
 
-/** Replace the whole entry list, re-sealed under the cached key. */
+/**
+ * Replace the whole entry list, re-sealed under the cached key.
+ *
+ * The local write is what this function's result reports — that succeeding
+ * or failing has never depended on the network, and still does not. The
+ * cloud push (when `deps.cloud` is wired) happens after, best-effort: a
+ * phone with no signal still saves the vault it can use right now, and syncs
+ * the next time `save()` or `unlock()` succeeds with a connection.
+ */
 export async function save(entries, deps = {}) {
     if (!_sessionKey || !_sessionSalt) return { ok: false, reason: VAULT.EMPTY };
     const blob = await seal(_sessionKey, entries, _sessionSalt, deps);
     if (!blob) return { ok: false, reason: VAULT.NO_CRYPTO };
     const wrote = writeBlob(blob, deps.storage);
-    return wrote ? { ok: true, reason: VAULT.OK } : { ok: false, reason: VAULT.NO_CRYPTO };
+    if (!wrote) return { ok: false, reason: VAULT.NO_CRYPTO };
+    await _cloudPush(blob, deps);
+    return { ok: true, reason: VAULT.OK };
 }
 
 /** Test seam: drop the cached key without touching storage. */

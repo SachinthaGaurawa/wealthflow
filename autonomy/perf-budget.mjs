@@ -202,7 +202,10 @@ export const BUDGETS = {
     // add 4,062 bytes to the source HTML (measured 2,035,924). The new deferred
     // cloud module adds one nonblocking request. This explicit measured increase
     // retains the two-script first-paint ceiling and under 1% size headroom.
-    htmlBytes: 2_050_000,
+    // Raised again for the cross-device vault sync fix: the Firestore glue for
+    // `users/{uid}/vault/{bankpw,secvault}` and the two updated call sites add
+    // 244 bytes (measured 2,050,244). No new script requests.
+    htmlBytes: 2_051_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -377,7 +380,7 @@ export const BUDGETS = {
      * keeping a second copy of the arithmetic. */
     // Measured 1,842,217 across 71 modules after cloud vault/review integration;
     // encrypted HTML intake and exact sender gates account for the other growth.
-    totalJsBytes: 1_860_000, // measured 1,859,464 after the memory-audit fixes (PDF-task/canvas/object-URL releases)
+    totalJsBytes: 1_870_000, // measured 1,869,343 after the cross-device vault sync fix (wealthflow-vault.js + wealthflow-intelligence.js)
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
