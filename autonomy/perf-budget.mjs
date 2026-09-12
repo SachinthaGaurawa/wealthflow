@@ -377,8 +377,8 @@ export const BUDGETS = {
      * keeping a second copy of the arithmetic. */
     // Measured 1,842,217 across 71 modules after cloud vault/review integration;
     // encrypted HTML intake and exact sender gates account for the other growth.
-    totalJsBytes: 1_850_000,
-    largestModuleBytes: 212_000, // measured 210,068 (wealthflow-ai-v4.js)
+    totalJsBytes: 1_852_000, // measured 1,851,342 after the diagnostics upgrade (crumb/resource tracking)
+    largestModuleBytes: 212_500, // measured 212,307 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely

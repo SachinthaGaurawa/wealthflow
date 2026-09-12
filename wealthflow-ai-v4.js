@@ -155,6 +155,7 @@
                     viewport = page.getViewport({ scale: newScale });
                 }
                 var canvas = document.createElement('canvas');
+                try { window.WFStability && window.WFStability.resourceInc('pdfCanvas'); } catch (_) {}
                 canvas.width = Math.floor(viewport.width);
                 canvas.height = Math.floor(viewport.height);
                 var ctx = canvas.getContext('2d', { willReadFrequently: false });
@@ -176,6 +177,7 @@
                     }
                 }
                 canvas.width = canvas.height = 0;   // release this rung's backing store now
+                try { window.WFStability && window.WFStability.resourceDec('pdfCanvas'); } catch (_) {}
                 if (found) return found;
             }
             // Last resort — return the smallest we could make
@@ -196,6 +198,7 @@
         if (!file) throw new Error('No file provided');
         var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
         var isImage = (file.type || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(file.name || '');
+        try { window.WFStability && window.WFStability.crumb('scan: ' + (isPdf ? 'pdf' : 'image') + ' ' + (file.name || '?') + ' (' + Math.round((file.size || 0) / 1024) + 'KB)'); } catch (_) {}
 
         // ---- IMAGE: compress to fit under maxBytes (memory-safe for iOS) ----
         if (!isPdf) {
