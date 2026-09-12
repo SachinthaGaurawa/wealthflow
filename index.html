@@ -8569,6 +8569,68 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // lexical const/let in a script tag don't auto-attach to window otherwise.
         window.DB = DB;
 
+        // ── v7.71.0 — CROSS-DEVICE VAULT SYNC (Firestore glue) ──────────────────
+        // The owner: a password saved on the phone was invisible on the laptop.
+        // wealthflow-vault.js (bank PDF passwords) and wealthflow-intelligence.js
+        // (the NIC/DOB Security Vault) each take an optional cloud seam —
+        // `deps.cloud` / `window._wfVaultCloud` — of exactly two functions,
+        // `pull()` and `push(payload)`, so neither module needs to import
+        // Firestore or know a project id. This is the ONE place that seam is
+        // wired to a real `db` handle, same as every other Firestore call here.
+        //
+        // Both live at `users/{uid}/vault/{doc}` — a SUBCOLLECTION of the
+        // private per-user document, already covered by the existing
+        // `users/{uid}/{collection}/{document=**}` owner-only rule with no
+        // rules change or redeploy needed. Deliberately its OWN subcollection,
+        // never inside the main `users/{uid}` document: that document is what
+        // the generic appData sync round-trips wholesale, and a vault blob
+        // sitting among those fields would ride along with every future
+        // "export my data" / "restore from backup" path built against it,
+        // exactly the exposure wealthflow-vault.js's own header says a bank
+        // password must never risk. A dedicated doc a generic field-walk never
+        // visits is what keeps that boundary real rather than assumed.
+        //
+        // What crosses the wire is ONLY what each module already decided is
+        // safe to store off-device: wealthflow-vault.js pushes the AES-GCM
+        // ciphertext blob (no PIN, no derived key — see its header); the
+        // Security Vault pushes its ciphertext PLUS its device-derived key,
+        // because unlike the PIN vault its whole point is to work with no
+        // secret the owner has to type (see wealthflow-intelligence.js's own
+        // note on that trade). Signed out, or offline, both `pull()` calls
+        // resolve to `null` and both `push()` calls are simply skipped —
+        // every caller already treats a missing cloud as "nothing changes".
+        function _wfVaultDoc(name) {
+            if (!currentUser || !db) return null;
+            try { return db.collection('users').doc(currentUser.uid).collection('vault').doc(name); } catch (_) { return null; }
+        }
+        function _wfMakeVaultCloud(docName) {
+            return {
+                pull: async () => {
+                    const ref = _wfVaultDoc(docName);
+                    if (!ref) return null;
+                    try { const snap = await ref.get(); return snap.exists ? snap.data() : null; } catch (_) { return null; }
+                },
+                push: async (payload) => {
+                    const ref = _wfVaultDoc(docName);
+                    if (!ref) return;
+                    await ref.set(payload || {});
+                },
+                // A real doc delete, not a blank/partial push: `_newer()` in
+                // wealthflow-vault.js compares `blob.savedAt`, and a tombstone
+                // object missing `salt`/`iv` would "win" a comparison and then
+                // fail to derive a key from it. Deleting the doc outright makes
+                // the next pull() see exactly what a vault that never existed
+                // looks like — nothing to reconcile at all.
+                remove: async () => {
+                    const ref = _wfVaultDoc(docName);
+                    if (!ref) return;
+                    await ref.delete();
+                },
+            };
+        }
+        window._wfBankVaultCloud = _wfMakeVaultCloud('bankpw');  // wealthflow-vault.js
+        window._wfVaultCloud = _wfMakeVaultCloud('secvault');    // wealthflow-intelligence.js Security Vault
+
         // ── v7.43.0 — NOTIFICATION SAFE-SHIM (root-cause fix for the iOS crash) ─
         // Diagnostics captured a repeating unhandled rejection "Can't find variable:
         // Notification" at the load handler — iOS Chrome / Safari browser tabs expose
@@ -15963,6 +16025,19 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                 currentUser = user;
                                 window.currentUser = user;
                                 userDocRef = db.collection('users').doc(user.uid);
+                                // v7.71.0 — hydrate both password vaults from the cloud in the
+                                // background, with NO PIN and no key derivation for either one
+                                // (see hydrate() in wealthflow-vault.js / syncFromCloud() in
+                                // wealthflow-intelligence.js). Without this, isSet()/exists() on
+                                // a device that has never opened the vault UI here still say
+                                // "no vault" for a vault that genuinely exists on this account,
+                                // until the owner opens it once — so "Manage" vs "Set Up" in
+                                // Settings would lag reality on every new device. Deliberately
+                                // NOT awaited: boot must never wait on this.
+                                setTimeout(() => {
+                                    try { if (window.WFVault && window.WFVault.hydrate) window.WFVault.hydrate({ cloud: window._wfBankVaultCloud }); } catch (_) {}
+                                    try { if (window.wfVault && window.wfVault.syncFromCloud) window.wfVault.syncFromCloud(); } catch (_) {}
+                                }, 1500);
                                 if (splashText) splashText.textContent = "Syncing with cloud...";
                                 console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
                                 // User is signed in (persisted) → ensure the
@@ -25394,15 +25469,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 +   'its statement address, approve that new address separately. Domain blocks still reject every address in that domain.'
                 + '</div>'
                 + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:6px;">'
-                +   '<div style="flex:1;min-width:170px;">'
+                +   '<div style="flex:2 1 170px;min-width:170px;">'
                 +     '<label for="_sl_addr" class="wf-sender-lbl">Exact statement email address</label>'
-                +     '<input id="_sl_addr" class="inp" type="email" maxlength="254" autocomplete="off" spellcheck="false" placeholder="statements@hnb.lk">'
+                +     '<input id="_sl_addr" class="fi" type="email" maxlength="254" autocomplete="off" spellcheck="false" placeholder="statements@hnb.lk">'
                 +   '</div>'
-                +   '<div style="width:140px;">'
+                +   '<div style="flex:1 1 110px;min-width:110px;">'
                 +     '<label for="_sl_name" class="wf-sender-lbl">Name (optional)</label>'
-                +     '<input id="_sl_name" class="inp" type="text" autocomplete="off" maxlength="60" placeholder="HNB">'
+                +     '<input id="_sl_name" class="fi" type="text" autocomplete="off" maxlength="60" placeholder="HNB">'
                 +   '</div>'
-                +   '<button class="btn btn-primary btn-sm" id="_sl_add" style="height:38px;">'
+                +   '<button class="btn btn-primary btn-sm" id="_sl_add" style="height:38px;flex-shrink:0;">'
                 +     (window.WFIcon ? WFIcon('plus') : '') + ' Add</button>'
                 + '</div>'
                 + '<div id="_sl_body"></div>'
@@ -32602,9 +32677,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             /* ---- step 1: the PIN ---- */
             body.innerHTML = `
                 <div style="font-size:12.5px;color:var(--text2);line-height:1.65;margin-bottom:14px;">
-                    These are encrypted with a key derived from your <b>master PIN</b>. The
-                    encrypted file never leaves this device and is never included in a cloud
-                    backup.
+                    These are encrypted with a key derived from your <b>master PIN</b> and kept in
+                    sync with your account, so the same passwords are available on every device
+                    you sign into. Only the encrypted file syncs — your PIN, and the key derived
+                    from it, never leave this device.
                 </div>
                 <div style="background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.25);border-radius:10px;padding:11px 13px;font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:16px;">
                     <b style="color:var(--red);">There is no recovery.</b> If you forget your PIN
@@ -32640,7 +32716,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     if (h !== auth.pin) { err.textContent = 'Incorrect PIN'; return; }
                 }
                 err.textContent = '';
-                const r = await window.WFVault.unlock(pin);
+                const r = await window.WFVault.unlock(pin, { cloud: window._wfBankVaultCloud });
                 if (!r.ok) {
                     err.textContent = r.reason === window.WFVault.VAULT.NO_CRYPTO
                         ? 'Secure storage unavailable in this browser'
@@ -32762,6 +32838,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             'btn-danger', 'Delete', async () => {
                                 try { if (!window.WFStatementCloud) throw new Error('cloud-module-unavailable'); await window.WFStatementCloud.remove(); }
                                 catch (error) { notify('Cloud deletion failed. The device vault has been retained; retry while signed in.', 'error'); return; }
+                                try { if (window._wfBankVaultCloud) await window._wfBankVaultCloud.remove(); } catch (_) { /* device copy is still erased below */ }
                                 window.WFVault.destroy();
                                 window.WFVault.lock();
                                 notify('Password vault deleted', 'info');
@@ -32774,7 +32851,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                          * though candidatesFor() tries every password regardless
                          * of bank match; Bank only orders the trial there. */
                         const usable = rows.filter(r => r.password && r.password.trim());
-                        const r = await window.WFVault.save(usable);
+                        const r = await window.WFVault.save(usable, { cloud: window._wfBankVaultCloud });
                         if (!r.ok) { notify('Could not save — secure storage refused the write', 'error'); return; }
                         try { triggerHaptic('success'); } catch (_) {}
                         let cloud;

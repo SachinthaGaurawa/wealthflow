@@ -61,3 +61,52 @@ describe('responsive: header/text rows wrap instead of crushing', () => {
         expect(rule('.setting-info')).toContain('min-width: 0');
     });
 });
+
+/* =============================================================================
+ * openSenderList() — the "Statement senders" modal's add-a-sender row used
+ * `class="inp"` on both inputs, a class with NO base styling anywhere in this
+ * file (no width, no background, no border — only an unrelated mobile-only
+ * min-height rule). Both inputs rendered as bare, unstyled native <input>
+ * elements at their tiny browser-default width instead of filling their flex
+ * item, so the row's real content width (two undersized inputs still taking
+ * their default box model) overflowed the modal and pushed the "+ Add"
+ * button past the card's right edge on anything but a very narrow phone —
+ * visually worse, not better, on a wider screen. `.fi` is the class every
+ * other themed input in this file actually uses.
+ * ===========================================================================*/
+describe('the Statement senders modal inputs are actually styled', () => {
+    it('never uses the unstyled "inp" class on any input', () => {
+        // Guards against this exact mistake recurring anywhere in the file,
+        // not just the two spots that prompted it.
+        expect(html).not.toMatch(/class="inp"/);
+    });
+
+    it('_sl_addr and _sl_name use .fi, the real styled input class', () => {
+        expect(html).toMatch(/id="_sl_addr" class="fi"/);
+        expect(html).toMatch(/id="_sl_name" class="fi"/);
+    });
+
+    it('.fi actually has width/background/border — proof the class carries real styling', () => {
+        // .fi is declared as part of a `.fi, .fs, .fta { ... }` multi-selector
+        // rule, so the single-selector rule() helper above (which requires the
+        // selector to sit right before the `{`) does not apply here.
+        const m = html.match(/\.fi,\s*\.fs,\s*\.fta\s*\{([^}]*)\}/);
+        const body = m ? m[1] : '';
+        expect(body).toContain('width: 100%');
+        expect(body).toContain('background');
+        expect(body).toContain('border');
+    });
+
+    it('neither field is pinned to a rigid pixel width that cannot shrink on a narrow phone', () => {
+        // A fixed `width:140px` on the name field, alongside a `min-width:170px`
+        // email field, left no room to wrap gracefully below ~350px; both are
+        // now a flex-basis so they can shrink before wrapping onto their own line.
+        expect(html).toMatch(/flex:1 1 110px;min-width:110px;/);
+        expect(html).toMatch(/flex:2 1 170px;min-width:170px;/);
+    });
+
+    it('the Add button never shrinks and drops out of the row before its text does', () => {
+        const btnLine = html.match(/id="_sl_add" style="([^"]*)"/);
+        expect(btnLine && btnLine[1]).toContain('flex-shrink:0');
+    });
+});

@@ -268,3 +268,65 @@ describe('fileToImagesV4() destroys the PDF.js document once it is done with it'
         expect(totalDestroyed).toBe(totalCreated);
     });
 });
+
+describe('fileToImagesV4() destroys every failed Vault-password attempt for a locked PDF', () => {
+    // Same defect class as wealthflow-pdf-unlock.js's mail-sync cascade (see
+    // mail_pdf_unlock_efficiency_test.js): every WRONG candidate password
+    // still creates a real PDF.js loading task via getDocument(), and a
+    // rejected promise does not release that task on its own — only the
+    // eventually-successful one used to matter, so N-1 wrong guesses per
+    // locked file leaked one loading task each, compounding across scans.
+    function fakePasswordError() {
+        const e = new Error('No password given');
+        e.name = 'PasswordException';
+        return e;
+    }
+
+    function setup(candidates, correctIndex) {
+        const pdf = {
+            numPages: 1,
+            getPage: async () => makePage(false),
+            destroy: async () => { pdf._destroyCalls = (pdf._destroyCalls || 0) + 1; },
+        };
+        const tasks = [];
+        const getDocument = (opts) => {
+            if (!opts || opts.password === undefined) {
+                return { promise: Promise.reject(fakePasswordError()) };
+            }
+            const idx = candidates.indexOf(opts.password);
+            const task = { _destroyCalls: 0 };
+            task.promise = (correctIndex != null && idx === correctIndex)
+                ? Promise.resolve(pdf)
+                : Promise.reject(new Error('Incorrect Password'));
+            task.destroy = async () => { task._destroyCalls += 1; };
+            tasks.push(task);
+            return task;
+        };
+        const win = { pdfjsLib: { getDocument }, wfVaultPdfPasswords: async () => candidates };
+        const loader = loadModule();
+        const doc = { createElement: (tag) => {
+            if (tag !== 'canvas') throw new Error('unexpected element ' + tag);
+            return makeCanvas([]);
+        } };
+        const m = loader(win, doc, { log() {}, warn() {} }, { getItem: () => null, setItem() {}, removeItem() {} });
+        const file = { type: 'application/pdf', name: 'locked.pdf', arrayBuffer: async () => new ArrayBuffer(8) };
+        return { m, file, pdf, tasks };
+    }
+
+    it("destroys every wrong candidate's loading task, not just the one that finally worked", async () => {
+        const { m, file, pdf, tasks } = setup(['0000000000V', '1990-01-01', '199012345678'], 2);
+        const res = await m.fileToImagesV4(file, { maxPages: 1, maxBytes: 12000 });
+        expect(res.isPdf).toBe(true);
+        expect(tasks.length).toBe(3); // tried candidates in order until the 3rd one opened it
+        expect(tasks[0]._destroyCalls, "first wrong candidate's task was never destroyed").toBe(1);
+        expect(tasks[1]._destroyCalls, "second wrong candidate's task was never destroyed").toBe(1);
+        expect(pdf._destroyCalls).toBe(1); // the actual opened document, released once at the end
+    });
+
+    it('destroys every candidate task when none of the saved Vault keys work', async () => {
+        const { m, file, tasks } = setup(['aaa', 'bbb'], null);
+        await expect(m.fileToImagesV4(file, { maxPages: 1, maxBytes: 12000 })).rejects.toThrow(/Vault keys/);
+        expect(tasks.length).toBe(2);
+        for (const t of tasks) expect(t._destroyCalls).toBe(1);
+    });
+});

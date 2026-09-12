@@ -1073,6 +1073,7 @@
                         cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
                         cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
                         _fbImageData = cv.toDataURL('image/jpeg', 0.7);
+                        cv.width = cv.height = 0;
                         if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + _fbImageData + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
                         if (imgBtn) imgBtn.textContent = '📎 Screenshot attached — tap to change';
                     };

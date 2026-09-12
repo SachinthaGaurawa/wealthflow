@@ -341,14 +341,25 @@
                 var cands = [];
                 try { cands = await window.wfVaultPdfPasswords(); } catch (_) {}
                 var opened = null;
+                // Same defect as mail-sync's unlock cascade (see wealthflow-
+                // pdf-unlock.js openPdfOnce): every WRONG candidate still
+                // creates a real PDF.js loading task, and a rejected promise
+                // does not release it on its own — it has to be destroyed
+                // explicitly. A vault with several saved passwords meant every
+                // locked receipt/statement scanned through AI Scan left one
+                // undestroyed task per wrong guess, compounding across scans
+                // in a session exactly like the mail-sync bug did.
                 for (var ci = 0; ci < cands.length; ci++) {
+                    var _vTask = window.pdfjsLib.getDocument({ data: u8.slice(), password: cands[ci] });
                     try {
-                        opened = await window.pdfjsLib.getDocument({ data: u8.slice(), password: cands[ci] }).promise;
+                        opened = await _vTask.promise;
                         if (opened) {
                             if (typeof window.notify === 'function') window.notify('🔓 Locked PDF opened automatically with your Vault keys', 'success');
                             break;
                         }
-                    } catch (pe) { /* wrong password — try the next candidate */ }
+                    } catch (pe) {
+                        try { if (typeof _vTask.destroy === 'function') await _vTask.destroy(); } catch (_) {}
+                    }
                 }
                 if (opened) { pdf = opened; }
                 else if (cands.length) {
@@ -505,8 +516,18 @@
     }
 
     // Returns an enhanced data-URL (JPEG). On any failure returns the original.
+    //
+    // The canvas release used to sit on ONE success-path line at the bottom of
+    // the try block. Three other exits — the getImageData catch, the missing-
+    // context early return, and the outer catch below — all returned without
+    // ever reaching it, so a canvas up to 3000x3000 (MAX, desktop) stayed
+    // resident on every error path. Same defect class as the PDF-render
+    // canvas leak this file already had fixed elsewhere; `c` is now released
+    // in a finally so every exit path — success, thrown, or early-returned —
+    // clears it exactly once.
     async function _enhanceImageForOCR(dataUrl, opts) {
         opts = opts || {};
+        var c = null;
         try {
             if (!dataUrl || typeof document === 'undefined') return dataUrl;
             var img = await _loadImg(dataUrl);
@@ -522,7 +543,7 @@
             if (longest * scale > MAX) scale = MAX / longest;
             var nw = Math.max(1, Math.round(w * scale)), nh = Math.max(1, Math.round(h * scale));
 
-            var c = document.createElement('canvas');
+            c = document.createElement('canvas');
             c.width = nw; c.height = nh;
             var ctx = c.getContext('2d', { willReadFrequently: true });
             if (!ctx) return dataUrl;
@@ -571,12 +592,13 @@
             for (i = 0; i < total; i++) { var p = sharp[i]; var j = i << 2; d[j] = d[j + 1] = d[j + 2] = p; d[j + 3] = 255; }
             ctx.putImageData(imgData, 0, 0);
             var out = c.toDataURL('image/jpeg', 0.92);
-            // free
-            c.width = c.height = 0; imgData = null; d = null; lum = null; stretched = null; sharp = null;
+            imgData = null; d = null; lum = null; stretched = null; sharp = null;
             return out || dataUrl;
         } catch (e) {
             console.warn('[' + V + '] image enhance skipped:', e && e.message);
             return dataUrl;
+        } finally {
+            if (c) { try { c.width = c.height = 0; } catch (_) {} }
         }
     }
 

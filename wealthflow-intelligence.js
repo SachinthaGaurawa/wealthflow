@@ -40,19 +40,38 @@
     function _money(n) { try { return 'LKR ' + (Number(n) || 0).toLocaleString(); } catch (_) { return 'LKR ' + n; } }
 
     /* =========================================================================
-     * A. SECURITY VAULT  (AES-256-GCM, device-local, encrypted at rest)
+     * A. SECURITY VAULT  (AES-256-GCM, encrypted at rest, synced per account)
      * =========================================================================
      * Threat model (honest):
      *   ✔ Protects against the vault contents being readable in plaintext by
      *     casual inspection, in cloud backups, or by other scripts that don't
      *     hold the device key.
-     *   ✔ Keeps NIC / DOB OUT of the cloud document entirely.
-     *   ✘ Does NOT defend against an attacker with full read access to this
-     *     device's localStorage AND the ability to run code (they'd have both
-     *     key + ciphertext) — but at that point the device PIN/biometric lock
-     *     is the real perimeter. This is the correct, standard tradeoff for a
-     *     personal-finance PWA that must also work under biometric unlock
-     *     (where no typed PIN is available to derive a key from).
+     *   ✔ Keeps NIC / DOB OUT of the cloud document IN PLAINTEXT — only the
+     *     ciphertext, and the key needed to open it, ever leave the device.
+     *   ✘ Does NOT defend against an attacker with full read access to the
+     *     owner's Firestore document (they'd have both key + ciphertext, same
+     *     as anyone with full localStorage access always could) — but at that
+     *     point the account itself is the real perimeter. This is the correct,
+     *     standard tradeoff for data the module's own PDF-unlock code already
+     *     treats as semi-public (see `_pdfCandidatesFrom` below): a NIC and a
+     *     date of birth, not a bank password.
+     *
+     * ── CROSS-DEVICE SYNC (v7.71.0) ──────────────────────────────────────────
+     * This used to be genuinely device-local: `_deviceSecret()` is a random
+     * value generated the first time this device ever needed one, so two
+     * devices derived two different keys and neither could read the other's
+     * `wf_vault_enc` even if the ciphertext were copied over by hand. The
+     * owner asked for that to stop — a NIC saved on the phone should also
+     * unlock statements scanned on the laptop.
+     *
+     * The fix is to sync the KEY, not just the data: `_deviceSecret()` and the
+     * ciphertext now travel together as one pair through `window._wfVaultCloud`
+     * (the same optional `{pull, push}` seam wealthflow-vault.js uses, wired to
+     * a private Firestore doc in index.html). They must always move as a pair
+     * — decrypting with a key from one device against ciphertext from another
+     * simply fails, so `_syncVaultFromCloud()` only ever adopts both fields
+     * from whichever side (local vs cloud) carries the later plaintext
+     * `updatedAt`, never one field from each.
      */
     function _b64(bytes) { var s = ''; for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
     function _ub64(b64) { var bin = atob(b64); var u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
@@ -78,8 +97,50 @@
 
     function vaultExists() { return !!localStorage.getItem('wf_vault_enc'); }
 
+    /**
+     * Pull the key+ciphertext pair from the cloud (when `window._wfVaultCloud`
+     * is wired) and adopt it locally when it is the newer of the two — by the
+     * plaintext `updatedAt` each side carries, never by trusting whichever
+     * answered first. Both fields move together always: a key from one device
+     * paired with ciphertext from another simply fails to decrypt, so this
+     * never adopts `dk` without also adopting the `enc` it was pushed with
+     * (and vice versa).
+     *
+     * Best-effort and silent: no network, no cloud wired, or a signed-out
+     * session all leave this device working exactly as it always did.
+     */
+    async function _syncVaultFromCloud() {
+        try {
+            var cloud = window._wfVaultCloud;
+            if (!cloud || typeof cloud.pull !== 'function') return;
+            var remote = await cloud.pull();
+            var localRaw = null;
+            try { localRaw = localStorage.getItem('wf_vault_enc'); } catch (_) {}
+            var localParsed = null, localUpdatedAt = 0;
+            if (localRaw) { try { localParsed = JSON.parse(localRaw); localUpdatedAt = Number(localParsed.updatedAt) || 0; } catch (_) {} }
+
+            if (!remote) {
+                // Nothing has ever been pushed for this account. Seed the
+                // cloud from whatever is already on THIS device, if anything,
+                // so the next device to open the app finds it. One-time: this
+                // branch never runs again once a first push exists anywhere.
+                if (localParsed && typeof cloud.push === 'function') {
+                    try { await cloud.push({ dk: _deviceSecret(), enc: localParsed, updatedAt: localUpdatedAt }); } catch (_) {}
+                }
+                return;
+            }
+            var remoteUpdatedAt = Number(remote.updatedAt) || 0;
+            if (remoteUpdatedAt > localUpdatedAt) {
+                if (remote.dk) localStorage.setItem('wf_vault_dk', remote.dk);
+                if (remote.enc) localStorage.setItem('wf_vault_enc', JSON.stringify(remote.enc));
+                else localStorage.removeItem('wf_vault_enc'); // the newer state elsewhere is "cleared"
+            }
+        } catch (_) { /* offline, or no cloud wired — local state is still correct */ }
+    }
+
     async function vaultSave(obj) {
         if (!crypto || !crypto.subtle) throw new Error('Secure storage not available in this browser');
+        await _syncVaultFromCloud(); // don't overwrite a newer cloud copy with a stale local save
         // sanitise
         var clean = {
             last4: Array.isArray(obj.last4) ? obj.last4.map(function (x) { return String(x).replace(/\D/g, '').slice(-4); }).filter(Boolean) : [],
@@ -91,11 +152,22 @@
         var iv = crypto.getRandomValues(new Uint8Array(12));
         var data = new TextEncoder().encode(JSON.stringify(clean));
         var ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, data);
-        localStorage.setItem('wf_vault_enc', JSON.stringify({ v: 1, iv: _b64(iv), ct: _b64(new Uint8Array(ct)) }));
+        // `updatedAt` here is deliberately OUTSIDE the ciphertext (unlike the
+        // ISO one already inside `clean` above): two devices need to agree on
+        // whose copy is newer before either one can even decrypt the other's,
+        // since the device secret itself is part of what might differ.
+        var record = { v: 1, iv: _b64(iv), ct: _b64(new Uint8Array(ct)), updatedAt: Date.now() };
+        localStorage.setItem('wf_vault_enc', JSON.stringify(record));
+        try {
+            if (window._wfVaultCloud && typeof window._wfVaultCloud.push === 'function') {
+                await window._wfVaultCloud.push({ dk: _deviceSecret(), enc: record, updatedAt: record.updatedAt });
+            }
+        } catch (_) { /* saved locally regardless; syncs next time a connection exists */ }
         return true;
     }
 
     async function vaultGet() {
+        await _syncVaultFromCloud();
         var raw = localStorage.getItem('wf_vault_enc');
         if (!raw) return null;
         try {
@@ -112,6 +184,11 @@
     function vaultClear() {
         localStorage.removeItem('wf_vault_enc');
         // keep the device key so a future vault re-uses it; remove only data
+        try {
+            if (window._wfVaultCloud && typeof window._wfVaultCloud.push === 'function') {
+                window._wfVaultCloud.push({ dk: _deviceSecret(), enc: null, updatedAt: Date.now() }).catch(function () {});
+            }
+        } catch (_) {}
         return true;
     }
 
@@ -338,7 +415,8 @@
         var last4 = (v && v.last4 || []).join(', ');
         var html = '' +
             '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:14px;">' +
-              'Stored <b>encrypted on this device only</b> (AES-256). Never uploaded in plaintext. ' +
+              'Stored <b>encrypted</b> (AES-256) and kept in sync with your account, so it works the ' +
+              'same on every device you sign into. Never uploaded in plaintext. ' +
               'Used to automatically unlock password-protected bank-statement PDFs.' +
             '</div>' +
             '<label style="font-size:12px;color:var(--text3);">Card last-4 digits (comma separated)</label>' +
@@ -357,7 +435,7 @@
                     nic: o.querySelector('#_vNic').value,
                     dob: o.querySelector('#_vDob').value
                 });
-                _notify('Vault saved and encrypted on this device', 'success');
+                _notify('Vault saved, encrypted, and synced to your account', 'success');
                 o.remove();
             } catch (e) { _notify('Save failed: ' + (e && e.message), 'error'); }
         };
@@ -369,7 +447,7 @@
     /* =========================================================================
      * EXPOSE
      * ========================================================================= */
-    window.wfVault = { save: vaultSave, get: vaultGet, exists: vaultExists, clear: vaultClear, openModal: openVaultModal };
+    window.wfVault = { save: vaultSave, get: vaultGet, exists: vaultExists, clear: vaultClear, openModal: openVaultModal, syncFromCloud: _syncVaultFromCloud };
     window.wfVaultPdfPasswords = vaultPdfPasswords;     // consumed by wealthflow-ai-v4.js PDF loader
     window.wfTrySemanticAllocate = trySemanticAllocate;  // consumed by wealthflow-autonomous.js
     window.wfMatchGoalOrLoan = matchGoalOrLoan;
