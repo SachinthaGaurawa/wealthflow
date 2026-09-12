@@ -32,7 +32,7 @@ export function validScheduleSecret(req, env = process.env) {
 
 export async function invokeBoard(prompt, handler = aiHandler) {
     let status = 200, result;
-    await handler({ method: 'POST', body: { prompt, mode: 'unanimous', temperature: 0, maxTokens: 3500, deadlineMs: 10000 } }, {
+    await handler({ method: 'POST', body: { prompt, financialDecision: true, mode: 'unanimous', temperature: 0, maxTokens: 3500, deadlineMs: 10000 } }, {
         setHeader() {}, status(code) { status = code; return this; }, json(value) { result = value; return this; }, end() {}
     });
     if (status !== 200 || !result?.unanimous || !result.trustworthy || !Array.isArray(result.expected) || result.expected.length < 10 || new Set(result.expected).size !== result.expected.length || !result.fields) throw new Error('ai-consensus-unavailable');
@@ -60,6 +60,22 @@ export async function claimSource(db, ref, uid, now = Date.now()) {
         tx.set(ref, { uid, status: 'processing', leaseToken, leaseUntil: now + 180000, updatedAt: now }, { merge: true });
         return { ...source, uid, leaseToken };
     });
+}
+
+export async function checkpointRows(db, ref, uid, leaseToken, rows) {
+    const rowSetHash = createHash('sha256').update(JSON.stringify(rows.map(row => ({
+        date: row.date, amount: row.amount, direction: row.direction,
+        narration: row.narration || row.description || '', ref: row.ref || ''
+    })))).digest('hex');
+    await db.runTransaction(async tx => {
+        const snap = await tx.get(ref), source = snap.data();
+        if (!snap.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
+        if ((source.rowSetHash && source.rowSetHash !== rowSetHash) || (source.totalRows != null && source.totalRows !== rows.length)) throw new Error('statement-cursor-or-content-changed');
+        // A pre-upgrade partial source has no trustworthy ordering checkpoint.
+        if (!source.rowSetHash && (source.cursor || 0) !== 0) throw new Error('statement-cursor-or-content-changed');
+        tx.set(ref, { rowSetHash, totalRows: rows.length }, { merge: true });
+    });
+    return rowSetHash;
 }
 
 async function quarantineSource(db, uid, ref, leaseToken, reason) {
@@ -155,12 +171,18 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     await enqueue({ env, f });
     return { ok: true, processed: 0, queued: true, migrationMore, recovered };
     }
-    let page = await mailRef.collection('items').where('status', '==', 'pending').limit(1).get();
-    if (!page.docs.length) page = await mailRef.collection('items').where('status', '==', 'processing').limit(50).get();
+    const page = await mailRef.collection('items').where('status', '==', 'pending').limit(50).get();
     let claimed = null, sourceRef;
     for (const doc of page.docs) {
         const source = await claimSource(db, doc.ref, uid);
         if (source) { claimed = source; sourceRef = doc.ref; break; }
+    }
+    if (!claimed) {
+        const expired = await mailRef.collection('items').where('status', '==', 'processing').where('leaseUntil', '<=', Date.now()).limit(50).get();
+        for (const doc of expired.docs) {
+            const source = await claimSource(db, doc.ref, uid);
+            if (source) { claimed = source; sourceRef = doc.ref; break; }
+        }
     }
     if (!claimed) {
         return { ok: true, processed: 0, queued: false };
@@ -186,6 +208,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const { parsed, text } = await read({ ...attachment, passwords, bank: claimed.bank || '', layouts });
         if (textVerdict(text || '').verdict !== VERDICT.STATEMENT) throw new Error('statement-layout-identity-needs-review');
         if (!parsed?.understood || parsed.verdict !== 'parsed' || parsed.reconciliation?.ok === false || !Array.isArray(parsed.rows) || !parsed.rows.length) throw new Error('statement-layout-or-reconciliation-needs-review');
+        await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
         const cursor = claimed.cursor || 0;
         if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
         const user = (await db.collection('users').doc(uid).get()).data() || {};
@@ -254,7 +277,7 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         if (!reviewSnap.exists || review.uid !== owner.uid || review.index !== -1 || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.bank !== evidence.bank || source.status !== 'needs_review' || source.filed === true || (source.cursor || 0) !== 0 || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate')) throw new Error('layout-replay-would-overlap-settled-data');
         tx.set(layoutRef, { uid: owner.uid, bank: evidence.bank, template: result.template, savedAt: Date.now() });
         tx.set(reviewRef, { status: 'mapped', mappedAt: Date.now(), templateId }, { merge: true });
-        tx.set(sourceRef, { status: 'pending', cursor: 0, totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
+        tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
     });
     try { await enqueue({ env, f }); return { ok: true, mapped: true, queued: true }; }
     catch (_) { return { ok: true, mapped: true, queued: false }; }

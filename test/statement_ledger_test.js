@@ -51,6 +51,18 @@ describe('statement ledger', () => {
         expect((await settleStatement(args)).filed).toBe(2);
         expect(args.db.docs.get('users/u').expenses).toHaveLength(2);
     });
+    it('acknowledges an identical occurrence but rejects changed content atomically', async () => {
+        const args = fixture();
+        await settleStatement(args);
+        const renew = () => args.db.docs.set('sources/s', { ...args.db.docs.get('sources/s'), cursor: 0, leaseToken: 'token', leaseUntil: 2000 });
+        renew();
+        expect(await settleStatement(args)).toMatchObject({ duplicates: 1, filed: 0 });
+        renew();
+        const before = structuredClone([...args.db.docs]);
+        args.rows = [{ ...row, amount: 43.10 }];
+        await expect(settleStatement(args)).rejects.toThrow('statement-cursor-or-content-changed');
+        expect([...args.db.docs]).toEqual(before);
+    });
     it('quarantines ambiguous prior manual matches without filing the source', async () => {
         const args = fixture({ expenses: [{ ...row, desc: 'Merchant', bank: 'Bank', card_last4: '1234', id: 'manual' }] });
         expect(await settleStatement(args)).toMatchObject({ review: 1, status: 'needs_review' });

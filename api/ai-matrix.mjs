@@ -476,11 +476,19 @@ function canonical(value) {
     return JSON.stringify(value);
 }
 
+function finiteDecision(value) {
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (Array.isArray(value)) return value.every(finiteDecision);
+    if (value && typeof value === 'object') return Object.values(value).every(finiteDecision);
+    return true;
+}
+
 export function unanimousDecision(results, opts = {}) {
     const all = Array.isArray(results) ? results : [];
     const expected = Array.isArray(opts.expected) ? opts.expected : [];
     const roster = [...new Set(expected)];
-    const rosterValid = roster.length >= 2 && roster.length === expected.length && roster.every(n => typeof n === 'string' && n.trim());
+    const minimumProviders = Number.isInteger(opts.minimumProviders) ? Math.max(2, opts.minimumProviders) : 2;
+    const rosterValid = roster.length >= minimumProviders && roster.length === expected.length && roster.every(n => typeof n === 'string' && n.trim());
     const answered = [], failed = [], invalid = [], values = [];
     for (const name of roster) {
         const matches = all.filter(r => r && r.name === name);
@@ -491,8 +499,9 @@ export function unanimousDecision(results, opts = {}) {
             // Strict JSON only: accepting prose surrounding an object can hide
             // a refusal or qualification that must prevent automatic filing.
             const raw = String(r.reply || '').trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+            if (raw.length > 262144) throw new Error('oversized decision');
             value = JSON.parse(raw);
-            if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length) throw new Error('empty decision');
+            if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length || !finiteDecision(value)) throw new Error('invalid decision');
         } catch (_) { invalid.push(name); continue; }
         answered.push(name);
         values.push({ result: r, value, key: canonical(value) });
@@ -504,7 +513,7 @@ export function unanimousDecision(results, opts = {}) {
         reply: unanimous ? JSON.stringify(values[0].value) : null,
         provider: unanimous ? 'parallel-unanimous-board' : null,
         mode: unanimous ? 'unanimous' : 'needs_review', task: opts.task || TASK.EXTRACTION,
-        unanimous, needsReview: !unanimous, expected: roster, answered, failed, invalid,
+        unanimous, needsReview: !unanimous, minimumProviders, expected: roster, answered, failed, invalid,
         reason: unanimous ? null : !rosterValid ? 'insufficient_or_invalid_roster' : unexpected ? 'unexpected_provider' : failed.length ? 'provider_unavailable' : invalid.length ? 'invalid_response' : 'provider_disagreement',
         fields: unanimous ? values[0].value : null,
         corroboration: { agreed: unanimous ? roster.length : 0, of: roster.length, score: unanimous ? 1 : 0,

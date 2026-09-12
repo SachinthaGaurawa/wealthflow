@@ -53,6 +53,10 @@ async function parse(text, htmlForData = '') {
                 // Require review until the layout has explicit evidence.
                 parsed.verdict = 'unverified'; parsed.understood = false;
                 parsed.reason = 'Embedded transaction data requires completeness verification.';
+                parsed.layout ||= {};
+                parsed.layout.embeddedRows = data.length;
+                parsed.layout.explicitDirectionRows = data.filter(r => r.directionSource && r.directionSource !== 'assumed').length;
+                parsed.layout.embeddedCompletenessVerified = false;
                 text = context.inputText;
             }
         }
@@ -70,13 +74,79 @@ async function htmlText(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     if (doc.querySelectorAll('tr').length > STATEMENT_LIMITS.rows + 100) fail('STATEMENT_ROW_LIMIT');
     doc.querySelectorAll('script,style,noscript,iframe,object,embed,template,svg,canvas').forEach(n => n.remove());
+    // Preserve column meaning before flattening the inert document. A running
+    // balance or numeric reference must never become the transaction amount.
+    let invalidRows = 0;
+    for (const table of doc.querySelectorAll('table')) {
+        const rows = Array.from(table.querySelectorAll('tr')).filter(r => r.closest('table') === table);
+        let columns = null;
+        let previousBalance = null;
+        const lines = [];
+        for (const row of rows) {
+            const cells = Array.from(row.children).filter(n => /^(TD|TH)$/.test(n.tagName)).map(n => n.textContent.replace(/\s+/g, ' ').trim());
+            const names = cells.map(s => s.toLowerCase().replace(/[^a-z]/g, ''));
+            const index = pattern => names.findIndex(s => pattern.test(s));
+            const date = index(/^(?:transactiondate|postingdate|posteddate|date)$/);
+            const description = index(/^(?:description|transactiondescription|particulars|narration|merchant|details)$/);
+            const amount = index(/^(?:amount|transactionamount)$/);
+            const debit = index(/^(?:debit|debits|withdrawal|withdrawals|debitamount)$/);
+            const credit = index(/^(?:credit|credits|deposit|deposits|creditamount)$/);
+            if (date >= 0 && description >= 0 && (amount >= 0 || (debit >= 0 && credit >= 0))) {
+                columns = { date, description, amount, debit, credit,
+                    marker: index(/^(?:drcr|crdr|direction|type)$/),
+                    reference: index(/^(?:reference|referenceno|ref|refno|transactionreference)$/),
+                    balance: index(/^(?:balance|runningbalance)$/) };
+                continue;
+            }
+            if (!columns || !cells.length) { lines.push(cells.join(' ')); continue; }
+            const c = columns;
+            if (!cells[c.date]) { lines.push(cells.join(' ')); continue; }
+            const money = raw => {
+                const s = String(raw || '').trim();
+                if (!s || /^[-–—]$/.test(s)) return 0;
+                if (!/^(?:(?:LKR|Rs\.?)\s*)?\d+(?:,\d{3})*(?:\.\d{1,2})?\s*(?:DR|CR)?$/i.test(s)) return NaN;
+                return Number(s.replace(/(?:LKR|Rs\.?|DR|CR)|[,\s]/gi, ''));
+            };
+            let value, direction = '';
+            if (c.amount >= 0) {
+                value = money(cells[c.amount]);
+                const marker = `${cells[c.amount] || ''} ${cells[c.marker] || ''}`;
+                const creditMarked = /\b(?:CR|credit)\b/i.test(marker), debitMarked = /\b(?:DR|debit)\b/i.test(marker);
+                if (creditMarked !== debitMarked) direction = creditMarked ? 'CR' : 'DR';
+            } else {
+                const debitValue = money(cells[c.debit]), creditValue = money(cells[c.credit]);
+                if (Number.isFinite(debitValue) && Number.isFinite(creditValue) && ((debitValue > 0) !== (creditValue > 0))) {
+                    value = debitValue || creditValue; direction = debitValue > 0 ? 'DR' : 'CR';
+                }
+            }
+            if (!Number.isFinite(value) || value <= 0 || !direction) {
+                // Preserve the candidate and force review instead of silently
+                // dropping a row or interpreting a conflicting column.
+                invalidRows++;
+                lines.push(cells.join(' '));
+                continue;
+            }
+            if (c.balance >= 0 && cells[c.balance]) {
+                const balance = money(cells[c.balance]);
+                if (!Number.isFinite(balance)) invalidRows++;
+                else {
+                    if (previousBalance !== null && Math.abs(balance - previousBalance - (direction === 'CR' ? value : -value)) > 0.011) invalidRows++;
+                    previousBalance = balance;
+                }
+            }
+            const narration = cells[c.description].replace(/\b(?:DR|CR)\b/gi, '').trim();
+            const ref = c.reference >= 0 && cells[c.reference] ? ` REF:${cells[c.reference]}` : '';
+            lines.push(`${cells[c.date]} ${narration}${ref} ${value.toFixed(2)} ${direction}`);
+        }
+        if (columns) table.textContent = `\n${lines.join('\n')}\n`;
+    }
     const blocks = new Set(['TR', 'DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'H3', 'TABLE', 'SECTION']);
     const visit = node => {
         if (node.nodeType === 3) return node.textContent;
         let out = Array.from(node.childNodes || [], visit).join(node.tagName === 'TR' ? ' ' : '');
         return blocks.has(node.tagName) ? `\n${out}\n` : out;
     };
-    return visit(doc.documentElement || doc).split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
+    return { text: visit(doc.documentElement || doc).split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n'), invalidRows };
 }
 export async function readHtmlStatement(bytes, passwords = []) {
     let html;
@@ -110,7 +180,14 @@ export async function readHtmlStatement(bytes, passwords = []) {
         if (!opened) fail('PASSWORD_FAILED');
         html = opened;
     }
-    return parse(await htmlText(html), html);
+    const extracted = await htmlText(html);
+    const result = await parse(extracted.text, html);
+    if (extracted.invalidRows) {
+        result.parsed.verdict = 'unverified'; result.parsed.understood = false;
+        result.parsed.htmlIncompleteRows = extracted.invalidRows;
+        result.parsed.reason = 'HTML transaction columns contain conflicting or incomplete evidence.';
+    }
+    return result;
 }
 export async function readPdfStatement(bytes, passwords = []) {
     const buffer = inputBytes(bytes);
@@ -155,7 +232,7 @@ export async function readStatement({ bytes, filename = '', passwords = [], bank
     if (value.subarray(0, 5).toString() === '%PDF-') result = await readPdfStatement(value, passwords);
     else if (/\.html?$/i.test(filename) || /^\s*(?:<!doctype html|<html)/i.test(value.subarray(0, 1024).toString())) result = await readHtmlStatement(value, passwords);
     else fail('ATTACHMENT_TYPE_UNSUPPORTED');
-    if (result.parsed.verdict === 'parsed' || result.parsed.reason === 'Embedded transaction data requires completeness verification.' || !bank || !Array.isArray(layouts)) return result;
+    if (result.parsed.verdict === 'parsed' || result.parsed.htmlIncompleteRows || result.parsed.reason === 'Embedded transaction data requires completeness verification.' || !bank || !Array.isArray(layouts)) return result;
     // A template is a bounded date translation, never a replacement for the
     // common parser's financial reconciliation and direction checks.
     for (const saved of layouts.slice(0, 6)) {

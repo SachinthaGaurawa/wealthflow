@@ -40,4 +40,10 @@ describe('financial parallel board unanimity', () => {
         expect(d.fields).toBeNull();
         expect(d.needsReview).toBe(true);
     });
+    it('does not equate overflowing JSON numbers with null or lower a required board size', () => {
+        const d = board(expected.map(name => ({ name, ok: true, reply: '{"amount":1e309}' })));
+        expect(d.reason).toBe('invalid_response'); expect(d.fields).toBeNull();
+        const small = unanimousDecision(agreed(), { expected, minimumProviders: 10 });
+        expect(small.reason).toBe('insufficient_or_invalid_roster');
+    });
 });

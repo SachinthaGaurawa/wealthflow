@@ -61,6 +61,10 @@ async function transportWithTimeout(url, options, timeoutMs = 22000) {
     }
 }
 
+function isFinancialTask(task) {
+    return typeof task === 'string' && /^(financial|extraction|categorization|routing|verification|vision)$/i.test(task);
+}
+
 export default async function handler(req, res) {
     // CORS — allow the public Vercel deployment to be called from anywhere
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -71,7 +75,12 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     const { prompt, image, temperature, maxTokens, preferredProvider } = req.body || {};
-    if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+    if (typeof prompt !== 'string' || !prompt.trim()) return res.status(400).json({ error: 'Missing prompt' });
+    // Financial consumers declare their intent explicitly. Conservative legacy
+    // detection also prevents JSON/category callers from bypassing the board
+    // through wording changes or a fastest-mode override.
+    const wantsJSON = /\bjson\b|\{[^}]*"vendor"[^}]*\}/i.test(prompt) || req.body?.responseFormat === 'json';
+    const financialDecision = req.body?.financialDecision === true || isFinancialTask(req.body?.task) || wantsJSON || !!image || /\bcategor(?:ize|ise|ization|isation|y|ies)\b|\broute\b[\s\S]*\btransaction/i.test(prompt);
     const requestedDeadline = req.body?.deadlineMs;
     const deadlineMs = Number.isInteger(requestedDeadline) ? Math.max(2000, Math.min(24000, requestedDeadline)) : 24000;
     const fetchWithTimeout = (url, options, timeoutMs = 22000) => transportWithTimeout(url, options, Math.min(timeoutMs, deadlineMs));
@@ -111,7 +120,7 @@ export default async function handler(req, res) {
 
         const generationConfig = { temperature: temp, maxOutputTokens: tokens };
         // If the prompt asks for JSON, hint the model to enforce it
-        if (/\{[^}]*"vendor"[^}]*\}/i.test(prompt) || /return only.*json/i.test(prompt)) {
+        if (wantsJSON || financialDecision) {
             generationConfig.responseMimeType = 'application/json';
         }
 
@@ -410,10 +419,10 @@ export default async function handler(req, res) {
         Fireworks: fireworksKey, OpenRouter: openrouterKey, Cerebras: cerebrasKey,
         SambaNova: sambanovaKey, NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey };
     engines = engines.filter(engine => Boolean(configured[engine.name]));
+    const expectedNames = Object.keys(configured).filter(name => Boolean(configured[name]));
     if (!engines.length) return res.status(503).json({ error: 'No AI providers configured.', needsReview: true, trustworthy: false, corroboration: { agreed: 0, of: 0, score: 0 } });
 
     // Wants JSON (receipt extraction etc.) → use consensus for max accuracy.
-    const wantsJSON = /\{[^}]*"vendor"[^}]*\}|return only.*json|extract.*json/i.test(prompt);
     const requestedMode = (req.body && req.body.mode) ? String(req.body.mode) : null;
     // DEFAULT CHANGED: prose and chat used to default to `fastest`, a race whose
     // winner was returned unread by anyone else. It now defaults to
@@ -421,7 +430,7 @@ export default async function handler(req, res) {
     // latency is a legitimate thing to ask for — but the reply is labelled with
     // what actually backed it, so nothing can present one engine as agreement.
     // Financial extraction may never opt into the fastest/quorum shortcut.
-    const mode = (isVision || wantsJSON) ? 'unanimous' : (requestedMode || 'corroborated');
+    const mode = financialDecision ? 'unanimous' : (requestedMode || 'corroborated');
     const task = isVision ? Matrix.TASK.VISION : wantsJSON ? Matrix.TASK.EXTRACTION : Matrix.TASK.PROSE;
 
     // Wrap each engine call so a rejection becomes a tagged result, never throws.
@@ -450,9 +459,10 @@ export default async function handler(req, res) {
     // arrived by then goes to the matrix, which picks the answer the arrivals
     // agree on and reports how well supported it is — including the case that
     // matters most here, two answers that read alike and name different money.
+    let pending;
     if (mode === 'fastest' || mode === 'corroborated') {
         const target = mode === 'fastest' ? 1 : Math.min(QUORUM, engines.length);
-        const pending = engines.map(run);
+        pending = engines.map(run);
         const settled = [];
         await new Promise((resolve) => {
             let remaining = pending.length;
@@ -478,7 +488,8 @@ export default async function handler(req, res) {
                 trustworthy: Matrix.trustworthy(decision),
                 engines: engines.map(e => e.name),
                 answered: decision.answered,
-                failed: decision.failed
+                failed: decision.failed,
+                financialDecision: false, advisoryOnly: true
             });
         }
         // Nothing valid arrived. Fall through and wait for the rest rather than
@@ -486,14 +497,16 @@ export default async function handler(req, res) {
     }
 
     // ---- MODE: CONSENSUS (gather all, choose the best) ----
-    const results = await Promise.all(engines.map(run));
+    const results = await Promise.all(pending || engines.map(run));
     if (mode === 'unanimous') {
-        const decision = Matrix.unanimousDecision(results, { task, expected: engines.map(e => e.name) });
+        // A configured text-only member cannot silently disappear from a vision
+        // board. Such requests need review or conversion to text evidence first.
+        const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 10 });
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
         return res.status(decision.unanimous ? 200 : 422).json({
             ...decision, trustworthy: Matrix.trustworthy(decision),
-            engines: engines.map(e => e.name), consensusOf: decision.answered.length,
+            engines: engines.map(e => e.name), financialDecision: true, advisoryOnly: false, consensusOf: decision.answered.length,
             consensusConfidence: decision.unanimous ? 1 : 0,
             error: decision.unanimous ? null : 'AI consensus requires review.'
         });
@@ -604,6 +617,7 @@ export default async function handler(req, res) {
             agreed: good.length, of: good.length, score: 1, dissent: [], nearMisses: [], numericConflict: false
         },
         trustworthy: proseDecision ? Matrix.trustworthy(proseDecision) : good.length >= 2,
-        latencyMs: best.ms
+        latencyMs: best.ms,
+        financialDecision: false, advisoryOnly: true
     });
 }

@@ -276,15 +276,19 @@ async function ingestMailbox(db, note, env, f, res) {
 
     let pending = state.pendingCollection;
     if (!pending || !Array.isArray(pending.ids) || !Number.isSafeInteger(pending.cursor)) {
-        let listed = state.historyId
+        const senderClauses = approvedClauses(senderList).sort();
+        // History only contains newly arriving messages. An address approved
+        // today may already have years of statements in this mailbox.
+        const senderCatchup = JSON.stringify(state.collectedSenderClauses || null) !== JSON.stringify(senderClauses);
+        let listed = state.historyId && !senderCatchup
             ? await messagesSince(token, state.historyId, f)
-            : await recentMessages(token, f, 50, approvedClauses(senderList));
+            : await recentMessages(token, f, 50, senderClauses);
         if (!listed.ok && listed.reason === 'history-too-old') listed = await recentMessages(token, f, 50, approvedClauses(senderList));
         if (!listed.ok) return j(res, 500, { ok: false, error: listed.reason });
         // Stage the complete collection before downloading. A slow historical
         // mailbox resumes in bounded batches without prematurely moving history.
         const candidate = { id: globalThis.crypto.randomUUID(), ids: listed.ids,
-            cursor: 0, target: String(listed.historyId || note.historyId || '') };
+            cursor: 0, senderClauses, target: String(listed.historyId || note.historyId || '') };
         try {
             pending = await db.runTransaction(async tx => {
                 const current = await tx.get(stateRef);
@@ -386,9 +390,18 @@ async function ingestMailbox(db, note, env, f, res) {
                 for (const p of write.parts) {
                     await ref.collection('parts').doc(String(p.i)).set({ i: p.i, d: p.d });
                 }
-                await ref.set({ ...write.manifest, status: 'pending', filed: false,
-                    ...(state.uid ? { uid: state.uid } : {}) });
-                stored.push({ key: item.key, bank: item.bank, chunked: write.chunked });
+                const created = await db.runTransaction(async tx => {
+                    const existing = await tx.get(ref);
+                    const currentState = await tx.get(stateRef);
+                    if (existing.exists) return false;
+                    // Settings revocation during a download must not publish a
+                    // new manifest. A later approval triggers historical replay.
+                    if (!planMessage(msg, policyFrom(normalizeList(sendersOf(currentState.data() || {})))).ok) return false;
+                    tx.set(ref, { ...write.manifest, status: 'pending', filed: false,
+                        ...(currentState.data()?.uid ? { uid: currentState.data().uid } : {}) });
+                    return true;
+                });
+                stored.push({ key: item.key, bank: item.bank, chunked: write.chunked, duplicate: !created });
             } catch (_) {
                 // A failure on ONE attachment is retryable; the manifest was not
                 // written, so the device will never see a partial statement.
@@ -425,6 +438,7 @@ async function ingestMailbox(db, note, env, f, res) {
             const complete = batchEnd === pending.ids.length;
             const next = complete ? pending.target : '';
             updates.pendingCollection = complete ? null : { ...pending, cursor: Math.max(active.cursor || 0, batchEnd) };
+            if (complete && Array.isArray(pending.senderClauses)) updates.collectedSenderClauses = pending.senderClauses;
             // Concurrent redeliveries cannot move a durable cursor backwards.
             if (/^\d+$/.test(next) && (!/^\d+$/.test(String(previous || '')) || BigInt(next) > BigInt(previous))) updates.historyId = next;
             tx.set(stateRef, updates, { merge: true });

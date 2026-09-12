@@ -3,7 +3,8 @@
   "outputDirectory": ".",
   "functions": {
     "api/*.js": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "{wealthflow-statement-parser*.js,wealthflow-html-statement*.js,wealthflow-layout-memory*.js,node_modules/pdfjs-dist/standard_fonts/**,node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs}"
     }
   },
   "headers": [

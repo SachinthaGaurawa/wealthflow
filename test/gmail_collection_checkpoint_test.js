@@ -14,7 +14,7 @@ function database() {
 }
 it('checkpoints a large collection and advances history only after every batch succeeds', async () => {
     const db = database(), ref = db.collection('wf-mail').doc('owner_example_org');
-    await ref.set({ email: 'owner@example.org', refresh_token: 'test-token', historyId: '100' });
+    await ref.set({ email: 'owner@example.org', refresh_token: 'test-token', historyId: '100', collectedSenderClauses: [] });
     let fail = false, downloads = 0;
     const f = async url => {
         if (url.includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'test-access' }) };

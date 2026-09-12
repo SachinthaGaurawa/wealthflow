@@ -19,8 +19,9 @@ describe('parallel unanimous endpoint', () => {
         await Promise.resolve();
         expect(res.body).toBeUndefined();
         releases[1](); await pending;
-        expect(res.code).toBe(200);
-        expect(res.body.mode).toBe('unanimous');
+        expect(res.code).toBe(422);
+        expect(res.body.mode).toBe('needs_review');
+        expect(res.body.reason).toBe('insufficient_or_invalid_roster');
         expect(res.body.engines).toEqual(['Gemini', 'Groq']);
     });
     it('returns review without a financial reply when a configured engine fails', async () => {
@@ -32,5 +33,44 @@ describe('parallel unanimous endpoint', () => {
         const res = response(); await handler(request, res);
         expect(res.code).toBe(422); expect(res.body.reply).toBeNull();
         expect(res.body.failed).toContain('Groq'); expect(res.body.needsReview).toBe(true);
+    });
+    it('requires ten members for explicit financial intent regardless of prose wording', async () => {
+        vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
+        vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
+            ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
+            : { choices: [{ message: { content: '{"approved":true}' } }] } })));
+        const res = response();
+        await handler({ method: 'POST', body: { prompt: 'Decide the destination', financialDecision: true, mode: 'fastest' } }, res);
+        expect(res.code).toBe(422); expect(res.body.reply).toBeNull(); expect(res.body.minimumProviders).toBe(10);
+    });
+    it('accepts only the entire ten-provider board and recognizes return JSON wording', async () => {
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY']) vi.stubEnv(key, 'test');
+        vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
+            ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
+            : { choices: [{ message: { content: '{"approved":true}' } }] } })));
+        const res = response();
+        await handler({ method: 'POST', body: { prompt: 'Return JSON with a decision', mode: 'fastest' } }, res);
+        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(10);
+        expect(res.body.unanimous).toBe(true); expect(res.body.financialDecision).toBe(true);
+        expect(fetch).toHaveBeenCalledTimes(10);
+    });
+    it('does not call failing prose engines a second time after quorum exhaustion', async () => {
+        vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
+        vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+        const res = response(); await handler({ method: 'POST', body: { prompt: 'Hello' } }, res);
+        expect(res.code).toBe(503); expect(fetch).toHaveBeenCalledTimes(2);
+    });
+    it('keeps a failed tenth configured member in the required board', async () => {
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY']) vi.stubEnv(key, 'test');
+        vi.stubGlobal('fetch', vi.fn(async url => {
+            if (url.includes('sambanova')) throw new Error('offline');
+            return { ok: true, json: async () => url.includes('googleapis')
+                ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
+                : { choices: [{ message: { content: '{"approved":true}' } }] } };
+        }));
+        const res = response(); await handler(request, res);
+        expect(res.code).toBe(422); expect(res.body.expected).toHaveLength(10);
+        expect(res.body.failed).toEqual(['SambaNova']); expect(res.body.reason).toBe('provider_unavailable');
+        expect(res.body.reply).toBeNull(); expect(res.body.trustworthy).toBe(false);
     });
 });

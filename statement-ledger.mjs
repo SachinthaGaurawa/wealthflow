@@ -75,9 +75,13 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const outcome = { filed: 0, duplicates: 0, review: 0, cursor: cursor + rows.length };
         const writes = [];
         rows.forEach((row, offset) => {
-            if (ledgerSnaps[offset].exists) { outcome.duplicates++; return; }
             const index = cursor + offset, id = ledgerRefs[offset].id;
             const context = { bank, last4, statementType, sourcePath: sourceRef.path, index };
+            const fingerprint = hash(rowIdentity(row, context));
+            if (ledgerSnaps[offset].exists) {
+                if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');
+                outcome.duplicates++; return;
+            }
             let reason = validateSettlementRow(row, decisions[offset], context);
             const decision = decisions[offset] || {};
             const module = modules[decision.module];
@@ -88,7 +92,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             // Even a matching bank ref can recur (batch/payment references). A
             // cross-source alias needs occurrence mapping by the review user.
             if (exact.length === 1 && matching.length === 1) {
-                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', matchedId: String(exact[0].id || ''), settledAt: now }]);
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', fingerprint, matchedId: String(exact[0].id || ''), settledAt: now }]);
                 outcome.duplicates++; return;
             }
             if (matching.length) reason = 'ambiguous-cross-source-match';
