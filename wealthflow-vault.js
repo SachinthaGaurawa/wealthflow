@@ -427,6 +427,28 @@ async function _cloudPush(blob, deps) {
 }
 
 /**
+ * Pull the cloud copy (when `deps.cloud` is wired) and cache it locally when
+ * it is newer than whatever is already on this device — with NO PIN and NO
+ * key derivation, so it is safe to call at boot, before the owner has typed
+ * anything, purely to make `isSet()` tell the truth on a device that has
+ * never been unlocked here yet. `unlock()` below does the same reconciliation
+ * itself (a stale cache between boot and the next unlock would otherwise
+ * still open with a stale blob), so calling `hydrate()` first is an
+ * optimisation for the UI, never a requirement for correctness.
+ *
+ * Returns the blob that ended up on disk (local or the newly-cached remote),
+ * or null when neither device nor cloud has ever saved one.
+ */
+export async function hydrate(deps = {}) {
+    const st = deps.storage || (typeof localStorage !== 'undefined' ? localStorage : null);
+    const local = readBlob(st);
+    const remote = await _cloudPull(deps);
+    const blob = _newer(local, remote);
+    if (blob && blob === remote) writeBlob(blob, st); // cache the winning cloud copy for offline use
+    return blob;
+}
+
+/**
  * Derive and cache the key for this session, verifying it against the stored
  * blob when one exists so a wrong PIN is refused up front rather than silently
  * caching a key that decrypts nothing.
@@ -438,15 +460,11 @@ async function _cloudPush(blob, deps) {
  * blob at all — only the same PIN used to create it elsewhere.
  */
 export async function unlock(pin, deps = {}) {
-    const st = deps.storage || (typeof localStorage !== 'undefined' ? localStorage : null);
     const p = pin == null ? '' : String(pin);
     if (p.length < MIN_PIN) return { ok: false, reason: VAULT.BAD_PIN, entries: [] };
     if (!subtleOf(deps)) return { ok: false, reason: VAULT.NO_CRYPTO, entries: [] };
 
-    const local = readBlob(st);
-    const remote = await _cloudPull(deps);
-    const blob = _newer(local, remote);
-    if (blob && blob === remote) writeBlob(blob, st); // cache the winning cloud copy for offline use
+    const blob = await hydrate(deps);
 
     const saltB64 = blob ? blob.salt : newSalt(deps);
     const key = await deriveKey(p, b64ToBytes(saltB64), deps);
@@ -503,7 +521,7 @@ const API = {
     STORE_KEY, KDF, VAULT, MIN_PIN,
     normaliseEntry, normaliseAll, deriveKey, seal, openSealed, candidatesFor,
     isSet, readBlob, writeBlob, destroy, newSalt,
-    unlock, lock, isUnlocked, list, save,
+    unlock, lock, isUnlocked, list, save, hydrate,
 };
 
 if (typeof window !== 'undefined') window.WFVault = API;

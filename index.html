@@ -16025,6 +16025,19 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                 currentUser = user;
                                 window.currentUser = user;
                                 userDocRef = db.collection('users').doc(user.uid);
+                                // v7.71.0 — hydrate both password vaults from the cloud in the
+                                // background, with NO PIN and no key derivation for either one
+                                // (see hydrate() in wealthflow-vault.js / syncFromCloud() in
+                                // wealthflow-intelligence.js). Without this, isSet()/exists() on
+                                // a device that has never opened the vault UI here still say
+                                // "no vault" for a vault that genuinely exists on this account,
+                                // until the owner opens it once — so "Manage" vs "Set Up" in
+                                // Settings would lag reality on every new device. Deliberately
+                                // NOT awaited: boot must never wait on this.
+                                setTimeout(() => {
+                                    try { if (window.WFVault && window.WFVault.hydrate) window.WFVault.hydrate({ cloud: window._wfBankVaultCloud }); } catch (_) {}
+                                    try { if (window.wfVault && window.wfVault.syncFromCloud) window.wfVault.syncFromCloud(); } catch (_) {}
+                                }, 1500);
                                 if (splashText) splashText.textContent = "Syncing with cloud...";
                                 console.log('[AUTH] ✅ User authenticated:', user.email, 'UID:', user.uid);
                                 // User is signed in (persisted) → ensure the

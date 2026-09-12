@@ -205,7 +205,10 @@ export const BUDGETS = {
     // Raised again for the cross-device vault sync fix: the Firestore glue for
     // `users/{uid}/vault/{bankpw,secvault}` and the two updated call sites add
     // 244 bytes (measured 2,050,244). No new script requests.
-    htmlBytes: 2_051_000,
+    // Raised again for the boot-time hydrate() wiring that makes isSet()/
+    // exists() accurate on a device that has never opened the vault UI here
+    // (measured 2,051,489). No new script requests.
+    htmlBytes: 2_052_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -380,7 +383,7 @@ export const BUDGETS = {
      * keeping a second copy of the arithmetic. */
     // Measured 1,842,217 across 71 modules after cloud vault/review integration;
     // encrypted HTML intake and exact sender gates account for the other growth.
-    totalJsBytes: 1_870_000, // measured 1,869,343 after the cross-device vault sync fix (wealthflow-vault.js + wealthflow-intelligence.js)
+    totalJsBytes: 1_871_000, // measured 1,870,197 after adding hydrate() (wealthflow-vault.js) for the boot-time, no-PIN vault sync
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

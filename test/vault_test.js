@@ -42,7 +42,7 @@ import V, {
     STORE_KEY, KDF, VAULT, MIN_PIN,
     normaliseEntry, normaliseAll, deriveKey, seal, openSealed, candidatesFor,
     isSet, readBlob, writeBlob, destroy, newSalt,
-    unlock, lock, isUnlocked, list, save, _resetSession,
+    unlock, lock, isUnlocked, list, save, hydrate, _resetSession,
 } from '../wealthflow-vault.js';
 
 const deps = { subtle: webcrypto.subtle, randomBytes: (n) => webcrypto.getRandomValues(new Uint8Array(n)) };
@@ -406,6 +406,17 @@ describe('unlocking, saving and locking', () => {
     });
 });
 
+/** An in-memory "cloud" standing in for the real Firestore glue wired in
+ *  index.html — shared across every sync-related describe block below. */
+function fakeCloud() {
+    let stored = null;
+    return {
+        pull: async () => stored,
+        push: async (blob) => { stored = blob; },
+        _peek: () => stored,
+    };
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * CROSS-DEVICE SYNC (v7.71.0) — the owner's complaint: a password saved on
  * one device was invisible everywhere else. `deps.cloud` is the injected
@@ -413,15 +424,6 @@ describe('unlocking, saving and locking', () => {
  * the real Firestore glue wired in index.html.
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('cross-device sync via deps.cloud', () => {
-    function fakeCloud() {
-        let stored = null;
-        return {
-            pull: async () => stored,
-            push: async (blob) => { stored = blob; },
-            _peek: () => stored,
-        };
-    }
-
     it('save() pushes the exact same ciphertext blob it just wrote locally', async () => {
         const st = fakeStore();
         const cloud = fakeCloud();
@@ -514,5 +516,60 @@ describe('cross-device sync via deps.cloud', () => {
         const first = await unlock(PIN, d);
         expect(first).toMatchObject({ ok: true, fresh: true });
         expect(await save(entries, d)).toMatchObject({ ok: true });
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * hydrate() — the boot-time, no-PIN half of sync
+ * ═══════════════════════════════════════════════════════════════════════════
+ * isSet() only ever looks at THIS device's storage, so a device that has
+ * never been unlocked shows "Set Up" instead of "Manage" for a vault that
+ * genuinely exists elsewhere on the same account — accurate, but only after
+ * the owner opens the vault and types the PIN once. hydrate() lets the host
+ * page fix that BEFORE the PIN is ever asked for, since knowing a vault
+ * exists needs none of the secrets deriving its key does.
+ */
+describe('hydrate() — no PIN, so isSet() can be right before the owner types anything', () => {
+    it('caches a cloud-only vault locally, with no PIN involved at all', async () => {
+        const cloud = fakeCloud();
+        const deviceA = { ...deps, storage: fakeStore(), cloud };
+        await unlock(PIN, deviceA);
+        await save(entries, deviceA);
+
+        const deviceB = { ...deps, storage: fakeStore(), cloud };
+        expect(isSet(deviceB.storage), 'device B looked set up before it ever synced').toBe(false);
+        const blob = await hydrate(deviceB);
+        expect(blob, 'hydrate() did not find the cloud copy').toBeTruthy();
+        expect(isSet(deviceB.storage), "isSet() still doesn't know the vault exists after hydrate()").toBe(true);
+    });
+
+    it('is a pure cache-fill: it never unlocks a session or exposes entries', async () => {
+        const cloud = fakeCloud();
+        const deviceA = { ...deps, storage: fakeStore(), cloud };
+        await unlock(PIN, deviceA);
+        await save(entries, deviceA);
+        _resetSession();
+
+        const deviceB = { ...deps, storage: fakeStore(), cloud };
+        await hydrate(deviceB);
+        expect(isUnlocked(), 'hydrate() must never unlock a session — it has no PIN to verify with').toBe(false);
+        expect((await list(deviceB)).ok, 'a locked vault must still refuse to list').toBe(false);
+    });
+
+    it('does nothing harmful when there is no cloud and no local vault', async () => {
+        const d = { ...deps, storage: fakeStore() };
+        expect(await hydrate(d)).toBe(null);
+        expect(isSet(d.storage)).toBe(false);
+    });
+
+    it('a pull failure (offline) leaves an existing local vault exactly as it was', async () => {
+        const st = fakeStore();
+        await unlock(PIN, { ...deps, storage: st });
+        await save(entries, { ...deps, storage: st });
+
+        const flaky = { ...deps, storage: st, cloud: { pull: async () => { throw new Error('offline'); } } };
+        const blob = await hydrate(flaky);
+        expect(blob).toBeTruthy();
+        expect(isSet(st)).toBe(true);
     });
 });
