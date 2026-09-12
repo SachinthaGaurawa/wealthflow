@@ -32,7 +32,7 @@ jobs:
           WF_RESPONSIVE_ARTIFACTS: responsive-artifacts
       - name: Preserve screenshots and measurements
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: statement-responsive
           path: responsive-artifacts
