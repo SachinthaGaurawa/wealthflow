@@ -55,6 +55,41 @@
     // PDF.js can detach the ArrayBuffer it's given, so pass a fresh copy each attempt
     function _copy(buf) { return new Uint8Array(buf).slice(); }
 
+    /*  openPdfOnce(arrayBuffer, password)
+     *
+     *  ONE attempt at ONE password. No vault lookup, no user prompt, no
+     *  cascade — the raw primitive openPdf() below builds its cascade out of.
+     *
+     *  WHY THIS EXISTS: wealthflow-mail-intake.js's unlock() already owns a
+     *  "try no password, then every vault candidate in order" loop for a mail
+     *  sync batch. It used to drive that loop by calling the FULL openPdf()
+     *  below on every candidate — and openPdf() itself re-runs a complete
+     *  vault cascade (every saved password, via _vaultCandidates) before ever
+     *  looking at the specific candidate it was asked to try. For V saved
+     *  passwords that is roughly V attempts × V internal retries = O(V²)
+     *  PDF.js decrypt/destroy cycles to unlock ONE locked statement, instead
+     *  of O(V) — and every real bank statement is locked. A sync batch with
+     *  several locked statements turned into dozens of rapid PDF.js
+     *  create/decrypt/destroy cycles, real memory and CPU churn that peaked
+     *  exactly when the batch finished — which is when the app was observed
+     *  to crash. Nothing here leaks in the sense of never releasing memory
+     *  (every failed attempt still destroys its loading task, see below); the
+     *  bug was doing V times more of that churn than the unlock was owed.
+     */
+    async function openPdfOnce(arrayBuffer, password) {
+        var lib = await ensurePdfJs();
+        var task = lib.getDocument({ data: _copy(arrayBuffer), password: password || undefined });
+        try {
+            var doc = await task.promise;
+            doc.__wasEncrypted = password != null;
+            doc.__unlockedBy = password != null ? 'vault' : null;
+            return doc;
+        } catch (e) {
+            try { if (typeof task.destroy === 'function') await task.destroy(); } catch (_) {}
+            throw e;
+        }
+    }
+
     /*  openPdf(arrayBuffer, askPassword)
      *  askPassword(isRetry) → Promise<string|null>  (null = user cancelled)
      *  Resolves the pdf document, or null if the user cancelled the password box.
@@ -264,6 +299,6 @@
         });
     }
 
-    window.WFPdfUnlock = { getStatementText: getStatementText, openPdf: openPdf, extractText: extractText, promptPassword: promptPassword, _itemsToLines: _itemsToLines, tryCandidates: tryCandidates, _isPasswordError: _isPasswordError };
+    window.WFPdfUnlock = { getStatementText: getStatementText, openPdf: openPdf, openPdfOnce: openPdfOnce, extractText: extractText, promptPassword: promptPassword, _itemsToLines: _itemsToLines, tryCandidates: tryCandidates, _isPasswordError: _isPasswordError };
     try { console.log('[WFPdfUnlock] ✓ encrypted-PDF unlock ready'); } catch (_) {}
 })();

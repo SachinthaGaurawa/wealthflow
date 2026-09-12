@@ -25691,10 +25691,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                                         ? await window.wfVaultPdfPasswords(bank) : [];
                                 } catch (_) { return []; }
                             },
+                            /* openPdfOnce, NOT openPdf. unlock() above already owns the
+                             * "try no password, then every vault candidate in order"
+                             * loop and calls this once per candidate — openPdf() re-runs
+                             * that ENTIRE cascade internally on every call, so routing
+                             * through it here meant unlocking one locked statement cost
+                             * roughly (vault size)² PDF.js decrypt/destroy cycles instead
+                             * of (vault size). A sync batch of several locked statements
+                             * turned into real memory/CPU churn that peaked exactly when
+                             * the batch finished. See wealthflow-pdf-unlock.js. */
                             openPdf: (bytes, password) => {
                                 set(i, { stage: 'unlocking' });
                                 if (!window.WFPdfUnlock) return Promise.reject(new Error('no pdf reader'));
-                                return window.WFPdfUnlock.openPdf(bytes, () => password);
+                                return window.WFPdfUnlock.openPdfOnce(bytes, password);
                             },
                             extractText: (doc) => {
                                 set(i, { stage: 'reading' });
