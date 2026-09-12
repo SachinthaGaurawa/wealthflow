@@ -72,6 +72,7 @@ try {
         ] };
         renderMailSync();
     }, { longAddress });
+    assert.equal(await app.page.locator('.wf-sync-item-main').count(), 2, 'both real statement rows must be measured');
     const cdp = await app.page.context().newCDPSession(app.page);
     for (const width of widths) {
         const mobile = width <= 768;
@@ -85,6 +86,13 @@ try {
             await app.page.evaluate(() => { document.querySelector('#wfMailSync').style.maxWidth = '320px'; });
             nestedCard = await app.page.evaluate(measureLayout, { sender: false, mobile: false });
             await app.page.evaluate(() => { document.querySelector('#wfMailSync').style.maxWidth = ''; });
+        }
+        // A fresh install legitimately displays release notes. Dismiss through
+        // its real button so no overlay or force-click hides an interaction bug.
+        const welcome = app.page.locator('#wfPostUpdate');
+        if (await welcome.isVisible()) {
+            await welcome.getByRole('button', { name: 'Return to Dashboard' }).click();
+            await welcome.waitFor({ state: 'hidden' });
         }
         await app.page.locator('#_ms_senders').click();
         await app.page.waitForFunction(() => document.querySelector('#_sl_body .wf-sender-row'));
