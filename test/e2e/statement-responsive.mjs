@@ -61,6 +61,9 @@ try {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
     });
     await app.page.evaluate(({ longAddress }) => {
+        // The legacy browser identity stub predates authenticated mail APIs.
+        // Every API request below is intercepted; no production token is used.
+        currentUser.getIdToken = async () => 'e2e-responsive-token';
         showPage('dashboard');
         _mailWatch = { watching: true };
         _mailStatus = { senderCount: 1 };
