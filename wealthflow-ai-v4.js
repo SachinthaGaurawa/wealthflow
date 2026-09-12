@@ -135,37 +135,54 @@
         var qualities = [0.85, 0.75, 0.65, 0.55];
         var page = await pdf.getPage(pageNum);
 
-        for (var si = 0; si < scales.length; si++) {
-            var scale = scales[si];
-            var viewport = page.getViewport({ scale: scale });
-            // Cap absolute dimensions — some PDFs are huge (A3 etc.)
-            var maxDim = 2200;
-            if (viewport.width > maxDim || viewport.height > maxDim) {
-                var newScale = scale * Math.min(maxDim / viewport.width, maxDim / viewport.height);
-                viewport = page.getViewport({ scale: newScale });
-            }
-            var canvas = document.createElement('canvas');
-            canvas.width = Math.floor(viewport.width);
-            canvas.height = Math.floor(viewport.height);
-            var ctx = canvas.getContext('2d', { willReadFrequently: false });
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-
-            for (var qi = 0; qi < qualities.length; qi++) {
-                var dataUrl = canvas.toDataURL('image/jpeg', qualities[qi]);
-                var base64 = dataUrl.split(',')[1];
-                var size = approxBase64Bytes(base64);
-                if (size <= maxBytes) {
-                    console.log('[' + V + '] pdf p' + pageNum + ' rendered ' +
-                        canvas.width + 'x' + canvas.height + ' @' + scale + 'x q=' + qualities[qi] +
-                        ' → ' + fmtBytes(size));
-                    return { base64: base64, width: canvas.width, height: canvas.height, bytes: size };
+        // Same defect the image path above was hardened against: a rejected
+        // canvas at scale 2.0 (up to 2200x2200 RGBA ≈ 19 MB backing store)
+        // fell out of scope without being released, so WebKit kept every
+        // rung's backing store alive until an actual GC pass — several of
+        // those per page, times every page of every PDF scanned this
+        // session, is exactly how the web content process gets starved and
+        // the app crash-loops. Every rung now zeroes its canvas before the
+        // next attempt or return, and the page's own caches are released via
+        // cleanup() once we are done with it, win or lose.
+        try {
+            for (var si = 0; si < scales.length; si++) {
+                var scale = scales[si];
+                var viewport = page.getViewport({ scale: scale });
+                // Cap absolute dimensions — some PDFs are huge (A3 etc.)
+                var maxDim = 2200;
+                if (viewport.width > maxDim || viewport.height > maxDim) {
+                    var newScale = scale * Math.min(maxDim / viewport.width, maxDim / viewport.height);
+                    viewport = page.getViewport({ scale: newScale });
                 }
+                var canvas = document.createElement('canvas');
+                canvas.width = Math.floor(viewport.width);
+                canvas.height = Math.floor(viewport.height);
+                var ctx = canvas.getContext('2d', { willReadFrequently: false });
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+                var found = null;
+                for (var qi = 0; qi < qualities.length; qi++) {
+                    var dataUrl = canvas.toDataURL('image/jpeg', qualities[qi]);
+                    var base64 = dataUrl.split(',')[1];
+                    var size = approxBase64Bytes(base64);
+                    if (size <= maxBytes) {
+                        console.log('[' + V + '] pdf p' + pageNum + ' rendered ' +
+                            canvas.width + 'x' + canvas.height + ' @' + scale + 'x q=' + qualities[qi] +
+                            ' → ' + fmtBytes(size));
+                        found = { base64: base64, width: canvas.width, height: canvas.height, bytes: size };
+                        break;
+                    }
+                }
+                canvas.width = canvas.height = 0;   // release this rung's backing store now
+                if (found) return found;
             }
+            // Last resort — return the smallest we could make
+            throw new Error('PDF page ' + pageNum + ' too large even at minimum quality');
+        } finally {
+            try { page.cleanup && page.cleanup(); } catch (_) {}
         }
-        // Last resort — return the smallest we could make
-        throw new Error('PDF page ' + pageNum + ' too large even at minimum quality');
     }
 
     /* =========================================================================
@@ -344,16 +361,27 @@
         if (pages === 0) throw new Error('PDF has no pages');
         var images = [];
         var dims = [];
-        for (var i = 1; i <= pages; i++) {
-            try {
-                var rendered = await renderPdfPageAdaptive(pdf, i, maxBytes);
-                images.push(rendered.base64);
-                dims.push({ w: rendered.width, h: rendered.height, bytes: rendered.bytes });
-            } catch (e) {
-                console.warn('[' + V + '] PDF page ' + i + ' render failed:', e.message);
-                if (images.length === 0 && i === 1) throw e; // first page must succeed
-                break;
+        try {
+            for (var i = 1; i <= pages; i++) {
+                try {
+                    var rendered = await renderPdfPageAdaptive(pdf, i, maxBytes);
+                    images.push(rendered.base64);
+                    dims.push({ w: rendered.width, h: rendered.height, bytes: rendered.bytes });
+                } catch (e) {
+                    console.warn('[' + V + '] PDF page ' + i + ' render failed:', e.message);
+                    if (images.length === 0 && i === 1) throw e; // first page must succeed
+                    break;
+                }
             }
+        } finally {
+            // Every page is already captured as a base64 JPEG at this point, so
+            // the PDF.js document itself — fonts, XRef table, every page object
+            // fetched above — has no reason to stay resident. Never destroying
+            // it (the bug this closes) meant every PDF scanned this session
+            // (AI chat attachments, CRIB reports up to 6 pages, vision OCR)
+            // permanently grew the web content process's memory until iOS
+            // killed it — repeatedly, indistinguishable from a crash loop.
+            try { if (pdf && typeof pdf.destroy === 'function') await pdf.destroy(); } catch (_) {}
         }
         if (images.length === 0) throw new Error('No PDF pages could be rendered');
         return { images: images, isPdf: true, pageCount: images.length, dimensions: dims };
