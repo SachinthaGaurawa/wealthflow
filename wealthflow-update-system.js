@@ -1,44 +1,7 @@
-/* =============================================================================
-   WealthFlow Update System  v1.0  —  window.wfUpdate
-   ---------------------------------------------------------------------------
-   An iOS/Android-style in-app update experience, built HONESTLY for a static
-   PWA (no fake server daemon, no imaginary sandbox — see notes below).
-
-   FLOW
-   ────
-   1. Detect a newer version two ways:
-        (a) a version manifest the developer ships  (version.json / wfVersionManifest)
-        (b) the service worker finding new files     (sw 'updatefound')
-   2. Show a subtle glowing "Update available" pill on the Dashboard.
-   3. Tap it → jump to Settings → Software Update section.
-   4. Show a scrollable "What's New" changelog (iOS-style).
-   5. Show an auto-generated, version-specific Legal Agreement (EULA) the user
-      must scroll to the bottom of before "I Agree" unlocks.
-   6. Require the user's PIN (reuses window._verifyPinPrompt) to authorise.
-   7. Run a real backup first (window.backupNow), then apply the update:
-        - tell the waiting service worker to skipWaiting + activate
-        - the app reloads onto the new files
-      A genuine progress bar + countdown reflects these real steps.
-   8. After reload, a centered "Welcome to vX" popup shows what changed, with a
-      Close / Return to Dashboard button. New installs are marked current and
-      skip the popup.
-
-   PER-USER, like phones: each browser tracks its own "installed version" in
-   localStorage, so updates are NOT forced on everyone at once. New users start
-   on the latest version silently.
-
-   MANDATORY (security) updates: if the manifest marks a version mandatory, the
-   update screen cannot be dismissed until applied.
-
-   HONEST SCOPE
-   ────────────
-   • This cannot continue an update "on the server while the phone is off" — a
-     static site has no server process. What it DOES guarantee: the new files
-     are atomically activated by the service worker, and if the device dies
-     mid-way nothing is half-written (the old version simply stays until the
-     SW successfully activates). That is the real, safe equivalent.
-   • No 100k-agent sandbox / self-rewriting AI — those aren't real features.
-   ============================================================================ */
+/* WealthFlow Software Update: deployed-manifest discovery, explicit installation,
+ * backup/download verification and next-boot claim settlement. Background worker
+ * activation never reloads an active session. Opted-in urgent security installs
+ * wait for an idle session without focused editors or open dialogs. */
 (function () {
     'use strict';
     if (window.WF_UPDATE_SYSTEM) return;
@@ -455,15 +418,12 @@
                 });
             });
             // proactively check for a new SW
-            try { reg.update(); } catch (_) {}
+            try { Promise.resolve(reg.update()).catch(() => {}); } catch (_) {}
         }).catch(() => {});
-        // when the new SW takes control after we asked it to, reload once
-        let _reloaded = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-            if (_reloaded) return; _reloaded = true;
-            // only auto-reload if we initiated an update
-            try { if (localStorage.getItem(LS_PENDING)) location.reload(); } catch (_) { location.reload(); }
-        });
+        // Controller changes also happen during ordinary background refreshes.
+        // Persisted LS_PENDING is recovery metadata, not permission to reload.
+        // Only the completed, current _runProgress flow owns navigation.
+
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -618,8 +578,22 @@
 
     // If the user opted in, silently apply an URGENT (mandatory security) update
     // — still backup-first and rollback-safe. Non-security updates never auto-apply.
+    let _lastInteraction = Date.now();
+    function _noteInteraction() { _lastInteraction = Date.now(); }
+    try {
+        ['pointerdown', 'keydown', 'input', 'focusin'].forEach(type =>
+            document.addEventListener(type, _noteInteraction, { capture: true, passive: true }));
+        window.addEventListener('focus', _noteInteraction);
+    } catch (_) {}
+    function _safeToAutoInstall() {
+        if (document.visibilityState === 'hidden' || Date.now() - _lastInteraction < 60000) return false;
+        const el = document.activeElement;
+        if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return false;
+        return !document.querySelector('[role="dialog"], .mo.open, .modal-overlay.active, .modal.show, #authScreen.show, #wfProgress, #wfEula');
+    }
     async function _autoApplyIfSecurity() {
         if (!_autoSecurityOn()) return false;
+        if (!_safeToAutoInstall() || _progressTask) return false;
         const v = _latestVersion();
         if (!_updateAvailable()) return false;
         if (!_isDeployedVersion(v)) return false; // announcement is not deployment
@@ -743,7 +717,15 @@
     }
 
     // Real progress: each step does actual work, then advances the bar.
-    async function _runProgress(version) {
+    let _progressTask = null;
+    let _updateReloaded = false;
+    function _runProgress(version) {
+        if (_progressTask) return _progressTask;
+        _progressTask = Promise.resolve().then(() => _executeProgress(version))
+            .finally(() => { _progressTask = null; });
+        return _progressTask;
+    }
+    async function _executeProgress(version) {
         _closeOverlay('wfProgress');
         const ov = document.createElement('div');
         ov.id = 'wfProgress';
@@ -824,7 +806,7 @@
             }},
             { pct: 88, eta: 2, label: 'Swapping core files…', run: async () => {
                 try { localStorage.setItem(LS_PENDING, version); } catch (_) {}
-                // tell the waiting SW to take over (triggers controllerchange→reload)
+                // Activate the worker; reload only after the installation claim is recorded.
                 try {
                     const reg = await navigator.serviceWorker.getRegistration();
                     const w = (reg && reg.waiting) || _swWaiting;
@@ -874,11 +856,13 @@
         setBar(100); setEta(0);
         setStep('Update complete. Restarting…');
 
-        // If a SW actually took control, controllerchange already reloaded.
-        // Otherwise (no SW / already controlling) reload ourselves so new files load.
+        // One owner, after backup/download/claim: no competing controller reload.
         await _sleep(700);
         try { localStorage.removeItem(LS_PENDING); } catch (_) {}
-        location.reload();
+        if (!_updateReloaded) {
+            _updateReloaded = true;
+            location.reload();
+        }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -1788,6 +1772,7 @@
                 const ph = document.getElementById('wfUpdateCard');
                 if (ph && !ph.querySelector('.settings-title')) _renderSettingsCard();
                 if (!document.getElementById('wfUpdatePill')) _refreshDashboardPill();
+                if (_autoSecurityOn()) _autoApplyIfSecurity().catch(() => {});
             } catch (_) {}
         }, 5000);
 
