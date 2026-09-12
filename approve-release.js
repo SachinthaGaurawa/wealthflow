@@ -9,6 +9,11 @@
  *  Everything before this tap is automatic; the tap itself can be one button.
  *
  *  FLOW:
+ *    GET  /api/approve-release
+ *      • no auth required — reveals only whether DEPLOY_HOOK_URL is configured
+ *        (never its value), so the approval panel can tell the owner BEFORE
+ *        they tap whether "Approve" triggers a real rebuild or only announces
+ *        the version. Side-effect-free.
  *    POST /api/approve-release  { idToken, action: "approve" | "reject", note? }
  *      • verifies the caller is the owner (Firebase ID token → uid must match
  *        RELEASE_ADMIN_UID), so no one else can ship.
@@ -101,6 +106,17 @@ async function _readBody(req) {
 }
 
 export default async function handler(req, res) {
+    // ── unauthenticated status probe ─────────────────────────────────────────
+    // The approval panel's own message used to reveal "No DEPLOY_HOOK_URL set,
+    // so the code build was not auto-triggered" only AFTER the owner had
+    // already tapped Approve — the one moment that information can no longer
+    // change their decision. Whether the hook is CONFIGURED (not its value,
+    // which stays a secret) is not sensitive, so it costs nothing to let the
+    // panel ask first and show it before the tap, not after.
+    if ((req && req.method) === 'GET') {
+        return _send(res, { ok: true, deployHookConfigured: !!(process.env.DEPLOY_HOOK_URL || '').trim() }, 200);
+    }
+
     const out = { ok: true, ran: new Date().toISOString() };
     const { admin, reason } = await getAdmin();
     if (!admin) { out.ok = false; out.error = reason; return _send(res, out, 500); }

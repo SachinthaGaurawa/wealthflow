@@ -34,7 +34,10 @@
 
     var K_ALIVE = 'wf_session_alive';
     var K_CRASH = 'wf_crash_log';
-    var HEARTBEAT_MS = 10000;
+    var K_CRASH_TOTAL = 'wf_crash_total_count';
+    var HEARTBEAT_MS = 5000;             // was 10000 — halves how stale the last-known state can be
+    var CRASH_LOG_CAP = 30;              // was a bare 20 baked into slice(-20); named so it reads as a choice
+    var CRUMB_CAP = 15;
     var LEGACY_EPOCH = 1600000000000;    // 2020-09-13 — older than any real edit, identical on every device
     var TOMB_CAP = 250;
 
@@ -47,12 +50,57 @@
     /* ── 1) CRASH DETECTION ──────────────────────────────────────────────────── */
     var _charts = [];
 
+    /* WHAT-WAS-HAPPENING, not just what the DOM/heap looked like. A crash
+     * report that says "3242 DOM nodes, 0 charts, survived 72s" leaves the
+     * reader (a human, or an AI reading a pasted diagnostic) to re-derive
+     * which code path was even running — which is how two real bugs today
+     * each took a full source-code investigation to find, when the app
+     * itself could have said "mail sync: statement 6/9 — Sampath Bank" and
+     * pointed straight at the file. crumb() is deliberately cheap: a capped
+     * in-memory ring buffer, persisted on the SAME write beat() already
+     * does, so logging one costs nothing beyond calling beat() a bit early
+     * — which also means a heavy operation naturally gets MORE frequent,
+     * MORE accurate heartbeats exactly when accuracy matters most. */
+    var _crumbs = [];
+    function crumb(msg) {
+        try {
+            _crumbs.push({ t: Date.now(), m: String(msg == null ? '' : msg).slice(0, 80) });
+            if (_crumbs.length > CRUMB_CAP) _crumbs.shift();
+        } catch (_) {}
+        try { beat(); } catch (_) {}
+    }
+
+    /* WHAT WAS OPEN, not just what leaked. The chart registry below answers
+     * "how many charts are alive" for one named kind; two real crashes this
+     * session (an un-released PDF-render canvas, a PDF.js document never
+     * destroyed) were each invisible to that because neither is a chart.
+     * A generic named counter means the NEXT resource that turns out to
+     * matter costs one inc()/dec() pair at its two call sites, not a new
+     * bespoke tracker. */
+    var _resources = Object.create(null);
+    // Beats immediately, same reasoning as crumb(): a resource opening or
+    // closing is exactly the kind of moment worth an accurate snapshot,
+    // and both of today's real crashes were resource-count changes.
+    function resourceInc(kind) {
+        try { _resources[kind] = (_resources[kind] || 0) + 1; } catch (_) {}
+        try { beat(); } catch (_) {}
+    }
+    function resourceDec(kind) {
+        try {
+            if (_resources[kind]) _resources[kind] -= 1;
+            if (!_resources[kind]) delete _resources[kind];
+        } catch (_) {}
+        try { beat(); } catch (_) {}
+    }
+    function resourceCounts() { return Object.assign({}, _resources); }
+
     function snapshot() {
         var mem = null;
         try { if (performance && performance.memory) mem = Math.round(performance.memory.usedJSHeapSize / 1048576); } catch (_) {}
         return {
             dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return 0; } })(),
             charts: _charts.length,
+            res: resourceCounts(),
             heapMB: mem,
             page: (function () { try { return W.currentPage || (document.querySelector('.page.active') || {}).id || '?'; } catch (_) { return '?'; } })()
         };
@@ -60,6 +108,13 @@
 
     function crashes() { var a = rd(K_CRASH, []); return Array.isArray(a) ? a : []; }
     function clearCrashes() { del(K_CRASH); }
+    /* The exact lifetime count, independent of the capped detail log below.
+     * "20 crash(es)" used to mean "at least 20, we stopped counting there" —
+     * silently, because slice(-20) drops the count along with the records.
+     * This never resets on clearCrashes(): it is meant to answer "has this
+     * device always been this unstable", which clearing the detail log for
+     * a fresh read should not erase. */
+    function totalCrashCount() { return rd(K_CRASH_TOTAL, 0) || 0; }
 
     function detectPreviousCrash() {
         var alive = rd(K_ALIVE, null);
@@ -71,12 +126,15 @@
             page: alive.page || '?',
             dom: alive.dom || 0,
             charts: alive.charts || 0,
+            res: (alive.res && typeof alive.res === 'object') ? alive.res : {},
+            crumbs: Array.isArray(alive.crumbs) ? alive.crumbs : [],
             heapMB: alive.heapMB == null ? null : alive.heapMB,
             aliveSec: Math.max(0, Math.round(((alive.last || alive.start) - alive.start) / 1000))
         };
         var log = crashes();
         log.push(rec);
-        wr(K_CRASH, log.slice(-20));
+        wr(K_CRASH, log.slice(-CRASH_LOG_CAP));
+        wr(K_CRASH_TOTAL, totalCrashCount() + 1);
         try { console.warn('[WFStability] previous session ended without a clean exit — recorded as a crash', rec); } catch (_) {}
         return rec;
     }
@@ -86,6 +144,7 @@
         var a = rd(K_ALIVE, null) || { start: Date.now(), build: build() };
         a.last = Date.now(); a.build = build();
         a.page = s.page; a.dom = s.dom; a.charts = s.charts; a.heapMB = s.heapMB;
+        a.res = s.res; a.crumbs = _crumbs.slice();
         wr(K_ALIVE, a);
     }
 
@@ -98,10 +157,10 @@
      * WHAT was on screen and how big the DOM was when the process died is
      * the one report this always threw away. */
     var FAST_BEAT_MS = 1000;
-    var FAST_BEAT_TICKS = 12;   // 12s of dense coverage, then the normal 10s cadence
+    var FAST_BEAT_TICKS = 12;   // 12s of dense coverage, then the normal (now 5s) cadence
 
     function armSession() {
-        wr(K_ALIVE, { start: Date.now(), last: Date.now(), build: build(), page: '?', dom: 0, charts: 0, heapMB: null });
+        wr(K_ALIVE, { start: Date.now(), last: Date.now(), build: build(), page: '?', dom: 0, charts: 0, res: {}, crumbs: [], heapMB: null });
         beat();   // real numbers from the first paint, not the boot placeholder
         var ticks = 0;
         var fast = null;
@@ -179,21 +238,80 @@
         return { healed: healed, keys: touched };
     }
 
+    /* _tomb is NESTED — {collectionKey: {recordId: deleteTs}}, per
+     * wealthflow-data-health.js and _wfCollectHealth() in index.html — not
+     * a flat {id: ts} map. This function (and integrity() below) read it as
+     * flat, so Object.keys(ad._tomb) returned the dozen-or-so COLLECTION
+     * KEYS, not the actual tombstone ids. `ids.length <= cap` was therefore
+     * always true and pruneTombstones() returned 0 no matter how many
+     * tombstones had actually accumulated — confirmed live: a device
+     * carrying 508 real tombstones still read "0 pruned" every boot,
+     * because the function was comparing 13 against 250, not 508 against
+     * it. Nothing here changes what counts as a tombstone; it only counts
+     * the ones that actually exist. */
+    function _flattenTombstones(tomb) {
+        var flat = [];
+        var keys = Object.keys(tomb || {});
+        for (var k = 0; k < keys.length; k++) {
+            var key = keys[k], entry = tomb[key];
+            if (!entry || typeof entry !== 'object') continue;
+            var ids = Object.keys(entry);
+            for (var j = 0; j < ids.length; j++) flat.push({ key: key, id: ids[j], ts: +entry[ids[j]] || 0 });
+        }
+        return flat;
+    }
+
     function pruneTombstones(cap) {
         try {
             var ad = W.appData;
             if (!ad || !ad._tomb || typeof ad._tomb !== 'object') return 0;
-            var ids = Object.keys(ad._tomb);
             cap = cap || TOMB_CAP;
-            if (ids.length <= cap) return 0;
+            var flat = _flattenTombstones(ad._tomb);
+            if (flat.length <= cap) return 0;
             // keep the NEWEST `cap` tombstones — the old ones have long since converged
-            ids.sort(function (a, b) { return (+ad._tomb[b] || 0) - (+ad._tomb[a] || 0); });
-            var drop = ids.slice(cap), t = {};
-            ids.slice(0, cap).forEach(function (i) { t[i] = ad._tomb[i]; });
-            ad._tomb = t;
-            try { W.localStorage.setItem('wf2__tomb', JSON.stringify(t)); } catch (_) {}
-            try { console.warn('[WFStability] pruned ' + drop.length + ' stale deletion markers (kept the newest ' + cap + ')'); } catch (_) {}
-            return drop.length;
+            flat.sort(function (a, b) { return b.ts - a.ts; });
+            var kept = flat.slice(0, cap), dropped = flat.length - kept.length;
+            var rebuilt = {};
+            for (var i = 0; i < kept.length; i++) {
+                var f = kept[i];
+                if (!rebuilt[f.key]) rebuilt[f.key] = {};
+                rebuilt[f.key][f.id] = f.ts;
+            }
+            ad._tomb = rebuilt;
+            try { W.localStorage.setItem('wf2__tomb', JSON.stringify(rebuilt)); } catch (_) {}
+            try { console.warn('[WFStability] pruned ' + dropped + ' stale deletion markers (kept the newest ' + cap + ')'); } catch (_) {}
+            return dropped;
+        } catch (_) { return 0; }
+    }
+
+    /* The markers pruneTombstones() above would never touch even once it
+     * worked: entries filed under a key that is not a record store at all
+     * (a stale rename, a typo, a removed feature) can never protect a
+     * deletion, so — unlike every other tombstone — removing them carries
+     * no risk of resurrecting anything a device still believes is deleted.
+     * Mirrors the "orphaned" measurement wealthflow-data-health.js already
+     * makes; this is the one case that measurement module deliberately
+     * left unwritten (it is read-only by design) and that is safe to heal
+     * unconditionally rather than merely report. */
+    function healOrphanTombstones() {
+        try {
+            var ad = W.appData;
+            if (!ad || !ad._tomb || typeof ad._tomb !== 'object') return 0;
+            var keys = Object.keys(ad._tomb);
+            var removed = 0, changed = false;
+            for (var i = 0; i < keys.length; i++) {
+                var key = keys[i];
+                if (RECORD_KEYS.indexOf(key) !== -1) continue;
+                var entry = ad._tomb[key];
+                removed += (entry && typeof entry === 'object') ? Object.keys(entry).length : 0;
+                delete ad._tomb[key];
+                changed = true;
+            }
+            if (changed) {
+                try { W.localStorage.setItem('wf2__tomb', JSON.stringify(ad._tomb)); } catch (_) {}
+                try { console.warn('[WFStability] removed ' + removed + ' orphaned deletion marker(s) filed under a key that holds no records'); } catch (_) {}
+            }
+            return removed;
         } catch (_) { return 0; }
     }
 
@@ -207,7 +325,7 @@
             out.records += a.length; out.unstamped += bad;
             if (a.length) out.byKey[k] = { n: a.length, unstamped: bad };
         });
-        try { out.tombstones = Object.keys((W.appData && W.appData._tomb) || {}).length; } catch (_) {}
+        try { out.tombstones = _flattenTombstones((W.appData && W.appData._tomb) || {}).length; } catch (_) {}
         return out;
     }
 
@@ -222,15 +340,19 @@
             if (!W.DB) { setTimeout(healSoon, 800); return; }
             healStamps();
             pruneTombstones();
+            healOrphanTombstones();
         } catch (_) {}
     }
     try { setTimeout(healSoon, 2500); } catch (_) {}
 
     W.WFStability = {
         crashes: crashes, clearCrashes: clearCrashes, lastCrash: function () { return lastCrash; },
+        totalCrashCount: totalCrashCount, crumb: crumb,
+        resourceInc: resourceInc, resourceDec: resourceDec, resourceCounts: resourceCounts,
         track: track, destroyGroup: destroyGroup, destroyAll: destroyAll, chartCount: chartCount,
-        healStamps: healStamps, pruneTombstones: pruneTombstones, integrity: integrity,
-        snapshot: snapshot, legacyUt: legacyUt, LEGACY_EPOCH: LEGACY_EPOCH, VERSION: '1.0'
+        healStamps: healStamps, pruneTombstones: pruneTombstones, healOrphanTombstones: healOrphanTombstones,
+        integrity: integrity,
+        snapshot: snapshot, legacyUt: legacyUt, LEGACY_EPOCH: LEGACY_EPOCH, VERSION: '1.1'
     };
-    try { console.log('[WFStability] v1.0 loaded' + (lastCrash ? ' — PREVIOUS SESSION CRASHED (' + lastCrash.page + ', ' + lastCrash.charts + ' charts, ' + lastCrash.dom + ' DOM nodes)' : '')); } catch (_) {}
+    try { console.log('[WFStability] v1.1 loaded' + (lastCrash ? ' — PREVIOUS SESSION CRASHED (' + lastCrash.page + ', ' + lastCrash.charts + ' charts, ' + lastCrash.dom + ' DOM nodes)' : '')); } catch (_) {}
 })();

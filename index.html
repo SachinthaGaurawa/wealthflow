@@ -8776,13 +8776,56 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     // handler runs, so "totalErrors: 0" was true AND useless. WFStability marks a
                     // session alive and clears it on a clean exit; a marker that survives means the
                     // last session was killed. Now the report actually shows them.
+                    //
+                    // v7.69.25 — WHERE, not just THAT. Two real crashes were found today (an
+                    // unreleased PDF-render canvas, an un-destroyed PDF.js document during mail
+                    // sync) and both took a source-code investigation, because the old report said
+                    // only "3242 DOM nodes, 0 charts, survived 72s" — nothing that named a code
+                    // path. It now also reports: which named resources (canvases, open PDF
+                    // documents — see WFStability.resourceInc/resourceDec) were outstanding at the
+                    // moment of death, the last few breadcrumbs leading up to it (page navigations,
+                    // mail-sync progress, scans — see WFStability.crumb), and — across every stored
+                    // crash, not only the last one — which page crashes land on most often. The
+                    // headline count is now the exact lifetime total (totalCrashCount), not the
+                    // length of the capped detail log, which used to silently read "20" forever
+                    // once the cap was hit no matter how many more happened after.
                     try {
                         var _cr = (window.WFStability && window.WFStability.crashes()) || [];
-                        if (_cr.length) {
-                            var _last = _cr[_cr.length - 1];
-                            add('error', 'stability', _cr.length + ' crash(es) detected — the app was killed without a clean exit.',
-                                'Last: ' + _last.page + ' page, ' + _last.dom + ' DOM nodes, ' + _last.charts + ' charts alive' +
-                                (_last.heapMB ? ', ' + _last.heapMB + 'MB heap' : '') + ', survived ' + _last.aliveSec + 's (build ' + _last.build + ').');
+                        var _crTotal = (window.WFStability && window.WFStability.totalCrashCount)
+                            ? window.WFStability.totalCrashCount() : _cr.length;
+                        if (_crTotal > 0) {
+                            var _last = _cr[_cr.length - 1] || {};
+                            var _resBits = [];
+                            try {
+                                var _res = _last.res || {};
+                                Object.keys(_res).forEach(function (k) { if (_res[k]) _resBits.push(_res[k] + ' ' + k); });
+                            } catch (_) {}
+                            var _crumbBits = [];
+                            try {
+                                (_last.crumbs || []).slice(-5).forEach(function (c) {
+                                    if (c && c.m) _crumbBits.push(c.m);
+                                });
+                            } catch (_) {}
+                            // Across every stored crash (not just the last), which page it
+                            // happens on most — the "where" a single record can't answer.
+                            var _pageCounts = {};
+                            _cr.forEach(function (c) { var p = (c && c.page) || '?'; _pageCounts[p] = (_pageCounts[p] || 0) + 1; });
+                            var _topPage = null, _topPageN = 0;
+                            Object.keys(_pageCounts).forEach(function (p) {
+                                if (_pageCounts[p] > _topPageN) { _topPage = p; _topPageN = _pageCounts[p]; }
+                            });
+                            var hint = 'Last: ' + (_last.page || '?') + ' page, ' + (_last.dom || 0) + ' DOM nodes, '
+                                + (_last.charts || 0) + ' charts alive'
+                                + (_resBits.length ? ', ' + _resBits.join(', ') + ' still open' : '')
+                                + (_last.heapMB ? ', ' + _last.heapMB + 'MB heap' : '')
+                                + ', survived ' + (_last.aliveSec || 0) + 's (build ' + (_last.build || '?') + ').';
+                            if (_crumbBits.length) hint += ' Leading up to it: ' + _crumbBits.join(' → ') + '.';
+                            if (_topPage && _cr.length > 1) {
+                                hint += ' Across the last ' + _cr.length + ' recorded: ' + _topPage + ' page crashes most often ('
+                                    + _topPageN + '/' + _cr.length + ').';
+                            }
+                            if (_crTotal > _cr.length) hint += ' (' + _crTotal + ' total over this device\'s lifetime; only the most recent ' + _cr.length + ' are kept in detail.)';
+                            add('error', 'stability', _crTotal + ' crash(es) detected — the app was killed without a clean exit.', hint);
                         }
                         var _ig = (window.WFStability && window.WFStability.integrity()) || null;
                         if (_ig && _ig.unstamped > 0) {
@@ -17498,6 +17541,7 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
 
         function _proceedShowPage(name, navEl) {
+            try { window.WFStability && window.WFStability.crumb('page: ' + name); } catch (_) {}
             triggerHaptic('light');
             playUISound('click');
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -25652,6 +25696,7 @@ table.amort tbody tr { page-break-inside: avoid; }
              * statement that will never be filed, and the fix — unlock the
              * vault — is one action for all of them, not one per row. */
             _mailSyncState.locked = 0;
+            try { window.WFStability && window.WFStability.crumb('mail sync: start, ' + docs.length + ' statement(s)'); } catch (_) {}
 
             for (let i = 0; i < docs.length; i += 1) {
                 const d = docs[i];
@@ -25680,8 +25725,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * inside them reports what is actually happening rather than a
                      * timer pretending to. */
                     const bank = (d.manifest && d.manifest.bank) || '';
+                    try { window.WFStability && window.WFStability.crumb('mail sync: statement ' + (i + 1) + '/' + docs.length + ' — ' + (bank || 'unknown bank')); } catch (_) {}
                     let _parsed = null;
-                    const res = await window.WFMailIntake.intakeStatement(
+                    // Brackets the window in which intakeStatement() may hold an open
+                    // PDF.js document (it always destroys its own before returning —
+                    // see wealthflow-mail-intake.js — this just makes that window
+                    // visible in a crash snapshot rather than invisible by the time
+                    // anyone reads one).
+                    try { window.WFStability && window.WFStability.resourceInc('mailPdfDoc'); } catch (_) {}
+                    let res;
+                    try {
+                        res = await window.WFMailIntake.intakeStatement(
                         { id: d.id, bank, manifest: d.manifest, parts },
                         {
                             decodeBase64: (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
@@ -25691,10 +25745,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                                         ? await window.wfVaultPdfPasswords(bank) : [];
                                 } catch (_) { return []; }
                             },
+                            /* openPdfOnce, NOT openPdf. unlock() above already owns the
+                             * "try no password, then every vault candidate in order"
+                             * loop and calls this once per candidate — openPdf() re-runs
+                             * that ENTIRE cascade internally on every call, so routing
+                             * through it here meant unlocking one locked statement cost
+                             * roughly (vault size)² PDF.js decrypt/destroy cycles instead
+                             * of (vault size). A sync batch of several locked statements
+                             * turned into real memory/CPU churn that peaked exactly when
+                             * the batch finished. See wealthflow-pdf-unlock.js. */
                             openPdf: (bytes, password) => {
                                 set(i, { stage: 'unlocking' });
                                 if (!window.WFPdfUnlock) return Promise.reject(new Error('no pdf reader'));
-                                return window.WFPdfUnlock.openPdf(bytes, () => password);
+                                return window.WFPdfUnlock.openPdfOnce(bytes, password);
                             },
                             extractText: (doc) => {
                                 set(i, { stage: 'reading' });
@@ -25737,7 +25800,10 @@ table.amort tbody tr { page-break-inside: avoid; }
                             }),
                         },
                         {},
-                    );
+                        );
+                    } finally {
+                        try { window.WFStability && window.WFStability.resourceDec('mailPdfDoc'); } catch (_) {}
+                    }
                     const summary = window.WFMailIntake.summarise(res);
 
                     /* THE SENTENCE THIS REPLACES SAID "N transactions filed"
@@ -25818,6 +25884,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     set(i, { stage: 'failed', reason: (e && e.message || 'error').slice(0, 60) });
                 }
             }
+            try { window.WFStability && window.WFStability.crumb('mail sync: batch done, ' + _ready.length + ' ready, ' + _mailSyncState.locked + ' locked'); } catch (_) {}
 
             /* Opened AFTER the loop, so the owner is not interrupted between
              * statements while the rest are still being decrypted.
