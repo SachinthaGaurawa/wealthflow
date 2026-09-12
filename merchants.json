@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 125,
-  "updated": "2026-09-11",
+  "version": 126,
+  "updated": "2026-09-12",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -44,7 +44,7 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 948,
+  "count": 950,
   "merchants": [
     {
       "key": "hnb",
@@ -5199,6 +5199,13 @@
       "source": "seed"
     },
     {
+      "key": "binge",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "crunchyroll",
       "category": "Streaming",
       "goesTo": "subscription",
@@ -5288,6 +5295,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "hbogo",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "hbomax",
