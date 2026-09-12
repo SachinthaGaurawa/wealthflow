@@ -191,7 +191,7 @@
          showing up as a sudden full app refresh. Tap-to-zoom on form
          fields still works (the OS handles that independently). -->
     <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>WealthFlow | Elite Financial System</title>
     <meta name="application-name" content="WealthFlow">
     <meta name="description" content="WealthFlow Elite Financial System - Manage your wealth with precision">
@@ -2022,7 +2022,7 @@
 
         .dash-chart-row {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
             gap: 16px;
             margin-bottom: 16px;
             width: 100%;
@@ -5346,6 +5346,47 @@
             background: var(--bg1, transparent); color: var(--text1);
         }
 
+        /* Intrinsic sizing: reserve readable text space before wrapping actions.
+           These rules follow the component styles so both themes and compact
+           mode share the same layout contract, including narrow modal bodies. */
+        .main, .content, .card, .stat-card, .md,
+        .g2 > *, .g3 > *, .g4 > *, .g5 > *, .dash-chart-row > * { min-width: 0; }
+        .card-hdr-main { overflow-wrap: break-word; word-break: normal; }
+        .wf-sync-item, .wf-sender-row {
+            display: flex; flex-wrap: wrap; align-items: flex-start;
+            gap: 12px; padding: 12px 0; border-top: 1px solid var(--border);
+        }
+        .wf-sync-item-main, .wf-sender-id { flex: 1 1 220px; min-width: 0; max-width: 100%; }
+        .wf-sync-item-actions, .wf-sender-acts {
+            display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center;
+            gap: 8px; max-width: 100%; min-width: 0; justify-content: flex-start;
+        }
+        .wf-sender-acts > .wf-sender-note { flex: 1 1 220px; max-width: 260px; margin: 0; }
+        .wf-sync-item-main > div, .wf-sender-name, .wf-sender-sub, .wf-sender-why {
+            white-space: normal; word-break: normal; overflow-wrap: anywhere;
+            line-height: 1.55;
+        }
+        .wf-sender-name { font-size: clamp(13px, .8rem + .1vw, 14px); }
+        .wf-hunt-addr { word-break: normal; overflow-wrap: anywhere; }
+        .wf-cover-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+        .wf-sender-find-txt, .wf-hunt-bank { min-width: min(190px, 100%); }
+        .tbl-wrap { max-width: 100%; overscroll-behavior-inline: contain; }
+        .md { max-height: 90dvh; }
+        @media (max-width: 768px) {
+            .wf-sync-item-main, .wf-sync-item-actions,
+            .wf-sender-id, .wf-sender-acts { flex-basis: 100%; width: 100%; }
+            .wf-sender-acts > .wf-sender-note { max-width: 100%; flex-basis: 100%; }
+            .card-hdr-row > .card-hdr-actions { flex-basis: 100%; margin-left: 0; }
+            .btn { max-width: 100%; white-space: normal; word-break: normal; }
+            .content { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+        }
+        @media (pointer: coarse), (max-width: 768px) {
+            .btn, .md-x, .liq-tab { min-height: 44px; min-width: 44px; }
+            .fc, .fs, .inp, input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select { min-height: 44px; }
+        }
+        @media (min-width: 1920px) {
+            .content { max-width: 2400px; width: 100%; margin-inline: auto; padding-inline: clamp(24px, 2vw, 64px); }
+        }
     </style>
 </head>
 
@@ -23987,9 +24028,9 @@ table.amort tbody tr { page-break-inside: avoid; }
             const connected = st.connected;
 
             const rows = st.items.map((it, i) => `
-                <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--border);flex-wrap:wrap;">
-                    <div style="flex:1;min-width:0;">
-                        <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                <div class="wf-sync-item">
+                    <div class="wf-sync-item-main">
+                        <div class="wf-sync-item-title" style="font-size:13px;font-weight:600;color:var(--text);">
                             ${_wfEsc(it.bank || 'Statement')}${it.filename ? ' · <span style="color:var(--text3);font-weight:400;">' + _wfEsc(it.filename) + '</span>' : ''}
                         </div>
                         ${it.note ? `<div style="font-size:11.5px;color:var(--text3);margin-top:2px;">${_wfEsc(it.note)}</div>` : ''}
@@ -23999,6 +24040,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                                 : 'not on your sender list.'}
                         </div>` : ''}
                     </div>
+                    <div class="wf-sync-item-actions">
                     ${_mailStageChip(it.stage, it.reason)}
                     ${!it.known && it.from && it.verdict !== 'blocked' ? `<button class="btn btn-secondary btn-sm" data-msadd="${_wfEsc(String(i))}">
                         ${(window.WFIcon ? WFIcon('plus') : '')} Add sender
@@ -24010,6 +24052,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         aria-label="Remove this statement" title="Remove this statement">
                         ${(window.WFIcon ? WFIcon('trash') : 'Remove')}
                     </button>
+                    </div>
                 </div>`).join('');
 
             /* The honest empty states. Each names the ONE thing that is missing,

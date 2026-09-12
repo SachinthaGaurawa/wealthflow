@@ -1,0 +1,39 @@
+name: Statement responsive browser verification
+
+on:
+  pull_request:
+    paths:
+      - index.html
+      - test/e2e/statement-responsive.mjs
+      - test/e2e/harness.mjs
+      - test/e2e/firebase-stub.mjs
+      - .github/workflows/statement-responsive.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  responsive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false chart.js@4.4.1
+      - run: npx playwright install --with-deps chromium
+      - name: Verify real mobile, tablet and desktop layouts
+        run: node test/e2e/statement-responsive.mjs
+        env:
+          WF_RESPONSIVE_ARTIFACTS: responsive-artifacts
+      - name: Preserve screenshots and measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: statement-responsive
+          path: responsive-artifacts
+          if-no-files-found: ignore
