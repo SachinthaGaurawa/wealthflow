@@ -32866,17 +32866,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 if (!snap.exists) return;
                                 const data = snap.data();
                                 const cloudRevoked = (data.revokedSessions || []);
-                                const cloudSessions = (data.sessions || []);
                                 // If MY session is in the revoked list -> sign out NOW
                                 if (cloudRevoked.includes(myId)) {
                                     _performHardSignOut('This session was revoked from another device.');
                                     return;
                                 }
-                                // If MY session was removed from the active list -> sign out NOW
-                                if (cloudSessions.length > 0 && !cloudSessions.find(s => s.id === myId)) {
-                                    _performHardSignOut('This session was signed out remotely.');
-                                    return;
-                                }
+                                // Session-list absence is not revocation: registration
+                                // awaits IP lookup, and stale/offline writes can replace
+                                // this display list. Explicit revokedSessions markers
+                                // above are authoritative (all revoke actions write them).
                                 // Mirror cloud-side revoked list into local
                                 const localRevoked = _getRevokedSessions();
                                 let changed = false;
