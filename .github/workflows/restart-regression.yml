@@ -1,0 +1,25 @@
+name: Active session restart regression
+on:
+  pull_request:
+    paths:
+      - wealthflow-live-update.js
+      - wealthflow-update-system.js
+      - test/restart_regression_test.js
+      - test/e2e/restart-regression.mjs
+      - .github/workflows/restart-regression.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node test/e2e/restart-regression.mjs
