@@ -381,12 +381,16 @@
         if (amount == null || Math.abs(amount) < 0.01) return null;
         var narration = _cleanNarr(narrRaw);
         if (!narration || _isMoney(narration) || _isCur(narration)) return null;
-        return {
+        var row = {
             date: date,
             narration: narration,
             amount: Math.abs(amount),
             direction: dirHint || _dirOf(amtRaw) || 'debit'
         };
+        // Retain the public four-field transaction shape while exposing source
+        // evidence to the trusted server reader before JSON serialization.
+        Object.defineProperty(row, 'directionSource', { value: dirHint ? 'explicit' : (_dirOf(amtRaw) ? 'marker' : 'assumed') });
+        return row;
     }
 
     /* date … description … amount [Dr|Cr]. Decimals required, so a reference or
@@ -458,7 +462,7 @@
     // ── layer 2: rows rendered from data inside <script> ──────────────────────
     var _K_DESC = /desc|narrat|detail|merchant|particular|remark|title|name/i;
     var _K_AMT = /amount|amt|value|total|lkr|debit|credit/i;
-    var _K_DIR = /dr.?cr|indicator|sign|type|kind/i;
+    var _K_DIR = /direction|dr.?cr|indicator|sign|type|kind/i;
 
     /** One object → a row, without knowing the bank's field names. */
     function _fromObject(o) {
@@ -491,7 +495,14 @@
         if (!nk) return null;
 
         var dir = '';
-        keys.forEach(function (k) { if (!dir && _K_DIR.test(k)) dir = _dirOf(val(k)); });
+        keys.forEach(function (k) {
+            if (!dir && _K_DIR.test(k)) {
+                var marked = val(k).trim().toLowerCase();
+                dir = /^(?:credit|debit)$/.test(marked) ? marked : _dirOf(marked);
+            }
+        });
+        if (!dir && /^(?:debit|withdrawal|debitamount)$/i.test(ak)) dir = 'debit';
+        if (!dir && /^(?:credit|deposit|creditamount)$/i.test(ak)) dir = 'credit';
         return _mkRow(val(dk), val(nk), val(ak), dir);
     }
 

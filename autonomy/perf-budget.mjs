@@ -198,7 +198,11 @@ export const BUDGETS = {
     // non-empty Bank field and silently dropped any password entry without
     // one, even though candidatesFor() tries every saved password regardless
     // of bank match. Real new logic, not drift.
-    htmlBytes: 2_031_950,        // measured 2,031,862 — deployed, after the strip: ~1,520 KB
+    // Cloud statement custody, login catch-up and authenticated review controls
+    // add 4,062 bytes to the source HTML (measured 2,035,924). The new deferred
+    // cloud module adds one nonblocking request. This explicit measured increase
+    // retains the two-script first-paint ceiling and under 1% size headroom.
+    htmlBytes: 2_050_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -371,7 +375,9 @@ export const BUDGETS = {
     /* And for wealthflow-pawn.js, which now owns everything a pawn ticket
      * costs. wealthflow-liquidity.js imports and re-exports it rather than
      * keeping a second copy of the arithmetic. */
-    totalJsBytes: 1_835_000,     // measured 1,816,204 across 70 modules
+    // Measured 1,842,217 across 71 modules after cloud vault/review integration;
+    // encrypted HTML intake and exact sender gates account for the other growth.
+    totalJsBytes: 1_850_000,
     largestModuleBytes: 212_000, // measured 210,068 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -449,7 +455,7 @@ export const BUDGETS = {
      * month-by-month accrual on a balance that changes, a term schedule with
      * more than one rate, payments allocated interest-first — and it is
      * exercised by its own test without a browser. */
-    moduleCount: 70,   // measured 70
+    moduleCount: 71,   // measured 71; authenticated cloud statement interface
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -508,7 +514,7 @@ export const BUDGETS = {
      * type="module", so they are deferred and none of them blocks first paint —
      * renderBlockingScripts below is unchanged at 2, which is the number that
      * actually decides how fast the page appears. */
-    scriptTags: 69,              // measured 69 — +1, deferred, not render-blocking
+    scriptTags: 70,              // measured 70; new cloud module is nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as

@@ -49,7 +49,7 @@ describe('api/ai.js is wired to the matrix', () => {
     it('no longer defaults prose and chat to the bare race', () => {
         // THE DEFECT THIS WHOLE CHANGE EXISTS FOR. The old line read:
         //   const mode = requestedMode || ((isVision || wantsJSON) ? 'consensus' : 'fastest');
-        const line = (SRC.match(/const mode = requestedMode.*/) || [''])[0];
+        const line = (SRC.match(/const mode = .*/) || [''])[0];
         expect(line).toContain("'corroborated'");
         expect(line).not.toMatch(/:\s*'fastest'/);
     });

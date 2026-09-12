@@ -120,7 +120,7 @@ describe('the listing decides against the list as it is NOW', () => {
          * button had done nothing. Blocking now purges what that sender
          * already put in the store, in the same request — see gmail-link.js. */
         store('b1', { bank: 'Utility', from: 'billing@utility.example', known: true });
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         const blocked = await addSender('utility.example', 'blocked');
         expect(blocked.body.purged).toBe(1);
         const seen = await list();
@@ -130,7 +130,7 @@ describe('the listing decides against the list as it is NOW', () => {
     it('purging on block is scoped to the sender just blocked, nothing else', async () => {
         store('b1', { bank: 'Utility', from: 'billing@utility.example' });
         store('b2', { bank: 'HNB', from: 'statements@hnb.lk' });
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         await addSender('utility.example', 'blocked');
         const seen = await list();
         expect(byId(seen.body, 'b1')).toBeUndefined();
@@ -146,7 +146,7 @@ describe('the listing decides against the list as it is NOW', () => {
 
     it('approving a sender never purges anything — only a block does', async () => {
         store('b1', { bank: 'HNB', from: 'statements@hnb.lk' });
-        const approved = await addSender('hnb.lk', 'approved');
+        const approved = await addSender('statements@hnb.lk', 'approved');
         expect(approved.body.purged).toBe(0);
         expect(fake.docs.has(`${ITEMS}/b1`)).toBe(true);
     });
@@ -157,10 +157,10 @@ describe('the listing decides against the list as it is NOW', () => {
          * `add` because the sender may not have a row yet at all. Both paths
          * must clear the store the same way. */
         store('b1', { bank: 'Utility', from: 'billing@utility.example' });
-        await addSender('utility.example', 'approved');
+        await addSender('billing@utility.example', 'approved');
         const blocked = await call({
             method: 'POST', url: '/api/gmail-link?senders=1',
-            body: { action: 'status', value: 'utility.example', status: 'blocked' },
+            body: { action: 'status', value: 'billing@utility.example', status: 'blocked' },
         });
         expect(blocked.body.purged).toBe(1);
         expect(fake.docs.has(`${ITEMS}/b1`)).toBe(false);
@@ -179,7 +179,7 @@ describe('the listing decides against the list as it is NOW', () => {
         store('b1', { bank: 'Shop', from: 'invoices@shop.example' });
         store('b2', { bank: 'Shop', from: 'no-reply+8827@shop.example' });
         store('b3', { bank: 'HNB', from: 'statements@hnb.lk' });
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         const blocked = await addSender('shop.example', 'blocked');
         expect(blocked.body.purged).toBe(2);
         const seen = await list();
@@ -192,7 +192,7 @@ describe('the listing decides against the list as it is NOW', () => {
         /* The owner's actual complaint. No `known` field at all — written by a
          * keyword search months before any list existed — and it used to draw
          * exactly like a confirmed bank's statement. */
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         store('c1', { bank: 'Shop', from: 'receipts@shop.example' });
         const seen = await list();
         expect(byId(seen.body, 'c1').sender.verdict).toBe('new');
@@ -201,7 +201,7 @@ describe('the listing decides against the list as it is NOW', () => {
     it('NO SENDER RECORDED IS NOT AN ANSWER OF "STRANGER"', async () => {
         /* Documents older still carry no From either. Reading absence as
          * refusal would offer a real bank's statement up for deletion. */
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         store('d1', { bank: 'HNB' });
         const seen = await list();
         expect(byId(seen.body, 'd1').sender.verdict).toBe('unrecorded');
@@ -225,14 +225,14 @@ describe('the listing decides against the list as it is NOW', () => {
     });
 
     it('the address is reported, never the display name the sender chose', async () => {
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         store('g1', { bank: 'HNB', from: '"Your Bank <security@evil.example>" <statements@hnb.lk>' });
         const s = byId((await list()).body, 'g1').sender;
         expect(s.address).toBe('statements@hnb.lk');
     });
 
     it('deciding writes NOTHING — the manifest is read, never rewritten', async () => {
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         store('h1', { bank: 'Shop', from: 'receipts@shop.example' });
         const before = { ...fake.docs.get(`${ITEMS}/h1`) };
         fake.ops.length = 0;
@@ -245,7 +245,7 @@ describe('the listing decides against the list as it is NOW', () => {
         /* It must leave `decided` false — the answer that makes the device fall
          * back to the stored flag and offer nothing for removal. A read that
          * failed must never present itself as "none of these are yours". */
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         store('i1', { bank: 'Shop', from: 'receipts@shop.example' });
         fake.setFailOn((p, op) => (p === `wf-mail/${KEY}` && op === 'get' ? new Error('unreachable') : null));
         const seen = await list();
@@ -254,7 +254,7 @@ describe('the listing decides against the list as it is NOW', () => {
     });
 
     it('a filed statement stays out of the listing whatever its sender says', async () => {
-        await addSender('hnb.lk', 'approved');
+        await addSender('statements@hnb.lk', 'approved');
         store('j1', { bank: 'Shop', from: 'receipts@shop.example', filed: true });
         const seen = await list();
         expect(byId(seen.body, 'j1')).toBeUndefined();

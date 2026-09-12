@@ -93,12 +93,12 @@ describe('a curated list decides for EVERYONE, built-in banks included', () => {
         expect(r.items).toHaveLength(1);
     });
 
-    it('a domain the owner approved covers every desk under it', () => {
+    it('legacy domain approval admits no mailbox', () => {
         const byDomain = policyFrom([
             { id: 'sampath.lk', kind: 'domain', domain: 'sampath.lk', name: 'Sampath Bank', status: 'approved', source: 'manual', addedMs: 1 },
         ]);
-        expect(planMessage(message('noreply@sampath.lk', 'sampath.lk'), byDomain).ok).toBe(true);
-        expect(planMessage(message('estatement@sampath.lk', 'sampath.lk'), byDomain).ok).toBe(true);
+        expect(planMessage(message('noreply@sampath.lk', 'sampath.lk'), byDomain).ok).toBe(false);
+        expect(planMessage(message('estatement@sampath.lk', 'sampath.lk'), byDomain).ok).toBe(false);
     });
 
     it('AN OWNER WHO HAS APPROVED NOTHING IS HELD, NOT FILED', () => {
@@ -251,7 +251,7 @@ describe('a refusal holds the message instead of losing it', () => {
         expect(releasedBy(held, CURATED().decide)).toBe(false);
 
         const after = policyFrom([
-            { id: 'sampath.lk', kind: 'domain', domain: 'sampath.lk', status: 'approved', source: 'manual', addedMs: 1 },
+            { id: 'noreply@sampath.lk', kind: 'address', domain: 'sampath.lk', status: 'approved', source: 'manual', addedMs: 1 },
         ]);
         expect(releasedBy(held, after.decide)).toBe(true);
     });

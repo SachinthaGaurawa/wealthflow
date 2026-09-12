@@ -47,6 +47,8 @@ export const config = { maxDuration: 60 }; // Hobby max; covers deep multi-engin
 // Static import map → Vercel bundles each handler; lazy so only the matched
 // module's top-level code runs per request (one bad module can't break others).
 const HANDLERS = {
+    'statement-vault': () => import('../statement-vault.js'),
+    'statement-sync': () => import('../statement-sync.js'),
     'adobe-pdf-share': () => import('../adobe-pdf-share.js'),
     // ai.js and vision-scan.js live in THIS directory, not at the repo root, so
     // '../' pointed at nothing. Both are served by their own real files before a
@@ -396,4 +398,3 @@ export default async function handler(req, res) {
         }
     }
 }
-

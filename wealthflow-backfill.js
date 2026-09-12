@@ -341,7 +341,7 @@ export function planWindows({
     for (let i = 0; i < depth; i++) {
         const hi = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i + 1, 1));
         const lo = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1));
-        const parts = ['has:attachment', 'filename:pdf', `after:${ymd(lo)}`, `before:${ymd(hi)}`];
+        const parts = ['has:attachment', '{filename:pdf filename:html filename:htm}', `after:${ymd(lo)}`, `before:${ymd(hi)}`];
         if (any) parts.push(`(${any})`);
         windows.push({
             label: `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`,

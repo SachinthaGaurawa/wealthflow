@@ -78,6 +78,7 @@ export const REASON = {
     BAD_CHARS: 'a-domain-cannot-contain-that',
     CONSUMER: 'that-is-a-personal-mailbox-not-an-institution',
     PUBLIC_SUFFIX: 'that-is-a-whole-country-or-category-not-a-sender',
+    EXACT_ADDRESS: 'an-exact-statement-email-address-is-required',
 };
 
 /* Approving `lk` or `com` would approve the internet. These are the suffixes a
@@ -97,6 +98,12 @@ const PUBLIC_SUFFIXES = new Set([
  * pattern here is how a display string ends up being treated as a domain. */
 const DOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 const LOCAL_RE = /^[a-z0-9._%+-]+$/;
+
+function isExactApproval(e) {
+    if (e.status !== STATUS.APPROVED || e.kind !== 'address') return false;
+    const parsed = normalizeSender(e.id);
+    return parsed.ok && parsed.kind === 'address' && parsed.id === e.id;
+}
 
 /**
  * What the owner typed, as something that can be matched against a From header.
@@ -294,6 +301,9 @@ export function matchSender(list, from) {
     let bestScore = -1;
     for (const e of entries) {
         if (e.status === STATUS.NEW) continue;
+        // Legacy domain approvals remain visible for correction but never
+        // authorize a mailbox, sibling address, or subdomain.
+        if (e.status === STATUS.APPROVED && !isExactApproval(e)) continue;
         let score = -1;
         if (e.kind === 'address') {
             if (e.id === address) {
@@ -322,6 +332,9 @@ export function addSender(list, input, { status = STATUS.APPROVED, name = '', no
     if (!parsed.ok) return { ok: false, reason: parsed.reason, list: normalizeList(list) };
 
     const want = [STATUS.APPROVED, STATUS.BLOCKED].includes(status) ? status : STATUS.APPROVED;
+    if (want === STATUS.APPROVED && parsed.kind !== 'address') {
+        return { ok: false, reason: REASON.EXACT_ADDRESS, list: normalizeList(list) };
+    }
     const existing = normalizeList(list);
     const idx = existing.findIndex((e) => e.id === parsed.id);
     const label = String(name || '').trim().slice(0, 60)
@@ -349,6 +362,10 @@ export function addSender(list, input, { status = STATUS.APPROVED, name = '', no
 export function setStatus(list, id, status, { now = 0 } = {}) {
     const want = [STATUS.APPROVED, STATUS.BLOCKED, STATUS.NEW].includes(status) ? status : STATUS.NEW;
     const key = lower(id);
+    const parsed = normalizeSender(key);
+    if (want === STATUS.APPROVED && (!parsed.ok || parsed.kind !== 'address' || parsed.id !== key)) {
+        return { ok: false, reason: REASON.EXACT_ADDRESS, list: normalizeList(list) };
+    }
     let found = false;
     const out = normalizeList(list).map((e) => {
         if (e.id !== key) return e;
@@ -430,30 +447,13 @@ export function recordSighting(list, { from = '', subject = '', now = 0, month =
  * which costs no quota, no attachment download and no row on a screen.
  */
 export function approvedClauses(list) {
-    /* FETCH BY DOMAIN, DECIDE BY ADDRESS.
-     *
-     * This used to emit `from:statements@hnb.lk` for an address entry — an
-     * EXACT-address query. The owner adds the address printed on the statement
-     * they are looking at; the bank then sends the next one from
-     * `estatement@hnb.lk`, or `no-reply@`, or `alerts@`, and it is never
-     * fetched. Not filtered out, not held for review: never asked for. The
-     * owner had done everything right and the statement was invisible, which is
-     * exactly what they reported.
-     *
-     * So the QUERY widens to the domain while the POLICY stays where they put
-     * it. matchSender is untouched, so only the address they approved is filed
-     * automatically; another address at the same domain arrives as a sender
-     * waiting for a decision, with one tap to accept it. Widening what is
-     * FETCHED cannot file anything — that is what makes this safe — and it is
-     * the only way a bank's second address can ever become visible.
-     *
-     * De-duplicated: two approved addresses at one domain are one clause, not
-     * two identical ones. */
+    // Gmail search narrows discovery; matchSender independently enforces the
+    // exact parsed From address before an attachment may be processed.
     const seen = new Set();
     const out = [];
     for (const e of normalizeList(list)) {
-        if (e.status !== STATUS.APPROVED) continue;
-        const clause = `from:${e.domain}`;
+        if (!isExactApproval(e) || matchSender(list, e.id).verdict !== STATUS.APPROVED) continue;
+        const clause = `from:${e.id}`;
         if (seen.has(clause)) continue;
         seen.add(clause);
         out.push(clause);
@@ -463,7 +463,7 @@ export function approvedClauses(list) {
 
 /** Has the owner curated this list at all? */
 export function hasApproved(list) {
-    return normalizeList(list).some((e) => e.status === STATUS.APPROVED);
+    return approvedClauses(list).length > 0;
 }
 
 /** The three buckets, ready to render. */
@@ -613,12 +613,13 @@ export function policyFrom(list) {
         related: (from) => relatedApproval(entries, from),
         /* Approved domains only. A blocked domain is not something to protect
          * from impersonation — it is already refused whatever it looks like. */
-        domains: entries.filter((e) => e.status === STATUS.APPROVED).map((e) => e.domain),
-        curated: entries.some((e) => e.status === STATUS.APPROVED),
+        domains: entries.filter(isExactApproval).map((e) => e.domain),
+        curated: hasApproved(entries),
     };
 }
 
 export const REASON_TEXT = {
+    [REASON.EXACT_ADDRESS]: 'Enter the exact statement email address. Domain-wide approvals are not allowed.',
     [REASON.EMPTY]: 'Type an address or a domain first.',
     [REASON.NO_DOMAIN]: 'That has no domain in it. Try statements@yourbank.lk, or just yourbank.lk.',
     [REASON.TOO_LONG]: 'That is longer than an email address can be.',

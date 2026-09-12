@@ -61,6 +61,7 @@ export const QUARANTINE = {
     PASSWORD_FAILED: 'password-failed',
     NO_VAULT_KEYS: 'no-vault-keys',
     PDF_UNREADABLE: 'pdf-unreadable',
+    HTML_UNREADABLE: 'html-unreadable',
     NO_TEXT_LAYER: 'no-text-layer',
     UNPARSEABLE: 'unparseable',
     /* UNPARSEABLE used to mean all three of these at once, and the three want
@@ -87,6 +88,7 @@ export const QUARANTINE_TEXT = {
     [QUARANTINE.PASSWORD_FAILED]: 'none of your saved vault keys opened it',
     [QUARANTINE.NO_VAULT_KEYS]: 'it is password-protected and your vault is empty',
     [QUARANTINE.PDF_UNREADABLE]: 'the PDF could not be read; changing its password will not fix this error',
+    [QUARANTINE.HTML_UNREADABLE]: 'the HTML statement could not be read safely',
     [QUARANTINE.NO_TEXT_LAYER]: 'the pages are images, so there is no text to read',
     [QUARANTINE.UNPARSEABLE]: 'the layout did not yield any transaction rows',
     [QUARANTINE.NOT_A_STATEMENT]: 'it is not a bank statement — it reads as something else',
@@ -293,6 +295,49 @@ const defaultYield = () => new Promise((r) => setTimeout(r, 0));
  */
 export const BATCH = 25;
 
+/** Passive HTML intake. Never invokes the attachment's scripts or password UI. */
+export async function unlockHtml(source, candidates, reader) {
+    const unreadable = () => ({ ok: false, reason: QUARANTINE.HTML_UNREADABLE });
+    if (!reader || typeof reader.isEncryptedHtmlStatement !== 'function'
+        || typeof reader.decrypt !== 'function' || typeof reader.htmlToText !== 'function') return unreadable();
+    try {
+        let html = source;
+        if (typeof source !== 'string' || source.length > 16 * 1024 * 1024) return unreadable();
+        const encrypted = reader.isEncryptedHtmlStatement(source);
+        let usedIndex = -1;
+        if (encrypted) {
+            if (typeof reader._params === 'function') {
+                const params = reader._params(source);
+                if (!Number.isInteger(params.iterations) || params.iterations < 1 || params.iterations > 100000
+                    || ![4, 6, 8].includes(params.keySize)
+                    || !/^[a-f0-9]{16,128}$/i.test(params.salt || '')
+                    || !/^[a-f0-9]{32}$/i.test(params.iv || '')) return unreadable();
+            }
+            const keys = [...new Set(arr(candidates).filter(k => typeof k === 'string' && k.length))];
+            if (!keys.length) return { ok: false, reason: QUARANTINE.NO_VAULT_KEYS };
+            html = '';
+            for (const key of keys) {
+                const candidate = await reader.decrypt(source, key);
+                if (candidate && /<(?:html|body|table|div|section|p)\b/i.test(candidate)) {
+                    html = candidate;
+                    usedIndex = arr(candidates).indexOf(key);
+                    break;
+                }
+            }
+            if (!html) return { ok: false, reason: QUARANTINE.PASSWORD_FAILED, detail: { tried: keys.length } };
+        }
+        // Remove active content before conversion even when a reader uses a
+        // non-DOM fallback. Do not call htmlToTransactionsAsync/renderInSandbox.
+        const passive = html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+            .replace(/<\/(?:tr|p|div|section|h[1-6])\s*>|<br\s*\/?>/gi, '$&\n')
+            .replace(/<\/(?:td|th)\s*>/gi, '$& ')
+            // No elements are passed to DOMParser: even inert documents can
+            // initiate image/frame requests in some browser implementations.
+            .replace(/<[^>]*>/g, ' ');
+        return { ok: true, text: String(reader.htmlToText(passive) || ''), usedIndex, encrypted };
+    } catch (_) { return unreadable(); }
+}
+
 export async function intakeStatement(item, deps = {}, ctx = {}) {
     const { openPdf, extractText, parse, route, vaultKeys } = deps;
     const yieldToUi = deps.yieldToUi || defaultYield;
@@ -319,14 +364,29 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
     let keys = [];
     try { keys = arr(await (typeof vaultKeys === 'function' ? vaultKeys() : [])); } catch (_) { keys = []; }
 
-    const opened = await unlock(bytes, keys, openPdf);
-    if (!opened.ok) return fail(opened.reason, opened.detail);
-
     let text = '';
-    try { text = String(await extractText(opened.doc) || ''); } catch (_) { text = ''; }
-    finally {
-        // Release PDF.js workers and buffers before parsing the extracted text.
-        try { if (typeof opened.doc.destroy === 'function') await opened.doc.destroy(); } catch (_) {}
+    let opened;
+    const manifest = (item && item.manifest) || {};
+    const htmlHint = /\.html?$/i.test(String(manifest.filename || manifest.name || ''))
+        || /^text\/html\b/i.test(String(manifest.mimeType || manifest.contentType || ''));
+    let source = '';
+    try {
+        if (typeof bytes !== 'string') source = new TextDecoder().decode(bytes);
+        else if (htmlHint) source = new TextDecoder().decode(Uint8Array.from(atob(asm.base64), c => c.charCodeAt(0)));
+    } catch (_) { if (htmlHint) return fail(QUARANTINE.HTML_UNREADABLE); }
+    if (htmlHint || /^\s*(?:<!doctype\s+html|<html\b)/i.test(source)) {
+        const reader = deps.htmlStatement || (typeof window !== 'undefined' && window.WFHtmlStatement);
+        opened = await unlockHtml(source, keys, reader);
+        if (!opened.ok) return fail(opened.reason, opened.detail);
+        text = opened.text;
+    } else {
+        opened = await unlock(bytes, keys, openPdf);
+        if (!opened.ok) return fail(opened.reason, opened.detail);
+        try { text = String(await extractText(opened.doc) || ''); } catch (_) { text = ''; }
+        finally {
+            // Release PDF.js workers and buffers before parsing extracted text.
+            try { if (typeof opened.doc.destroy === 'function') await opened.doc.destroy(); } catch (_) {}
+        }
     }
     if (text.trim().length < 40) return fail(QUARANTINE.NO_TEXT_LAYER, { chars: text.trim().length });
 
@@ -534,7 +594,7 @@ export function summarise(result) {
 
 const API = {
     QUARANTINE, QUARANTINE_TEXT, BATCH,
-    assemble, unlock, crossCheck, intakeStatement, intakeAll, notificationFor, summarise,
+    assemble, unlock, unlockHtml, crossCheck, intakeStatement, intakeAll, notificationFor, summarise,
 };
 
 if (typeof window !== 'undefined') window.WFMailIntake = API;

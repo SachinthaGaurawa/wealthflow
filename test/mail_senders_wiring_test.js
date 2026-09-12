@@ -96,8 +96,9 @@ describe('an unapproved sender is never asked for', () => {
          * accident, because a discovery run reads headers only and imports
          * nothing. `includeTerms` carries the separate uncurated case. */
         expect(scanPlan).toContain('discover: discover === true,');
-        expect(scanPlan).toContain('includeTerms: !owns,');
-        expect(scanPlan).toContain('const chosen = Array.isArray(senders) && senders.length ? senders : scanSenders();');
+        expect(scanPlan).toContain('includeTerms: discover === true && !owns,');
+        expect(scanPlan).toContain('const chosen = Array.isArray(senders) ? senders : [];');
+        expect(scanPlan).toContain('if (discover !== true && chosen.length === 0) return null;');
     });
 
     it('the handler reads the state BEFORE it builds the window', () => {

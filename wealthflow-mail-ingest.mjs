@@ -436,10 +436,12 @@ export function releasedBy(held, decide) {
 
 /* ── 2. what to take ──────────────────────────────────────────────────────── */
 
-const isPdf = (part) => {
+const isStatementAttachment = (part) => {
     const mime = lower(part && part.mimeType);
     const name = lower(part && part.filename);
-    return mime === 'application/pdf' || (mime === 'application/octet-stream' && name.endsWith('.pdf'));
+    return mime === 'application/pdf'
+        || (mime === 'application/octet-stream' && name.endsWith('.pdf'))
+        || ((mime === 'text/html' || mime === 'application/octet-stream') && /\.html?$/.test(name));
 };
 
 /** Walk the MIME tree; Gmail nests parts arbitrarily deep under multipart/*. */
@@ -460,7 +462,7 @@ function walk(part, out) {
  */
 export function selectAttachments(payload) {
     const all = walk(payload, []);
-    const pdfs = all.filter(isPdf);
+    const pdfs = all.filter(isStatementAttachment);
     if (!pdfs.length) return { ok: false, reason: REJECT.NO_ATTACHMENT, detail: { attachments: all.length } };
     if (pdfs.length > MAX_ATTACHMENTS) {
         return { ok: false, reason: REJECT.TOO_MANY, detail: { pdfs: pdfs.length, max: MAX_ATTACHMENTS } };
