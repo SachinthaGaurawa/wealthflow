@@ -219,7 +219,11 @@ export const BUDGETS = {
     // explicit model capture/navigation code so one 200-row statement mounts
     // 12 heavy form rows, not all 200 (measured 2,062,845). No new script or
     // network request; the narrow headroom keeps future growth visible.
-    htmlBytes: 2_064_000,
+    // Raised for the iOS compositor-safe dashboard path: accessible DOM bars
+    // replace two GPU-backed Chart.js canvases on mobile and async repaints are
+    // coalesced until momentum scrolling is idle (measured 2,072,253). No new
+    // script or request; this is a tightly ratcheted stability trade.
+    htmlBytes: 2_073_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

@@ -23,6 +23,27 @@
         var KEY = 'wf_boot_fails';
         var booted = false, timer = null;
 
+        // v7.69.27 — iOS WebKit stability mode. The screen recording that
+        // finally reproduced the remaining crash shows the dashboard render,
+        // a fast downward scroll, a WebContent restart, then Safari's "A
+        // problem repeatedly occurred" page. The timing matches the deferred
+        // Chart.js warm-up below: it replaces two GPU-backed canvases while a
+        // momentum scroll is being composited. Mark iOS before CSS is parsed so
+        // the page can select its non-canvas dashboard charts from first paint.
+        // Manual restoration also prevents WebKit from returning a crash reload
+        // straight to the same expensive scroll position and looping.
+        try {
+            var _wfBootUA = navigator.userAgent || '';
+            var _wfBootPlatform = navigator.platform || '';
+            var _wfBootIOS = /iPhone|iPad|iPod/i.test(_wfBootUA)
+                || (_wfBootPlatform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            if (_wfBootIOS) {
+                document.documentElement.classList.add('wf-ios-stable');
+                window.__wfIOSStable = true;
+                if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+            }
+        } catch (_) {}
+
         function getFails() { try { return parseInt(localStorage.getItem(KEY) || '0', 10) || 0; } catch (_) { return 0; } }
         function setFails(n) { try { localStorage.setItem(KEY, String(n)); } catch (_) {} }
 
@@ -727,6 +748,20 @@
             /* v7.15.2 — also set 'none' (stronger than contain) so no
                glow/refresh chaining can occur at the root scroller. */
             overscroll-behavior: none;
+        }
+
+        /* iOS WebKit gets a deliberately quiet compositor path. Momentum
+           scrolling remains native; only programmatic smooth-scroll and the
+           whole-page entrance transform are removed. A transformed page plus
+           asynchronously replaced canvases is the exact combination visible
+           immediately before the recorded WebContent termination. */
+        html.wf-ios-stable,
+        html.wf-ios-stable body {
+            scroll-behavior: auto !important;
+        }
+
+        html.wf-ios-stable .page.active {
+            animation: none !important;
         }
 
         body {
@@ -2027,6 +2062,30 @@
             margin-bottom: 16px;
             width: 100%;
         }
+
+        .dash-safe-chart {
+            display: none;
+            min-height: 210px;
+        }
+
+        .dash-safe-row {
+            display: grid;
+            grid-template-columns: minmax(58px, .8fr) minmax(0, 2.4fr) minmax(76px, auto);
+            align-items: center;
+            gap: 8px;
+            min-height: 16px;
+            font-size: 10px;
+            color: var(--text2);
+        }
+
+        .dash-safe-bars { display: grid; gap: 3px; }
+        .dash-safe-bar { display: block; height: 5px; min-width: 2px; border-radius: 999px; }
+        .dash-safe-bar.income { background: var(--green); }
+        .dash-safe-bar.expense { background: var(--red); }
+        .dash-safe-bar.category { background: var(--accent); }
+        .dash-safe-value { text-align: right; color: var(--text); font-family: var(--mono); font-size: 10px; }
+        .dash-safe-legend { display: flex; gap: 12px; margin-bottom: 8px; color: var(--text3); font-size: 10px; }
+        .dash-safe-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 
         /* ================== TABLE ================== */
         .tbl-wrap {
@@ -5887,13 +5946,15 @@
                                 <select class="fi" style="width:110px;padding:5px 8px;font-size:12px;" id="dashYear"
                                     onchange="renderDash()"></select>
                             </div>
-                            <div style="height:210px;"><canvas id="dashChart"></canvas></div>
+                            <div id="dashChartCanvas" style="height:210px;"><canvas id="dashChart"></canvas></div>
+                            <div id="dashChartSafe" class="dash-safe-chart" role="img" aria-label="Monthly income and expense overview"></div>
                         </div>
                         <div class="card">
                             <div class="card-header">
                                 <div class="card-title">Expense Breakdown</div>
                             </div>
-                            <div style="height:210px;"><canvas id="dashPie"></canvas></div>
+                            <div id="dashPieCanvas" style="height:210px;"><canvas id="dashPie"></canvas></div>
+                            <div id="dashPieSafe" class="dash-safe-chart" role="img" aria-label="Expense category breakdown"></div>
                         </div>
                     </div>
 
@@ -8675,7 +8736,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.26';
+        var WF_APP_VERSION = '7.69.27';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -10738,14 +10799,35 @@ Keep total under 200 words. No markdown, no asterisks.`;
             });
         };
 
+        /** Canvas charts are a desktop enhancement, not a condition for seeing
+         * financial truth. iOS always takes the DOM-bar path; other coarse,
+         * narrow or explicitly low-memory devices do too. This prevents a pair
+         * of DPR-scaled GPU textures from being created/destroyed during native
+         * momentum scrolling while preserving the same values and labels. */
+        window._wfUseSafeDashboardCharts = function () {
+            try {
+                if (window.__wfIOSStable) return true;
+                if (navigator.deviceMemory && navigator.deviceMemory <= 4) return true;
+                return window.innerWidth < 900 && !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+            } catch (_) { return window.innerWidth < 900; }
+        };
+
         window._wfWarmCharts = function () {
             if (window._wfChartsWarmed) return;
+            // Never download or initialise Chart.js merely to draw the mobile
+            // dashboard. Other chart-heavy tools still call ensureChart() when
+            // the owner explicitly opens them.
+            if (window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts()) return;
             window._wfChartsWarmed = true;
             const go = () => window.ensureChart().then((ok) => {
                 if (!ok) return;
-                for (const fn of ['renderDash', 'renderDebtDemolisher', 'renderMonteCarlo']) {
-                    try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {}
-                }
+                const draw = () => {
+                    for (const fn of ['renderDash', 'renderDebtDemolisher', 'renderMonteCarlo']) {
+                        try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {}
+                    }
+                };
+                if (window._wfAfterScrollIdle) window._wfAfterScrollIdle('chart-warm', draw);
+                else draw();
             });
             if (typeof requestIdleCallback === 'function') requestIdleCallback(go, { timeout: 2500 });
             else setTimeout(go, 400);
@@ -16282,10 +16364,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                                                     if (nonSessionChanged) {
                                                         console.log('[SYNC] 🔄 Core data changed — re-rendering global UI');
                                                         if ($('app') && $('app').classList.contains('show')) {
-                                                            const active = document.querySelector('.page.active');
-                                                            if (active) renderPage(active.id.replace('page-', ''));
-                                                            try { updateCCOTBadge(); } catch (e) { }
-                                                            try { updateChequeBadge(); } catch (e) { }
+                                                            _wfAfterScrollIdle('cloud-snapshot-paint', () => {
+                                                                const active = document.querySelector('.page.active');
+                                                                if (active) renderPage(active.id.replace('page-', ''));
+                                                                try { updateCCOTBadge(); } catch (e) { }
+                                                                try { updateChequeBadge(); } catch (e) { }
+                                                            });
                                                         }
                                                     } else if (sessionsChanged) {
                                                         console.log('[SYNC] 🔄 Sessions updated — localized render');
@@ -16918,6 +17002,35 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
         }
         window.refreshAllSurfaces = refreshAllSurfaces;
 
+        /* v7.69.27 — COMPOSITOR-SAFE ASYNC PAINT GATE
+         * Network snapshots, the reactive DB layer and lazy libraries can all
+         * finish while the finger is moving. Rebuilding the active dashboard
+         * at that instant invalidates layout and (before this release) replaced
+         * two canvases underneath WebKit's momentum-scroll compositor. Model
+         * state still updates immediately; only the expensive DOM commit waits
+         * for 180ms of scroll quiet. Calls sharing a key coalesce to one paint. */
+        let _wfLastScrollEventAt = 0;
+        const _wfScrollIdleJobs = Object.create(null);
+        try {
+            window.addEventListener('scroll', () => { _wfLastScrollEventAt = Date.now(); }, { passive: true, capture: true });
+        } catch (_) {}
+        function _wfAfterScrollIdle(key, fn) {
+            const k = String(key || 'paint');
+            if (typeof fn !== 'function') return;
+            try { if (_wfScrollIdleJobs[k]) clearTimeout(_wfScrollIdleJobs[k]); } catch (_) {}
+            const attempt = () => {
+                const quietFor = Date.now() - _wfLastScrollEventAt;
+                if (_wfLastScrollEventAt && quietFor < 180) {
+                    _wfScrollIdleJobs[k] = setTimeout(attempt, 180 - quietFor);
+                    return;
+                }
+                delete _wfScrollIdleJobs[k];
+                try { fn(); } catch (e) { try { _wfLogClientError('scroll-idle:' + k, e); } catch (_) {} }
+            };
+            attempt();
+        }
+        window._wfAfterScrollIdle = _wfAfterScrollIdle;
+
         /* ═══════════════════════════════════════════════════════════════════
          * STRICT REACTIVE BINDING — the write repaints, not the handler
          * ═══════════════════════════════════════════════════════════════════
@@ -16937,10 +17050,10 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             if (_wfRepainter) return _wfRepainter;
             if (!window.WFReactive || !window.WFReactive.createRepaintScheduler) return null;
             _wfRepainter = window.WFReactive.createRepaintScheduler({
-                schedule: (fn) => {
+                schedule: (fn) => _wfAfterScrollIdle('reactive-paint', () => {
                     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => fn());
                     else setTimeout(fn, 0);
-                },
+                }),
                 paint: () => refreshAllSurfaces(),
                 onLoop: (keys) => {
                     console.warn('[REACTIVE] a repaint keeps writing; stopped after two passes:', keys.join(', '));
@@ -27302,6 +27415,47 @@ table.amort tbody tr { page-break-inside: avoid; }
 
         // ==================== DASHBOARD AUTOMATION ====================
         let dashChartInst = null, dashPieInst = null;
+
+        function _renderSafeDashboardCharts(months, income, expenses, categories) {
+            const lineHost = $('dashChartSafe');
+            const pieHost = $('dashPieSafe');
+            const lineCanvas = $('dashChartCanvas');
+            const pieCanvas = $('dashPieCanvas');
+            const safe = !!(window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts());
+            if (lineCanvas) lineCanvas.style.display = safe ? 'none' : '';
+            if (pieCanvas) pieCanvas.style.display = safe ? 'none' : '';
+            if (lineHost) lineHost.style.display = safe ? 'block' : 'none';
+            if (pieHost) pieHost.style.display = safe ? 'block' : 'none';
+            if (!safe) return false;
+
+            const maxMonth = Math.max(1, ...income, ...expenses);
+            if (lineHost) {
+                lineHost.innerHTML = '<div class="dash-safe-legend">'
+                    + '<span><i class="dash-safe-dot" style="background:var(--green)"></i>Income</span>'
+                    + '<span><i class="dash-safe-dot" style="background:var(--red)"></i>Expenses</span></div>'
+                    + months.map((m, i) => '<div class="dash-safe-row">'
+                        + '<span>' + _wfEsc(m) + '</span>'
+                        + '<span class="dash-safe-bars">'
+                            + '<i class="dash-safe-bar income" style="width:' + Math.max(1, Math.round((income[i] || 0) / maxMonth * 100)) + '%"></i>'
+                            + '<i class="dash-safe-bar expense" style="width:' + Math.max(1, Math.round((expenses[i] || 0) / maxMonth * 100)) + '%"></i>'
+                        + '</span>'
+                        + '<span class="dash-safe-value">' + fmtS(income[i] || 0) + ' / ' + fmtS(expenses[i] || 0) + '</span>'
+                    + '</div>').join('');
+            }
+
+            const cats = Object.entries(categories || {}).sort((a, b) => b[1] - a[1]).slice(0, 8);
+            const maxCat = Math.max(1, ...cats.map(x => x[1] || 0));
+            if (pieHost) {
+                pieHost.innerHTML = cats.length ? cats.map(([name, value]) => '<div class="dash-safe-row">'
+                    + '<span title="' + _wfEsc(name) + '">' + _wfEsc(name) + '</span>'
+                    + '<span class="dash-safe-bars"><i class="dash-safe-bar category" style="width:'
+                        + Math.max(1, Math.round((value || 0) / maxCat * 100)) + '%"></i></span>'
+                    + '<span class="dash-safe-value">' + fmtS(value || 0) + '</span></div>').join('')
+                    : '<div class="empty" style="padding:28px 8px;">No expenses for this year</div>';
+            }
+            return true;
+        }
+        window._renderSafeDashboardCharts = _renderSafeDashboardCharts;
         /* ── Cash flow runway card ───────────────────────────────────────────
          *
          * WFCashflow does the arithmetic; this function does nothing but render
@@ -27543,12 +27697,14 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             const ctxC = $('dashChart');
             if (dashChartInst) dashChartInst.destroy();
+            dashChartInst = null;
             // A blocked or slow CDN must not take the dashboard with it. Without
             // this guard `new Chart` throws, and because the throw is uncaught it
             // ABORTS renderDash — so every stat, table and total BELOW the chart
             // silently never renders. Skipping the chart costs a chart; throwing
             // costs the whole page.
-            if (ctxC && typeof Chart !== 'undefined') {
+            const _safeDashCharts = !!(window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts());
+            if (!_safeDashCharts && ctxC && typeof Chart !== 'undefined') {
                 dashChartInst = new Chart(ctxC, {
                     type: 'line',
                     data: {
@@ -27570,7 +27726,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 .forEach(e => { catMap[e.cat || 'Other'] = (catMap[e.cat || 'Other'] || 0) + (e.amount || 0); });
             const pCtx = $('dashPie');
             if (dashPieInst) dashPieInst.destroy();
-            if (pCtx && typeof Chart !== 'undefined') {
+            dashPieInst = null;
+            if (!_safeDashCharts && pCtx && typeof Chart !== 'undefined') {
                 dashPieInst = new Chart(pCtx, {
                     type: 'doughnut',
                     data: {
@@ -27580,6 +27737,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                     options: { maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: document.documentElement.getAttribute('data-theme') === 'dark' ? '#e2e8f0' : '#1e293b', font: { size: 10 } } } } }
                 });
             }
+
+            _renderSafeDashboardCharts(months, incData, expData, catMap);
 
             renderUpcoming();
             renderRecentActivity();
@@ -28519,8 +28678,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.26</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.26</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.27</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.27</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>

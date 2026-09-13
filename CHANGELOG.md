@@ -1,5 +1,19 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.27 — 2026-09-13
+
+**What changed for you**
+
+- Fast dashboard scrolling after Statement Sync no longer collides with an asynchronous Chart.js redraw on iPhone/iPad.
+- Mobile keeps the same monthly and category values in lightweight, accessible DOM charts without GPU-backed canvas pressure.
+
+**Under the hood**
+
+- Disabled automatic dashboard Chart.js loading on iOS, coarse-pointer mobile and low-memory devices; desktop charts remain unchanged.
+- Added a compositor-safe scroll-idle gate that coalesces reactive and cloud-snapshot DOM paints while native momentum scrolling is active.
+- Disabled iOS whole-page entrance transforms and automatic restoration to a crash scroll position.
+- Extended real-browser mobile pressure coverage to assert zero dashboard Chart.js construction/download, one coalesced repaint and all 12 monthly values after 30 rapid scroll-time update requests.
+
 ## v7.69.26 — 2026-09-13
 
 **What changed for you**
