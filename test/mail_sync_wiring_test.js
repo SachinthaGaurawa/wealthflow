@@ -686,13 +686,8 @@ describe('runMailSync() pages through the mailbox instead of loading it all at o
     });
 
     it('the page size is small — a handful of statements, not the whole ceiling', () => {
-        // Not a specific number pinned (that would just move with any retune);
-        // bounded well under the server's own 200-item ceiling is the property
-        // that actually matters here.
-        const m = /_MAIL_SYNC_PAGE\s*=\s*(\d+)/.exec(body);
-        expect(m, '_MAIL_SYNC_PAGE constant not found').toBeTruthy();
-        expect(Number(m[1])).toBeGreaterThan(0);
-        expect(Number(m[1])).toBeLessThanOrEqual(20);
+        expect(body).toMatch(/_MAIL_SYNC_PAGE\s*=\s*_mailLowMemory\s*\?\s*1\s*:\s*6/);
+        expect(body).toMatch(/_MAIL_READY_STATEMENT_BUDGET\s*=\s*_mailLowMemory\s*\?\s*1\s*:\s*6/);
     });
 
     it('advances the offset by what the page actually returned, and stops when the server says so', () => {
@@ -714,5 +709,9 @@ describe('runMailSync() pages through the mailbox instead of loading it all at o
         // the release's finally must be the one right after this statement's
         // own catch, not some earlier, unrelated finally in the function
         expect(finallyAt).toBeGreaterThan(catchAt);
+    });
+
+    it('stops accumulating parsed or teachable statements once the device review budget is reached', () => {
+        expect(body).toMatch(/_ready\.length\s*\+\s*_teach\.length\s*>=\s*_MAIL_READY_STATEMENT_BUDGET/);
     });
 });

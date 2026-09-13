@@ -5,7 +5,7 @@
 // bounded in-process statement drain); this worker owns only notifications,
 // caching and backup wake-ups.
 
-const CACHE_NAME = 'wealthflow-v7.69.27';
+const CACHE_NAME = 'wealthflow-v7.69.28';
 
 // How long the app shell waits for the network before falling back to the cached
 // copy. Long enough for a slow mobile connection to win the race, short enough
@@ -68,6 +68,14 @@ function _isAppShell(url) {
         || /^\/version\.js$/.test(p);
 }
 
+/* Query-string launch variants are one document, not separate 1.6 MB cache
+ * entries. Assets keep their exact request key. */
+function _shellCacheKey(request, url) {
+    return request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html'
+        ? '/index.html'
+        : request;
+}
+
 self.addEventListener('fetch', (event) => {
     let url;
     try { url = new URL(event.request.url); } catch (_) { return; }
@@ -76,6 +84,9 @@ self.addEventListener('fetch', (event) => {
     if (_isNeverCacheable(event.request, url)) return;
     if (!_isAppShell(url)) return;
 
+    let settleCacheWrite;
+    const cacheWrite = new Promise((resolve) => { settleCacheWrite = resolve; });
+    event.waitUntil(cacheWrite);
     event.respondWith((async () => {
         try {
             // Network first, and deliberately WITHOUT a second argument.
@@ -110,21 +121,29 @@ self.addEventListener('fetch', (event) => {
                 }),
             ]).finally(() => clearTimeout(netTimer));
             if (fresh && fresh.ok) {
-                // Store a copy for offline use. Failure to cache must never
-                // fail the request — the user gets their page either way.
+                // The response reaches the renderer immediately. CacheStorage
+                // I/O continues as lifecycle work instead of holding a 1.6 MB
+                // HTML clone and dozens of module clones on the navigation's
+                // critical path.
                 try {
                     const copy = fresh.clone();
-                    const cache = await caches.open(CACHE_NAME);
-                    await cache.put(event.request, copy);
-                } catch (_) {}
+                    const key = _shellCacheKey(event.request, url);
+                    caches.open(CACHE_NAME)
+                        .then((cache) => cache.put(key, copy))
+                        .catch(() => {})
+                        .finally(settleCacheWrite);
+                } catch (_) { settleCacheWrite(); }
+            } else {
+                settleCacheWrite();
             }
             return fresh;
         } catch (err) {
+            settleCacheWrite();
             // Genuinely offline. Serve the last good copy of THIS version only:
             // caches.open(CACHE_NAME) cannot reach a previous version's cache,
             // because activate() deleted it.
             const cache = await caches.open(CACHE_NAME);
-            const hit = await cache.match(event.request);
+            const hit = await cache.match(_shellCacheKey(event.request, url));
             if (hit) return hit;
             // A navigation with nothing cached still deserves the shell rather
             // than a browser error page.
@@ -151,7 +170,7 @@ self.addEventListener('activate', (event) => {
     console.log('[SW] Service Worker activated (v7.11.0)');
     event.waitUntil(
         caches.keys().then(keys =>
-            Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+            Promise.all(keys.filter(k => k.indexOf('wealthflow-') === 0 && k !== CACHE_NAME).map(k => caches.delete(k)))
         ).then(() => clients.claim())
     );
 });

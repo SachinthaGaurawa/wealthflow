@@ -126,7 +126,7 @@ describe('2. CACHE_NAME must name a cache that exists', () => {
         // asserted here is unchanged — the network call still precedes the cache
         // read — only the shape it is spelled in.
         const netAt = body.indexOf('fetch(event.request)');
-        const cacheAt = body.indexOf('cache.match(event.request)');
+        const cacheAt = body.indexOf('cache.match(_shellCacheKey(event.request, url))');
         expect(netAt, 'the app shell no longer fetches at all').toBeGreaterThan(-1);
         expect(cacheAt).toBeGreaterThan(-1);
         // Network-first: the fetch must appear before the cache read.
@@ -179,8 +179,10 @@ describe('2. CACHE_NAME must name a cache that exists', () => {
         expect(sw).toMatch(/request\.method\s*!==\s*['"]GET['"]/);
     });
 
-    it('purges every cache that is not the current version on activate', () => {
-        expect(sw).toMatch(/keys\.filter\(k\s*=>\s*k\s*!==\s*CACHE_NAME\)/);
+    it('purges old WealthFlow code caches but preserves the backup cache', () => {
+        expect(sw).toMatch(/keys\.filter\(k\s*=>\s*k\.indexOf\(['"]wealthflow-['"]\)\s*===\s*0\s*&&\s*k\s*!==\s*CACHE_NAME\)/);
+        const activate = sw.slice(sw.indexOf("self.addEventListener('activate'"), sw.indexOf("self.addEventListener('push'"));
+        expect(activate).not.toContain("caches.delete('wf-backup-cache')");
     });
 });
 
@@ -196,7 +198,10 @@ describe('2b. the fetch handler, actually executed', () => {
         const listeners = {};
         const store = {
             _m: {},
-            put: async (req, res) => { store._m[req.url] = { FROM: 'CACHE', url: req.url }; },
+            put: async (req, res) => {
+                const key = typeof req === 'string' ? req : req.url;
+                store._m[key] = { FROM: 'CACHE', url: key };
+            },
             match: async (req) => store._m[typeof req === 'string' ? req : req.url],
         };
         const calls = { fetchInits: [] };
@@ -227,9 +232,18 @@ describe('2b. the fetch handler, actually executed', () => {
             setOnline: (v) => { g.online = v; },
             async request(url, mode = 'no-cors', method = 'GET') {
                 let out = 'PASSTHROUGH';
-                listeners.fetch({ request: { url, method, mode }, respondWith: (p) => { out = p; } });
+                const lifetime = [];
+                listeners.fetch({
+                    request: { url, method, mode },
+                    respondWith: (p) => { out = p; },
+                    waitUntil: (p) => { lifetime.push(Promise.resolve(p)); },
+                });
                 if (out === 'PASSTHROUGH') return 'passthrough';
-                try { return (await out).FROM; } catch (e) { return 'threw'; }
+                try {
+                    const answer = (await out).FROM;
+                    await Promise.all(lifetime);
+                    return answer;
+                } catch (e) { return 'threw'; }
             },
         };
     }

@@ -371,8 +371,15 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
         || /^text\/html\b/i.test(String(manifest.mimeType || manifest.contentType || ''));
     let source = '';
     try {
-        if (typeof bytes !== 'string') source = new TextDecoder().decode(bytes);
-        else if (htmlHint) source = new TextDecoder().decode(Uint8Array.from(atob(asm.base64), c => c.charCodeAt(0)));
+        if (htmlHint) {
+            source = typeof bytes !== 'string'
+                ? new TextDecoder().decode(bytes)
+                : new TextDecoder().decode(Uint8Array.from(atob(asm.base64), c => c.charCodeAt(0)));
+        } else if (typeof bytes !== 'string') {
+            /* Sniff octet-stream HTML without decoding a whole PDF. */
+            const head = new TextDecoder().decode(bytes.subarray ? bytes.subarray(0, 512) : bytes);
+            if (/^\s*(?:<!doctype\s+html|<html\b)/i.test(head)) source = new TextDecoder().decode(bytes);
+        }
     } catch (_) { if (htmlHint) return fail(QUARANTINE.HTML_UNREADABLE); }
     if (htmlHint || /^\s*(?:<!doctype\s+html|<html\b)/i.test(source)) {
         const reader = deps.htmlStatement || (typeof window !== 'undefined' && window.WFHtmlStatement);

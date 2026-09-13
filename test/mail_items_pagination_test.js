@@ -106,6 +106,52 @@ describe('GET items=1 is unchanged when no limit/offset is sent', () => {
     });
 });
 
+describe('metadata-only listing never transports attachment bytes', () => {
+    it('removes inline ciphertext and omits parts even for a multi-megabyte statement', async () => {
+        store('meta0', { d: 'A'.repeat(3 * 1024 * 1024), parts: 2 });
+        fake.docs.set(`${ITEMS}/meta0/parts/000000`, { i: 0, d: 'B'.repeat(512 * 1024) });
+        fake.docs.set(`${ITEMS}/meta0/parts/000001`, { i: 1, d: 'C'.repeat(512 * 1024) });
+
+        const seen = await list('&metadata=1&limit=200');
+
+        expect(seen.status).toBe(200);
+        expect(seen.body.items).toHaveLength(1);
+        expect(seen.body.items[0].manifest).not.toHaveProperty('d');
+        expect(seen.body.items[0]).not.toHaveProperty('parts');
+        expect(JSON.stringify(seen.body).length).toBeLessThan(10_000);
+    });
+});
+
+describe('attachment delivery is an exact sender allow-list', () => {
+    it('returns metadata only when no sender has been approved', async () => {
+        store('no-policy', { d: 'A'.repeat(2 * 1024 * 1024), parts: 1 });
+        fake.docs.set(`${ITEMS}/no-policy/parts/000000`, { i: 0, d: 'B'.repeat(512 * 1024) });
+
+        const seen = await list('&limit=1');
+
+        expect(seen.status).toBe(200);
+        expect(seen.body.decided).toBe(true);
+        expect(seen.body.items[0].sender.verdict).toBe('new');
+        expect(seen.body.items[0].manifest).not.toHaveProperty('d');
+        expect(seen.body.items[0].parts).toEqual([]);
+        expect(fake.ops.some((o) => o.path === `${ITEMS}/no-policy/parts` && o.op === 'query')).toBe(false);
+    });
+
+    it('fails closed without reading parts when the sender policy cannot be read', async () => {
+        store('policy-failure', { d: 'secret', parts: 1 });
+        fake.docs.set(`${ITEMS}/policy-failure/parts/000000`, { i: 0, d: 'secret-part' });
+        fake.setFailOn((path, op) => path === `wf-mail/${KEY}` && op === 'get'
+            ? new Error('simulated sender policy failure') : null);
+
+        const seen = await list('&limit=1');
+
+        expect(seen.status).toBe(503);
+        expect(seen.body).toEqual({ ok: false, error: 'sender list unreadable' });
+        expect(fake.ops.some((o) => o.path.endsWith('/parts') && o.op === 'query')).toBe(false);
+        expect(fake.ops.some((o) => o.op === 'set' || o.op === 'delete')).toBe(false);
+    });
+});
+
 describe('limit/offset page through the backlog instead of returning it all at once', () => {
     it('limit caps how many full attachments come back in one call', async () => {
         for (let i = 0; i < 5; i += 1) store('p' + i);

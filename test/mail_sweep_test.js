@@ -109,6 +109,22 @@ describe('the listing decides against the list as it is NOW', () => {
         expect(byId(seen.body, 'a1').sender.verdict).toBe('approved');
     });
 
+    it('shows an unapproved sender for review without transporting its attachment bytes', async () => {
+        await addSender('statements@hnb.lk', 'approved');
+        store('held-bytes', {
+            bank: 'Shop', from: 'receipts@shop.example',
+            d: 'A'.repeat(2 * 1024 * 1024), parts: 1,
+        });
+        fake.docs.set(`${ITEMS}/held-bytes/parts/000000`, { i: 0, d: 'B'.repeat(512 * 1024) });
+
+        const seen = await list();
+        const item = byId(seen.body, 'held-bytes');
+        expect(item.sender.verdict).toBe('new');
+        expect(item.manifest).not.toHaveProperty('d');
+        expect(item.parts).toEqual([]);
+        expect(JSON.stringify(item).length).toBeLessThan(10_000);
+    });
+
     it('A SENDER BLOCKED AFTER THE FACT is purged from the store, not merely relabelled', async () => {
         /* THE REGRESSION THIS CLOSES, TWICE OVER. First: the flag was written
          * when the statement arrived, so a block could never reach the mail
@@ -198,30 +214,33 @@ describe('the listing decides against the list as it is NOW', () => {
         expect(byId(seen.body, 'c1').sender.verdict).toBe('new');
     });
 
-    it('NO SENDER RECORDED IS NOT AN ANSWER OF "STRANGER"', async () => {
-        /* Documents older still carry no From either. Reading absence as
-         * refusal would offer a real bank's statement up for deletion. */
+    it('holds a legacy item with no recorded sender without transporting its bytes', async () => {
         await addSender('statements@hnb.lk', 'approved');
-        store('d1', { bank: 'HNB' });
+        store('d1', { bank: 'HNB', d: 'A'.repeat(2 * 1024 * 1024) });
         const seen = await list();
-        expect(byId(seen.body, 'd1').sender.verdict).toBe('unrecorded');
+        const item = byId(seen.body, 'd1');
+        expect(item.sender.verdict).toBe('unrecorded');
+        expect(item.manifest).not.toHaveProperty('d');
+        expect(item.parts).toEqual([]);
     });
 
-    it('with nobody approved yet, the verdicts are declared meaningless', async () => {
-        /* Every sender is equally undecided, the scanner is still guessing by
-         * keyword, and calling a statement "not on your list" would blame the
-         * owner for a list they have not been asked to make. */
+    it('with nobody approved yet, policy is enforced and payload permission is denied', async () => {
         store('e1', { bank: 'Shop', from: 'receipts@shop.example' });
         const seen = await list();
-        expect(seen.body.decided).toBe(false);
+        expect(seen.body.decided).toBe(true);
         expect(seen.body.approvedCount).toBe(0);
+        expect(byId(seen.body, 'e1').sender.verdict).toBe('new');
+        expect(byId(seen.body, 'e1').manifest).not.toHaveProperty('d');
+        expect(byId(seen.body, 'e1').parts).toEqual([]);
     });
 
-    it('a blocked-only list is still not "decided" — nothing has been approved', async () => {
+    it('a blocked-only list still enforces zero attachment permissions', async () => {
         await addSender('shop.example', 'blocked');
         store('f1', { bank: 'Shop', from: 'receipts@shop.example' });
         const seen = await list();
-        expect(seen.body.decided).toBe(false);
+        expect(seen.body.decided).toBe(true);
+        expect(byId(seen.body, 'f1').manifest).not.toHaveProperty('d');
+        expect(byId(seen.body, 'f1').parts).toEqual([]);
     });
 
     it('the address is reported, never the display name the sender chose', async () => {
@@ -241,16 +260,16 @@ describe('the listing decides against the list as it is NOW', () => {
         expect(fake.docs.get(`${ITEMS}/h1`)).toEqual(before);
     });
 
-    it('an unreadable sender list is not an empty one', async () => {
-        /* It must leave `decided` false — the answer that makes the device fall
-         * back to the stored flag and offer nothing for removal. A read that
-         * failed must never present itself as "none of these are yours". */
+    it('an unreadable sender list fails closed without changing stored data', async () => {
         await addSender('statements@hnb.lk', 'approved');
         store('i1', { bank: 'Shop', from: 'receipts@shop.example' });
+        fake.ops.length = 0;
         fake.setFailOn((p, op) => (p === `wf-mail/${KEY}` && op === 'get' ? new Error('unreachable') : null));
         const seen = await list();
-        expect(seen.status).toBe(200);
-        expect(seen.body.decided).toBe(false);
+        expect(seen.status).toBe(503);
+        expect(seen.body).toEqual({ ok: false, error: 'sender list unreadable' });
+        expect(fake.docs.has(`${ITEMS}/i1`)).toBe(true);
+        expect(fake.ops.some((o) => o.op === 'set' || o.op === 'delete')).toBe(false);
     });
 
     it('a filed statement stays out of the listing whatever its sender says', async () => {
@@ -344,18 +363,15 @@ describe('what the device does with the verdict', () => {
         expect(of('new')).toBe(false);
     });
 
-    it('A LEGACY DOCUMENT IS NOT ACCUSED BY ITS SILENCE', () => {
-        /* No stored flag, no sender recorded, a full list. If this ever
-         * answers false, every statement stored before the flag existed turns
-         * into "not on your sender list" on upgrade — and stops being read. */
+    it('holds a legacy document with no recorded sender once an allow-list exists', () => {
         const { api } = loadSweep({ decided: true, items: [] });
-        expect(api._mailKnownNow({ manifest: { bank: 'HNB' }, sender: { verdict: 'unrecorded' } }, true)).toBe(true);
+        expect(api._mailKnownNow({ manifest: { bank: 'HNB' }, sender: { verdict: 'unrecorded' } }, true)).toBe(false);
     });
 
-    it('the stored flag still decides when the list cannot', () => {
+    it('a stored legacy flag can never grant attachment permission', () => {
         const { api } = loadSweep({ decided: false, items: [] });
         expect(api._mailKnownNow({ manifest: { known: false }, sender: { verdict: 'approved' } }, false)).toBe(false);
-        expect(api._mailKnownNow({ manifest: { known: true }, sender: { verdict: 'new' } }, false)).toBe(true);
+        expect(api._mailKnownNow({ manifest: { known: true }, sender: { verdict: 'new' } }, false)).toBe(false);
     });
 
     it('a verdict the server did not send is no verdict at all', () => {
