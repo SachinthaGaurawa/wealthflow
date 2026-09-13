@@ -215,7 +215,7 @@ export const BUDGETS = {
     // now fetches, processes and releases a few statements' payloads at a
     // time instead of the whole backlog at once (measured 2,055,080). No
     // new script requests.
-    htmlBytes: 2_056_000,
+    htmlBytes: 2_056_250,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -390,7 +390,7 @@ export const BUDGETS = {
      * keeping a second copy of the arithmetic. */
     // Measured 1,842,217 across 71 modules after cloud vault/review integration;
     // encrypted HTML intake and exact sender gates account for the other growth.
-    totalJsBytes: 1_871_000, // measured 1,870,197 after adding hydrate() (wealthflow-vault.js) for the boot-time, no-PIN vault sync
+    totalJsBytes: 1_872_726, // measured after capping wealthflow-history.js's unbounded places list (the "spending & payment history" modal)
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

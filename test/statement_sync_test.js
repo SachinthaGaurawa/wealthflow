@@ -66,7 +66,7 @@ describe('private source inspection and durable layout replay', () => {
             writes.forEach(([path, value, options]) => data.set(path, options?.merge ? { ...data.get(path), ...value } : value)); return result;
         } };
         const owner = { uid: 'u', email: 'owner@example.com' };
-        const env = { CRON_SECRET: 'a'.repeat(24), STATEMENT_TASK_QUEUE: 'projects/p/locations/l/queues/q', STATEMENT_SYNC_ORIGIN: 'https://example.com' };
+        const env = { CRON_SECRET: 'a'.repeat(24) };
         const f = vi.fn(async () => ({ ok: true, json: async () => ({ access_token: 'token' }) }));
         const open = vi.fn(async () => [{ password: '01021990', bank: 'HNB' }]);
         const read = vi.fn(async () => ({ text, parsed: { layout: { accountLast4: '3456' } } }));

@@ -24149,7 +24149,16 @@ table.amort tbody tr { page-break-inside: avoid; }
             const st = _mailSyncState;
             const connected = st.connected;
 
-            const rows = st.items.map((it, i) => `
+            /* Unlike every other list in the app, this one grew straight from the
+             * array with no cap — a multi-year historical scan can leave hundreds
+             * of pending items here, each rebuilt into fresh markup on every page
+             * and every per-item status change during a sync run. Same fix as
+             * Expenses/Loans/etc: draw a bounded prefix, offer the rest on tap.
+             * Indices from the capped slice are still real indices into st.items
+             * (it is a prefix, never reordered), so the existing data-msadd/
+             * data-msblock/data-msdel handlers need no change. */
+            const _msCap = _wfCap('mailSync', st.items);
+            const rows = _msCap.rows.map((it, i) => `
                 <div class="wf-sync-item">
                     <div class="wf-sync-item-main">
                         <div class="wf-sync-item-title" style="font-size:13px;font-weight:600;color:var(--text);">
@@ -24175,7 +24184,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                         ${(window.WFIcon ? WFIcon('trash') : 'Remove')}
                     </button>
                     </div>
-                </div>`).join('');
+                </div>`).join('') + _msCap.bar;
 
             /* The honest empty states. Each names the ONE thing that is missing,
              * because "not working" without a cause is what sent the owner

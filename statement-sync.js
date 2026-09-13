@@ -5,8 +5,7 @@ import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { syncMailbox } from './gmail-hook.js';
 import { policyFrom } from './wealthflow-mail-senders.mjs';
 import { planMessage } from './wealthflow-mail-ingest.mjs';
-import { cloudConfig, openCloud, VAULT_ROOT, kmsCall } from './statement-cloud-vault.mjs';
-import { enqueueStatementSync, queueConfig } from './statement-cloud-queue.mjs';
+import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { settleStatement, resolveReview } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
@@ -151,26 +150,13 @@ export async function recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt }
     return recovered;
 }
 
-export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, enqueue = enqueueStatementSync, board = invokeBoard }) {
-    queueConfig(env);
-    const uid = owner.uid, email = String(owner.email || '').toLowerCase();
-    const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
-    const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
-    if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
-    const token = await accessTokenFrom(mail.refresh_token, env, f);
-    if (action !== 'drain') {
-    const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
-    if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
-    const profile = await profileResponse.json();
-    if (String(profile.emailAddress || '').toLowerCase() !== email || !/^\d+$/.test(String(profile.historyId || ''))) throw new Error('gmail-profile-owner-mismatch');
-    const intakeResult = await intake(db, { emailAddress: email, historyId: String(profile.historyId) }, { env, f });
-    if (!intakeResult?.body?.ok) throw new Error('gmail-intake-unavailable');
-    const migrationMore = await migrateItems(db, mailRef, mail, uid);
-    const vault = await db.collection(VAULT_ROOT).doc(uid).get();
-    const recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
-    await enqueue({ env, f });
-    return { ok: true, processed: 0, queued: true, migrationMore, recovered };
-    }
+/**
+ * Claims and fully processes exactly one pending statement, or returns null
+ * when nothing is claimable. A thrown error (a transient fetch failure) is
+ * not caught here — it is meant to stop the caller's loop and propagate, the
+ * same as it always has.
+ */
+async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board }) {
     const page = await mailRef.collection('items').where('status', '==', 'pending').limit(50).get();
     let claimed = null, sourceRef;
     for (const doc of page.docs) {
@@ -184,15 +170,13 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
             if (source) { claimed = source; sourceRef = doc.ref; break; }
         }
     }
-    if (!claimed) {
-        return { ok: true, processed: 0, queued: false };
-    }
+    if (!claimed) return null;
     let outcome;
     let entries = [], passwords = [];
     try {
         const vaultSnap = await db.collection(VAULT_ROOT).doc(uid).get();
         if (!vaultSnap.exists) throw new Error('cloud-vault-not-saved');
-        entries = await open(uid, vaultSnap.data(), { unwrap: payload => kmsCall('decrypt', payload, { env, f }) });
+        entries = await open(uid, vaultSnap.data());
         await db.runTransaction(async tx => {
             const current = await tx.get(sourceRef), source = current.data();
             if (!current.exists || source.uid !== uid || source.leaseToken !== claimed.leaseToken) throw new Error('statement-lease-lost');
@@ -229,10 +213,52 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason);
         outcome = { status: 'needs_review', review: 1 };
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
-    // Always schedule one bounded drain after a processed item; the following
-    // invocation stops when empty, so multiple attachments do not need login.
-    await enqueue({ env, f });
-    return { ok: true, processed: 1, queued: true, ...outcome };
+    return outcome;
+}
+
+/**
+ * Drains whatever is pending for one owner, in-process, bounded by wall
+ * clock rather than by a durable external queue. Cloud Tasks would need a
+ * paid Google Cloud queue provisioned by a GCP administrator; this needs
+ * nothing beyond the Vercel function already running the request that calls
+ * it. A single invocation processes as many statements as fit in the time
+ * budget and simply returns when nothing more is claimable — a leftover
+ * backlog is picked up by the next real trigger (new mail, a saved vault) or
+ * by the daily safety-net schedule, never lost.
+ */
+async function enqueueStatementSync({ db, owner, env = process.env, f = fetch }) {
+    await runStatementSync({ db, owner, action: 'drain', env, f });
+    return { queued: true };
+}
+
+export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000 }) {
+    const start = Date.now();
+    const uid = owner.uid, email = String(owner.email || '').toLowerCase();
+    const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
+    const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
+    if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
+    const token = await accessTokenFrom(mail.refresh_token, env, f);
+    let migrationMore = false, recovered = 0;
+    if (action !== 'drain') {
+        const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
+        if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
+        const profile = await profileResponse.json();
+        if (String(profile.emailAddress || '').toLowerCase() !== email || !/^\d+$/.test(String(profile.historyId || ''))) throw new Error('gmail-profile-owner-mismatch');
+        const intakeResult = await intake(db, { emailAddress: email, historyId: String(profile.historyId) }, { env, f });
+        if (!intakeResult?.body?.ok) throw new Error('gmail-intake-unavailable');
+        migrationMore = await migrateItems(db, mailRef, mail, uid);
+        const vault = await db.collection(VAULT_ROOT).doc(uid).get();
+        recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
+    }
+    let processed = 0, last = null;
+    for (;;) {
+        if (Date.now() - start > budgetMs) break;
+        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board });
+        if (!step) break;
+        processed += 1;
+        last = step;
+    }
+    return { ok: true, processed, migrationMore, recovered, ...(last || {}) };
 }
 
 export async function inspectReviewSource({ db, owner, id, env = process.env, f = fetch, open = openCloud, read = readStatement, attachment = attachmentBytes }) {
@@ -249,7 +275,7 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
     if (!vault.exists) throw new Error('cloud-vault-not-saved');
     let entries = [], passwords = [];
     try {
-        entries = await open(owner.uid, vault.data(), { unwrap: payload => kmsCall('decrypt', payload, { env, f }) });
+        entries = await open(owner.uid, vault.data());
         passwords = candidatesFor(source.bank || '', entries);
         if (!passwords.length) throw new Error('cloud-vault-empty');
         const token = await accessTokenFrom(mail.refresh_token, env, f);
@@ -262,7 +288,6 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
 }
 
 export async function mapReviewLayout({ db, owner, id, rows, env = process.env, f = fetch, inspect = inspectReviewSource, learn, enqueue = enqueueStatementSync }) {
-    queueConfig(env);
     const evidence = await inspect({ db, owner, id, env, f });
     const learner = learn || (await import('./statement-layout.mjs')).learnCloudLayout;
     const result = await learner(evidence.text, rows, { bank: evidence.bank });
@@ -279,7 +304,7 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         tx.set(reviewRef, { status: 'mapped', mappedAt: Date.now(), templateId }, { merge: true });
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
     });
-    try { await enqueue({ env, f }); return { ok: true, mapped: true, queued: true }; }
+    try { await enqueue({ db, owner, env, f }); return { ok: true, mapped: true, queued: true }; }
     catch (_) { return { ok: true, mapped: true, queued: false }; }
 }
 

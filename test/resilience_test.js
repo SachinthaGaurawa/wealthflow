@@ -550,7 +550,7 @@ describe('the shared list cap', () => {
 
 describe('every list that measured unbounded is capped', () => {
     for (const key of ['loans', 'targets', 'incomeActive', 'incomeEnded', 'cconetime',
-        'sessions', 'ccinstall', 'cheques', 'subscriptions', 'incRecv', 'ccPayments']) {
+        'sessions', 'ccinstall', 'cheques', 'subscriptions', 'incRecv', 'ccPayments', 'mailSync']) {
         it(`${key} goes through the cap`, () => {
             expect(HTML, `${key} renders its rows straight from the array again`)
                 .toContain(`_wfCap('${key}'`);
