@@ -61,6 +61,67 @@ async function verifyLargeReviewWindow(page, width) {
     await page.waitForFunction(() => !document.querySelector('#_ccr_body'));
 }
 
+async function verifyMobileDashboardScrollStability(page, width) {
+    await page.evaluate(() => {
+        showPage('dashboard');
+        window.__wfE2ERealChart = window.Chart;
+        window.__wfE2ERealEnsureChart = window.ensureChart;
+        window.__wfE2EChartConstructed = 0;
+        window.__wfE2EChartRequested = 0;
+        window.__wfE2EIdlePaints = 0;
+        // A mobile dashboard must not touch Chart.js even when it is already
+        // available. Throwing here turns an accidental canvas construction
+        // into an immediate, precise browser-test failure.
+        window.Chart = function ForbiddenMobileChart() {
+            window.__wfE2EChartConstructed += 1;
+            throw new Error('mobile dashboard constructed a GPU canvas chart');
+        };
+        window.ensureChart = async () => {
+            window.__wfE2EChartRequested += 1;
+            return true;
+        };
+        window._wfChartsWarmed = false;
+        renderDash();
+        window._wfWarmCharts();
+
+        // Reproduce the recording's pressure shape: momentum-like scroll events
+        // while many asynchronous data completions ask for the same repaint.
+        for (let i = 0; i < 30; i += 1) {
+            window.scrollTo(0, i * 80);
+            window.dispatchEvent(new Event('scroll'));
+            window._wfAfterScrollIdle('e2e-dashboard-paint', () => {
+                window.__wfE2EIdlePaints += 1;
+                renderDash();
+            });
+        }
+    });
+    await page.waitForTimeout(350);
+    const result = await page.evaluate(() => ({
+        safe: window._wfUseSafeDashboardCharts(),
+        chartConstructed: window.__wfE2EChartConstructed,
+        chartRequested: window.__wfE2EChartRequested,
+        idlePaints: window.__wfE2EIdlePaints,
+        lineRows: document.querySelectorAll('#dashChartSafe .dash-safe-row').length,
+        lineVisible: getComputedStyle(document.getElementById('dashChartSafe')).display !== 'none',
+        lineCanvasVisible: getComputedStyle(document.getElementById('dashChartCanvas')).display !== 'none',
+        appVisible: !!document.querySelector('#app.show'),
+    }));
+    assert.equal(result.safe, true, `${width}px must use the compositor-safe dashboard`);
+    assert.equal(result.chartConstructed, 0, `${width}px constructed a Chart.js canvas`);
+    assert.equal(result.chartRequested, 0, `${width}px downloaded Chart.js during dashboard warm-up`);
+    assert.equal(result.idlePaints, 1, `${width}px did not coalesce/defer scroll-time paints`);
+    assert.equal(result.lineRows, 12, `${width}px must retain all 12 monthly values without canvas`);
+    assert.equal(result.lineVisible, true, `${width}px safe dashboard chart is hidden`);
+    assert.equal(result.lineCanvasVisible, false, `${width}px GPU canvas remains visible`);
+    assert.equal(result.appVisible, true, `${width}px app disappeared during rapid scrolling`);
+    await page.evaluate(() => {
+        window.Chart = window.__wfE2ERealChart;
+        window.ensureChart = window.__wfE2ERealEnsureChart;
+        delete window.__wfE2ERealChart;
+        delete window.__wfE2ERealEnsureChart;
+    });
+}
+
 function measureLayout({ sender, mobile }) {
     const root = sender ? document.querySelector('#_sl_body').closest('.md') : document.querySelector('#wfMailSync');
     const shown = el => !!el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden';
@@ -149,6 +210,7 @@ try {
         }
         await app.page.locator('#_sl_x').click();
         await app.page.waitForFunction(() => !document.querySelector('#_sl_body'));
+        if ([320, 390, 768].includes(width)) await verifyMobileDashboardScrollStability(app.page, width);
         if ([320, 390, 768].includes(width)) await verifyLargeReviewWindow(app.page, width);
         if ([320, 768].includes(width)) {
             await app.page.locator('#wfMailSync').scrollIntoViewIfNeeded();

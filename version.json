@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.69.26",
+  "latest": "7.69.27",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -517,6 +517,24 @@
           "title": "What changed for you",
           "items": [
             "The release brain has never run — and three other masked failures (#98)"
+          ]
+        }
+      ]
+    },
+    "7.69.27": {
+      "headline": "iPhone dashboard scrolling is compositor-safe",
+      "date": "2026-09-13",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Fast scrolling after Statement Sync no longer collides with background chart loading or cloud repaints. iPhone and iPad use lightweight, accessible dashboard charts that preserve every financial value without GPU canvas pressure."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Mobile dashboard Chart.js warm-up is disabled, asynchronous model updates wait for scroll idle before committing DOM changes, and crash reloads no longer restore the same dangerous scroll position. Real-browser pressure tests cover repeated scroll-time repaint requests."
           ]
         }
       ]
