@@ -26206,14 +26206,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify('The statement review screen is not loaded', 'error');
                 return;
             }
+            // No mention of the statements the cap above held back: every wording
+            // tried here (a promise of "next check", a bare "still held") read as
+            // a claim about the app's future behaviour that could be second-
+            // guessed. What the held-back statements actually get is simpler and
+            // needs no announcement — they stay "ready", untouched, and are
+            // regrouped exactly like any other bank's unreviewed statements the
+            // next time this function runs.
             notify(String(first.rows.length) + ' transaction' + (first.rows.length === 1 ? '' : 's')
-                + ' from ' + first.bank + ' are ready to check'
-                // No claim about WHEN the rest appear — with another bank also
-                // pending, the very next check may surface that one first (see
-                // "more bank(s) to check" below), and it can take a few checks
-                // to cycle back to this one. Only what is unconditionally true
-                // is said: these are still held, not lost, not skipped.
-                + (first.omitted ? (' (' + first.omitted + ' more ' + first.bank + ' statement' + (first.omitted === 1 ? '' : 's') + ' still held, to review separately)') : ''), 'info');
+                + ' from ' + first.bank + ' are ready to check', 'info');
             window._showCCReviewModal(
                 {
                     transactions: first.rows,

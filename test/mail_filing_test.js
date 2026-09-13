@@ -358,18 +358,24 @@ describe('a huge catch-up sync does not open one unbounded review screen', () =>
         expect(calls.showModal.parsed.transactions.length % 20).toBe(0);
     });
 
-    it('tells the owner more of this bank will follow', () => {
+    it('the ready-to-check notice reports only what is actually shown, no claim about the rest', () => {
+        // Three rounds of review-board wording objections settled on saying
+        // nothing about held-back statements at all, rather than a claim that
+        // could be second-guessed. This pins that: the notice names the SHOWN
+        // count and nothing else.
         const { reviewer, calls } = loadReviewer();
         reviewer(manyStatements());
-        expect(calls.notify.some(n => /more HNB statement/.test(n.msg)),
-            'omitted statements are silently dropped with no explanation').toBe(true);
+        const shown = calls.showModal.parsed.transactions.length;
+        expect(calls.notify.some(n => n.msg.includes(String(shown) + ' transaction'))).toBe(true);
+        expect(calls.notify.some(n => /more|held|waiting|follow/i.test(n.msg)),
+            'the notice makes a claim about statements it did not show').toBe(false);
     });
 
-    it('a short sync is unaffected — nothing is held back and no cap notice appears', () => {
+    it('a short sync is unaffected — nothing is held back', () => {
         const { reviewer, calls } = loadReviewer();
         reviewer([statement('a', 'HNB', '1234', 5)]);
         expect(calls.showModal.parsed.transactions.length).toBe(5);
-        expect(calls.notify.some(n => /more HNB statement/.test(n.msg))).toBe(false);
+        expect(calls.notify.some(n => n.msg.includes('5 transactions'))).toBe(true);
     });
 
     it('lets one oversized statement through whole rather than starving it forever', () => {
