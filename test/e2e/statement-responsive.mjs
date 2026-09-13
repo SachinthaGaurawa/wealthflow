@@ -95,7 +95,11 @@ async function verifyMobileDashboardScrollStability(page, width) {
             });
         }
     });
-    await page.waitForTimeout(350);
+    // Chromium can keep dispatching the queued scroll events after evaluate()
+    // returns. Waiting a fixed 350ms made a correctly-deferred paint read as
+    // zero on a busy CI runner. Observe the contract instead: it must remain
+    // zero during the burst, then become exactly one after scroll idle.
+    await page.waitForFunction(() => window.__wfE2EIdlePaints === 1, null, { timeout: 3000 });
     const result = await page.evaluate(() => ({
         safe: window._wfUseSafeDashboardCharts(),
         chartConstructed: window.__wfE2EChartConstructed,
