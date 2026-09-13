@@ -1,5 +1,17 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.26 — 2026-09-13
+
+**What changed for you**
+
+- Statement review now keeps only 12 transaction rows mounted at once, so even a single unusually large statement cannot exhaust iPhone/iPad browser memory while scrolling.
+- Previous/Next controls preserve edits across every page; Save, cloud review, bulk routing and AI auto-sort still process the complete statement.
+
+**Under the hood**
+
+- Replaced the review modal's DOM-as-database assumption with a bounded view over a complete in-memory transaction model.
+- Added executable 200-row mobile-pressure simulations covering rapid navigation, hidden-row filing, cloud review and AI queue hand-off.
+
 ## v7.69.25 — 2026-09-13
 
 **What changed for you**

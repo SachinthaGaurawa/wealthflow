@@ -89,9 +89,18 @@ describe('the key comes from the PIN and from nothing on disk', () => {
         const key = await deriveKey(PIN, Uint8Array.from(atob(salt), (c) => c.charCodeAt(0)), deps);
         const blob = await seal(key, entries, salt, deps);
         const text = JSON.stringify(blob);
-        for (const secret of ['hnb-Secret#2026', 'dfcc pass with spaces', 'HNB', 'DFCC']) {
+        // Only full secrets are meaningful substring checks. `ct` is random
+        // Base64 and can legitimately contain a short token such as "HNB"
+        // by chance (1 in 64^3 at each position); treating that as plaintext
+        // made this security test intermittently fail on perfectly valid AES
+        // output. Bank/password absence is instead proven structurally below.
+        for (const secret of ['hnb-Secret#2026', 'dfcc pass with spaces']) {
             expect(text, `"${secret}" is readable in the stored blob`).not.toContain(secret);
         }
+        expect(Object.keys(blob).sort()).toEqual(['ct', 'iv', 'kdf', 'salt', 'savedAt', 'v'].sort());
+        expect(blob).not.toHaveProperty('entries');
+        expect(blob).not.toHaveProperty('password');
+        expect(blob).not.toHaveProperty('bank');
     });
 
     it('refuses a PIN shorter than the app itself accepts', async () => {

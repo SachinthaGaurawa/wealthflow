@@ -1,10 +1,11 @@
 // ==================== WealthFlow Infinity Service Worker v7.11.0 ====================
 // Handles PWA push notifications, offline caching, and background sync.
 //
-// Gmail ingestion is server-owned (Pub/Sub + scheduled reconciliation + Cloud
-// Tasks); the worker owns only notifications, caching and backup wake-ups.
+// Gmail ingestion is server-owned (Pub/Sub + scheduled reconciliation + the
+// bounded in-process statement drain); this worker owns only notifications,
+// caching and backup wake-ups.
 
-const CACHE_NAME = 'wealthflow-v7.69.25';
+const CACHE_NAME = 'wealthflow-v7.69.26';
 
 // How long the app shell waits for the network before falling back to the cached
 // copy. Long enough for a slow mobile connection to win the race, short enough

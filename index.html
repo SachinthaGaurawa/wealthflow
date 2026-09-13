@@ -8675,7 +8675,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.25';
+        var WF_APP_VERSION = '7.69.26';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -26157,14 +26157,14 @@ table.amort tbody tr { page-break-inside: avoid; }
          * a single group (see the loop below), and rendering all of them into
          * one <tbody> at once is exactly the OOM-kill-with-a-white-screen the
          * owner reported right after a sync. Bounding it here, at the point
-         * groups are built, means _showCCReviewModal's save/AI-auto-sort/
-         * cloud-review logic — which reads its rows straight back out of the
-         * live DOM — never has to change: every review screen it ever opens
-         * stays a normal, fully-saveable size. A statement whose own rows
-         * alone exceed the cap is still let through whole (never split one
-         * statement's rows across two review screens, since a whole
-         * statement's keys are marked filed together) rather than starved
-         * forever. */
+         * groups are built, keeps the parsing/classification batch itself
+         * bounded. _showCCReviewModal adds a second independent guard: all rows
+         * stay in its model while only 12 are mounted at once, so even one
+         * unusually large statement cannot create an unbounded DOM. A statement
+         * whose own rows alone exceed this grouping cap is still let through
+         * whole (never split one statement's rows across two filing units,
+         * since a whole statement's keys are marked filed together) rather
+         * than starved forever. */
         const _WF_REVIEW_ROW_CAP = 60;
         function _reviewMailStatements(ready) {
             const groups = new Map();
@@ -28519,8 +28519,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.25</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.25</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.26</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.26</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -34197,12 +34197,51 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 ['cheque', 'Cheque'],
                 ['skip', 'Skip']
             ].filter(([v]) => !parsed.cloudReview || !['loan', 'cheque'].includes(v)).map(([v, l]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${l}</option>`).join('');
-            const renderRows = () => txns.map((t, idx) => `
+            /* A statement can contain hundreds of transactions. Each review row
+             * owns at least five native form controls (and cloud review owns
+             * eight), so putting the whole statement in one tbody still gives
+             * iOS WebKit an unbounded DOM even after _reviewMailStatements capped
+             * how many separate statements it groups together. Keep every row in
+             * the plain-JS txns model, but mount only one small window at a time.
+             * Edits are copied back before the window moves; Save consumes txns,
+             * never just the currently mounted DOM. */
+            const _CCR_PAGE_SIZE = 12;
+            let _ccrPage = 0;
+            const _ccrPageCount = () => Math.max(1, Math.ceil(txns.length / _CCR_PAGE_SIZE));
+            const _captureRenderedRows = () => {
+                try {
+                    overlay.querySelectorAll('#_ccr_body tr').forEach((tr) => {
+                        const idx = Number(tr.dataset.idx);
+                        const t = txns[idx];
+                        if (!t) return;
+                        const get = (sel) => tr.querySelector(sel);
+                        const keep = get('._ccr_keep'), date = get('._ccr_date'), desc = get('._ccr_desc');
+                        const dest = get('._ccr_dest'), type = get('._ccr_type'), amount = get('._ccr_amount');
+                        if (keep) t._keep = !!keep.checked;
+                        if (date) t.date = date.value || '';
+                        if (desc) t.description = desc.value || '';
+                        if (dest) t._dest = dest.value || 'skip';
+                        if (type) t.type = type.value || '';
+                        if (amount) t.amount = parseMoney(amount.value) || 0;
+                        const category = get('._ccr_cloud_category');
+                        const direction = get('._ccr_cloud_direction');
+                        const allocation = get('._ccr_cloud_allocation');
+                        if (category) t._cloudCategory = category.value || '';
+                        if (direction) t.direction = direction.value || '';
+                        if (allocation) t._cloudAllocation = allocation.value || '';
+                    });
+                } catch (_) {}
+            };
+            const renderRows = () => {
+                const start = _ccrPage * _CCR_PAGE_SIZE;
+                return txns.slice(start, start + _CCR_PAGE_SIZE).map((t, localIndex) => {
+                const idx = start + localIndex;
+                return `
                 <tr data-idx="${idx}" style="border-bottom:1px solid var(--border);${t._review ? 'background:rgba(245,166,35,.07);box-shadow:inset 3px 0 0 var(--accent,#f5a623);' : ''}">
                     <td style="padding:6px 6px;"><input type="checkbox" class="_ccr_keep" ${t._keep ? 'checked' : ''}></td>
-                    <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${t.date || ''}" style="width:130px;font-size:12px;"></td>
-                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${(t.description||'').replace(/"/g,'&quot;')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — ' + String(t._reviewWhy || 'AI wasn\'t sure').replace(/[<>&]/g, '') + '</div>' : ''}</td>
-                    <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select>${parsed.cloudReview ? `<label>Category<input class="fi _ccr_cloud_category" value="${_wfEsc(t._cloudCategory || t._cat || 'Other')}" maxlength="100"></label><label>Direction<select class="fs _ccr_cloud_direction"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></label><label>Subscription allocation<select class="fs _ccr_cloud_allocation"><option value="">Choose an existing subscription when routing to Subscription</option>${(DB.get('subscriptions') || []).map(s => `<option value="${_wfEsc(s.id)}">${_wfEsc(s.name || s.id)}</option>`).join('')}</select></label>` : ''}</td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_date" type="date" value="${_wfEsc(t.date || '')}" style="width:130px;font-size:12px;"></td>
+                    <td style="padding:6px 6px;"><input class="fi _ccr_desc" value="${_wfEsc(t.description || '')}" style="font-size:12px;min-width:150px;">${t._review ? '<div style="font-size:10px;color:var(--accent,#f5a623);margin-top:3px;font-weight:600;">⚠ Please review — ' + _wfEsc(t._reviewWhy || 'AI wasn\'t sure') + '</div>' : ''}</td>
+                    <td style="padding:6px 6px;"><select class="fs _ccr_dest" style="font-size:11px;">${_destOpts(t._dest)}</select>${parsed.cloudReview ? `<label>Category<input class="fi _ccr_cloud_category" value="${_wfEsc(t._cloudCategory || t._cat || 'Other')}" maxlength="100"></label><label>Direction<select class="fs _ccr_cloud_direction"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></label><label>Subscription allocation<select class="fs _ccr_cloud_allocation"><option value="">Choose an existing subscription when routing to Subscription</option>${(DB.get('subscriptions') || []).map(s => `<option value="${_wfEsc(s.id)}" ${t._cloudAllocation === s.id ? 'selected' : ''}>${_wfEsc(s.name || s.id)}</option>`).join('')}</select></label>` : ''}</td>
                     <td style="padding:6px 6px;">
                         ${_acctType === 'bank_account'
                             ? `<select class="fs _ccr_type" style="font-size:11px;">
@@ -34219,13 +34258,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         </select>`}
                     </td>
                     <td style="padding:6px 6px;"><input class="fi _ccr_amount money-input" value="${fmtN(t.amount||0)}" inputmode="decimal" style="width:110px;font-size:12px;text-align:right;font-family:var(--mono);"></td>
-                </tr>
-            `).join('');
+                </tr>`;
+                }).join('');
+            };
 
             overlay.innerHTML = `
                 <div class="md" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">
                     <div class="md-hdr">
-                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${bank}</div>
+                        <div class="md-title">✨ AI extracted ${txns.length} transaction${txns.length>1?'s':''} — ${_wfEsc(bank)}</div>
                         <button class="md-x" aria-label="Close" id="_ccrx"><i data-wfi="x"></i></button>
                     </div>
                     <div class="md-body" style="overflow-y:auto;flex:1;">
@@ -34236,7 +34276,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                                 <button type="button" id="_ccr_typeBank" class="btn" style="padding:4px 10px;font-size:11px;border-radius:8px;${_acctType==='bank_account'?'background:var(--accent,#f5a623);color:#1a1300;':'background:transparent;border:1px solid var(--border2,#243049);color:var(--text2);'}">🏦 Bank Account</button>
                             </div>
                             Each row's <b>Goes to</b> is set automatically from that — change any row if needed. Credit-card cash advances get their bank fee added; bank credits become Income (salary/interest, not investments); transfers are skipped.
-                            ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${parsed.statement_period}` : ''}
+                            ${parsed.statement_period ? `<br><b style="color:var(--blue);">Statement period:</b> ${_wfEsc(parsed.statement_period)}` : ''}
                         </div>
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.28);border-radius:10px;padding:9px 12px;">
                             <span style="color:var(--text2);font-weight:600;">Send every ticked row to →</span>
@@ -34267,6 +34307,11 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                             </thead>
                             <tbody id="_ccr_body">${renderRows()}</tbody>
                         </table>
+                        <div id="_ccr_pages" style="display:${txns.length > _CCR_PAGE_SIZE ? 'flex' : 'none'};align-items:center;justify-content:space-between;gap:10px;padding:12px 2px 2px;position:sticky;bottom:0;background:var(--bg1,#0b1220);">
+                            <button type="button" id="_ccr_prev" class="btn btn-secondary btn-sm" style="min-height:44px;" aria-label="Previous transaction page">← Previous</button>
+                            <span id="_ccr_page_status" style="font-size:11px;color:var(--text2);font-weight:700;"></span>
+                            <button type="button" id="_ccr_next" class="btn btn-secondary btn-sm" style="min-height:44px;" aria-label="Next transaction page">Next →</button>
+                        </div>
                     </div>
                     <div class="md-ftr" style="display:flex;gap:10px;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;">
                         <button class="btn btn-ghost" id="_ccr_cancel" type="button" style="flex:1;min-width:90px;">Cancel</button>
@@ -34286,28 +34331,56 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             // routed there at once. We update BOTH the live <select> (so Save reads it)
             // AND txns[idx]._dest (so it survives a re-render from the CC/Bank toggle).
             const _ccrBulkApply = () => {
+                _captureRenderedRows();
                 const dd = $ovl('#_ccr_bulkDest');
                 const dest = dd ? dd.value : '';
                 if (!dest) { notify('Pick a destination first (e.g. Expenses), then tap Apply.', 'warn'); return; }
                 let n = 0;
-                overlay.querySelectorAll('#_ccr_body tr').forEach(tr => {
-                    const keep = tr.querySelector('._ccr_keep');
-                    if (keep && !keep.checked) return;                 // only ticked rows
-                    const sel = tr.querySelector('._ccr_dest');
-                    if (sel) sel.value = dest;
-                    const idx = parseInt(tr.getAttribute('data-idx'), 10);
-                    if (!isNaN(idx) && typeof txns !== 'undefined' && txns[idx]) txns[idx]._dest = dest;
+                txns.forEach(t => {
+                    if (!t._keep) return;
+                    t._dest = dest;
                     n++;
                 });
+                _reRenderBody();
                 const lbl = { expenses: 'Expenses', cconetime: 'CC One-Time', income: 'Income', subscription: 'Subscription', cc_payment: 'Card Payment', loan: 'Loan Payment', cheque: 'Cheque', skip: 'Skip' }[dest] || dest;
                 notify(n ? ('Routed ' + n + ' row' + (n > 1 ? 's' : '') + ' → ' + lbl) : 'No ticked rows to route.', n ? 'success' : 'warn');
                 try { triggerHaptic(n ? 'success' : 'warn'); } catch (_) {}
             };
             if ($ovl('#_ccr_bulkApply')) $ovl('#_ccr_bulkApply').onclick = _ccrBulkApply;
 
-            // Credit-Card / Bank toggle — re-route every row and repaint the table
-            const _reRenderBody = () => { const b = $ovl('#_ccr_body'); if (b) b.innerHTML = renderRows(); };
+            // Credit-Card / Bank toggle — re-route every row and repaint the table.
+            // The page controls are updated in the same operation so fast taps
+            // can never point beyond the final transaction window.
+            const _reRenderBody = () => {
+                _ccrPage = Math.max(0, Math.min(_ccrPage, _ccrPageCount() - 1));
+                const b = $ovl('#_ccr_body');
+                if (b) b.innerHTML = renderRows();
+                const status = $ovl('#_ccr_page_status');
+                const prev = $ovl('#_ccr_prev'), next = $ovl('#_ccr_next');
+                if (status) {
+                    const from = txns.length ? (_ccrPage * _CCR_PAGE_SIZE + 1) : 0;
+                    const to = Math.min(txns.length, (_ccrPage + 1) * _CCR_PAGE_SIZE);
+                    status.textContent = from + '–' + to + ' of ' + txns.length;
+                }
+                if (prev) prev.disabled = _ccrPage <= 0;
+                if (next) next.disabled = _ccrPage >= _ccrPageCount() - 1;
+            };
+            const _moveReviewPage = (delta) => {
+                _captureRenderedRows();
+                _ccrPage = Math.max(0, Math.min(_ccrPage + delta, _ccrPageCount() - 1));
+                _reRenderBody();
+                const body = $ovl('.md-body');
+                if (body) body.scrollTop = 0;
+            };
+            if ($ovl('#_ccr_prev')) $ovl('#_ccr_prev').onclick = () => _moveReviewPage(-1);
+            if ($ovl('#_ccr_next')) $ovl('#_ccr_next').onclick = () => _moveReviewPage(1);
+            // Keep the model current even when an asynchronous merchant/AI
+            // refinement repaints the visible page while the owner is editing.
+            overlay.addEventListener('input', (ev) => { if (ev.target && ev.target.closest && ev.target.closest('#_ccr_body tr')) _captureRenderedRows(); });
+            overlay.addEventListener('change', (ev) => { if (ev.target && ev.target.closest && ev.target.closest('#_ccr_body tr')) _captureRenderedRows(); });
+            _reRenderBody();
             const _setAcctType = (tp) => {
+                _captureRenderedRows();
                 _acctType = tp; _routeAll(); _reRenderBody();
                 const on = 'background:var(--accent,#f5a623);color:#1a1300;', off = 'background:transparent;border:1px solid var(--border2,#243049);color:var(--text2);';
                 const cc = $ovl('#_ccr_typeCC'), bk = $ovl('#_ccr_typeBank');
@@ -34341,7 +34414,15 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         if (!better) return;
                         const tr = overlay.querySelector('#_ccr_body tr[data-idx="' + idx + '"]');
                         const sel = tr && tr.querySelector('._ccr_type');
-                        if (sel && sel.value === prior) { t.type = ai.type; try { sel.value = ai.type; } catch (_) {} touched++; }
+                        // A row outside the mounted 12-row window has no select.
+                        // Its model value is still upgraded; when its page opens,
+                        // renderRows reads that value. A visible row is changed
+                        // only if the owner has not already edited its select.
+                        if ((!sel && t.type === prior) || (sel && sel.value === prior)) {
+                            t.type = ai.type;
+                            if (sel) { try { sel.value = ai.type; } catch (_) {} }
+                            touched++;
+                        }
                     });
                     if (touched) { try { notify('🤖 AI refined ' + touched + ' transaction type' + (touched === 1 ? '' : 's') + ' for accuracy', 'info'); } catch (_) {} }
                 } catch (_) {}
@@ -34355,14 +34436,14 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     notify('Background AI engine still loading — try the save button, or retry in a moment.', 'warn');
                     return;
                 }
-                const rows = overlay.querySelectorAll('#_ccr_body tr');
+                _captureRenderedRows();
                 const picked = [];
-                rows.forEach((tr) => {
-                    if (!tr.querySelector('._ccr_keep').checked) return;
-                    const date = tr.querySelector('._ccr_date').value || today();
-                    const desc = (tr.querySelector('._ccr_desc').value || '').trim();
-                    const type = tr.querySelector('._ccr_type').value;
-                    const amount = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
+                txns.forEach((t) => {
+                    if (!t._keep) return;
+                    const date = t.date || today();
+                    const desc = String(t.description || '').trim();
+                    const type = t.type || '';
+                    const amount = Number(t.amount) || 0;
                     if (!desc || !amount) return;
                     picked.push({ date, description: desc, amount, type: (type === 'cash_advance' || type === 'service_fee') ? 'debit' : 'debit' });
                 });
@@ -34374,11 +34455,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
             };
 
             $ovl('#_ccr_save').onclick = async () => {
+                _captureRenderedRows();
                 if (typeof parsed.cloudReview === 'function') {
                     const button = $ovl('#_ccr_save'); button.disabled = true;
                     try {
-                        const choices = Array.from(overlay.querySelectorAll('#_ccr_body tr')).filter(tr => tr.querySelector('._ccr_keep').checked).map(tr => {
-                            return { row: { date: tr.querySelector('._ccr_date').value, description: tr.querySelector('._ccr_desc').value.trim(), amount: parseMoney(tr.querySelector('._ccr_amount').value), direction: tr.querySelector('._ccr_cloud_direction').value, type: tr.querySelector('._ccr_type').value }, decision: { module: tr.querySelector('._ccr_dest').value, category: tr.querySelector('._ccr_cloud_category').value.trim(), allocationId: tr.querySelector('._ccr_cloud_allocation').value } };
+                        const choices = txns.filter(t => t._keep).map(t => {
+                            return { row: { date: t.date || '', description: String(t.description || '').trim(), amount: Number(t.amount) || 0, direction: t.direction || '', type: t.type || '' }, decision: { module: t._dest || 'skip', category: String(t._cloudCategory || t._cat || 'Other').trim(), allocationId: t._cloudAllocation || '' } };
                         });
                         if (!choices.length) throw new Error('review-selection-required');
                         if (choices.some(c => c.decision.module === 'subscription' && !c.decision.allocationId)) throw new Error('subscription-allocation-required');
@@ -34389,7 +34471,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     return;
                 }
                 // Route every ticked row to the destination chosen in its "Goes to" cell.
-                const rows = overlay.querySelectorAll('#_ccr_body tr');
+                const rows = txns;
                 const ccArr = DB.get('cconetime');
                 const ccPayArr = DB.get('ccPayments') || [];
                 const expArr = DB.get('expenses');
@@ -34418,12 +34500,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 // each note by a stable signature. A clean note ('') is used when
                 // the AI judges none is needed — never the old "from statement".
                 const _noteItems = [];
-                rows.forEach((tr) => {
-                    if (!tr.querySelector('._ccr_keep').checked) return;
-                    const d = tr.querySelector('._ccr_date').value || today();
-                    const ds = (tr.querySelector('._ccr_desc').value || '').trim();
-                    const am = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
-                    const ty = tr.querySelector('._ccr_type').value;
+                rows.forEach((t) => {
+                    if (!t._keep) return;
+                    const d = t.date || today();
+                    const ds = String(t.description || '').trim();
+                    const am = Number(t.amount) || 0;
+                    const ty = t.type || '';
                     if (ds && am) _noteItems.push({ date: d, desc: ds, amount: am, type: ty });
                 });
                 let _notesMap = {};
@@ -34439,17 +34521,17 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
 
                 // One undoable batch per import (records every payment it creates).
                 const _batch = (window.WFBatch ? WFBatch.begin((parsed && parsed.fileName) || (bank ? (bank + ' statement') : 'Statement'), 'statement') : null);
-                rows.forEach((tr) => {
-                    if (!tr.querySelector('._ccr_keep').checked) { skipped++; return; }
-                    const date = tr.querySelector('._ccr_date').value || today();
-                    const desc = (tr.querySelector('._ccr_desc').value || '').trim();
-                    const dest = tr.querySelector('._ccr_dest').value;
-                    const type = tr.querySelector('._ccr_type').value;
-                    const amount = parseMoney(tr.querySelector('._ccr_amount').value) || 0;
+                rows.forEach((t) => {
+                    if (!t._keep) { skipped++; return; }
+                    const date = t.date || today();
+                    const desc = String(t.description || '').trim();
+                    const dest = t._dest || 'skip';
+                    const type = t.type || '';
+                    const amount = Number(t.amount) || 0;
                     if (!desc || !amount) { skipped++; return; }
                     const month = (date || '').slice(0, 7);
                     const past = _isPast(date);
-                    const _sourceRow = (typeof txns !== 'undefined' && txns[+(tr.dataset.idx)]) || {};
+                    const _sourceRow = t || {};
                     const _source = { statementKey: _sourceRow._statementKey || '', statementRow: _sourceRow._statementRow,
                         bank: _sourceRow._bank || bank || '', card_last4: _sourceRow._ccLast4 || _last4 || '', ref: _sourceRow.ref || '' };
 
@@ -34474,7 +34556,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         cc++;
                     } else if (dest === 'expenses') {
                         if (_dupIn(expArr, date, amount, desc, 'amount', _source)) { dup++; return; }
-                        const _mi = +(tr.dataset.idx); const _mt = (typeof txns !== 'undefined' && txns[_mi]) || {};
+                        const _mt = t || {};
                         const cat = (_mt._cat && _mt._cat !== 'Other') ? _mt._cat : ((window.WFRoute ? window.WFRoute.expenseCategory(desc) : 'Other') || 'Other');
                         try { if (window.WFMerchants) window.WFMerchants.learn(desc, 'expenses', cat); } catch (_) {}
                         const _rec = { id: uid(), desc, cat, ..._source, amount, month, date, recurring: false, recurringType: '0', notes: _noteFor(date, desc, amount), completed: past, source: 'statement', createdAt: new Date().toISOString() };
@@ -34496,7 +34578,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // the merchant even if renamed) else auto-create, then record
                         // this month's payment. WFSubs de-dupes payments internally.
                         const si = (window.WFRoute && window.WFRoute.subscriptionInfo(desc)) || {};
-                        const _si2 = +(tr.dataset.idx); const _st = (typeof txns !== 'undefined' && txns[_si2]) || {};
+                        const _st = t || {};
                         const routeInfo = { subName: _st._subName || si.name || ((window.WFMerchants && window.WFMerchants.cleanName) ? window.WFMerchants.cleanName(desc) : desc), subKind: _st._subKind || si.kind || 'other', subPhone: _st._subPhone || si.phone || null, category: (_st._cat && _st._cat !== 'Other') ? _st._cat : (si.category || 'Other') };
                         try { if (window.WFMerchants) window.WFMerchants.learn(desc, 'subscription', routeInfo.category); } catch (_) {}
                         if (window.WFSubs) {
@@ -34512,7 +34594,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // "PAYMENT - THANK YOU"). Stored like a charge so it auto-settles
                         // outstanding charges, oldest first. NOT a ledger income/expense.
                         if (_dupIn(ccPayArr, date, amount, desc, 'amount', _source)) { dup++; return; }
-                        const _payT = (typeof txns !== 'undefined' && txns[+(tr.dataset.idx)]) || {};
+                        const _payT = t || {};
                         const _pay = { id: uid(), ..._source, card_last4: _payT._ccLast4 || _source.card_last4, amount, date, desc, source: 'statement', createdAt: new Date().toISOString() };
                         if (_batch) { WFBatch.tag(_batch, _pay); WFBatch.record(_batch, 'ccPayments', _pay.id); }
                         ccPayArr.push(_pay);
@@ -34520,7 +34602,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     } else if (dest === 'loan') {
                         // v7.30.0 — file this bank-statement loan repayment against the matching loan's month
                         // (replace that month's entry if one already exists — the statement is authoritative).
-                        const _ti = +(tr.dataset.idx); const _t = (typeof txns !== 'undefined' && txns[_ti]) || {};
+                        const _t = t || {};
                         let _ln = null;
                         if (_t._loanId) _ln = loanArr.find(x => x.id === _t._loanId);
                         if (!_ln) { const _m = _matchLoanForPayment(desc, amount, 'debit'); if (_m) _ln = loanArr.find(x => x.id === _m.id); }
@@ -34539,7 +34621,7 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         // v7.30.0 — file a statement cheque into the Cheque tab. received = money IN
                         // (deposit/inward/credit), issued = money OUT (payment/outward/debit). It is
                         // already on the statement, so it has CLEARED. De-dupe by cheque number.
-                        const _ti = +(tr.dataset.idx); const _t = (typeof txns !== 'undefined' && txns[_ti]) || {};
+                        const _t = t || {};
                         const _no = String(_t._chequeNo || '').trim();
                         const _seen = chequeArr.some(c => (_no && String(c.no || '').trim() === _no) || (c.issue === date && Math.abs((c.amount || 0) - amount) < 0.01 && _nz(c.party) === _nz(desc)));
                         if (_seen) { dup++; return; }
