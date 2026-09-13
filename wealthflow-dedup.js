@@ -79,7 +79,12 @@
     function _sameDay(a, b) {
         const da = new Date(a), db = new Date(b);
         if (isNaN(da) || isNaN(db)) return false;
-        return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+        // Imported timestamps must deduplicate identically on every device.
+        // Local calendar getters made the same pair match in Sri Lanka and fail
+        // after a timezone change or on a CI runner east of midnight.
+        return da.getUTCFullYear() === db.getUTCFullYear()
+            && da.getUTCMonth() === db.getUTCMonth()
+            && da.getUTCDate() === db.getUTCDate();
     }
     function _sameMinute(a, b) { return a && b && Math.abs(a - b) < 60000; }
 

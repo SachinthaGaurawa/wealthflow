@@ -6,6 +6,24 @@ const response = () => ({ setHeader() {}, status(n) { this.code = n; return this
 const request = { method: 'POST', body: { prompt: 'Return only JSON for this financial transaction', mode: 'fastest' } };
 
 describe('parallel unanimous endpoint', () => {
+    it('waits for late prose dissent instead of returning the first or third arrival', async () => {
+        vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
+        const releases = [];
+        vi.stubGlobal('fetch', vi.fn(url => new Promise(resolve => releases.push(() => resolve({ ok: true, json: async () => url.includes('googleapis')
+            ? { candidates: [{ content: { parts: [{ text: 'Use the verified collective answer.' }] } }] }
+            : { choices: [{ message: { content: 'Use the verified collective answer.' } }] } })))));
+        const res = response();
+        const pending = handler({ method: 'POST', body: { prompt: 'Give advisory guidance', mode: 'fastest' } }, res);
+        await vi.waitFor(() => expect(releases.length).toBe(2));
+        releases[0](); await Promise.resolve();
+        expect(res.body).toBeUndefined();
+        releases[1](); await pending;
+        expect(res.code).toBe(200);
+        expect(res.body.mode).toBe('collective');
+        expect(res.body.answered).toEqual(['Gemini', 'Groq']);
+        expect(res.body.requestedMode).toBe('fastest');
+    });
+
     it('starts both configured engines before either completes and cannot use fastest override', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
         const releases = [];

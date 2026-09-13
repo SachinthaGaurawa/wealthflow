@@ -355,6 +355,14 @@ describe('the check button stops re-offering what is done', () => {
         expect(fn('renderMailSync')).toContain('st.filed');
     });
 
+    it('does not re-offer obvious legacy invoices and receipts as statements', () => {
+        const at = link.indexOf("method === 'GET' && /[?&]items=1/");
+        const block = link.slice(at);
+        expect(block).toContain('legacyNonStatements');
+        expect(block).toContain('nameVerdict({ subject:');
+        expect(block).toContain('rejectedNonStatements: legacyNonStatements.length');
+    });
+
     it('an unapproved sender is never opened at all', () => {
         /* #167 stored `known` and drew it on the row, then unlocked and parsed
          * the attachment anyway. "Held for review" has to mean the statement is

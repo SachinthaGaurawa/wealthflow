@@ -1,12 +1,10 @@
 // ==================== WealthFlow Infinity Service Worker v7.11.0 ====================
 // Handles PWA push notifications, offline caching, and background sync.
 //
-// v7.11.0 (May 2026): Reverted the v7.9.0 Gmail-sync hooks. The app no longer
-// has email-based ingestion. Instead, users paste bank SMSes manually via the
-// new in-app modal (wealthflow-sms-paste.js). Service Worker stays simple:
-// notifications, caching, and the original auto-backup logic.
+// Gmail ingestion is server-owned (Pub/Sub + scheduled reconciliation + Cloud
+// Tasks); the worker owns only notifications, caching and backup wake-ups.
 
-const CACHE_NAME = 'wealthflow-v7.69.24';
+const CACHE_NAME = 'wealthflow-v7.69.25';
 
 // How long the app shell waits for the network before falling back to the cached
 // copy. Long enough for a slow mobile connection to win the race, short enough

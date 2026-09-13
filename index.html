@@ -8675,7 +8675,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.24';
+        var WF_APP_VERSION = '7.69.25';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -10193,9 +10193,12 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 var r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
                 if (r.ok) {
                     var d = await r.json();
-                    if (d && d.reply) { try { _lastAIProvider = d.provider || _lastAIProvider; } catch (_) {} return d.reply; }
+                    if (d && d.reply && (!wantJSON || (d.trustworthy === true && d.financialDecision === true))) {
+                        try { _lastAIProvider = d.provider || _lastAIProvider; } catch (_) {} return d.reply;
+                    }
                 }
             } catch (_) {}
+            if (wantJSON) throw new Error('Unverified structured result withheld.');
             // Graceful fallbacks — same engines callAI uses, no chat rewriting.
             try { var g = await _tryGemini(prompt, image); if (g) return g; } catch (_) {}
             try { var o = await _tryOllama(prompt, image); if (o) return o; } catch (_) {}
@@ -28427,8 +28430,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.24</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.24</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.25</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.25</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -33877,24 +33880,26 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                 '   • fuel = buying fuel AT a filling/petrol/gas station (e.g. Ceypetco, Lanka IOC, Sinopec, a named fuel station). IMPORTANT: a "fuel surcharge" is a FEE → service_fee, NOT fuel.\n' +
                 '   • purchase = any normal goods/services purchase, or a transfer/deposit/salary line (Type is only used for card fees, fuel & repayments — for everything else use "purchase").\n' +
                 '2) "category" — a short human expense/income category (Groceries, Dining, Fuel, Utilities, Telecom, Health, Shopping, Travel, Transport, Bank Charges, Government, Entertainment, Salary, Transfer, Other).\n' +
-                'Return ONLY a JSON array, SAME length & order as the input, each element {"i":<index>,"type":"...","category":"..."}. No prose, no markdown.\n\nTransactions:\n' +
+                'Return ONLY {"decisions":[...]}, same length/order as input; each item {"i":<index>,"type":"...","category":"..."}. No prose/markdown.\n\nTransactions:\n' +
                 JSON.stringify(items.map((it, i) => ({ i: i, desc: it.desc, amount: it.amount })));
             try {
                 const raw = await Promise.race([
-                    callAIRaw(prompt, null, { json: true }),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 16000))
+                    callAIRaw(prompt, null, { json: true, mode: 'unanimous' }),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 50000))
                 ]);
                 let t = String(raw || '').replace(/```json|```/g, '').trim();
-                let arr = null;
-                try { arr = JSON.parse(t); } catch (_) { const m = t.match(/\[[\s\S]*\]/); if (m) { try { arr = JSON.parse(m[0]); } catch (_) {} } }
-                if (Array.isArray(arr)) {
+                let payload = null;
+                try { payload = JSON.parse(t); } catch (_) { const m = t.match(/\{[\s\S]*\}/); if (m) { try { payload = JSON.parse(m[0]); } catch (_) {} } }
+                const arr = payload && Array.isArray(payload.decisions) ? payload.decisions : null;
+                const exactOrder = arr && arr.length === items.length && arr.every((row, i) => row && Number(row.i) === i);
+                if (exactOrder) {
                     arr.forEach((row) => {
                         if (!row || row.i == null || !items[row.i]) return;
                         const it = items[row.i];
                         const ty = String(row.type || '').toLowerCase().replace(/[^a-z_]/g, '');
                         const cat = String(row.category || '').trim().slice(0, 24);
                         out[sig(it)] = {
-                            type: (['purchase', 'cash_advance', 'service_fee', 'fuel'].indexOf(ty) >= 0) ? ty : null,
+                            type: (['purchase', 'cash_advance', 'service_fee', 'fuel', 're_payment'].indexOf(ty) >= 0) ? ty : null,
                             category: cat || null
                         };
                     });

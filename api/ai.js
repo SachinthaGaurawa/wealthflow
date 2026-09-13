@@ -17,15 +17,9 @@
 
 import * as Matrix from './ai-matrix.mjs';
 
-/* HOW MANY ANSWERS BEFORE WE STOP WAITING.
- *
- * The old default returned the FIRST valid reply and read none of the others.
- * Sixteen engines ran in parallel and exactly one was heard from. Waiting for a
- * small quorum instead costs the difference between the fastest engine and the
- * third fastest — not the difference between the fastest and the slowest, which
- * is what full consensus costs — and it is the difference between an answer and
- * a corroborated answer. */
-const QUORUM = 3;
+/* Every eligible configured engine is started before any result is awaited.
+ * A response is reduced only after all members settle or hit their individual
+ * deadline, so a late dissent can never be silently discarded. */
 
 export const config = {
     maxDuration: 45 // seconds — long enough for deep responses
@@ -363,15 +357,12 @@ export default async function handler(req, res) {
     // All engines fire SIMULTANEOUSLY (not one-by-one). This is dramatically
     // faster and more reliable: a slow/down provider no longer blocks the rest.
     //
-    //  • mode=corroborated → stop at the first QUORUM valid answers, then let
-    //                        api/ai-matrix.mjs pick the one they agree on. The
-    //                        default for prose and chat.
+    //  • mode=corroborated → wait for every eligible configured engine, then
+    //                        let api/ai-matrix.mjs reconcile all testimony.
     //  • mode=consensus    → wait for every engine, then vote (vision / JSON)
-    //  • mode=fastest      → the old race, still available when a caller wants
-    //                        latency above all. It no longer PRESENTS itself as
-    //                        agreement: the reply comes back labelled `solo`
-    //                        with trustworthy:false when one engine is all that
-    //                        had arrived.
+    //  • mode=fastest      → retained as a compatibility alias only. WealthFlow
+    //                        never releases an answer before the full eligible
+    //                        board has settled or reached its per-engine deadline.
     const errorLog = [];
 
     let engines;
@@ -419,18 +410,18 @@ export default async function handler(req, res) {
         Fireworks: fireworksKey, OpenRouter: openrouterKey, Cerebras: cerebrasKey,
         SambaNova: sambanovaKey, NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey };
     engines = engines.filter(engine => Boolean(configured[engine.name]));
-    const expectedNames = Object.keys(configured).filter(name => Boolean(configured[name]));
+    // The required roster must match the task capability. A configured
+    // text-only provider is not a missing vision voter; every eligible provider
+    // is still required and a failed eligible provider still blocks unanimity.
+    const expectedNames = engines.map(engine => engine.name);
     if (!engines.length) return res.status(503).json({ error: 'No AI providers configured.', needsReview: true, trustworthy: false, corroboration: { agreed: 0, of: 0, score: 0 } });
 
     // Wants JSON (receipt extraction etc.) → use consensus for max accuracy.
     const requestedMode = (req.body && req.body.mode) ? String(req.body.mode) : null;
-    // DEFAULT CHANGED: prose and chat used to default to `fastest`, a race whose
-    // winner was returned unread by anyone else. It now defaults to
-    // `corroborated`. An explicit mode:'fastest' from a caller is still served —
-    // latency is a legitimate thing to ask for — but the reply is labelled with
-    // what actually backed it, so nothing can present one engine as agreement.
-    // Financial extraction may never opt into the fastest/quorum shortcut.
-    const mode = financialDecision ? 'unanimous' : (requestedMode || 'corroborated');
+    // `fastest` and `consensus` are legacy caller vocabulary. They now both mean
+    // a collective board; no endpoint path is allowed to discard late dissent.
+    const mode = financialDecision ? 'unanimous' : 'collective';
+    const requestedModeAlias = requestedMode || 'corroborated';
     const task = isVision ? Matrix.TASK.VISION : wantsJSON ? Matrix.TASK.EXTRACTION : Matrix.TASK.PROSE;
 
     // Wrap each engine call so a rejection becomes a tagged result, never throws.
@@ -452,55 +443,10 @@ export default async function handler(req, res) {
 
     const isValid = (txt) => typeof txt === 'string' && txt.trim().length > 1;
 
-    // ---- MODE: CORROBORATED (wait for a quorum, then cross-check) ----
-    //
-    // Every engine still fires at once. What changed is when we stop listening:
-    // at the first QUORUM valid answers rather than the first one. Whatever has
-    // arrived by then goes to the matrix, which picks the answer the arrivals
-    // agree on and reports how well supported it is — including the case that
-    // matters most here, two answers that read alike and name different money.
-    let pending;
-    if (mode === 'fastest' || mode === 'corroborated') {
-        const target = mode === 'fastest' ? 1 : Math.min(QUORUM, engines.length);
-        pending = engines.map(run);
-        const settled = [];
-        await new Promise((resolve) => {
-            let remaining = pending.length;
-            let valid = 0;
-            pending.forEach(p => p.then(r => {
-                settled.push(r);
-                if (r.ok && isValid(r.reply) && ++valid >= target) resolve();
-                if (--remaining === 0) resolve();
-            }));
-        });
-
-        // Snapshot: engines that have not settled keep running harmlessly, and
-        // a list that grows underneath the decision would make the reported
-        // counts describe a different set from the one that was read.
-        const decision = Matrix.decide(settled.slice(), { task, json: wantsJSON });
-        if (decision.reply) {
-            return res.status(200).json({
-                reply: decision.reply,
-                provider: decision.provider,
-                mode: decision.mode,          // corroborated | consensus | split | solo
-                task: decision.task,
-                corroboration: decision.corroboration,
-                trustworthy: Matrix.trustworthy(decision),
-                engines: engines.map(e => e.name),
-                answered: decision.answered,
-                failed: decision.failed,
-                financialDecision: false, advisoryOnly: true
-            });
-        }
-        // Nothing valid arrived. Fall through and wait for the rest rather than
-        // reporting a failure while engines are still working.
-    }
-
-    // ---- MODE: CONSENSUS (gather all, choose the best) ----
-    const results = await Promise.all(pending || engines.map(run));
+    // Start the entire eligible board before awaiting any member, then retain
+    // every success, failure and timeout in the decision record.
+    const results = await Promise.all(engines.map(run));
     if (mode === 'unanimous') {
-        // A configured text-only member cannot silently disappear from a vision
-        // board. Such requests need review or conversion to text evidence first.
         const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 10 });
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
@@ -604,7 +550,8 @@ export default async function handler(req, res) {
     return res.status(200).json({
         reply: best.reply,
         provider: best.provider,
-        mode: 'consensus',
+        mode: 'collective',
+        requestedMode: requestedModeAlias,
         task,
         consensusOf: good.length,
         agreement: good.map(r => r.name),
@@ -617,6 +564,8 @@ export default async function handler(req, res) {
             agreed: good.length, of: good.length, score: 1, dissent: [], nearMisses: [], numericConflict: false
         },
         trustworthy: proseDecision ? Matrix.trustworthy(proseDecision) : good.length >= 2,
+        answered: good.map(r => r.name),
+        failed: results.filter(r => !r.ok).map(r => r.name),
         latencyMs: best.ms,
         financialDecision: false, advisoryOnly: true
     });

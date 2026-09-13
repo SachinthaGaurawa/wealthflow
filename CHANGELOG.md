@@ -1,5 +1,17 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.25 — 2026-09-13
+
+**What changed for you**
+
+- Recover approved statements missed behind Gmail's history cursor with a bounded 14-day reconciliation.
+- Keep exact approved sender addresses authoritative and hide obvious legacy invoices and receipts from the statement queue.
+
+**Under the hood**
+
+- Wait for every eligible AI engine before reducing a result; structured financial AI and autonomous security review now fail closed.
+- Make duplicate matching deterministic across device timezones.
+
 ## v7.69.24 — 2026-08-16
 
 **Internal changes only**
@@ -140,4 +152,3 @@ Improvements and fixes in this release.
 ## v7.63.1 — 2026-07-13 (security)
 
 Security & stability update.
-
