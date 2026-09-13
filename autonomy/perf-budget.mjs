@@ -208,7 +208,14 @@ export const BUDGETS = {
     // Raised again for the boot-time hydrate() wiring that makes isSet()/
     // exists() accurate on a device that has never opened the vault UI here
     // (measured 2,051,489). No new script requests.
-    htmlBytes: 2_052_000,
+    // Raised again for the mail-sync pagination fix: GET items=1 used to
+    // return every pending statement's full attachment in one response
+    // (up to 200, tens to hundreds of MB on a phone) — the actual root
+    // cause of "the app crashes while email statements sync". runMailSync
+    // now fetches, processes and releases a few statements' payloads at a
+    // time instead of the whole backlog at once (measured 2,055,080). No
+    // new script requests.
+    htmlBytes: 2_056_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

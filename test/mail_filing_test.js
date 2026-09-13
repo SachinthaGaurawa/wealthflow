@@ -110,7 +110,10 @@ describe('a mail statement’s rows actually reach the ledger', () => {
         const body = fn('runMailSync');
         const at = body.indexOf('_parsed = out');
         expect(at).toBeGreaterThan(-1);
-        expect(body.slice(at, at + 60)).toContain('return out');
+        // Widened from 60: the sync now pages through the backlog (an extra
+        // nesting level around the per-statement work), so this line sits
+        // further right on the page than it used to.
+        expect(body.slice(at, at + 80)).toContain('return out');
     });
 });
 
@@ -136,7 +139,10 @@ describe('a check fetches, it does not only re-list', () => {
         const body = fn('runMailSync');
         expect(fn('_recentSweep'), '_recentSweep is gone').toBeTruthy();
         const sweep = body.indexOf('_recentSweep(');
-        const list = body.indexOf("'?items=1'");
+        // Prefix, not the whole literal: the sync now pages through the
+        // backlog (see gmail-link.js's limit/offset), so the query string
+        // carries extra params past '?items=1' itself.
+        const list = body.indexOf("'?items=1");
         expect(sweep, 'the check no longer fetches').toBeGreaterThan(-1);
         expect(sweep, 'it lists the store before going to look').toBeLessThan(list);
     });

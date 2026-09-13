@@ -193,7 +193,13 @@ describe('a connected mailbox scans its own history once', () => {
     it('runMailSync triggers the backfill when the store is empty', () => {
         expect(SYNC, 'runMailSync is gone').toBeTruthy();
         expect(SYNC, 'nothing runs the historical scan on its own').toContain('runBackfill(FIRST_SCAN_MONTHS)');
-        expect(SYNC).toContain('!docs.length');
+        // The sync now pages through the backlog (see gmail-link.js's
+        // limit/offset), so "nothing pending" is read from the server's own
+        // total count (_totalPending, from the first page's response) rather
+        // than the length of whatever happened to fit in one unpaginated
+        // fetch — the same "is the store genuinely empty" check, just fed by
+        // a number that is actually correct for a backlog over one page.
+        expect(SYNC).toContain('!_totalPending');
     });
 
     it('only once, and the marker is set BEFORE the scan runs', () => {

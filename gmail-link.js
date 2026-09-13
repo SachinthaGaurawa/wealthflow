@@ -479,11 +479,32 @@ export default async function handler(req, res) {
              * before. A statement stored several times may have been marked on
              * any one of those copies; filtering first would let an unmarked
              * copy survive the collapse and be offered again, which is the
-             * duplicate the owner reported wearing a different hat. */
+             * duplicate the owner reported wearing a different hat.
+             *
+             * Filtered from `eligible` (post legacy-non-statement veto), not
+             * the raw `collapsed`: a rejected invoice/receipt must never
+             * occupy a page slot a real statement could have used. */
             const done = eligible.filter((r) => r.manifest && r.manifest.filed === true).length;
-            const keep = eligible
-                .filter((r) => !(r.manifest && r.manifest.filed === true))
-                .slice(0, ITEMS_RETURN_MAX);
+            const pending = eligible.filter((r) => !(r.manifest && r.manifest.filed === true));
+
+            /* PAGINATED, NOT JUST CAPPED. `keep` used to always be the first
+             * ITEMS_RETURN_MAX (200) pending statements, EVERY one's parts
+             * fetched and returned in one response — so a real backlog handed
+             * the device up to 200 full PDF attachments (each easily 0.5-3MB
+             * of base64) in a single JSON payload, before it had processed
+             * even one of them. That is a peak of tens to hundreds of MB on a
+             * phone, held for the whole sync, which is exactly the shape of
+             * "the app crashes while — or right after — email statements
+             * sync". `limit`/`offset` (both optional; absent behaves exactly
+             * as before, one page of up to ITEMS_RETURN_MAX) let the device
+             * ask for a few statements' worth of attachments at a time,
+             * process and release each page, then ask for the next — bounding
+             * peak memory to one page's payloads instead of the whole queue's. */
+            const limitMatch = /[?&]limit=(\d+)/.exec(String(req.url || ''));
+            const offsetMatch = /[?&]offset=(\d+)/.exec(String(req.url || ''));
+            const limit = limitMatch ? Math.min(ITEMS_RETURN_MAX, Math.max(1, parseInt(limitMatch[1], 10))) : ITEMS_RETURN_MAX;
+            const offset = offsetMatch ? Math.max(0, parseInt(offsetMatch[1], 10)) : 0;
+            const keep = pending.slice(offset, offset + limit);
 
             const items = [];
             for (const row of keep) {
@@ -515,6 +536,14 @@ export default async function handler(req, res) {
                  * so the numbers on the card always add up. */
                 filed: done,
                 rejectedNonStatements: legacyNonStatements.length,
+                /* Pagination: how many pending statements exist beyond this
+                 * page, and the total pending count (for a progress readout).
+                 * A caller that never sends limit/offset gets `more: false`
+                 * whenever the (unpaginated, up-to-200) page already covers
+                 * everything pending — unchanged from before pagination
+                 * existed unless the backlog itself exceeds 200. */
+                more: offset + keep.length < pending.length,
+                pending: pending.length,
             });
         } catch (_) {
             return j(res, 503, { ok: false, error: 'items unreadable' });
