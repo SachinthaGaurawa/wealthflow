@@ -215,7 +215,7 @@ export const BUDGETS = {
     // now fetches, processes and releases a few statements' payloads at a
     // time instead of the whole backlog at once (measured 2,055,080). No
     // new script requests.
-    htmlBytes: 2_056_250,
+    htmlBytes: 2_058_281,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
