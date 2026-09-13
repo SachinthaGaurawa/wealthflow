@@ -22,6 +22,45 @@ const senderFixture = {
     legacyApproved: [],
 };
 
+async function verifyLargeReviewWindow(page, width) {
+    await page.evaluate(() => {
+        window.__wfE2EReviewChoices = null;
+        const transactions = Array.from({ length: 200 }, (_, i) => ({
+            date: `2026-08-${String((i % 28) + 1).padStart(2, '0')}`,
+            description: `Mobile pressure row ${i}`,
+            amount: 100 + i,
+            direction: 'debit',
+            type: 'purchase',
+        }));
+        _showCCReviewModal({
+            transactions,
+            cloudReview: async choices => { window.__wfE2EReviewChoices = choices; },
+        }, 'Mobile memory test');
+    });
+    const body = page.locator('#_ccr_body');
+    await body.waitFor({ state: 'visible' });
+    assert.equal(await body.locator('tr').count(), 12, `${width}px must mount only one 12-row review window`);
+    assert.equal(await page.locator('#_ccr_page_status').textContent(), '1–12 of 200');
+    await body.locator('tr[data-idx="0"] ._ccr_desc').fill('Edited before rapid navigation');
+
+    // Move quickly enough to exercise repeated teardown/rebuild while WebKit's
+    // failure used to appear during a fast swipe through hundreds of controls.
+    for (let i = 0; i < 8; i += 1) {
+        await page.locator('#_ccr_next').click();
+        assert.ok((await body.locator('tr').count()) <= 12, `${width}px review DOM grew beyond its window`);
+    }
+    for (let i = 0; i < 8; i += 1) await page.locator('#_ccr_prev').click();
+    assert.equal(await body.locator('tr[data-idx="0"] ._ccr_desc').inputValue(), 'Edited before rapid navigation');
+
+    // Save from page one. The cloud callback must receive the 188 rows which
+    // are not in the DOM as well as the 12 which are.
+    await page.locator('#_ccr_save').click();
+    await page.waitForFunction(() => Array.isArray(window.__wfE2EReviewChoices));
+    assert.equal(await page.evaluate(() => window.__wfE2EReviewChoices.length), 200,
+        `${width}px save dropped rows outside the mounted review window`);
+    await page.waitForFunction(() => !document.querySelector('#_ccr_body'));
+}
+
 function measureLayout({ sender, mobile }) {
     const root = sender ? document.querySelector('#_sl_body').closest('.md') : document.querySelector('#wfMailSync');
     const shown = el => !!el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden';
@@ -110,6 +149,7 @@ try {
         }
         await app.page.locator('#_sl_x').click();
         await app.page.waitForFunction(() => !document.querySelector('#_sl_body'));
+        if ([320, 390, 768].includes(width)) await verifyLargeReviewWindow(app.page, width);
         if ([320, 768].includes(width)) {
             await app.page.locator('#wfMailSync').scrollIntoViewIfNeeded();
             await app.page.screenshot({ path: path.join(artifacts, `statement-sync-${width}.png`), fullPage: false });
