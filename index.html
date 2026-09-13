@@ -26208,13 +26208,12 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
             notify(String(first.rows.length) + ' transaction' + (first.rows.length === 1 ? '' : 's')
                 + ' from ' + first.bank + ' are ready to check'
-                // Deliberately not "after you save this batch" — that is only
-                // guaranteed when this whole batch is filed AND syncs durably
-                // (see the onFiled check below). Ticking off some rows, or a
-                // sync failure, leaves this bank not marked done, and the held
-                // statements wait for the NEXT check either way — true whether
-                // this batch's save succeeds, is partial, or fails.
-                + (first.omitted ? (' (' + first.omitted + ' more ' + first.bank + ' statement' + (first.omitted === 1 ? '' : 's') + ' waiting — offered on the next check)') : ''), 'info');
+                // No claim about WHEN the rest appear — with another bank also
+                // pending, the very next check may surface that one first (see
+                // "more bank(s) to check" below), and it can take a few checks
+                // to cycle back to this one. Only what is unconditionally true
+                // is said: these are still held, not lost, not skipped.
+                + (first.omitted ? (' (' + first.omitted + ' more ' + first.bank + ' statement' + (first.omitted === 1 ? '' : 's') + ' still held, to review separately)') : ''), 'info');
             window._showCCReviewModal(
                 {
                     transactions: first.rows,
