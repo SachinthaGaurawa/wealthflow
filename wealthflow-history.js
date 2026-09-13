@@ -140,7 +140,17 @@
     }
 
     // ── rendering ──────────────────────────────────────────────────────────────
-    let _state = { tab: null, category: 'all', query: '' };
+    // Places grow with every distinct payee ever recorded — statement imports over
+    // a few years routinely leave hundreds of them, each expanding into its own
+    // nested months/transactions <details> tree. Every OTHER long list in this app
+    // draws a bounded page and offers the rest on tap (see index.html's _wfCap);
+    // this one drew every place, unconditionally, into one <details> tree — the
+    // same "renderer kill on a phone" shape, just in a self-contained module that
+    // cannot reach that shared helper (see the file's own "never depend on app
+    // internals" note above). Capped the same way, locally: draw a page of
+    // places, keep the totals computed over all of them.
+    const _WFH_PAGE = 60;
+    let _state = { tab: null, category: 'all', query: '', shown: _WFH_PAGE };
 
     function bodyHTML() {
         const recs = collect();
@@ -157,11 +167,18 @@
         Object.keys(model.cats).forEach(ck => { const c = model.cats[ck]; Object.keys(c.places).forEach(pk => places.push(Object.assign({ category: c.category }, c.places[pk]))); });
         places.sort((a, b) => b.total - a.total);
 
+        // The bar below reflects places.length (every place, unsliced) — it must
+        // never be computed from the page that follows, or a truncated view would
+        // report itself as the whole picture.
+        const shown = Math.min(_state.shown || _WFH_PAGE, places.length);
+        const hidden = places.length - shown;
+        const pagePlaces = hidden > 0 ? places.slice(0, shown) : places;
+
         let list;
         if (!places.length) {
             list = '<div class="wfh-empty">No transactions yet for this view.<br>Import a bank statement or add records, and they will appear here grouped by month.</div>';
         } else {
-            list = places.map(p => {
+            list = pagePlaces.map(p => {
                 const months = Object.values(p.months).sort((a, b) => b.month.localeCompare(a.month));
                 const monthsHTML = months.map(m => {
                     const txns = m.txns.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -192,7 +209,14 @@
                     '<div class="wfh-months">' + monthsHTML + '</div>' +
                     '</details>'
                 );
-            }).join('');
+            }).join('') + (hidden > 0
+                ? '<div style="text-align:center;padding:14px 10px 4px;">'
+                    + '<button class="wfh-more" data-wfh-more="1" style="font-size:10.5px;font-weight:800;color:var(--accent,#8ba0ff);border:1px solid var(--border2,rgba(255,255,255,.14));border-radius:999px;padding:8px 16px;background:transparent;">Show '
+                    + Math.min(_WFH_PAGE, hidden) + ' more</button>'
+                    + '<div style="font-size:11px;color:var(--text3,#8890a6);margin-top:6px;">Showing '
+                    + shown + ' of ' + places.length + ' places &middot; the totals above cover all '
+                    + places.length + '</div></div>'
+                : '');
         }
 
         return (
@@ -217,7 +241,7 @@
     function open(opts) {
         injectCSS();
         opts = opts || {};
-        _state = { tab: opts.tab || null, category: opts.category || 'all', query: '' };
+        _state = { tab: opts.tab || null, category: opts.category || 'all', query: '', shown: _WFH_PAGE };
         close(true);
         const ov = document.createElement('div'); ov.className = 'wfh-ov'; ov.id = 'wfh-ov';
         ov.innerHTML =
@@ -232,12 +256,16 @@
         // interactions (delegated)
         ov.addEventListener('click', (e) => {
             if (e.target.id === 'wfh-ov' || e.target.id === 'wfh-x' || e.target.closest('#wfh-x')) { close(); return; }
+            // Checked ahead of .wfh-histbtn below: additive only, so it never
+            // moves a place already on screen under the finger that is tapping.
+            const more = e.target.closest('[data-wfh-more]');
+            if (more) { _state.shown = (_state.shown || _WFH_PAGE) + _WFH_PAGE; repaint(); return; }
             const chip = e.target.closest('.wfh-chip');
-            if (chip) { _state.category = chip.getAttribute('data-cat'); repaint(); return; }
+            if (chip) { _state.category = chip.getAttribute('data-cat'); _state.shown = _WFH_PAGE; repaint(); return; }
             const hist = e.target.closest('.wfh-histbtn');
             if (hist) { const d = hist.closest('details.wfh-month'); if (d) { e.preventDefault(); d.open = !d.open; } return; }
         });
-        ov.addEventListener('input', (e) => { if (e.target.classList.contains('wfh-search')) { _state.query = e.target.value; repaint(); } });
+        ov.addEventListener('input', (e) => { if (e.target.classList.contains('wfh-search')) { _state.query = e.target.value; _state.shown = _WFH_PAGE; repaint(); } });
         document.addEventListener('keydown', _esc, true);
         try { if (window.triggerHaptic) window.triggerHaptic(); } catch (_) {}
     }
