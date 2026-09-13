@@ -175,18 +175,10 @@ describe('the owner can actually reach it', () => {
         expect(fn('_sendersApply')).toContain('r.body.approved');
     });
 
-    it('THE CARD READS `known` — storing it and not reading it is the same defect', () => {
-        /* The original bug in one line: planMessage computed this field, a
-         * comment claimed the write path acted on it, and no manifest carried
-         * it. Now both call sites store it. A screen that ignored it would be
-         * that defect one step further along, in the change that names it.
-         *
-         * The read moved into _mailKnownNow when the verdict started being
-         * recomputed against the owner's current list — the stored flag is now
-         * the FALLBACK for a document too old to have one, rather than the only
-         * answer. Retargeted, not relaxed: the flag must still be read, and the
-         * loop must still get its answer from the function that reads it. */
-        expect(fn('_mailKnownNow')).toContain('d.manifest.known === false');
+    it('THE CARD READS the live sender verdict, never an arrival-time permission flag', () => {
+        const known = fn('_mailKnownNow');
+        expect(known).toContain("return v === 'approved'");
+        expect(known).not.toContain('manifest.known');
         const body = fn('runMailSync');
         expect(body).toContain('_mailKnownNow(d,');
         expect(body).toContain('d.manifest.from');
@@ -199,13 +191,10 @@ describe('the owner can actually reach it', () => {
         expect(body).toContain("_sendersDo('add', it.from");
     });
 
-    it('a document written before the field existed is not treated as suspect', () => {
-        /* `known: undefined` must read as known. Written as `!== false` for
-         * exactly that reason — a truthiness test would turn every statement
-         * stored before this change into an accusation. */
+    it('a legacy document without a live approval is held, never opened by default', () => {
         const body = fn('_mailKnownNow');
-        expect(body).not.toMatch(/return\s*!!\s*\(?d/);
-        expect(body).toContain('return !(d && d.manifest && d.manifest.known === false)');
+        expect(body).toContain("return v === 'approved'");
+        expect(body).not.toContain('manifest.known');
     });
 
     it('the sender shown is the address, not a display name the sender chose', () => {

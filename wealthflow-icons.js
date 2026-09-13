@@ -145,7 +145,11 @@
     // Hydrate <i data-wfi="name"> placeholders into real SVGs.
     function hydrate(root) {
         try {
-            (root || document).querySelectorAll('i[data-wfi]:not([data-wfi-done])').forEach(function (el) {
+            root = root || document;
+            var found = [];
+            if (root.nodeType === 1 && root.matches && root.matches('i[data-wfi]:not([data-wfi-done])')) found.push(root);
+            if (root.querySelectorAll) found = found.concat(Array.prototype.slice.call(root.querySelectorAll('i[data-wfi]:not([data-wfi-done])')));
+            found.forEach(function (el) {
                 var n = el.getAttribute('data-wfi');
                 if (P[n]) { el.innerHTML = svg(n); el.setAttribute('data-wfi-done', '1'); el.style.display = 'inline-flex'; el.style.alignItems = 'center'; }
             });
@@ -163,10 +167,12 @@
     // hydrate now (in case markup already parsed) + after DOM ready + on a light interval
     function boot() { hydrate(document); }
     if (document.readyState !== 'loading') boot(); else document.addEventListener('DOMContentLoaded', boot);
-    // observe DOM additions so dynamically-rendered <i data-wfi> get hydrated
     try {
         var mo = new MutationObserver(function (muts) {
-            for (var i = 0; i < muts.length; i++) { if (muts[i].addedNodes && muts[i].addedNodes.length) { hydrate(document); break; } }
+            for (var i = 0; i < muts.length; i++) {
+                var added = muts[i].addedNodes || [];
+                for (var j = 0; j < added.length; j++) if (added[j].nodeType === 1) hydrate(added[j]);
+            }
         });
         if (document.body) mo.observe(document.body, { childList: true, subtree: true });
         else document.addEventListener('DOMContentLoaded', function () { mo.observe(document.body, { childList: true, subtree: true }); });
@@ -191,23 +197,7 @@
         '👍':'thumbsUp','👎':'thumbsDown','👁️':'eye','👁':'eye','💎':'gem','🎁':'gift','⬇️':'download','⬆️':'upload',
         '📦':'receipt','💵':'wallet','💴':'wallet','💶':'wallet','💷':'wallet','🟢':'checkCircle','🔴':'alert','🟡':'alert',
         '↩️':'undo','↩':'undo','🏛️':'bank','🏛':'bank','📜':'fileText','📷':'scan',
-        /* ── Added from a RUNTIME sweep, not a source grep ────────────────────
-         *
-         * A browser was driven through all twenty-one screens and every visible
-         * text node was read back, which is a different question from "which
-         * emoji are in the source": it finds only the glyphs a person actually
-         * sees, and it found twenty-eight pictographs that this table did not
-         * know. Because replaceIn() walks the live DOM, adding them here removes
-         * them from every screen at once — no call site has to be touched, and a
-         * screen written tomorrow that reaches for one of them is covered too.
-         *
-         * DELIBERATELY ABSENT: the AI-persona faces (😊 👨‍💼 🔥 🔬 🚀 🌌). They
-         * are a set of CHOICES the owner picks between, and this icon set has no
-         * six distinct glyphs for warm / professional / aggressive / analytical /
-         * visionary. Mapping them would make six different personas look
-         * identical, which is worse than the emoji — the same lesson
-         * test/debt_demolisher_icons_test.js records about icon choice mattering
-         * more than the count. They need drawn icons, not a substitution. */
+        /* Runtime-swept UI glyphs; persona faces stay distinct emoji choices. */
         '🚪':'lock','📡':'globe','📭':'mail','📲':'devices','🖥️':'devices','🖥':'devices',
         '💻':'devices','🐧':'devices','🌍':'globe','🌏':'globe','🌎':'globe',
         '💚':'wallet','💧':'coins','🎭':'user','⚖️':'ruler','⚖':'ruler',
@@ -225,7 +215,6 @@
             root = root || document.body; if (!root) return;
             var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
                 acceptNode: function (n) {
-                    if (!n.nodeValue || !rx.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
                     var p = n.parentNode;
                     while (p && p.nodeType === 1) {
                         if (SKIP[p.tagName]) return NodeFilter.FILTER_REJECT;
@@ -233,6 +222,9 @@
                         if (p.hasAttribute && p.hasAttribute('data-noicon')) return NodeFilter.FILTER_REJECT;
                         p = p.parentNode;
                     }
+                    if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
+                    rx.lastIndex = 0;
+                    if (!rx.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
                     return NodeFilter.FILTER_ACCEPT;
                 }
             });
@@ -257,11 +249,27 @@
         } catch (_) {}
     }
     window.WFIconStripEmoji = replaceIn;
-    var _t = null;
-    function schedule() { if (_t) return; _t = setTimeout(function () { _t = null; replaceIn(document.body); }, 120); }
-    if (document.readyState !== 'loading') schedule(); else document.addEventListener('DOMContentLoaded', schedule);
+    var _t=null,_roots=[];
+    function schedule(root) {
+        root = root || document.body;
+        if (root && root.nodeType === 3) root = root.parentNode;
+        if (root && root.nodeType === 1 && _roots.indexOf(root) < 0) _roots.push(root);
+        if (_t) return;
+        _t = setTimeout(function () {
+            _t = null;
+            var work=_roots.splice(0,_roots.length);
+            for(var i=0;i<work.length;i++) replaceIn(work[i]);
+        }, 120);
+    }
+    if (document.readyState !== 'loading') schedule(document.body);
+    else document.addEventListener('DOMContentLoaded', function () { schedule(document.body); });
     try {
-        var mo = new MutationObserver(function (m) { for (var i = 0; i < m.length; i++) { if (m[i].addedNodes && m[i].addedNodes.length) { schedule(); break; } } });
+        var mo = new MutationObserver(function (m) {
+            for (var i = 0; i < m.length; i++) {
+                var added = m[i].addedNodes || [];
+                for (var j = 0; j < added.length; j++) schedule(added[j]);
+            }
+        });
         function arm() { if (document.body) mo.observe(document.body, { childList: true, subtree: true }); }
         if (document.body) arm(); else document.addEventListener('DOMContentLoaded', arm);
     } catch (_) {}

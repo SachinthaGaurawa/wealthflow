@@ -126,6 +126,33 @@ async function verifyMobileDashboardScrollStability(page, width) {
     });
 }
 
+async function verifyClosedModalCompositorSafety(page, width) {
+    const result = await page.evaluate(() => {
+        document.documentElement.classList.add('wf-ios-stable');
+        const closedBefore = [...document.querySelectorAll('.mo:not(.open)')];
+        const before = closedBefore.map(el => ({
+            id: el.id,
+            display: getComputedStyle(el).display,
+            backdrop: getComputedStyle(el).backdropFilter || getComputedStyle(el).webkitBackdropFilter || 'none',
+        }));
+        openModal('mdConfirm');
+        const modal = document.getElementById('mdConfirm');
+        const opened = {
+            display: getComputedStyle(modal).display,
+            backdrop: getComputedStyle(modal).backdropFilter || getComputedStyle(modal).webkitBackdropFilter || 'none',
+        };
+        closeModal('mdConfirm');
+        const closedAgain = getComputedStyle(modal).display;
+        return { count: before.length, before, opened, closedAgain };
+    });
+    assert.ok(result.count >= 20, `${width}px fixture no longer exercises the static modal population`);
+    assert.deepEqual([...new Set(result.before.map(x => x.display))], ['none'],
+        `${width}px closed modal remained in the rendering tree`);
+    assert.equal(result.opened.display, 'flex', `${width}px open modal did not render`);
+    assert.equal(result.opened.backdrop, 'none', `${width}px iOS modal retained backdrop blur`);
+    assert.equal(result.closedAgain, 'none', `${width}px closed modal did not leave the rendering tree`);
+}
+
 function measureLayout({ sender, mobile }) {
     const root = sender ? document.querySelector('#_sl_body').closest('.md') : document.querySelector('#wfMailSync');
     const shown = el => !!el && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden';
@@ -215,6 +242,7 @@ try {
         await app.page.locator('#_sl_x').click();
         await app.page.waitForFunction(() => !document.querySelector('#_sl_body'));
         if ([320, 390, 768].includes(width)) await verifyMobileDashboardScrollStability(app.page, width);
+        if ([320, 390, 768].includes(width)) await verifyClosedModalCompositorSafety(app.page, width);
         if ([320, 390, 768].includes(width)) await verifyLargeReviewWindow(app.page, width);
         if ([320, 768].includes(width)) {
             await app.page.locator('#wfMailSync').scrollIntoViewIfNeeded();

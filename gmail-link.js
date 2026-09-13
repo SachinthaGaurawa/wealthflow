@@ -46,7 +46,7 @@ import { dedupeStored, BANKS, releasedBy } from './wealthflow-mail-ingest.mjs';
 import { nameVerdict, VERDICT as STATEMENT_ID } from './wealthflow-statement-identity.js';
 import {
     addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
-    matchSender, hasApproved, policyFrom,
+    matchSender, policyFrom,
 } from './wealthflow-mail-senders.mjs';
 
 /* How many stored documents this endpoint will look at, and how many
@@ -379,6 +379,10 @@ export default async function handler(req, res) {
     }
 
     if (method === 'GET' && /[?&]items=1/.test(String(req.url || ''))) {
+        /* Dashboard discovery is metadata, not attachment delivery.
+         * metadata=1 returns manifests/verdicts/counts without either the
+         * inline ciphertext field or parts subdocuments. */
+        const metadataOnly = /[?&]metadata=1(?:&|$)/.test(String(req.url || ''));
         /* The pending statements, assembled parts and all.
          *
          * These go through the server for the same reason the status does: the
@@ -409,17 +413,18 @@ export default async function handler(req, res) {
             const mailDoc = await withDeadline(ref.get(), 8000, 'wf-mail senders');
             senderList = normalizeList(sendersOf(mailDoc && mailDoc.exists ? mailDoc.data() : null));
         } catch (_) {
-            /* An unreadable list is not an empty one. It leaves `decided` false
-             * below, which is the answer that makes the device fall back to the
-             * stored flag and offer nothing for removal — a read that failed
-             * must never present itself as "none of these are yours". */
-            senderList = [];
+            /* This read is the attachment authorisation boundary. Treating a
+             * failed read as an empty/unconfigured list used to make
+             * `senderMayOpen` true and disclose every stored payload. Fail the
+             * listing instead: no bytes cross the wire and no stored item is
+             * changed or deleted. */
+            return j(res, 503, { ok: false, error: 'sender list unreadable' });
         }
-        /* Only meaningful once the owner has approved somebody. With an empty
-         * list every sender is equally undecided, the scanner is still guessing
-         * by keyword, and calling a statement "not on your list" would be
-         * blaming the owner for a list they have not been asked to make. */
-        const decided = hasApproved(senderList);
+        /* A successful policy read is a decision even when the list is empty:
+         * zero approvals means zero attachment permissions. Discovery may show
+         * metadata for a new sender, but only an exact approved address may
+         * receive payload bytes. */
+        const decided = true;
         const verdictOf = (manifest) => {
             const from = String((manifest && manifest.from) || '').trim();
             /* NO SENDER RECORDED IS NOT AN ANSWER OF "STRANGER". Documents
@@ -508,16 +513,36 @@ export default async function handler(req, res) {
 
             const items = [];
             for (const row of keep) {
+                const sender = verdictOf(row.manifest);
+                /* If an allow-list has made a decision, bytes from a rejected
+                 * sender never cross the wire. The old client downloaded the
+                 * whole receipt/bill before deciding not to open it. */
+                /* Exact allow-list, fail closed. `new`, `blocked`,
+                 * `unrecorded`, or any future/malformed verdict is metadata
+                 * only. There is deliberately no legacy-known fallback here. */
+                const senderMayOpen = sender.verdict === 'approved';
+                const includePayload = !metadataOnly && senderMayOpen;
                 const parts = [];
-                try {
-                    const ps = await withDeadline(row.ref.collection('parts').get(), 8000, 'parts');
-                    for (const p of (ps && ps.docs) || []) parts.push(p.data());
-                } catch (_) { /* an unreadable part shows up as a short assembly */ }
+                if (includePayload) {
+                    try {
+                        const ps = await withDeadline(row.ref.collection('parts').get(), 8000, 'parts');
+                        for (const p of (ps && ps.docs) || []) parts.push(p.data());
+                    } catch (_) { /* an unreadable part shows up as a short assembly */ }
+                }
                 /* Alongside the manifest, never inside it. The manifest is
                  * what the hook wrote; this is what the list says today, and
                  * merging the two would make a re-decision look like a stored
                  * fact. */
-                items.push({ id: row.id, manifest: row.manifest, parts, sender: verdictOf(row.manifest) });
+                let manifest = row.manifest;
+                if (!includePayload && manifest && Object.prototype.hasOwnProperty.call(manifest, 'd')) {
+                    manifest = { ...manifest };
+                    delete manifest.d;
+                }
+                const item = { id: row.id, manifest, sender };
+                /* Keep the established full-payload response shape for the
+                 * explicit sync path. Metadata responses omit parts entirely. */
+                if (!metadataOnly) item.parts = parts;
+                items.push(item);
             }
             /* `duplicates` is reported rather than hidden: the owner asked why
              * the same statements kept appearing, and a number they can watch

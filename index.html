@@ -764,6 +764,19 @@
             animation: none !important;
         }
 
+        /* Never allocate backdrop-sampling surfaces on iOS. */
+        html.wf-ios-stable * {
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+        }
+
+        html.wf-ios-stable #page-dashboard > .golden-frame,
+        html.wf-ios-stable #page-dashboard > .dash-chart-row,
+        html.wf-ios-stable #page-dashboard > .g2 {
+            content-visibility: auto;
+            contain-intrinsic-size: auto 260px;
+        }
+
         body {
             background: var(--bg);
             color: var(--text);
@@ -2326,20 +2339,26 @@
             position: fixed;
             inset: 0;
             background: rgba(0, 0, 0, .8);
-            backdrop-filter: blur(6px);
             z-index: 200;
-            display: flex;
+            display: none;
             align-items: center;
             justify-content: center;
-            opacity: 0;
             pointer-events: none;
-            transition: opacity .23s;
             padding: 14px;
         }
 
         .mo.open {
+            display: flex;
             opacity: 1;
             pointer-events: all;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+        }
+
+        html.wf-ios-stable .mo.open {
+            background: rgba(6, 10, 20, .97);
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
         }
 
         .md {
@@ -8736,7 +8755,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.27';
+        var WF_APP_VERSION = '7.69.28';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -22734,13 +22753,12 @@ table.amort tbody tr { page-break-inside: avoid; }
          * The verdict is recomputed by the server on every listing — see the
          * items branch of gmail-link.js — because the flag in the manifest was
          * written when the statement arrived and cannot know about a decision
-         * made afterwards. Everything below reads that live verdict and treats
-         * the stored flag as the fallback for a document too old to have one.
+         * made afterwards. Everything below reads that live verdict; no stored
+         * arrival-time flag can grant permission to open attachment bytes.
          *
-         * `unrecorded` is NOT a refusal. A statement stored before the From
-         * header was kept cannot be attributed to anyone, and guessing would
-         * mean offering a real bank's statement for deletion. */
-        const _MAIL_VERDICTS = ['approved', 'blocked', 'new'];
+         * Once an allow-list exists, an unrecorded legacy sender is also held:
+         * "unknown" is not permission to open an attachment. */
+        const _MAIL_VERDICTS = ['approved', 'blocked', 'new', 'unrecorded'];
 
         /** The live verdict for a listed statement, or '' when there is none. */
         function _mailVerdict(d, decided) {
@@ -22751,16 +22769,13 @@ table.amort tbody tr { page-break-inside: avoid; }
         /**
          * Is this from a sender the owner has approved — as of now?
          *
-         * Falls back to the manifest's flag whenever the list cannot answer:
-         * no approved senders yet, an unreadable list, or a document with no
-         * sender recorded. An absent flag counts as known, because every
-         * document written before the flag existed has none and a filed
-         * statement must not become an accusation on upgrade.
+         * Only an explicit live `approved` verdict is permission. Missing,
+         * malformed or unreadable policy state is a denial; `manifest.known`
+         * is historical metadata, never an attachment capability.
          */
         function _mailKnownNow(d, decided) {
             const v = _mailVerdict(d, decided);
-            if (v) return v === 'approved';
-            return !(d && d.manifest && d.manifest.known === false);
+            return v === 'approved';
         }
 
         /**
@@ -24256,7 +24271,15 @@ table.amort tbody tr { page-break-inside: avoid; }
             renderVerifyQueue();
         }
 
+        let _mailSyncIdleCommit = false;
         function renderMailSync() {
+            if (!_mailSyncIdleCommit && window._wfAfterScrollIdle) {
+                window._wfAfterScrollIdle('mail-sync-paint', () => {
+                    _mailSyncIdleCommit = true;
+                    try { renderMailSync(); } finally { _mailSyncIdleCommit = false; }
+                });
+                return;
+            }
             const host = $('wfMailSync');
             if (!host) return;
             const st = _mailSyncState;
@@ -25714,7 +25737,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     notify(String(swept) + ' new statement' + (swept === 1 ? '' : 's') + ' found in your mailbox', 'success');
                 }
 
-                const r = await _gmailLink('GET', null, '?items=1');
+                const r = await _gmailLink('GET', null, '?items=1&metadata=1&limit=200');
                 if (!r || !r.body || r.body.ok !== true) { renderMailSync(); return; }
                 const docs = Array.isArray(r.body.items) ? r.body.items : [];
                 _mailSyncState.filed = Number(r.body.filed) || 0;
@@ -25796,21 +25819,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify(String(swept) + ' new statement' + (swept === 1 ? '' : 's') + ' found in your mailbox', 'success');
             }
 
-            /* Through the server, not Firestore. wf-mail is sealed to clients
-             * by firestore.rules, so the direct query this replaced was denied
-             * every time — the sync could never have fetched anything.
-             *
-             * PAGED, not one shot. GET items=1 used to return EVERY pending
-             * statement's full attachment (up to 200, each easily 0.5-3MB of
-             * base64) in a single response, held in memory for the whole run.
-             * A real backlog was tens to hundreds of MB on a phone before a
-             * single statement had been processed — a native OOM kill with no
-             * JS error to show for it, exactly "the app crashes while (or
-             * right after) email statements sync". Fetching, processing and
-             * RELEASING a few statements at a time (see gmail-link.js's
-             * limit/offset) bounds peak memory to one page's payloads instead
-             * of the whole queue's. */
-            const _MAIL_SYNC_PAGE = 6;
+            /* wf-mail is client-sealed, so the server returns a bounded payload
+             * page. Each attachment is released before the next page arrives. */
+            /* Bound iOS peak memory to one encrypted attachment. */
+            const _mailLowMemory = !!(window.__wfIOSStable
+                || (window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts()));
+            const _MAIL_SYNC_PAGE = _mailLowMemory ? 1 : 6;
+            const _MAIL_READY_STATEMENT_BUDGET = _mailLowMemory ? 1 : 6;
             _mailSyncState.items = [];
             const set = (i, patch) => { Object.assign(_mailSyncState.items[i], patch); renderMailSync(); };
 
@@ -25862,10 +25877,9 @@ table.amort tbody tr { page-break-inside: avoid; }
                      * an empty list because everything is done look identical, and
                      * the owner has already been burnt by that distinction. */
                     _mailSyncState.filed = Number(r.body.filed) || 0;
-                    /* Whether the sender verdicts on these rows mean anything: the
-                     * server answers false when the owner has approved nobody, and
-                     * when it could not read the list at all. Either way the rows
-                     * fall back to the stored flag with them. */
+                    /* A successful server listing always carries an enforced
+                     * sender decision. A policy read failure returns 503 and
+                     * never reaches this branch. */
                     _mailSyncState.decided = r.body.decided === true;
                     _totalPending = Number(r.body.pending) || 0;
                     try { window.WFStability && window.WFStability.crumb('mail sync: start, ' + _totalPending + ' statement(s)'); } catch (_) {}
@@ -26128,6 +26142,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
 
                 _offset += pageDocs.length;
+                /* One atomic review pass; other manifests remain pending. */
+                /* A teachable statement retains its decrypted text until the
+                 * layout screen opens, so it consumes the same memory budget as
+                 * a parsed statement. Counting only `_ready` let a run collect
+                 * an unbounded `_teach` backlog and bypass the iOS one-statement
+                 * boundary entirely. */
+                if (_ready.length + _teach.length >= _MAIL_READY_STATEMENT_BUDGET) break;
                 if (!r.body.more) break;
             }
             try { window.WFStability && window.WFStability.crumb('mail sync: batch done, ' + _ready.length + ' ready, ' + _mailSyncState.locked + ' locked'); } catch (_) {}
@@ -28678,8 +28699,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.27</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.27</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.28</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.28</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>

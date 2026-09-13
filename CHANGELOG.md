@@ -1,5 +1,21 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.28 — 2026-09-13
+
+**What changed for you**
+
+- Checking Statement Sync now fetches names and status only; it never downloads encrypted attachments in the background.
+- iPhone and iPad process one complete statement per review pass, preventing attachment and parsed-row memory from accumulating.
+- Only exact approved sender addresses can receive attachment bytes; missing, unknown, blocked and unreadable sender-policy states fail closed.
+
+**Under the hood**
+
+- Removed closed full-screen blurred modal layers from the compositor and disabled backdrop sampling on iOS.
+- Stopped decoding PDFs into redundant full-size text strings and scoped icon observers to newly added DOM nodes.
+- Coalesced mail-card updates until scroll idle and moved Service Worker cache writes off the navigation critical path.
+- Canonicalised navigation cache entries and preserved the independent backup cache during code-cache cleanup.
+- Counted unknown-layout teaching text against the same one-statement mobile memory budget instead of retaining an unbounded teaching backlog.
+
 ## v7.69.27 — 2026-09-13
 
 **What changed for you**
