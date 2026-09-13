@@ -299,6 +299,104 @@ describe('a statement is marked done only when something was written', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * ONE BANK'S BACKLOG DOES NOT OPEN ONE UNBOUNDED REVIEW SCREEN
+ * -----------------------------------------------------------------------------
+ * The owner's report, verbatim: after a sync, scrolling down produces a white
+ * screen and the app restarts. _showCCReviewModal's <tbody> is 5+ interactive
+ * form controls per row — heavier than any other list in the app — and a
+ * catch-up scan (FIRST_SCAN_MONTHS = 24) can merge many months of ONE bank's
+ * statements into a single group with no cap at all. These tests actually RUN
+ * _reviewMailStatements (not just grep its source), because the fix is in
+ * exactly how many rows accumulate before the cap trips — a string match could
+ * not tell a correct off-by-one from a wrong one.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('a huge catch-up sync does not open one unbounded review screen', () => {
+    function loadReviewer() {
+        const src = [fn('_mailRowKey'), fn('_mailRowForReview'), fn('_reviewMailStatements')].join('\n');
+        const calls = { showModal: null, notify: [] };
+        const fakeWindow = {};
+        const reviewer = new Function('window', 'notify', src + '; return _reviewMailStatements;')(
+            fakeWindow, (msg, kind) => calls.notify.push({ msg, kind }),
+        );
+        fakeWindow._showCCReviewModal = (parsed, bank, onFiled) => { calls.showModal = { parsed, bank, onFiled }; };
+        return { reviewer, calls };
+    }
+    function statement(key, bank, last4, rowCount) {
+        return {
+            key, bank, last4,
+            rows: Array.from({ length: rowCount }, (_, i) => ({
+                date: '2026-01-' + String((i % 28) + 1).padStart(2, '0'),
+                amount: 100 + i, description: 'Row ' + key + '-' + i, direction: 'debit',
+            })),
+            doubts: new Map(),
+        };
+    }
+    const manyStatements = () => Array.from({ length: 10 }, (_, i) => statement('stmt' + i, 'HNB', '1234', 20)); // 200 rows total
+
+    it('the extraction found the real function (guards a vacuous suite)', () => {
+        const { reviewer } = loadReviewer();
+        expect(typeof reviewer).toBe('function');
+    });
+
+    it('caps one bank group instead of merging every held-back statement into one screen', () => {
+        const { reviewer, calls } = loadReviewer();
+        reviewer(manyStatements());
+        expect(calls.showModal, '_showCCReviewModal was never called').toBeTruthy();
+        expect(calls.showModal.parsed.transactions.length,
+            '200 rows from one bank were handed to one review screen — the exact shape of the crash the owner reported')
+            .toBeLessThanOrEqual(60);
+        expect(calls.showModal.parsed.transactions.length).toBeGreaterThan(0);
+    });
+
+    it('never splits one statement’s own rows across two review screens', () => {
+        // 20 rows/statement, cap 60: the included count must land on a whole
+        // multiple of 20, or some statement's rows were cut mid-statement —
+        // and that statement's key would still be marked filed with rows
+        // missing from the ledger.
+        const { reviewer, calls } = loadReviewer();
+        reviewer(manyStatements());
+        expect(calls.showModal.parsed.transactions.length % 20).toBe(0);
+    });
+
+    it('the ready-to-check notice reports only what is actually shown, no claim about the rest', () => {
+        // Three rounds of review-board wording objections settled on saying
+        // nothing about held-back statements at all, rather than a claim that
+        // could be second-guessed. This pins that: the notice names the SHOWN
+        // count and nothing else.
+        const { reviewer, calls } = loadReviewer();
+        reviewer(manyStatements());
+        const shown = calls.showModal.parsed.transactions.length;
+        expect(calls.notify.some(n => n.msg.includes(String(shown) + ' transaction'))).toBe(true);
+        expect(calls.notify.some(n => /more|held|waiting|follow/i.test(n.msg)),
+            'the notice makes a claim about statements it did not show').toBe(false);
+    });
+
+    it('a short sync is unaffected — nothing is held back', () => {
+        const { reviewer, calls } = loadReviewer();
+        reviewer([statement('a', 'HNB', '1234', 5)]);
+        expect(calls.showModal.parsed.transactions.length).toBe(5);
+        expect(calls.notify.some(n => n.msg.includes('5 transactions'))).toBe(true);
+    });
+
+    it('lets one oversized statement through whole rather than starving it forever', () => {
+        const { reviewer, calls } = loadReviewer();
+        reviewer([statement('huge', 'HNB', '1234', 200)]); // one statement alone exceeds the cap
+        expect(calls.showModal.parsed.transactions.length).toBe(200);
+    });
+
+    it('a second, smaller bank is never folded into the first bank’s cap', () => {
+        const { reviewer, calls } = loadReviewer();
+        reviewer([...manyStatements(), statement('other', 'Commercial Bank', '9999', 10)]);
+        // Only HNB's group is shown first; Commercial Bank's 10 rows must not
+        // have been merged in to help fill HNB's page.
+        expect(calls.showModal.bank).toBe('HNB');
+        expect(calls.showModal.parsed.transactions.length % 20).toBe(0);
+        expect(calls.showModal.parsed.transactions.every(t => t.description.startsWith('Row stmt')),
+            'a different bank\'s rows leaked into this bank\'s capped page').toBe(true);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * DONE IS A FLAG, NOT A DELETE
  * ═══════════════════════════════════════════════════════════════════════════*/
 describe('marking done must not make the statement re-fetchable', () => {

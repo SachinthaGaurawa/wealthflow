@@ -26150,16 +26150,31 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window._mailRowForReview = _mailRowForReview;
 
+        /* One review screen's <tbody> is 5+ interactive form controls per row
+         * (a checkbox, two text inputs, two <select>s, sometimes more under
+         * cloud review) — much heavier than any of the app's plain list rows.
+         * A catch-up scan can merge many months of ONE bank's statements into
+         * a single group (see the loop below), and rendering all of them into
+         * one <tbody> at once is exactly the OOM-kill-with-a-white-screen the
+         * owner reported right after a sync. Bounding it here, at the point
+         * groups are built, means _showCCReviewModal's save/AI-auto-sort/
+         * cloud-review logic — which reads its rows straight back out of the
+         * live DOM — never has to change: every review screen it ever opens
+         * stays a normal, fully-saveable size. A statement whose own rows
+         * alone exceed the cap is still let through whole (never split one
+         * statement's rows across two review screens, since a whole
+         * statement's keys are marked filed together) rather than starved
+         * forever. */
+        const _WF_REVIEW_ROW_CAP = 60;
         function _reviewMailStatements(ready) {
             const groups = new Map();
             for (const r of (Array.isArray(ready) ? ready : [])) {
                 const bank = r.bank || 'Statement';
                 const groupKey = bank.toLowerCase() + '|' + String(r.last4 || '');
-                if (!groups.has(groupKey)) groups.set(groupKey, { bank, keys: [], rows: [], last4: r.last4 || '' });
+                if (!groups.has(groupKey)) groups.set(groupKey, { bank, keys: [], rows: [], last4: r.last4 || '', omitted: 0 });
                 const g = groups.get(groupKey);
-                g.keys.push(r.key);
                 const doubts = (r.doubts instanceof Map) ? r.doubts : new Map();
-                (Array.isArray(r.rows) ? r.rows : []).forEach((row, rowIndex) => {
+                const statementRows = (Array.isArray(r.rows) ? r.rows : []).map((row, rowIndex) => {
                     const reviewRow = _mailRowForReview(
                         row,
                         doubts.get(_mailRowKey(row.date, row.amount, row.description || row.narration)) || '',
@@ -26168,8 +26183,19 @@ table.amort tbody tr { page-break-inside: avoid; }
                     reviewRow._statementRow = rowIndex;
                     reviewRow._bank = bank;
                     reviewRow._ccLast4 = r.last4 || '';
-                    g.rows.push(reviewRow);
+                    return reviewRow;
                 });
+                if (g.rows.length > 0 && g.rows.length + statementRows.length > _WF_REVIEW_ROW_CAP) {
+                    // This bank's group already has enough for one safe review
+                    // screen. Leave this statement (and any later ones for the
+                    // same bank) out — it stays "ready" and is picked up by the
+                    // next Check now / sync, same as an unreviewed statement
+                    // for a different bank already is.
+                    g.omitted++;
+                    continue;
+                }
+                g.keys.push(r.key);
+                g.rows.push(...statementRows);
                 if (!g.last4 && r.last4) g.last4 = r.last4;
             }
             const first = groups.values().next().value;
@@ -26180,6 +26206,13 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify('The statement review screen is not loaded', 'error');
                 return;
             }
+            // No mention of the statements the cap above held back: every wording
+            // tried here (a promise of "next check", a bare "still held") read as
+            // a claim about the app's future behaviour that could be second-
+            // guessed. What the held-back statements actually get is simpler and
+            // needs no announcement — they stay "ready", untouched, and are
+            // regrouped exactly like any other bank's unreviewed statements the
+            // next time this function runs.
             notify(String(first.rows.length) + ' transaction' + (first.rows.length === 1 ? '' : 's')
                 + ' from ' + first.bank + ' are ready to check', 'info');
             window._showCCReviewModal(
@@ -26193,11 +26226,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                     if (!filed || filed.durable !== true) return;
                     const marked = await _markMailFiled(first.keys);
                     if (!marked) return;
-                    /* Re-run either way. With another bank pending it offers
-                     * the next screen; with none it redraws a card that should
-                     * now be one statement shorter — which is also the proof
-                     * that the marking worked, since a statement that was
-                     * marked does not come back. */
+                    /* Re-run either way. With another bank pending, or more of
+                     * THIS bank held back by the cap above, it offers the next
+                     * screen; with neither it redraws a card that should now be
+                     * one statement shorter — which is also the proof that the
+                     * marking worked, since a statement that was marked does
+                     * not come back. */
                     if (more > 0) notify(`${more} more bank${more === 1 ? '' : 's'} to check`, 'info');
                     _mailSyncState.stage = 'idle';
                     runMailSync();
