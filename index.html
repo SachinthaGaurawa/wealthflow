@@ -25676,80 +25676,20 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             /* Through the server, not Firestore. wf-mail is sealed to clients
              * by firestore.rules, so the direct query this replaced was denied
-             * every time — the sync could never have fetched anything. */
-            let docs = [];
-            try {
-                const r = await _gmailLink('GET', null, '?items=1');
-                if (!r || !r.body || r.body.ok !== true) {
-                    return finish('Could not read the mailbox store'
-                        + (r && r.body && r.body.error ? ': ' + r.body.error : '.'));
-                }
-                docs = Array.isArray(r.body.items) ? r.body.items : [];
-                /* How many the store holds that are already dealt with. The
-                 * card says it, because an empty list with no explanation and
-                 * an empty list because everything is done look identical, and
-                 * the owner has already been burnt by that distinction. */
-                _mailSyncState.filed = Number(r.body.filed) || 0;
-                /* Whether the sender verdicts on these rows mean anything: the
-                 * server answers false when the owner has approved nobody, and
-                 * when it could not read the list at all. Either way the rows
-                 * fall back to the flag stored with them. */
-                _mailSyncState.decided = r.body.decided === true;
-            } catch (e) {
-                return finish('Could not read the mailbox store: ' + (e && e.message || 'unknown error'));
-            }
-
-            _mailSyncState.items = docs.map(d => ({
-                key: d.id,
-                bank: d.manifest && d.manifest.bank,
-                filename: d.manifest && d.manifest.filename,
-                stage: 'waiting',
-                note: null, reason: null,
-                /* WHO SENT IT, AND WHETHER THE OWNER HAS SAID SO.
-                 *
-                 * `known` has been computed since the pipeline was written and
-                 * stored by nothing until now, so a verified stranger drew
-                 * exactly like a confirmed bank and there was no way to tell
-                 * from the screen why a receipt was sitting in it. Storing the
-                 * field and then not reading it would be the same defect one
-                 * step further along, in the very change that names it.
-                 *
-                 * `!== false` on purpose: every document written before this
-                 * has no such field, and an absent one must not turn a filed
-                 * statement into an accusation. */
-                /* AND DECIDED AGAINST THE LIST AS IT IS NOW. Reading only the
-                 * stored flag left the owner's actual complaint untouched:
-                 * every bill and receipt collected before the sender list
-                 * existed carries no flag at all, so it drew — and was opened,
-                 * parsed and offered for filing — exactly like a confirmed
-                 * bank's statement. See _mailKnownNow. */
-                known: _mailKnownNow(d, _mailSyncState.decided),
-                verdict: _mailVerdict(d, _mailSyncState.decided),
-                from: (d.manifest && d.manifest.from) || '',
-                /* Server-computed, from the same matchSender() the trust
-                 * decision itself uses — never re-parsed from `from` here.
-                 * Approve/Block need it: an address-scoped block only ever
-                 * catches the one exact address it names, and a sender that
-                 * mails from a different address next time (transactional
-                 * systems do this constantly) is then simply un-blocked. */
-                domain: (d.sender && d.sender.domain) || '',
-            }));
-            renderMailSync();
-
-            /* A connected mailbox with nothing in it has almost certainly never
-             * been looked at, rather than being empty: the Gmail watch reports
-             * only what arrives next, so the whole existing inbox is reachable
-             * only through the historical scan. Run it once, here, instead of
-             * waiting for the owner to discover a button. */
-            if (!docs.length && !_firstScanDone() && _scan.stage !== 'running') {
-                _markFirstScan();
-                notify(`Scanning the last ${FIRST_SCAN_MONTHS} months of your mailbox for statements…`, 'info');
-                try { await runBackfill(FIRST_SCAN_MONTHS); } catch (_) { /* runBackfill reports its own failure */ }
-                /* Whatever it found is in the store now, so read it again
-                 * rather than leaving the card showing the empty answer. */
-                if (_scan.found > 0) { _mailSyncState.stage = 'idle'; return runMailSync(); }
-            }
-
+             * every time — the sync could never have fetched anything.
+             *
+             * PAGED, not one shot. GET items=1 used to return EVERY pending
+             * statement's full attachment (up to 200, each easily 0.5-3MB of
+             * base64) in a single response, held in memory for the whole run.
+             * A real backlog was tens to hundreds of MB on a phone before a
+             * single statement had been processed — a native OOM kill with no
+             * JS error to show for it, exactly "the app crashes while (or
+             * right after) email statements sync". Fetching, processing and
+             * RELEASING a few statements at a time (see gmail-link.js's
+             * limit/offset) bounds peak memory to one page's payloads instead
+             * of the whole queue's. */
+            const _MAIL_SYNC_PAGE = 6;
+            _mailSyncState.items = [];
             const set = (i, patch) => { Object.assign(_mailSyncState.items[i], patch); renderMailSync(); };
 
             /* Built ONCE per run, not per statement: it is a scan of the whole
@@ -25774,193 +25714,299 @@ table.amort tbody tr { page-break-inside: avoid; }
              * statement that will never be filed, and the fix — unlock the
              * vault — is one action for all of them, not one per row. */
             _mailSyncState.locked = 0;
-            try { window.WFStability && window.WFStability.crumb('mail sync: start, ' + docs.length + ' statement(s)'); } catch (_) {}
 
-            for (let i = 0; i < docs.length; i += 1) {
-                const d = docs[i];
-                /* A SENDER NOBODY HAS APPROVED IS NOT OPENED.
-                 *
-                 * #167 stored `known` and drew it on the row, but the loop went
-                 * on to unlock, parse and route the attachment anyway — so an
-                 * unapproved sender's PDF was still being read and its rows
-                 * still offered for filing. "Held for review" has to mean the
-                 * statement is not processed, or it means nothing at all. */
-                if (_mailSyncState.items[i] && _mailSyncState.items[i].known === false) {
-                    set(i, { stage: 'held', reason: 'waiting for you to add this sender' });
-                    continue;
-                }
+            let _offset = 0;
+            let _sawFirstPage = false;
+            let _totalPending = 0;
+            for (;;) {
+                let r;
                 try {
-                    set(i, { stage: 'assembling' });
-                    // The parts arrive with the manifest; the server reads the
-                    // subcollection, because the page cannot.
-                    const parts = Array.isArray(d.parts) ? d.parts : [];
-
-                    /* The stages below are observed, not announced. intakeStatement
-                     * owns the pipeline — assembling, unlocking, parsing — and the
-                     * only honest way to show where it has got to is to watch the
-                     * seams it already injects. openPdf is called by unlock() and
-                     * extractText once a document is open, so setting the stage
-                     * inside them reports what is actually happening rather than a
-                     * timer pretending to. */
-                    const bank = (d.manifest && d.manifest.bank) || '';
-                    try { window.WFStability && window.WFStability.crumb('mail sync: statement ' + (i + 1) + '/' + docs.length + ' — ' + (bank || 'unknown bank')); } catch (_) {}
-                    let _parsed = null;
-                    // Brackets the window in which intakeStatement() may hold an open
-                    // PDF.js document (it always destroys its own before returning —
-                    // see wealthflow-mail-intake.js — this just makes that window
-                    // visible in a crash snapshot rather than invisible by the time
-                    // anyone reads one).
-                    try { window.WFStability && window.WFStability.resourceInc('mailPdfDoc'); } catch (_) {}
-                    let res;
-                    try {
-                        res = await window.WFMailIntake.intakeStatement(
-                        { id: d.id, bank, manifest: d.manifest, parts },
-                        {
-                            decodeBase64: (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
-                            vaultKeys: async () => {
-                                try {
-                                    return typeof window.wfVaultPdfPasswords === 'function'
-                                        ? await window.wfVaultPdfPasswords(bank) : [];
-                                } catch (_) { return []; }
-                            },
-                            /* openPdfOnce, NOT openPdf. unlock() above already owns the
-                             * "try no password, then every vault candidate in order"
-                             * loop and calls this once per candidate — openPdf() re-runs
-                             * that ENTIRE cascade internally on every call, so routing
-                             * through it here meant unlocking one locked statement cost
-                             * roughly (vault size)² PDF.js decrypt/destroy cycles instead
-                             * of (vault size). A sync batch of several locked statements
-                             * turned into real memory/CPU churn that peaked exactly when
-                             * the batch finished. See wealthflow-pdf-unlock.js. */
-                            openPdf: (bytes, password) => {
-                                set(i, { stage: 'unlocking' });
-                                if (!window.WFPdfUnlock) return Promise.reject(new Error('no pdf reader'));
-                                return window.WFPdfUnlock.openPdfOnce(bytes, password);
-                            },
-                            extractText: (doc) => {
-                                set(i, { stage: 'reading' });
-                                return window.WFPdfUnlock.extractText(doc);
-                            },
-                            /* parseStatement, NOT parseStatementText. The latter
-                             * returns `parseStatement(text).rows` — a bare array —
-                             * and intakeStatement reads `parsed.rows`, so the
-                             * shorthand yields undefined, then zero rows, then
-                             * every statement quarantined as UNPARSEABLE. It fails
-                             * as a plausible-looking "needs review", not as an
-                             * error, which is why it survived a reading of the diff
-                             * and was caught only by running a real statement
-                             * through the real parser in a browser. */
-                            /* Captured on the way past. The review screen wants
-                             * the PARSER's rows — description, direction, the
-                             * balance-confirmed flags — not the router's
-                             * summary of them, and this is the only place they
-                             * exist. Returning the value unchanged keeps
-                             * intakeStatement's own behaviour identical. */
-                            /* `{ bank }` is not decoration. parseStatement()
-                             * asks wealthflow-layout-memory.js for the layouts
-                             * the owner has already confirmed, and it asks for
-                             * THIS bank's first. Called with the text alone it
-                             * still works, but it tries other banks' layouts
-                             * before the right one — which is the difference
-                             * between reading the statement and reading it on
-                             * the sixth attempt. */
-                            parse: (text) => {
-                                const out = window.WFStatementParser.parseStatement(text, { bank });
-                                _parsed = out;
-                                return out;
-                            },
-                            /* existingHashes is the ledger-wide dedup. classifyStatement
-                             * has accepted it since it was written and NO caller had
-                             * ever passed one, so every import was deduplicated only
-                             * against itself. This is the first caller that does. */
-                            route: (rows, ctx) => window.WFStatementRouter.classifyStatement({
-                                rows, existingHashes: ledgerHashes, ...ctx,
-                            }),
-                        },
-                        {},
-                        );
-                    } finally {
-                        try { window.WFStability && window.WFStability.resourceDec('mailPdfDoc'); } catch (_) {}
+                    r = await _gmailLink('GET', null, '?items=1&limit=' + _MAIL_SYNC_PAGE + '&offset=' + _offset);
+                } catch (e) {
+                    if (!_sawFirstPage) return finish('Could not read the mailbox store: ' + (e && e.message || 'unknown error'));
+                    break; // a later page failed offline — keep what already ran rather than losing it
+                }
+                if (!r || !r.body || r.body.ok !== true) {
+                    if (!_sawFirstPage) {
+                        return finish('Could not read the mailbox store'
+                            + (r && r.body && r.body.error ? ': ' + r.body.error : '.'));
                     }
-                    const summary = window.WFMailIntake.summarise(res);
+                    break;
+                }
+                if (!_sawFirstPage) {
+                    _sawFirstPage = true;
+                    /* How many the store holds that are already dealt with. The
+                     * card says it, because an empty list with no explanation and
+                     * an empty list because everything is done look identical, and
+                     * the owner has already been burnt by that distinction. */
+                    _mailSyncState.filed = Number(r.body.filed) || 0;
+                    /* Whether the sender verdicts on these rows mean anything: the
+                     * server answers false when the owner has approved nobody, and
+                     * when it could not read the list at all. Either way the rows
+                     * fall back to the stored flag with them. */
+                    _mailSyncState.decided = r.body.decided === true;
+                    _totalPending = Number(r.body.pending) || 0;
+                    try { window.WFStability && window.WFStability.crumb('mail sync: start, ' + _totalPending + ' statement(s)'); } catch (_) {}
 
-                    /* THE SENTENCE THIS REPLACES SAID "N transactions filed"
-                     * AND NOTHING HAD BEEN FILED.
-                     *
-                     * intakeStatement RETURNS `applied` and `quarantined`; it
-                     * writes neither. Its one caller — here — read only
-                     * summarise() to print a count and threw the rows away. So
-                     * every mail statement was opened, decrypted, parsed and
-                     * routed, the card reported the transactions as filed, and
-                     * the ledger never received one of them. wealthflow-
-                     * quarantine.js had no caller at all, and the tile that was
-                     * meant to show held rows was never written — the call to
-                     * it sat inside a try/catch that swallowed the
-                     * ReferenceError.
-                     *
-                     * The rows now go to the SAME review screen an uploaded
-                     * statement goes to. That screen is proven, it records an
-                     * undoable batch, it de-duplicates against what is already
-                     * stored, and it lets the owner correct a destination
-                     * before anything is written — which is the control they
-                     * asked for. A second writer for the same records is how
-                     * two shapes of "expense" end up in one array. */
-                    const rows = (_parsed && Array.isArray(_parsed.rows)) ? _parsed.rows : [];
-                    if (!rows.length) {
-                        /* THE CODE, NOT ONLY THE SENTENCE. The card printed a
-                         * human message and threw the reason away, so "none of
-                         * your saved keys opened it" and "the layout yielded no
-                         * rows" were the same kind of dead end on screen —
-                         * though one of them is fixed by one tap and the other
-                         * is not. */
-                        const stmtCodes = (Array.isArray(res.quarantined) ? res.quarantined : [])
-                            .filter((q) => q && q.scope === 'statement')
-                            .map((q) => q.reason);
-                        const QK = (window.WFMailIntake && window.WFMailIntake.QUARANTINE) || {};
-                        const lockedOut = stmtCodes.some(
-                            (c) => c === QK.PASSWORD_FAILED || c === QK.NO_VAULT_KEYS);
-                        if (lockedOut) _mailSyncState.locked += 1;
-                        /* THE ONE CASE THAT IS NOT A DEAD END. An unknown
-                         * layout is a question with an answer, and the answer
-                         * is on the screen in front of the owner. Held here,
-                         * offered after the loop, taught once. */
-                        if (stmtCodes[0] === QK.LAYOUT_UNKNOWN && typeof res.text === 'string' && res.text) {
-                            _teach.push({
-                                key: d.id, bank, text: res.text, index: i,
+                    /* A connected mailbox with nothing in it has almost certainly
+                     * never been looked at, rather than being empty: the Gmail
+                     * watch reports only what arrives next, so the whole existing
+                     * inbox is reachable only through the historical scan. Run it
+                     * once, here, instead of waiting for the owner to discover a
+                     * button. */
+                    if (!_totalPending && !_firstScanDone() && _scan.stage !== 'running') {
+                        _markFirstScan();
+                        notify(`Scanning the last ${FIRST_SCAN_MONTHS} months of your mailbox for statements…`, 'info');
+                        try { await runBackfill(FIRST_SCAN_MONTHS); } catch (_) { /* runBackfill reports its own failure */ }
+                        /* Whatever it found is in the store now, so read it again
+                         * rather than leaving the card showing the empty answer. */
+                        if (_scan.found > 0) { _mailSyncState.stage = 'idle'; return runMailSync(); }
+                    }
+                }
+
+                const pageDocs = Array.isArray(r.body.items) ? r.body.items : [];
+                if (!pageDocs.length) break;
+
+                /* WHO SENT IT, AND WHETHER THE OWNER HAS SAID SO.
+                 *
+                 * `known` has been computed since the pipeline was written and
+                 * stored by nothing until now, so a verified stranger drew
+                 * exactly like a confirmed bank and there was no way to tell
+                 * from the screen why a receipt was sitting in it. Storing the
+                 * field and then not reading it would be the same defect one
+                 * step further along, in the very change that names it.
+                 *
+                 * `!== false` on purpose: every document written before this
+                 * has no such field, and an absent one must not turn a filed
+                 * statement into an accusation. */
+                /* AND DECIDED AGAINST THE LIST AS IT IS NOW. Reading only the
+                 * stored flag left the owner's actual complaint untouched:
+                 * every bill and receipt collected before the sender list
+                 * existed carries no flag at all, so it drew — and was opened,
+                 * parsed and offered for filing — exactly like a confirmed
+                 * bank's statement. See _mailKnownNow. */
+                const baseIndex = _mailSyncState.items.length;
+                _mailSyncState.items.push(...pageDocs.map(d => ({
+                    key: d.id,
+                    bank: d.manifest && d.manifest.bank,
+                    filename: d.manifest && d.manifest.filename,
+                    stage: 'waiting',
+                    note: null, reason: null,
+                    known: _mailKnownNow(d, _mailSyncState.decided),
+                    verdict: _mailVerdict(d, _mailSyncState.decided),
+                    from: (d.manifest && d.manifest.from) || '',
+                    /* Server-computed, from the same matchSender() the trust
+                     * decision itself uses — never re-parsed from `from` here.
+                     * Approve/Block need it: an address-scoped block only ever
+                     * catches the one exact address it names, and a sender that
+                     * mails from a different address next time (transactional
+                     * systems do this constantly) is then simply un-blocked. */
+                    domain: (d.sender && d.sender.domain) || '',
+                })));
+                renderMailSync();
+
+                for (let j = 0; j < pageDocs.length; j += 1) {
+                    const d = pageDocs[j];
+                    const i = baseIndex + j;
+                    try {
+                        /* A SENDER NOBODY HAS APPROVED IS NOT OPENED.
+                         *
+                         * #167 stored `known` and drew it on the row, but the loop
+                         * went on to unlock, parse and route the attachment
+                         * anyway — so an unapproved sender's PDF was still being
+                         * read and its rows still offered for filing. "Held for
+                         * review" has to mean the statement is not processed, or
+                         * it means nothing at all. */
+                        if (_mailSyncState.items[i] && _mailSyncState.items[i].known === false) {
+                            set(i, { stage: 'held', reason: 'waiting for you to add this sender' });
+                            continue;
+                        }
+                        set(i, { stage: 'assembling' });
+                        // The parts arrive with the manifest; the server reads the
+                        // subcollection, because the page cannot.
+                        const parts = Array.isArray(d.parts) ? d.parts : [];
+
+                        /* The stages below are observed, not announced. intakeStatement
+                         * owns the pipeline — assembling, unlocking, parsing — and the
+                         * only honest way to show where it has got to is to watch the
+                         * seams it already injects. openPdf is called by unlock() and
+                         * extractText once a document is open, so setting the stage
+                         * inside them reports what is actually happening rather than a
+                         * timer pretending to. */
+                        const bank = (d.manifest && d.manifest.bank) || '';
+                        try { window.WFStability && window.WFStability.crumb('mail sync: statement ' + (i + 1) + '/' + _totalPending + ' — ' + (bank || 'unknown bank')); } catch (_) {}
+                        let _parsed = null;
+                        // Brackets the window in which intakeStatement() may hold an open
+                        // PDF.js document (it always destroys its own before returning —
+                        // see wealthflow-mail-intake.js — this just makes that window
+                        // visible in a crash snapshot rather than invisible by the time
+                        // anyone reads one).
+                        try { window.WFStability && window.WFStability.resourceInc('mailPdfDoc'); } catch (_) {}
+                        let res;
+                        try {
+                            res = await window.WFMailIntake.intakeStatement(
+                            { id: d.id, bank, manifest: d.manifest, parts },
+                            {
+                                decodeBase64: (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
+                                vaultKeys: async () => {
+                                    try {
+                                        return typeof window.wfVaultPdfPasswords === 'function'
+                                            ? await window.wfVaultPdfPasswords(bank) : [];
+                                    } catch (_) { return []; }
+                                },
+                                /* openPdfOnce, NOT openPdf. unlock() above already owns the
+                                 * "try no password, then every vault candidate in order"
+                                 * loop and calls this once per candidate — openPdf() re-runs
+                                 * that ENTIRE cascade internally on every call, so routing
+                                 * through it here meant unlocking one locked statement cost
+                                 * roughly (vault size)² PDF.js decrypt/destroy cycles instead
+                                 * of (vault size). A sync batch of several locked statements
+                                 * turned into real memory/CPU churn that peaked exactly when
+                                 * the batch finished. See wealthflow-pdf-unlock.js. */
+                                openPdf: (bytes, password) => {
+                                    set(i, { stage: 'unlocking' });
+                                    if (!window.WFPdfUnlock) return Promise.reject(new Error('no pdf reader'));
+                                    return window.WFPdfUnlock.openPdfOnce(bytes, password);
+                                },
+                                extractText: (doc) => {
+                                    set(i, { stage: 'reading' });
+                                    return window.WFPdfUnlock.extractText(doc);
+                                },
+                                /* parseStatement, NOT parseStatementText. The latter
+                                 * returns `parseStatement(text).rows` — a bare array —
+                                 * and intakeStatement reads `parsed.rows`, so the
+                                 * shorthand yields undefined, then zero rows, then
+                                 * every statement quarantined as UNPARSEABLE. It fails
+                                 * as a plausible-looking "needs review", not as an
+                                 * error, which is why it survived a reading of the diff
+                                 * and was caught only by running a real statement
+                                 * through the real parser in a browser. */
+                                /* Captured on the way past. The review screen wants
+                                 * the PARSER's rows — description, direction, the
+                                 * balance-confirmed flags — not the router's
+                                 * summary of them, and this is the only place they
+                                 * exist. Returning the value unchanged keeps
+                                 * intakeStatement's own behaviour identical. */
+                                /* `{ bank }` is not decoration. parseStatement()
+                                 * asks wealthflow-layout-memory.js for the layouts
+                                 * the owner has already confirmed, and it asks for
+                                 * THIS bank's first. Called with the text alone it
+                                 * still works, but it tries other banks' layouts
+                                 * before the right one — which is the difference
+                                 * between reading the statement and reading it on
+                                 * the sixth attempt. */
+                                parse: (text) => {
+                                    const out = window.WFStatementParser.parseStatement(text, { bank });
+                                    _parsed = out;
+                                    return out;
+                                },
+                                /* existingHashes is the ledger-wide dedup. classifyStatement
+                                 * has accepted it since it was written and NO caller had
+                                 * ever passed one, so every import was deduplicated only
+                                 * against itself. This is the first caller that does. */
+                                route: (rows, ctx) => window.WFStatementRouter.classifyStatement({
+                                    rows, existingHashes: ledgerHashes, ...ctx,
+                                }),
+                            },
+                            {},
+                            );
+                        } finally {
+                            try { window.WFStability && window.WFStability.resourceDec('mailPdfDoc'); } catch (_) {}
+                        }
+                        const summary = window.WFMailIntake.summarise(res);
+
+                        /* THE SENTENCE THIS REPLACES SAID "N transactions filed"
+                         * AND NOTHING HAD BEEN FILED.
+                         *
+                         * intakeStatement RETURNS `applied` and `quarantined`; it
+                         * writes neither. Its one caller — here — read only
+                         * summarise() to print a count and threw the rows away. So
+                         * every mail statement was opened, decrypted, parsed and
+                         * routed, the card reported the transactions as filed, and
+                         * the ledger never received one of them. wealthflow-
+                         * quarantine.js had no caller at all, and the tile that was
+                         * meant to show held rows was never written — the call to
+                         * it sat inside a try/catch that swallowed the
+                         * ReferenceError.
+                         *
+                         * The rows now go to the SAME review screen an uploaded
+                         * statement goes to. That screen is proven, it records an
+                         * undoable batch, it de-duplicates against what is already
+                         * stored, and it lets the owner correct a destination
+                         * before anything is written — which is the control they
+                         * asked for. A second writer for the same records is how
+                         * two shapes of "expense" end up in one array. */
+                        const rows = (_parsed && Array.isArray(_parsed.rows)) ? _parsed.rows : [];
+                        if (!rows.length) {
+                            /* THE CODE, NOT ONLY THE SENTENCE. The card printed a
+                             * human message and threw the reason away, so "none of
+                             * your saved keys opened it" and "the layout yielded no
+                             * rows" were the same kind of dead end on screen —
+                             * though one of them is fixed by one tap and the other
+                             * is not. */
+                            const stmtCodes = (Array.isArray(res.quarantined) ? res.quarantined : [])
+                                .filter((q) => q && q.scope === 'statement')
+                                .map((q) => q.reason);
+                            const QK = (window.WFMailIntake && window.WFMailIntake.QUARANTINE) || {};
+                            const lockedOut = stmtCodes.some(
+                                (c) => c === QK.PASSWORD_FAILED || c === QK.NO_VAULT_KEYS);
+                            if (lockedOut) _mailSyncState.locked += 1;
+                            /* THE ONE CASE THAT IS NOT A DEAD END. An unknown
+                             * layout is a question with an answer, and the answer
+                             * is on the screen in front of the owner. Held here,
+                             * offered after the loop, taught once. */
+                            if (stmtCodes[0] === QK.LAYOUT_UNKNOWN && typeof res.text === 'string' && res.text) {
+                                _teach.push({
+                                    key: d.id, bank, text: res.text, index: i,
+                                    last4: (d.manifest && d.manifest.card_last4) || '',
+                                });
+                            }
+                            set(i, {
+                                stage: 'held',
+                                why: stmtCodes[0] || null,
+                                locked: lockedOut,
+                                reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60),
+                            });
+                        } else {
+                            set(i, {
+                                stage: 'ready',
+                                note: `${rows.length} transaction${rows.length === 1 ? '' : 's'} ready for you to check`,
+                            });
+                            /* Row-scope refusals only. A statement-scope one means
+                             * nothing was read at all, and that path never reaches
+                             * here — it is the `held` branch above. */
+                            const doubts = new Map();
+                            const QT = (window.WFMailIntake && window.WFMailIntake.QUARANTINE_TEXT) || {};
+                            for (const q of (Array.isArray(res.quarantined) ? res.quarantined : [])) {
+                                if (!q || q.scope !== 'row' || !q.row) continue;
+                                doubts.set(
+                                    _mailRowKey(q.row.date, q.row.amount, q.row.desc),
+                                    QT[q.reason] || 'the bank’s figures and the suggested category disagree',
+                                );
+                            }
+                            _ready.push({
+                                key: d.id, bank, rows, doubts,
                                 last4: (d.manifest && d.manifest.card_last4) || '',
                             });
                         }
-                        set(i, {
-                            stage: 'held',
-                            why: stmtCodes[0] || null,
-                            locked: lockedOut,
-                            reason: (summary.messages[0] || 'nothing could be read from it').slice(0, 60),
-                        });
-                    } else {
-                        set(i, {
-                            stage: 'ready',
-                            note: `${rows.length} transaction${rows.length === 1 ? '' : 's'} ready for you to check`,
-                        });
-                        /* Row-scope refusals only. A statement-scope one means
-                         * nothing was read at all, and that path never reaches
-                         * here — it is the `held` branch above. */
-                        const doubts = new Map();
-                        const QT = (window.WFMailIntake && window.WFMailIntake.QUARANTINE_TEXT) || {};
-                        for (const q of (Array.isArray(res.quarantined) ? res.quarantined : [])) {
-                            if (!q || q.scope !== 'row' || !q.row) continue;
-                            doubts.set(
-                                _mailRowKey(q.row.date, q.row.amount, q.row.desc),
-                                QT[q.reason] || 'the bank’s figures and the suggested category disagree',
-                            );
-                        }
-                        _ready.push({
-                            key: d.id, bank, rows, doubts,
-                            last4: (d.manifest && d.manifest.card_last4) || '',
-                        });
+                    } catch (e) {
+                        set(i, { stage: 'failed', reason: (e && e.message || 'error').slice(0, 60) });
+                    } finally {
+                        /* THE ACTUAL FIX. `d` still holds this statement's full
+                         * base64 attachment (manifest.d, or every chunk in
+                         * parts) even though intakeStatement() is done with it —
+                         * nothing frees it while `pageDocs`/`r.body.items` stays
+                         * referenced. Dropping both fields here is what makes a
+                         * page's memory footprint fall back to near-zero before
+                         * the next page's fetch, instead of every processed
+                         * statement's payload staying resident for the rest of
+                         * the run. */
+                        try { d.parts = null; if (d.manifest) d.manifest.d = null; } catch (_) {}
                     }
-                } catch (e) {
-                    set(i, { stage: 'failed', reason: (e && e.message || 'error').slice(0, 60) });
                 }
+
+                _offset += pageDocs.length;
+                if (!r.body.more) break;
             }
             try { window.WFStability && window.WFStability.crumb('mail sync: batch done, ' + _ready.length + ' ready, ' + _mailSyncState.locked + ' locked'); } catch (_) {}
 

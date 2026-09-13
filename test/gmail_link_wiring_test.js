@@ -54,7 +54,10 @@ describe('the page never queries the sealed branch', () => {
         const f = code(fn('runMailSync'));
         expect(f, 'the items subcollection is queried from the page again')
             .not.toMatch(/firestore\(\)\s*\n?\s*\.collection\(MAIL_ROOT\)|collection\('items'\)/);
-        expect(f).toContain("_gmailLink('GET', null, '?items=1')");
+        // Prefix, not the whole literal: the sync now pages through the
+        // backlog (see gmail-link.js's limit/offset), so the query string
+        // carries extra params past '?items=1' itself.
+        expect(f).toContain("_gmailLink('GET', null, '?items=1");
     });
 
     it('sends the query in the URL, not as the HTTP method', () => {

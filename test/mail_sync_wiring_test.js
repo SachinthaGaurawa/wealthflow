@@ -139,10 +139,14 @@ describe('the pipeline is handed the right functions', () => {
 
     it('builds the ledger hash set once per run, not once per statement', () => {
         // It scans every record the app holds; doing it per statement makes a
-        // ten-statement sync ten full passes over the ledger.
+        // ten-statement sync ten full passes over the ledger. The sync now
+        // pages through the backlog (see gmail-link.js's limit/offset), so
+        // the per-statement work sits in an inner loop over one page's
+        // items — still built exactly once, before the outer page loop ever
+        // starts, not once per page and not once per statement.
         const fn = functionBody('runMailSync');
         const hashAt = fn.indexOf('WFBackfill.ledgerHashes(appData)');
-        const loopAt = fn.indexOf('for (let i = 0; i < docs.length');
+        const loopAt = fn.indexOf('for (let j = 0; j < pageDocs.length');
         expect(hashAt).toBeGreaterThan(0);
         expect(loopAt).toBeGreaterThan(0);
         expect(hashAt, 'the ledger is rescanned for every statement').toBeLessThan(loopAt);
@@ -417,7 +421,12 @@ describe('the page actually asks Gmail to watch the mailbox', () => {
          * codebase keeps finding between paired call sites. */
         const boot = codeOnly(functionBody('_mailBootCheck'));
         const full = codeOnly(functionBody('runMailSync'));
-        for (const shared of ["_recentSweep(false)", "_gmailLink('GET', null, '?items=1')", '_mailConnected()']) {
+        /* A prefix, not the whole call: runMailSync now pages through the
+         * backlog (see gmail-link.js's limit/offset) so its call carries
+         * extra query params the cheap boot check has no reason to send —
+         * both still hit the same endpoint the same way up to that point,
+         * which is the shared behavior this test actually pins. */
+        for (const shared of ["_recentSweep(false)", "_gmailLink('GET', null, '?items=1", '_mailConnected()']) {
             expect(boot, `_mailBootCheck does not make the ${shared} call runMailSync() makes`).toContain(shared);
             expect(full, `runMailSync no longer makes the ${shared} call this pins`).toContain(shared);
         }
@@ -645,5 +654,65 @@ describe('the backfill engine is actually driven', () => {
         expect(body).toMatch(/paused/i);
         expect(body).toMatch(/resumes from where it stopped|pick up where it left off/i);
         expect(body).not.toMatch(/[Rr]un it again/);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * runMailSync() PAGES THROUGH THE BACKLOG, AND RELEASES EACH PAGE (v7.71.0)
+ * -----------------------------------------------------------------------------
+ * THE OWNER'S REPORT: the whole app crashes and restarts while — or right
+ * after — email statements finish syncing. GET /api/gmail-link?items=1 used
+ * to return EVERY pending statement's full attachment (up to 200, each
+ * easily 0.5-3MB of base64) in one response, and runMailSync held the whole
+ * thing in memory for the entire run — tens to hundreds of MB on a phone,
+ * before a single statement had even been processed. A native WebKit OOM
+ * kill leaves no JS error to catch, which is exactly why this went
+ * undiagnosed as "the app just restarts sometimes".
+ *
+ * gmail-link.js's own test/mail_items_pagination_test.js proves the server
+ * half (limit/offset actually page the backlog) by EXECUTING the real
+ * handler. This file follows the same source-text convention every other
+ * runMailSync test above it uses (the function is too entangled with the
+ * rest of the page to execute in isolation) to pin the CLIENT half: that the
+ * sync actually asks for pages instead of everything at once, and that each
+ * statement's payload is dropped once intakeStatement is done with it.
+ * ═══════════════════════════════════════════════════════════════════════════*/
+describe('runMailSync() pages through the mailbox instead of loading it all at once', () => {
+    const body = functionBody('runMailSync');
+
+    it('sends limit and offset, not a bare items=1 fetch-everything call', () => {
+        expect(body, 'runMailSync not found').toBeTruthy();
+        expect(body).toMatch(/'\?items=1&limit='\s*\+\s*_MAIL_SYNC_PAGE\s*\+\s*'&offset='\s*\+\s*_offset/);
+    });
+
+    it('the page size is small — a handful of statements, not the whole ceiling', () => {
+        // Not a specific number pinned (that would just move with any retune);
+        // bounded well under the server's own 200-item ceiling is the property
+        // that actually matters here.
+        const m = /_MAIL_SYNC_PAGE\s*=\s*(\d+)/.exec(body);
+        expect(m, '_MAIL_SYNC_PAGE constant not found').toBeTruthy();
+        expect(Number(m[1])).toBeGreaterThan(0);
+        expect(Number(m[1])).toBeLessThanOrEqual(20);
+    });
+
+    it('advances the offset by what the page actually returned, and stops when the server says so', () => {
+        expect(body).toContain('_offset += pageDocs.length');
+        expect(body).toMatch(/if\s*\(\s*!r\.body\.more\s*\)\s*break/);
+    });
+
+    it("releases each statement's attachment payload once intakeStatement is done with it", () => {
+        const releaseAt = body.indexOf('d.parts = null');
+        expect(releaseAt, 'the payload release is gone — every page\'s attachments would stay resident again').toBeGreaterThan(-1);
+        expect(body.slice(releaseAt, releaseAt + 55)).toContain('manifest.d = null');
+    });
+
+    it('the release runs in a finally, so a failed statement still frees its payload', () => {
+        const releaseAt = body.indexOf('d.parts = null');
+        const finallyAt = body.lastIndexOf('} finally {', releaseAt);
+        const catchAt = body.lastIndexOf('} catch (e) {', releaseAt);
+        expect(finallyAt, 'no enclosing finally block found before the release').toBeGreaterThan(-1);
+        // the release's finally must be the one right after this statement's
+        // own catch, not some earlier, unrelated finally in the function
+        expect(finallyAt).toBeGreaterThan(catchAt);
     });
 });
