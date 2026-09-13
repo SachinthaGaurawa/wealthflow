@@ -586,9 +586,16 @@ export async function runSwarm({
     }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
     providers.security = reviewed.provider;
 
-    const review = reviewed.text
-        ? parseVerdict(reviewed.text)
-        : { verdict: 'PASS', severity: 'none', findings: [], reason: 'no independent reviewer available — deferring to CI gates' };
+    // Absence is not approval. CI can add evidence later, but it cannot make a
+    // missing independent security opinion retroactively exist.
+    if (!reviewed.text) {
+        return {
+            ok: false, stage: 'security_unavailable', file, providers,
+            reason: 'no independent security reviewer was available',
+            review: { verdict: 'FAIL', severity: 'high', findings: [], reason: reviewed._error || 'reviewer unavailable' },
+        };
+    }
+    const review = parseVerdict(reviewed.text);
 
     if (review.verdict === 'FAIL') {
         return { ok: false, stage: 'security', reason: `Agent 5 veto (${review.severity}): ${review.reason}`, review, file, providers };
@@ -600,7 +607,7 @@ export async function runSwarm({
     if (writeTest) {
         const t = await chat({
             system: ROLES.qa.system, prompt: testPrompt(issueText, file, before, code),
-            prefer: ROLES.qa.prefer, exclude: [authored.provider],
+            prefer: ROLES.qa.prefer, exclude: [authored.provider, reviewed.provider],
             maxTokens: 4000, temperature: 0.1, env,
         }).catch((e) => ({ text: '', provider: 'none', _error: e.message }));
         providers.qa = t.provider;

@@ -28,43 +28,37 @@ describe('api/ai.js is wired to the matrix', () => {
         expect(SRC).toMatch(/import\s+\*\s+as\s+Matrix\s+from\s+['"]\.\/ai-matrix\.mjs['"]/);
     });
 
-    it('calls decide() rather than choosing an answer by itself', () => {
+    it('calls decide() rather than choosing a prose answer by itself', () => {
         expect(SRC).toContain('Matrix.decide(');
-        // Both paths: the quorum path and the full-consensus prose path.
-        expect((SRC.match(/Matrix\.decide\(/g) || []).length).toBeGreaterThanOrEqual(2);
+        expect((SRC.match(/Matrix\.decide\(/g) || []).length).toBeGreaterThanOrEqual(1);
     });
 
     it('reports how well supported the answer is, on every path', () => {
-        // Two `return res.status(200)` payloads reach a caller. Both must carry
-        // the corroboration, or a caller has to know which branch answered it
-        // in order to find out whether anything checked the answer.
+        // Every successful payload must carry the evidence and trust verdict.
         const payloads = SRC.match(/return res\.status\(200\)\.json\(\{[\s\S]*?\}\);/g) || [];
-        expect(payloads.length).toBeGreaterThanOrEqual(2);
+        expect(payloads.length).toBeGreaterThanOrEqual(1);
         for (const p of payloads) {
             expect(p, 'a 200 response without corroboration').toContain('corroboration');
             expect(p, 'a 200 response without a trust verdict').toContain('trustworthy');
         }
     });
 
-    it('no longer defaults prose and chat to the bare race', () => {
+    it('defaults prose and chat to the collective board', () => {
         // THE DEFECT THIS WHOLE CHANGE EXISTS FOR. The old line read:
         //   const mode = requestedMode || ((isVision || wantsJSON) ? 'consensus' : 'fastest');
         const line = (SRC.match(/const mode = .*/) || [''])[0];
-        expect(line).toContain("'corroborated'");
+        expect(line).toContain("'collective'");
         expect(line).not.toMatch(/:\s*'fastest'/);
     });
 
-    it('no longer returns a winner the moment one engine replies', () => {
-        // The old race resolved on the FIRST valid reply. The quorum target
-        // must come from a constant, not be hardcoded to one.
-        expect(SRC).toMatch(/const QUORUM = \d+/);
-        expect(SRC).toContain('valid >= target');
+    it('settles the full eligible board before reducing it', () => {
+        expect(SRC).toContain('await Promise.all(engines.map(run))');
+        expect(SRC).not.toContain('valid >= target');
     });
 
-    it('still honours an explicit fastest request rather than silently ignoring it', () => {
-        // Removing a caller's choice without telling them is its own bug. The
-        // mode is still served; what changed is that its answer is labelled.
-        expect(SRC).toContain("mode === 'fastest'");
+    it('treats fastest as a compatibility alias, never a one-engine race', () => {
+        expect(SRC).not.toContain("mode === 'fastest'");
+        expect(SRC).toContain('requestedModeAlias');
     });
 
     it('the prose branch no longer picks the longest answer', () => {

@@ -33,6 +33,53 @@ it('historically catches up a newly approved exact sender despite an advanced Gm
     expect((await ref.get()).data().historyId).toBe('1000');
 });
 
+it('recovers yesterday’s approved statement even when the Gmail cursor already skipped past it', async () => {
+    const { db, ref, senders } = setup();
+    await ref.set({ email: 'owner@example.org', refresh_token: 'fake', historyId: '500', collectedSenderClauses: approvedClauses(senders), senders });
+    const fetched = [];
+    const approved = { id: 'missed-yesterday', internalDate: String(Date.now() - 86400000), payload: {
+        headers: [{ name: 'From', value: 'statements@hnb.lk' }, { name: 'Subject', value: 'Monthly Statement' }, { name: 'Authentication-Results', value: 'dkim=pass header.i=@hnb.lk' }],
+        parts: [{ filename: 'Statement.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a1', size: 100 } }],
+    } };
+    const unapproved = { ...approved, id: 'receipt', payload: { ...approved.payload,
+        headers: [{ name: 'From', value: 'receipts@shop.example' }, { name: 'Subject', value: 'Receipt' }, { name: 'Authentication-Results', value: 'dkim=pass header.i=@shop.example' }],
+    } };
+    const f = async url => {
+        const u = decodeURIComponent(String(url)); fetched.push(u);
+        if (u.includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'fake-access' }) };
+        if (u.includes('/history?')) return { ok: true, json: async () => ({ historyId: '501', history: [] }) };
+        if (u.includes('/messages?')) {
+            expect(u).toContain('newer_than:14d');
+            expect(u).toContain('from:statements@hnb.lk');
+            expect(u).not.toContain('receipts@shop.example');
+            return { ok: true, json: async () => ({ messages: [{ id: approved.id }] }) };
+        }
+        if (u.includes('/attachments/')) return { ok: true, json: async () => ({ data: Buffer.from('%PDF approved').toString('base64url') }) };
+        if (u.includes('/messages/missed-yesterday?')) return { ok: true, json: async () => approved };
+        if (u.includes('/messages/receipt?')) return { ok: true, json: async () => unapproved };
+        throw new Error('unexpected request ' + u);
+    };
+    const result = await syncMailbox(db, { emailAddress: 'owner@example.org', historyId: '501' }, { env: {}, f });
+    expect(result.body).toMatchObject({ ok: true, stored: 1 });
+    expect(fetched.some(u => u.includes('/messages/receipt?'))).toBe(false);
+    expect((await ref.collection('items').get()).docs).toHaveLength(1);
+    expect((await ref.get()).data().lastReconcileMs).toBeGreaterThan(Date.now() - 5000);
+});
+
+it('throttles the overlap after a completed reconciliation while history remains immediate', async () => {
+    const { db, ref, senders } = setup();
+    await ref.set({ email: 'owner@example.org', refresh_token: 'fake', historyId: '500', lastReconcileMs: Date.now(), collectedSenderClauses: approvedClauses(senders), senders });
+    const urls = [];
+    const f = async url => {
+        const u = decodeURIComponent(String(url)); urls.push(u);
+        if (u.includes('oauth2.googleapis.com')) return { ok: true, json: async () => ({ access_token: 'fake-access' }) };
+        if (u.includes('/history?')) return { ok: true, json: async () => ({ historyId: '501', history: [] }) };
+        throw new Error('unexpected overlap request');
+    };
+    expect((await syncMailbox(db, { emailAddress: 'owner@example.org', historyId: '501' }, { env: {}, f })).body.ok).toBe(true);
+    expect(urls.some(u => u.includes('newer_than:'))).toBe(false);
+});
+
 it('does not reset a manifest filed by another worker while an attachment download was in flight', async () => {
     const { db, ref, senders } = setup();
     const message = { id: 'm1', internalDate: '1789000000000', snippet: 'Your monthly statement', payload: {

@@ -43,6 +43,7 @@ import {
     SENDERS_FIELD, sendersOf, heldOf,
 } from './gmail-link.mjs';
 import { dedupeStored, BANKS, releasedBy } from './wealthflow-mail-ingest.mjs';
+import { nameVerdict, VERDICT as STATEMENT_ID } from './wealthflow-statement-identity.js';
 import {
     addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
     matchSender, hasApproved, policyFrom,
@@ -463,13 +464,24 @@ export default async function handler(req, res) {
              * several times over, on a phone, for nothing. */
             const collapsed = dedupeStored(rows);
 
+            // Old releases stored obvious invoices/receipts before the
+            // universal content-name veto existed. Do not keep presenting
+            // those legacy records as statements. This is a reversible view
+            // filter (no financial record or Gmail message is deleted).
+            const legacyNonStatements = collapsed.filter((r) => {
+                const m = r.manifest || {};
+                return nameVerdict({ subject: m.subject || '', filenames: [m.filename || ''] }).verdict === STATEMENT_ID.NOT_STATEMENT;
+            });
+            const legacyRejectedIds = new Set(legacyNonStatements.map((r) => r.id));
+            const eligible = collapsed.filter((r) => !legacyRejectedIds.has(r.id));
+
             /* AND THEN THE FINISHED ONES ARE DROPPED — after the collapse, not
              * before. A statement stored several times may have been marked on
              * any one of those copies; filtering first would let an unmarked
              * copy survive the collapse and be offered again, which is the
              * duplicate the owner reported wearing a different hat. */
-            const done = collapsed.filter((r) => r.manifest && r.manifest.filed === true).length;
-            const keep = collapsed
+            const done = eligible.filter((r) => r.manifest && r.manifest.filed === true).length;
+            const keep = eligible
                 .filter((r) => !(r.manifest && r.manifest.filed === true))
                 .slice(0, ITEMS_RETURN_MAX);
 
@@ -502,6 +514,7 @@ export default async function handler(req, res) {
                  * broken. Computed from the same collapse the list came from,
                  * so the numbers on the card always add up. */
                 filed: done,
+                rejectedNonStatements: legacyNonStatements.length,
             });
         } catch (_) {
             return j(res, 503, { ok: false, error: 'items unreadable' });

@@ -193,6 +193,45 @@ export async function recentMessages(token, f, max = 25, clauses = null) {
     return { ok: false, reason: 'list-pagination-incomplete' };
 }
 
+/**
+ * A small rolling reconciliation over the owner's exact approved addresses.
+ *
+ * Gmail history is an efficient cursor, not an inventory proof: a watch lapse,
+ * an earlier buggy cursor advance, or an acknowledged push whose worker died
+ * can leave one message behind the bookmark forever. Re-reading a bounded
+ * overlap is safe because manifests have stable message+attachment identities.
+ */
+export const RECONCILE_DAYS = 14;
+export const RECONCILE_MAX_PAGES = 4;
+export const RECONCILE_MIN_GAP_MS = 6 * 60 * 60 * 1000;
+export async function reconcileRecentMessages(token, f, clauses, {
+    days = RECONCILE_DAYS, maxPages = RECONCILE_MAX_PAGES,
+} = {}) {
+    if (!Array.isArray(clauses) || !clauses.length) return { ok: true, ids: [] };
+    const safeDays = Math.max(1, Math.min(31, Math.floor(Number(days)) || RECONCILE_DAYS));
+    const safePages = Math.max(1, Math.min(RECONCILE_MAX_PAGES, Math.floor(Number(maxPages)) || RECONCILE_MAX_PAGES));
+    const query = `newer_than:${safeDays}d has:attachment {${clauses.join(' ')}}`;
+    const base = `${GMAIL}/messages?maxResults=50&q=${encodeURIComponent(query)}`;
+    const ids = new Set(), seen = new Set();
+    let pageToken = '';
+    for (let page = 0; page < safePages; page += 1) {
+        let out;
+        try {
+            const r = await f(base + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
+            if (!r.ok) return { ok: false, reason: 'recent-reconciliation-unavailable', status: r.status };
+            out = await r.json();
+            for (const m of out.messages || []) if (m && m.id) ids.add(m.id);
+        } catch (_) { return { ok: false, reason: 'recent-reconciliation-unavailable' }; }
+        pageToken = out.nextPageToken;
+        if (!pageToken) return { ok: true, ids: [...ids], complete: true };
+        if (typeof pageToken !== 'string' || seen.has(pageToken)) break;
+        seen.add(pageToken);
+    }
+    // Do not pretend a capped inventory is complete. The collected ids are
+    // still useful and the next minute repeats the overlap idempotently.
+    return { ok: true, ids: [...ids], complete: false };
+}
+
 /* ── 4. the handler ───────────────────────────────────────────────────────── */
 
 export default async function handler(req, res) {
@@ -285,10 +324,21 @@ async function ingestMailbox(db, note, env, f, res) {
             : await recentMessages(token, f, 50, senderClauses);
         if (!listed.ok && listed.reason === 'history-too-old') listed = await recentMessages(token, f, 50, approvedClauses(senderList));
         if (!listed.ok) return j(res, 500, { ok: false, error: listed.reason });
+        // Cursor collection and rolling inventory are independent evidence.
+        // Union them before staging so a statement missed behind a valid-looking
+        // history bookmark is recovered without weakening the sender allowlist.
+        const shouldReconcile = state.historyId && !senderCatchup
+            && Date.now() - (Number(state.lastReconcileMs) || 0) >= RECONCILE_MIN_GAP_MS;
+        if (shouldReconcile) {
+            const overlap = await reconcileRecentMessages(token, f, senderClauses);
+            if (!overlap.ok) return j(res, 503, { ok: false, error: overlap.reason });
+            listed.ids = [...new Set([...(listed.ids || []), ...(overlap.ids || [])])];
+        }
         // Stage the complete collection before downloading. A slow historical
         // mailbox resumes in bounded batches without prematurely moving history.
         const candidate = { id: globalThis.crypto.randomUUID(), ids: listed.ids,
-            cursor: 0, senderClauses, target: String(listed.historyId || note.historyId || '') };
+            cursor: 0, senderClauses, reconciled: Boolean(shouldReconcile),
+            target: String(listed.historyId || note.historyId || '') };
         try {
             pending = await db.runTransaction(async tx => {
                 const current = await tx.get(stateRef);
@@ -439,6 +489,7 @@ async function ingestMailbox(db, note, env, f, res) {
             const next = complete ? pending.target : '';
             updates.pendingCollection = complete ? null : { ...pending, cursor: Math.max(active.cursor || 0, batchEnd) };
             if (complete && Array.isArray(pending.senderClauses)) updates.collectedSenderClauses = pending.senderClauses;
+            if (complete && pending.reconciled === true) updates.lastReconcileMs = Date.now();
             // Concurrent redeliveries cannot move a durable cursor backwards.
             if (/^\d+$/.test(next) && (!/^\d+$/.test(String(previous || '')) || BigInt(next) > BigInt(previous))) updates.historyId = next;
             tx.set(stateRef, updates, { merge: true });
