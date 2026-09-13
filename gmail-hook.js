@@ -499,8 +499,8 @@ async function ingestMailbox(db, note, env, f, res) {
     let queued = false;
     if (state.autonomous && state.uid === env.WEALTHFLOW_OWNER_UID && stored.some(item => !item.duplicate)) {
         try {
-            const { enqueueStatementSync } = await import('./statement-cloud-queue.mjs');
-            await enqueueStatementSync({ env, f });
+            const { runStatementSync } = await import('./statement-sync.js');
+            await runStatementSync({ db, owner: { uid: state.uid, email: state.email }, action: 'drain', env, f, budgetMs: 20000 });
             queued = true;
         } catch (_) { /* Durable manifests remain pending; scheduled catch-up retries them. */ }
     }

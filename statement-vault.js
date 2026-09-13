@@ -42,10 +42,10 @@ export default async function handler(req, res) {
         });
         let queued = false;
         try {
-            const { enqueueStatementSync } = await import('./statement-cloud-queue.mjs');
-            await enqueueStatementSync();
+            const { runStatementSync } = await import('./statement-sync.js');
+            await runStatementSync({ db, owner: { uid: who.uid, email: who.email }, action: 'drain', budgetMs: 45000 });
             queued = true;
-        } catch (_) { /* The scheduler can pick up durable vault/mailbox state. */ }
+        } catch (_) { /* The daily safety-net schedule can pick up durable vault/mailbox state. */ }
         return json(res, 200, { ok: true, saved: true, count: sealed.count, savedAt: sealed.savedAt, queued });
     } catch (_) { return json(res, 503, { ok: false, reason: 'vault-storage-unavailable' }); }
 }
