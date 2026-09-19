@@ -31,7 +31,7 @@ import { describe, it, expect } from 'vitest';
 import G, {
     BANKS, REJECT, REJECT_TEXT, SINGLE_MAX, CHUNK_SIZE, MAX_BASE64, MAX_ATTACHMENTS,
     addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, worthSighting, looksLikeStatement,
+    itemKey, stableItemKey, planWrite, planMessage, repairManifest, isWorthTelling, worthSighting, looksLikeStatement,
 } from '../wealthflow-mail-ingest.mjs';
 
 const hdrs = (o) => Object.entries(o).map(([name, value]) => ({ name, value }));
@@ -459,15 +459,11 @@ describe('which attachment to take', () => {
         expect(r.ok).toBe(true);
     });
 
-    it('ignores a part with no attachmentId, even when it is a named PDF', () => {
-        /* The first version of this test used a part with no FILENAME, so it
-         * never reached the attachmentId clause it was named for — a mutation
-         * deleting that clause survived it. This is the case that matters: a
-         * part Gmail describes with a filename but no fetchable id. Selecting
-         * it sends `attachmentId: undefined` to the fetch. */
-        const r = selectAttachments({ parts: [{ filename: 'inline.pdf', mimeType: 'application/pdf', body: { size: 10 } }] });
-        expect(r.ok, 'a part with no attachmentId cannot be fetched').toBe(false);
-        expect(r.reason).toBe(REJECT.NO_ATTACHMENT);
+    it('takes a small attachment Gmail inlines in body.data without an attachmentId', () => {
+        const data = Buffer.from('%PDF-inline').toString('base64url');
+        const r = selectAttachments({ parts: [{ filename: 'inline.pdf', mimeType: 'application/pdf', body: { data, size: 11 } }] });
+        expect(r.ok).toBe(true);
+        expect(r.take).toEqual([{ attachmentId: '', inlineData: data, filename: 'inline.pdf', size: 11 }]);
     });
 
     it('and ignores an unnamed part too', () => {
@@ -475,15 +471,16 @@ describe('which attachment to take', () => {
         expect(r.ok).toBe(false);
     });
 
-    it('never selects an item without an attachmentId to fetch', () => {
-        // The property behind both: whatever is taken must be fetchable.
+    it('selects only parts that are fetchable by id or already carry inline data', () => {
+        const data = Buffer.from('%PDF-inline').toString('base64url');
         const r = selectAttachments({ parts: [
             { filename: 'inline.pdf', mimeType: 'application/pdf', body: { size: 10 } },
+            { filename: 'inline-data.pdf', mimeType: 'application/pdf', body: { data, size: 11 } },
             pdf('real.pdf', 100, 'A'),
         ] });
         expect(r.ok).toBe(true);
-        for (const t of r.take) expect(t.attachmentId, JSON.stringify(t)).toBeTruthy();
-        expect(r.take).toHaveLength(1);
+        for (const t of r.take) expect(Boolean(t.attachmentId || t.inlineData), JSON.stringify(t)).toBe(true);
+        expect(r.take).toHaveLength(2);
     });
 
     it.each([
@@ -521,6 +518,24 @@ describe('which attachment to take', () => {
         const justOver = Math.floor(MAX_BASE64 * 3 / 4) + 16;
         expect(selectAttachments({ parts: [pdf('a.pdf', justUnder, 'A')] }).ok).toBe(true);
         expect(selectAttachments({ parts: [pdf('a.pdf', justOver, 'A')] }).ok).toBe(false);
+    });
+});
+
+describe('legacy manifest repair', () => {
+    it('fills absent sender and worker metadata without replacing stored evidence', () => {
+        const patch = repairManifest(
+            { bank: 'Original Bank', filename: 'old.pdf', filed: false },
+            { from: 'Statements <statements@hnb.lk>', bank: 'HNB', filename: 'new.pdf', messageId: 'm1', size: 42 },
+            { uid: 'u1' },
+        );
+        expect(patch).toMatchObject({ from: 'Statements <statements@hnb.lk>', messageId: 'm1', size: 42, uid: 'u1', status: 'pending', cursor: 0 });
+        expect(patch).not.toHaveProperty('bank');
+        expect(patch).not.toHaveProperty('filename');
+    });
+
+    it('never requeues or rewrites a filed manifest', () => {
+        expect(repairManifest({ filed: true, from: 'old@hnb.lk' }, { from: 'new@hnb.lk' }, { uid: 'u1' }))
+            .toEqual({ uid: 'u1' });
     });
 });
 

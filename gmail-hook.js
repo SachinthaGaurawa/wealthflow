@@ -50,12 +50,13 @@
  * ===========================================================================*/
 
 import {
-    planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
+    planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
 } from './wealthflow-mail-ingest.mjs';
 import { normalizeList, policyFrom, recordSighting, approvedClauses } from './wealthflow-mail-senders.mjs';
 import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
+import { createHash } from 'node:crypto';
 
 const TOKENINFO = 'https://oauth2.googleapis.com/tokeninfo?id_token=';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -394,34 +395,44 @@ async function ingestMailbox(db, note, env, f, res) {
         for (const item of plan.items) {
             const ref = db.collection(MAIL_ROOT).doc(userKey).collection('items').doc(item.key);
             try {
-                /* Redelivery is normal; a document already here is already
-                 * done. BOTH names are checked: item.key is the stable one and
-                 * item.legacyKey is what the same attachment was filed under
-                 * before the key stopped depending on Gmail's attachmentId.
-                 * Without the second lookup, the first run after that change
-                 * would re-store every statement already held — one last round
-                 * of exactly the duplication it fixes. */
+                // Repair current or legacy duplicates without downloading again.
                 const existing = await ref.get();
-                if (existing.exists) { stored.push({ key: item.key, duplicate: true }); continue; }
+                if (existing.exists) {
+                    const patch = repairManifest(existing.data(), item, { uid: state.uid || '' });
+                    if (Object.keys(patch).length) await ref.set(patch, { merge: true });
+                    stored.push({ key: item.key, duplicate: true });
+                    continue;
+                }
                 if (item.legacyKey && item.legacyKey !== item.key) {
-                    const old = await db.collection(MAIL_ROOT).doc(userKey)
-                        .collection('items').doc(item.legacyKey).get();
-                    if (old.exists) { stored.push({ key: item.legacyKey, duplicate: true }); continue; }
+                    const oldRef = db.collection(MAIL_ROOT).doc(userKey).collection('items').doc(item.legacyKey);
+                    const old = await oldRef.get();
+                    if (old.exists) {
+                        const patch = repairManifest(old.data(), item, { uid: state.uid || '' });
+                        if (Object.keys(patch).length) await oldRef.set(patch, { merge: true });
+                        stored.push({ key: item.legacyKey, duplicate: true });
+                        continue;
+                    }
                 }
 
-                const ar = await f(
-                    `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
-                    + `/attachments/${encodeURIComponent(item.attachmentId)}`,
-                    { headers: authed(token) },
-                );
-                if (!ar.ok) return j(res, 503, { ok: false, error: 'attachment fetch failed' });
-                const att = await ar.json();
+                let att;
+                if (item.inlineData) {
+                    att = { data: item.inlineData };
+                } else {
+                    const ar = await f(
+                        `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
+                        + `/attachments/${encodeURIComponent(item.attachmentId)}`,
+                        { headers: authed(token) },
+                    );
+                    if (!ar.ok) return j(res, 503, { ok: false, error: 'attachment fetch failed' });
+                    att = await ar.json();
+                }
                 // Gmail returns base64url; the store and the device both want base64.
                 const b64 = String(att.data || '').replace(/-/g, '+').replace(/_/g, '/');
 
                 const write = planWrite(b64, {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
+                    contentSha256: createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex'),
                     /* See gmail-scan.js: computed since the beginning, stored
                      * by nothing until now. */
                     known: item.known !== false,

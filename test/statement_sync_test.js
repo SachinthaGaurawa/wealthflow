@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { validScheduleSecret, invokeBoard, classifySlice, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const roster = Array.from({ length: 10 }, (_, index) => 'engine' + index);
 const row = { date: '2026-09-10', narration: 'Merchant', amount: 42, direction: 'debit', directionSource: 'column', needsReview: false };
@@ -10,6 +12,14 @@ const decision = { index: 0, module: 'expenses', category: 'Food', allocationId:
 const good = fields => ({ unanimous: true, trustworthy: true, expected: roster, fields });
 
 describe('statement worker authorization and board', () => {
+    it('has an independent daily catch-up schedule routed to the worker', () => {
+        const root = path.resolve(import.meta.dirname, '..');
+        const vercel = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+        const cron = vercel.crons.find(entry => entry.path === '/api/statement-sync');
+        expect(cron).toEqual({ path: '/api/statement-sync', schedule: '30 3 * * *' });
+        expect(fs.readFileSync(path.join(root, 'api/router.js'), 'utf8'))
+            .toContain("'statement-sync': () => import('../statement-sync.js')");
+    });
     it('requires a long exact constant-time schedule credential', () => {
         const env = { CRON_SECRET: 'a'.repeat(24) };
         expect(validScheduleSecret({ headers: { authorization: 'Bearer ' + env.CRON_SECRET } }, env)).toBe(true);
@@ -145,5 +155,28 @@ describe('statement worker attachment policy', () => {
         const blocked = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => message });
         await expect(attachmentBytes({ messageId: 'm1' }, { id: plan.items[0].key }, 'token', [], blocked)).rejects.toThrow('statement-sender-no-longer-approved');
         expect(blocked).toHaveBeenCalledTimes(1);
+    });
+    it('reads Gmail inline attachment data without calling the attachments endpoint', async () => {
+        const inline = structuredClone(message);
+        inline.payload.parts[0].body = { data: Buffer.from('%PDF-inline').toString('base64url'), size: 11 };
+        const plan = planMessage(inline, policyFrom(senders));
+        const f = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => inline });
+        const result = await attachmentBytes({ messageId: 'm1' }, { id: plan.items[0].key }, 'token', senders, f);
+        expect(result.bytes.toString()).toBe('%PDF-inline');
+        expect(f).toHaveBeenCalledTimes(1);
+    });
+    it('pins every attachment to SHA-256 and rejects changed ciphertext', async () => {
+        const plan = planMessage(message, policyFrom(senders));
+        const data = Buffer.from('%PDF-test').toString('base64url');
+        const f = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => message }).mockResolvedValueOnce({ ok: true, json: async () => ({ data }) });
+        const set = vi.fn();
+        const first = await attachmentBytes({ messageId: 'm1' }, { id: plan.items[0].key, set }, 'token', senders, f);
+        const digest = createHash('sha256').update(Buffer.from('%PDF-test')).digest('hex');
+        expect(first.contentSha256).toBe(digest);
+        expect(set).toHaveBeenCalledWith({ contentSha256: digest }, { merge: true });
+
+        const changed = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => message }).mockResolvedValueOnce({ ok: true, json: async () => ({ data }) });
+        await expect(attachmentBytes({ messageId: 'm1', contentSha256: '0'.repeat(64) }, { id: plan.items[0].key }, 'token', senders, changed))
+            .rejects.toThrow('statement-attachment-content-mismatch');
     });
 });

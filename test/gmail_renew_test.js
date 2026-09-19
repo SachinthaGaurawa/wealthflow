@@ -200,6 +200,7 @@ describe('the scheduled renewal', () => {
         expect(doc.renewedBy).toBe('schedule');
     });
 
+
     it('leaves a mailbox that does not need it completely alone', async () => {
         mailbox('fresh_example_com', { watchExpiry: Date.now() + 6.9 * DAY });
         const before = { ...fake.docs.get('wf-mail/fresh_example_com') };
@@ -345,8 +346,13 @@ describe('something actually calls it', () => {
         expect([dom, month, dow]).toEqual(['*', '*', '*']);
     });
 
-    it('stays within the two cron jobs a Hobby project may have', () => {
-        expect((vercel.crons || []).length).toBeLessThanOrEqual(2);
+    it('keeps every Hobby cron at a daily-or-slower interval', () => {
+        for (const cron of vercel.crons || []) {
+            const fields = cron.schedule.trim().split(/\s+/);
+            expect(fields).toHaveLength(5);
+            expect(fields[0], `${cron.path} has a repeating minute field`).toMatch(/^\d+$/);
+            expect(fields[1], `${cron.path} has a repeating hour field`).toMatch(/^\d+$/);
+        }
     });
 
     it('the path resolves to a handler', () => {

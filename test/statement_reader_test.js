@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createCipheriv, pbkdf2Sync } from 'node:crypto';
-import { readStatement, STATEMENT_LIMITS } from '../statement-reader.mjs';
+import { readStatement, pdfLinesFromItems, STATEMENT_LIMITS } from '../statement-reader.mjs';
 
 const password = '01021990';
 const plain = '<html><body><h1>American Express Card Statement</h1><p>Card No: 376657XXXXX0276</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>123.45 DR</td></tr><tr><td>15/09/2026</td><td>PAYMENT THANK YOU</td><td>50.00 CR</td></tr></table><script>globalThis.stolen="01021990"; throw Error("must not execute")</script></body></html>';
@@ -25,6 +25,18 @@ function pdf(texts) {
 }
 
 describe('server statement reader', () => {
+    it('orders scrambled PDF text by visual row and column coordinates', () => {
+        const items = [
+            { str: '123.45 DR', transform: [1, 0, 0, 1, 450, 700] },
+            { str: 'KEELLS STORE', transform: [1, 0, 0, 1, 140, 700] },
+            { str: 'Statement', transform: [1, 0, 0, 1, 50, 740] },
+            { str: '14/09/2026', transform: [1, 0, 0, 1, 50, 700] },
+        ];
+        expect(pdfLinesFromItems(items)).toEqual([
+            'Statement',
+            '14/09/2026 KEELLS STORE 123.45 DR',
+        ]);
+    });
     it('opens a real NTB cryptographic envelope, exact vault passwords, inert HTML and both money directions', async () => {
         const result = await readStatement({ bytes: envelope(), filename: 'AMEX.html', passwords: ['wrong', 'wrong', password] });
         expect(result.parsed.rows).toHaveLength(2);

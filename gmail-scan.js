@@ -44,9 +44,10 @@ import {
 import { monthKey } from './wealthflow-sender-discovery.js';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import {
-    planMessage, planWrite, planHold, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
+    planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
 } from './wealthflow-mail-ingest.mjs';
 import { MAIL_ROOT, windowFor, listUrl, boundedMax, pageResult } from './gmail-scan.mjs';
+import { createHash } from 'node:crypto';
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
@@ -173,6 +174,7 @@ export default async function handler(req, res, deps) {
     /* References to messages refused for a sender reason — see planHold. */
     const held = [];
     const skipped = [];
+    const retryFailures = [];
 
     /* Headers only on a discovery window. `format=metadata` returns From,
      * Subject and internalDate and NO body — so the loop below physically
@@ -186,9 +188,10 @@ export default async function handler(req, res, deps) {
         let msg;
         try {
             const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?${fmt}`, { headers: authed(token) });
-            if (!r.ok) continue;                       // one unreadable message is not a failed scan
+            if (r.status === 404) continue;             // Deleted mail is permanently gone.
+            if (!r.ok) { retryFailures.push({ id, stage: 'message' }); continue; }
             msg = await r.json();
-        } catch (_) { continue; }
+        } catch (_) { retryFailures.push({ id, stage: 'message' }); continue; }
 
         /* A DISCOVERY RUN ENDS HERE. It has the sender, the subject and the
          * date, which is everything the ranking needs, and it has downloaded
@@ -271,32 +274,41 @@ export default async function handler(req, res, deps) {
         for (const item of plan.items) {
             const itemRef = ref.collection('items').doc(item.key);
             try {
-                /* Already here: a rescan, or a message the push already took.
-                 * The key is (messageId, attachmentId), so this is the same
-                 * document either way and there is nothing to do. */
+                // Repair current or legacy duplicates without downloading again.
                 const existing = await itemRef.get();
-                if (existing.exists) continue;
-                /* The name this attachment was filed under before the key
-                 * stopped depending on Gmail's attachmentId. Checked so the
-                 * first scan after that change recognises what is already
-                 * stored rather than writing a second copy of all of it. */
+                if (existing.exists) {
+                    const patch = repairManifest(existing.data(), item, { uid: who.uid });
+                    if (Object.keys(patch).length) await itemRef.set(patch, { merge: true });
+                    continue;
+                }
                 if (item.legacyKey && item.legacyKey !== item.key) {
-                    const prior = await ref.collection('items').doc(item.legacyKey).get();
-                    if (prior && prior.exists) continue;
+                    const priorRef = ref.collection('items').doc(item.legacyKey);
+                    const prior = await priorRef.get();
+                    if (prior && prior.exists) {
+                        const patch = repairManifest(prior.data(), item, { uid: who.uid });
+                        if (Object.keys(patch).length) await priorRef.set(patch, { merge: true });
+                        continue;
+                    }
                 }
 
-                const ar = await f(
-                    `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
-                    + `/attachments/${encodeURIComponent(item.attachmentId)}`,
-                    { headers: authed(token) },
-                );
-                if (!ar.ok) continue;
-                const att = await ar.json();
+                let att;
+                if (item.inlineData) {
+                    att = { data: item.inlineData };
+                } else {
+                    const ar = await f(
+                        `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
+                        + `/attachments/${encodeURIComponent(item.attachmentId)}`,
+                        { headers: authed(token) },
+                    );
+                    if (!ar.ok) throw new Error('attachment-fetch-failed');
+                    att = await ar.json();
+                }
                 const b64 = String(att.data || '').replace(/-/g, '+').replace(/_/g, '/');
 
                 const write = planWrite(b64, {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
+                    contentSha256: createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex'),
                     backfilled: true,
                     uid: who.uid,
                     status: 'pending',
@@ -321,9 +333,8 @@ export default async function handler(req, res, deps) {
                 await itemRef.set(write.manifest);
                 stored.push({ key: item.key, bank: item.bank, filename: item.filename });
             } catch (_) {
-                /* This attachment did not land. The manifest was not written, so
-                 * the device will never see a partial statement, and the next
-                 * scan of this window picks it up. Not a failed page. */
+                // Fail the page closed; successful writes are safe to retry.
+                retryFailures.push({ id, stage: 'attachment' });
             }
         }
     }
@@ -341,6 +352,16 @@ export default async function handler(req, res, deps) {
             }, { merge: true }), 8000, 'wf-mail senders');
         }
     } catch (_) { /* the scan succeeded; the suggestions can wait for the next page */ }
+
+    if (retryFailures.length) {
+        return j(res, 503, {
+            ok: false,
+            error: 'Some Gmail messages could not be stored. This page was not advanced and is safe to retry.',
+            retryable: true,
+            failed: retryFailures.length,
+            stored: stored.length,
+        });
+    }
 
     return j(res, 200, {
         ok: true,

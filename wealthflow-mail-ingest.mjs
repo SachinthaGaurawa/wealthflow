@@ -448,7 +448,9 @@ const isStatementAttachment = (part) => {
 function walk(part, out) {
     if (!part) return out;
     if (Array.isArray(part.parts)) for (const p of part.parts) walk(p, out);
-    if (part.filename && part.body && part.body.attachmentId) out.push(part);
+    // Gmail may inline a small MIME part in body.data.
+    if (part.filename && part.body
+        && (part.body.attachmentId || typeof part.body.data === 'string')) out.push(part);
     return out;
 }
 
@@ -477,7 +479,12 @@ export function selectAttachments(payload) {
             skipped.push({ filename: p.filename, reason: REJECT.TOO_LARGE, bytes: Number(p.body.size) || 0 });
             continue;
         }
-        take.push({ attachmentId: p.body.attachmentId, filename: p.filename, size: Number(p.body.size) || 0 });
+        take.push({
+            attachmentId: p.body.attachmentId || '',
+            inlineData: typeof p.body.data === 'string' ? p.body.data : '',
+            filename: p.filename,
+            size: Number(p.body.size) || 0,
+        });
     }
     if (!take.length) return { ok: false, reason: REJECT.TOO_LARGE, detail: { skipped } };
     return { ok: true, take, skipped };
@@ -566,6 +573,29 @@ export function planWrite(base64, meta = {}) {
     const parts = [];
     for (let i = 0; i < n; i++) parts.push({ i, d: b64.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) });
     return { ok: true, parts, manifest: { ...meta, parts: n }, chunked: true };
+}
+
+/** Fill absent legacy fields from mail that passed current DKIM/policy. */
+export function repairManifest(manifest, item, { uid = '' } = {}) {
+    const old = manifest && typeof manifest === 'object' ? manifest : {};
+    const patch = {};
+    const missing = key => old[key] == null || old[key] === '';
+    const fill = (key, value) => {
+        if (missing(key) && value !== undefined && value !== null && value !== '') patch[key] = value;
+    };
+    fill('from', item && item.from);
+    fill('bank', item && item.bank);
+    fill('messageId', item && item.messageId);
+    fill('filename', item && item.filename);
+    fill('subject', item && item.subject);
+    fill('receivedMs', item && item.receivedMs);
+    if (missing('size') && Number.isFinite(Number(item && item.size))) patch.size = Number(item.size);
+    fill('uid', uid);
+    if (old.filed !== true && missing('status') && uid) {
+        patch.status = 'pending';
+        if (missing('cursor')) patch.cursor = 0;
+    }
+    return patch;
 }
 
 /* ── 4. the whole decision ────────────────────────────────────────────────── */
@@ -776,6 +806,7 @@ export function planMessage(message, policy = {}) {
              * duplicate bug worse exactly once, on the way to fixing it. */
             legacyKey: itemKey(message.id, a.attachmentId),
             attachmentId: a.attachmentId,
+            inlineData: a.inlineData,
             filename: a.filename,
             size: a.size,
             bank: who.bank,
