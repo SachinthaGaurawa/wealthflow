@@ -1,6 +1,6 @@
-/* Authenticated cloud vault and autonomous statement review. No secrets enter appData. */
-let user = null, unsubscribe = null, pending = [], syncPromise = null, overlay = null;
-const state = { configured: null, saved: false, count: 0, savedAt: null, syncing: false, error: '', reviews: 0 };
+/**/
+let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null;
+const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0};
 const say = (message, type = 'info') => { if (typeof window.notify === 'function') window.notify(message, type); };
 function change() { window.dispatchEvent(new CustomEvent('wf-statement-cloud', { detail: { ...state } })); }
 export async function request(path, method = 'GET', body) {
@@ -69,6 +69,7 @@ export function friendly(reason) {
         'statement-request-timed-out': 'The request timed out; its final server state will be checked again.',
         'statement-service-unavailable': 'The service is unavailable. Your statements remain pending.' })[reason] || 'The cloud operation failed. Please retry; no successful completion was recorded.';
 }
+export const migrateUnlockedVault=entries=>Array.isArray(entries) && entries.length && !state.saved && save(entries);
 async function download(entry) {
     try {
         const sourceId = String(entry.sourcePath || '').split('/').pop();
@@ -156,7 +157,7 @@ if (typeof window !== 'undefined') {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, getState: () => ({ ...state }) };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState };
     const start = () => { if (window.firebase?.apps?.length) window.firebase.auth().onAuthStateChanged(next => authChanged(next)); };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
 }
