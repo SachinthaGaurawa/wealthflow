@@ -8,24 +8,21 @@ import { normalizeCloudLayout, validateCloudTemplate } from './statement-layout.
 const derive = promisify(pbkdf2);
 export const STATEMENT_LIMITS = Object.freeze({ bytes: 16 * 1024 * 1024, pages: 100, rows: 5000, passwords: 1000 });
 const fail = code => { const error = new Error(code); error.code = code; throw error; };
-let trusted;
+let trustedSources;
 async function tools() {
-    if (!trusted) trusted = Promise.all([
+    if (!trustedSources) trustedSources = Promise.all([
         readFile(new URL('./wealthflow-statement-parser.js', import.meta.url), 'utf8'),
         readFile(new URL('./wealthflow-html-statement.js', import.meta.url), 'utf8'),
         import('linkedom'),
-    ]).then(([parser, html, { DOMParser }]) => {
-        const context = vm.createContext({ window: {}, DOMParser, console: { log() {} } }, { codeGeneration: { strings: false, wasm: false } });
-        // These are repository-owned readers. Attachment source is NEVER evaluated.
-        vm.runInContext(parser, context, { timeout: 2000 });
-        // Preserve repeated printed transactions in the server data adapter.
-        // This change affects only the trusted helper's exported JSON reader.
-        const adapter = html.replace('return _dedupe(_fromScripts(h));', 'return _fromScripts(h);');
-        if (adapter === html) fail('HTML_READER_ADAPTER_UNAVAILABLE');
-        vm.runInContext(adapter, context, { timeout: 2000 });
-        return { context, DOMParser };
-    });
-    return trusted;
+    ]).then(([parser, html, { DOMParser }]) => ({ parser, html, DOMParser }));
+    const { parser, html, DOMParser } = await trustedSources;
+    // Cache source modules, but isolate mutable input globals per parse.
+    const context = vm.createContext({ window: {}, DOMParser, console: { log() {} } }, { codeGeneration: { strings: false, wasm: false } });
+    vm.runInContext(parser, context, { timeout: 2000 });
+    const adapter = html.replace('return _dedupe(_fromScripts(h));', 'return _fromScripts(h);');
+    if (adapter === html) fail('HTML_READER_ADAPTER_UNAVAILABLE');
+    vm.runInContext(adapter, context, { timeout: 2000 });
+    return { context, DOMParser };
 }
 function keys(passwords) {
     if (!Array.isArray(passwords) || passwords.length > STATEMENT_LIMITS.passwords) fail('INVALID_VAULT_KEYS');
@@ -35,6 +32,29 @@ function inputBytes(value) {
     if (!(value instanceof Uint8Array)) fail('INVALID_ATTACHMENT');
     if (!value.length || value.length > STATEMENT_LIMITS.bytes) fail('ATTACHMENT_SIZE_LIMIT');
     return Buffer.from(value);
+}
+
+/** Convert PDF.js items from object order to visual row/column order. */
+export function pdfLinesFromItems(items, tolerance = 2) {
+    const rows = [];
+    const loose = [];
+    for (const [index, item] of (Array.isArray(items) ? items : []).entries()) {
+        if (!item || typeof item.str !== 'string' || !item.str.trim()) continue;
+        const x = Number(item.transform?.[4]), y = Number(item.transform?.[5]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) { loose.push({ index, text: item.str }); continue; }
+        let row = rows.find(candidate => Math.abs(candidate.y - y) <= tolerance);
+        if (!row) { row = { y, first: index, cells: [] }; rows.push(row); }
+        row.cells.push({ x, index, text: item.str });
+    }
+    const visual = rows
+        .sort((a, b) => b.y - a.y || a.first - b.first)
+        .map(row => row.cells
+            .sort((a, b) => a.x - b.x || a.index - b.index)
+            .map(cell => cell.text.trim()).filter(Boolean).join(' '))
+        .filter(Boolean);
+    // Preserve unpositioned evidence in source order.
+    visual.push(...loose.sort((a, b) => a.index - b.index).map(item => item.text.trim()).filter(Boolean));
+    return visual;
 }
 async function parse(text, htmlForData = '') {
     const { context } = await tools();
@@ -206,17 +226,12 @@ export async function readPdfStatement(bytes, passwords = []) {
                 const page = await doc.getPage(n);
                 try {
                     const content = await page.getTextContent();
-                    let line = '', y;
                     for (const item of content.items) {
                         if (typeof item.str !== 'string') continue;
                         textLength += item.str.length + 1;
                         if (textLength > STATEMENT_LIMITS.bytes) fail('STATEMENT_TEXT_LIMIT');
-                        const nextY = item.transform?.[5];
-                        if (line && y !== undefined && nextY !== undefined && Math.abs(y - nextY) > 2) { lines.push(line); line = ''; }
-                        line += `${line ? ' ' : ''}${item.str}`; y = nextY;
-                        if (item.hasEOL) { lines.push(line); line = ''; y = undefined; }
                     }
-                    if (line) lines.push(line);
+                    lines.push(...pdfLinesFromItems(content.items));
                 } finally { page.cleanup(); }
             }
             return await parse(lines.join('\n'));

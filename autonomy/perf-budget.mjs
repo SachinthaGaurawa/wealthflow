@@ -398,7 +398,12 @@ export const BUDGETS = {
      * keeping a second copy of the arithmetic. */
     // Measured 1,842,217 across 71 modules after cloud vault/review integration;
     // encrypted HTML intake and exact sender gates account for the other growth.
-    totalJsBytes: 1_872_726, // measured after capping wealthflow-history.js's unbounded places list (the "spending & payment history" modal)
+    // Raised for repairing pre-upgrade statement manifests whose missing sender
+    // evidence made an owner-approved bank look unapproved forever. The same
+    // change also records a SHA-256 attachment digest so repeated processing
+    // can prove it received identical ciphertext. Measured on this tree; no new
+    // module or browser request.
+    totalJsBytes: 1_874_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

@@ -1,5 +1,21 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.29 — 2026-09-19
+
+**What changed for you**
+
+- Old waiting statements repair missing sender metadata on a safe rescan, so exact approved senders can release them instead of leaving “From — not on your sender list” forever.
+- Small Gmail attachments embedded directly in a message are now collected, and unencrypted PDF/HTML statements work without forcing a password vault.
+- A dedicated daily Statement Sync catch-up recovers delayed or dropped Gmail push notifications.
+- Every fresh sign-in starts authenticated cloud collection and processing when the private cloud vault is enabled.
+
+**Under the hood**
+
+- Historical scan pages fail closed and remain retryable when Gmail or Firestore fails transiently; no cursor advances past an unstored message.
+- PDF text is reconstructed by visual row and column coordinates, while each parse uses isolated VM state.
+- Unknown filed keys cannot create phantom manifests, connected mailbox status no longer requests a redundant token, and failed recent sweeps are immediately retryable.
+- Stored attachment ciphertext is pinned to a SHA-256 digest; changed bytes fail closed, while row occurrence and fingerprint hashes keep repeated processing idempotent.
+
 ## v7.69.28 — 2026-09-13
 
 **What changed for you**

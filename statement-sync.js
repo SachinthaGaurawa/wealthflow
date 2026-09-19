@@ -17,7 +17,8 @@ const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const permanentFailure = error => /^(?:PASSWORD_FAILED|NO_VAULT_KEYS|PDF_UNREADABLE|ATTACHMENT_TYPE_UNSUPPORTED|ATTACHMENT_SIZE_LIMIT|INVALID_ATTACHMENT|HTML_[A-Z_]+|STATEMENT_[A-Z_]+)$/.test(error?.message || '') || new Set([
     'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-cursor-or-content-changed',
     'statement-message-missing', 'statement-message-deleted', 'statement-sender-no-longer-approved',
-    'statement-attachment-identity-mismatch', 'statement-attachment-invalid', 'statement-attachment-size'
+    'statement-attachment-identity-mismatch', 'statement-attachment-invalid', 'statement-attachment-size',
+    'statement-attachment-content-mismatch'
 ]).has(error?.message);
 const json = (res, code, body) => { res.statusCode = code; res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store'); res.end(JSON.stringify(body)); };
 
@@ -98,13 +99,24 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch) {
     const items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
     if (items.length !== 1) throw new Error('statement-attachment-identity-mismatch');
     const item = items[0];
-    const attachment = await f(`${GMAIL}/messages/${encodeURIComponent(source.messageId)}/attachments/${encodeURIComponent(item.attachmentId)}`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
-    if (!attachment.ok) throw new Error('gmail-fetch-unavailable');
-    const payload = await attachment.json();
+    let payload;
+    if (item.inlineData) {
+        payload = { data: item.inlineData };
+    } else {
+        const attachment = await f(`${GMAIL}/messages/${encodeURIComponent(source.messageId)}/attachments/${encodeURIComponent(item.attachmentId)}`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
+        if (!attachment.ok) throw new Error('gmail-fetch-unavailable');
+        payload = await attachment.json();
+    }
     if (typeof payload.data !== 'string' || payload.data.length > Math.ceil(STATEMENT_LIMITS.bytes * 4 / 3) + 4 || !/^[A-Za-z\d_\-+/]*={0,2}$/.test(payload.data)) throw new Error('statement-attachment-invalid');
     const bytes = Buffer.from(payload.data, 'base64url');
     if (!bytes.length || bytes.length > STATEMENT_LIMITS.bytes) throw new Error('statement-attachment-size');
-    return { bytes, filename: item.filename };
+    const contentSha256 = createHash('sha256').update(bytes).digest('hex');
+    if (source.contentSha256 && source.contentSha256 !== contentSha256) throw new Error('statement-attachment-content-mismatch');
+    // Pre-hash manifests are upgraded only after Gmail identity, sender policy,
+    // payload syntax and size have all been re-verified. Future reads then fail
+    // closed if Gmail ever serves different bytes for the same occurrence.
+    if (!source.contentSha256 && typeof ref.set === 'function') await ref.set({ contentSha256 }, { merge: true });
+    return { bytes, filename: item.filename, contentSha256 };
 }
 
 // Bounded automatic migration makes pre-upgrade unfiled manifests eligible.
@@ -175,15 +187,16 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     let entries = [], passwords = [];
     try {
         const vaultSnap = await db.collection(VAULT_ROOT).doc(uid).get();
-        if (!vaultSnap.exists) throw new Error('cloud-vault-not-saved');
-        entries = await open(uid, vaultSnap.data());
-        await db.runTransaction(async tx => {
-            const current = await tx.get(sourceRef), source = current.data();
-            if (!current.exists || source.uid !== uid || source.leaseToken !== claimed.leaseToken) throw new Error('statement-lease-lost');
-            tx.set(sourceRef, { vaultSavedAt: Number(vaultSnap.data().savedAt) || 0 }, { merge: true });
-        });
-        passwords = candidatesFor(claimed.bank || '', entries);
-        if (!passwords.length) throw new Error('cloud-vault-empty');
+        // The reader, not vault existence, decides whether decryption is needed.
+        if (vaultSnap.exists) {
+            entries = await open(uid, vaultSnap.data());
+            await db.runTransaction(async tx => {
+                const current = await tx.get(sourceRef), source = current.data();
+                if (!current.exists || source.uid !== uid || source.leaseToken !== claimed.leaseToken) throw new Error('statement-lease-lost');
+                tx.set(sourceRef, { vaultSavedAt: Number(vaultSnap.data().savedAt) || 0 }, { merge: true });
+            });
+            passwords = candidatesFor(claimed.bank || '', entries);
+        }
         // Reload policy after ingestion; approval can be revoked during a run.
         const currentMail = (await mailRef.get()).data();
         const attachment = await attachmentBytes(claimed, sourceRef, token, sendersOf(currentMail), f);
@@ -272,12 +285,12 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
     const mail = (await mailRef.get()).data();
     if (!sourceSnap.exists || source.uid !== owner.uid || source.status !== 'needs_review' || source.filed === true || !mail || mail.uid !== owner.uid || mail.email !== String(owner.email).toLowerCase() || !mail.refresh_token) throw new Error('review-source-owner-mismatch');
     const vault = await db.collection(VAULT_ROOT).doc(owner.uid).get();
-    if (!vault.exists) throw new Error('cloud-vault-not-saved');
     let entries = [], passwords = [];
     try {
-        entries = await open(owner.uid, vault.data());
-        passwords = candidatesFor(source.bank || '', entries);
-        if (!passwords.length) throw new Error('cloud-vault-empty');
+        if (vault.exists) {
+            entries = await open(owner.uid, vault.data());
+            passwords = candidatesFor(source.bank || '', entries);
+        }
         const token = await accessTokenFrom(mail.refresh_token, env, f);
         const bytes = await attachment(source, sourceRef, token, sendersOf(mail), f);
         const result = await read({ ...bytes, passwords, bank: source.bank || '', layouts: [] });

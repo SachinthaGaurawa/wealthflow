@@ -37,7 +37,7 @@ function database(initial) {
         return result;
     } };
 }
-function simulation({ disagree = false, unavailable = false, items = 1 } = {}) {
+function simulation({ disagree = false, unavailable = false, items = 1, noVault = false, unencrypted = false } = {}) {
     const owner = { uid: 'u', email: 'owner@example.com' }, sender = 'statements@nationstrust.com';
     const senders = [{ id: sender, kind: 'address', status: 'approved' }];
     const messageFor = id => ({ id, internalDate: '1789000000000', snippet: 'Your monthly card statement', payload: {
@@ -51,13 +51,14 @@ function simulation({ disagree = false, unavailable = false, items = 1 } = {}) {
         if (!plan.ok) throw Error('synthetic sender policy failed: ' + plan.reason);
         return 'wf-mail/owner_example_com/items/' + plan.items[0].key;
     });
-    const db = database({
+    const initial = {
         'users/u': { expenses: [], cconetime: [], ccPayments: [], incomeRecv: [], subscriptions: [] },
         'wf-mail/owner_example_com': { uid: 'u', email: owner.email, refresh_token: 'synthetic-refresh', autonomous: true, senders },
-        'wf-statement-vault/u': { uid: 'u', savedAt: 100 },
         ...Object.fromEntries(sourcePaths.map((path, i) => [path, { uid: 'u', bank: 'NTB', filename: 'AMEX_Statement_2026Sep.html', messageId: messageIds[i], status: 'pending', cursor: 0, filed: false }])),
-    });
-    const ciphertexts = new Map(messageIds.map((id, i) => [id, encryptedHtml(i)]));
+    };
+    if (!noVault) initial['wf-statement-vault/u'] = { uid: 'u', savedAt: 100 };
+    const db = database(initial);
+    const ciphertexts = new Map(messageIds.map((id, i) => [id, unencrypted ? Buffer.from(plainFor(i)) : encryptedHtml(i)]));
     const f = vi.fn(async url => {
         if (url === 'https://oauth2.googleapis.com/token') return { ok: true, json: async () => ({ access_token: 'synthetic-access' }) };
         const attachmentMatch = messageIds.find(id => url.includes('/messages/' + id + '/attachments/'));
@@ -109,6 +110,17 @@ describe('cold-server composed statement pipeline simulation', () => {
         expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
         expect(setup.board).not.toHaveBeenCalled();
         expect([...setup.db.docs.keys()].some(path => path.includes('/statementReview/'))).toBe(false);
+    });
+    it('processes an unencrypted statement without requiring a password vault', async () => {
+        const setup = simulation({ noVault: true, unencrypted: true });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'filed', filed: 2 });
+        expect(setup.args.open).not.toHaveBeenCalled();
+        expect(setup.db.docs.get(setup.sourcePath).vaultSavedAt).toBeUndefined();
+    });
+    it('quarantines an encrypted statement without a vault instead of retrying forever', async () => {
+        const setup = simulation({ noVault: true });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'needs_review' });
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'needs_review', reviewReason: 'NO_VAULT_KEYS' });
     });
 });
 

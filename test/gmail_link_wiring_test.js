@@ -165,4 +165,11 @@ describe('the card can say which piece is missing', () => {
             .not.toMatch(/value="\$\{[^}]*(?:tok|refresh)/i);
         expect(code(f)).not.toMatch(/console\.(log|warn|error)/);
     });
+
+    it('does not ask a connected mailbox to paste or replace its credential', () => {
+        const f = fn('openGmailLink');
+        expect(f).toContain("st.connected ? '' : `<button class=\"btn btn-primary\" id=\"_gl_save\"");
+        expect(f).toContain('The mailbox credential is already stored');
+        expect(f).toContain('No live push timestamp is recorded yet');
+    });
 });

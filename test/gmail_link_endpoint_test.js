@@ -181,6 +181,20 @@ describe('disconnecting removes the credential and keeps the history', () => {
     });
 });
 
+describe('marking a statement filed', () => {
+    it('does not create a phantom manifest for a stale or unknown key', async () => {
+        await call({ method: 'POST', body: { refresh_token: TOKEN } });
+        const seen = await call({
+            method: 'POST',
+            url: '/api/gmail-link?items=1',
+            body: { action: 'filed', keys: ['missing-statement'] },
+        });
+        expect(seen.status).toBe(200);
+        expect(seen.body).toMatchObject({ ok: true, marked: 0, missed: ['missing-statement'] });
+        expect(fake.docs.has(`wf-mail/${OWNER_KEY}/items/missing-statement`)).toBe(false);
+    });
+});
+
 describe('who is refused, and with which answer', () => {
     it('no credential at all is 401 and writes nothing', async () => {
         const seen = await call({ method: 'POST', token: '', body: { refresh_token: TOKEN } });

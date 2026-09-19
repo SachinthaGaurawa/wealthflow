@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { request, save, remove, dismissReview } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, dismissReview, authChanged } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
@@ -11,6 +11,18 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('private statement cloud frontend transport', () => {
+    it('starts an authenticated cloud collection automatically on every fresh sign-in', async () => {
+        await authChanged(null);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 }))
+            .mockResolvedValueOnce(reply(true, { ok: true, processed: 2 }));
+        await authChanged(active);
+        expect(fetch.mock.calls.map(([path, options]) => [path, options.method])).toEqual([
+            ['/api/statement-vault', 'GET'],
+            ['/api/statement-sync', 'POST'],
+        ]);
+        expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ action: 'sync' });
+        await authChanged(null);
+    });
     it('sends exact passwords only to authenticated vault PUT without local plaintext storage', async () => {
         fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: false })).mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }));
         const entries = [{ password: ' 01021990 ', kind: 'birthday', format: 'DDMMYYYY' }];

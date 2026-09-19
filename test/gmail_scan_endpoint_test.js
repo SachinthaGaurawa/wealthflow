@@ -59,7 +59,7 @@ function junkMessage(id) {
     };
 }
 
-function stubGmail({ messages = [], byId = {}, nextPageToken, tokenFails, listStatus, big = false } = {}) {
+function stubGmail({ messages = [], byId = {}, nextPageToken, tokenFails, listStatus, messageStatus, attachmentStatus, big = false } = {}) {
     return async (url, init) => {
         const u = String(url);
         calls.push({ url: u, init });
@@ -73,11 +73,13 @@ function stubGmail({ messages = [], byId = {}, nextPageToken, tokenFails, listSt
         }
         const att = /\/messages\/([^/?]+)\/attachments\/([^/?]+)/.exec(u);
         if (att) {
+            if (attachmentStatus) return { ok: false, status: attachmentStatus, async json() { return {}; } };
             const data = big ? 'JVBERi0xLjQK' + 'QQ'.repeat(600000) : 'JVBERi0xLjQK' + 'QQ'.repeat(40);
             return { ok: true, status: 200, async json() { return { data }; } };
         }
         const one = /\/messages\/([^/?]+)\?/.exec(u);
         if (one) {
+            if (messageStatus) return { ok: false, status: messageStatus, async json() { return {}; } };
             const m = byId[decodeURIComponent(one[1])];
             if (!m) return { ok: false, status: 404, async json() { return {}; } };
             return { ok: true, status: 200, async json() { return m; } };
@@ -154,6 +156,22 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         const key = stableItemKey('m1', { filename: att.filename, size: att.body.size, attachmentId: att.body.attachmentId });
         expect(fake.docs.has(`wf-mail/${KEY}/items/${key}`), 'the manifest is not where the device looks').toBe(true);
         expect(fake.docs.get(`wf-mail/${KEY}/items/${key}`)).toMatchObject({ uid: 'u1', status: 'pending' });
+        expect(fake.docs.get(`wf-mail/${KEY}/items/${key}`).contentSha256).toMatch(/^[a-f\d]{64}$/);
+    });
+
+    it('fails the page closed when Gmail transiently refuses a message so the cursor cannot skip it', async () => {
+        connect();
+        const seen = await call({ body: WINDOW, gmail: { messages: ['m1'], messageStatus: 503, nextPageToken: 'next' } });
+        expect(seen.status).toBe(503);
+        expect(seen.body).toMatchObject({ ok: false, retryable: true, failed: 1 });
+        expect(seen.body.nextPageToken).toBeUndefined();
+    });
+
+    it('fails the page closed when an attachment download is transiently unavailable', async () => {
+        connect();
+        const seen = await call({ body: WINDOW, gmail: { messages: ['m1'], byId: { m1: bankMessage('m1') }, attachmentStatus: 503 } });
+        expect(seen.status).toBe(503);
+        expect(seen.body).toMatchObject({ ok: false, retryable: true, failed: 1, stored: 0 });
     });
 
     it('an empty whitelist fails before any Gmail request', async () => {
@@ -199,6 +217,19 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         expect(fake.docs.get(`wf-mail/${KEY}/items/${legacy}`).d,
             'the statement already held was overwritten').toBe('already-here');
         expect(seen.body.statements, 'it counted a statement it did not store').toBe(0);
+    });
+
+    it('repairs missing sender metadata on an old-key duplicate so an approved row can be released', async () => {
+        connect();
+        const { itemKey } = await import('../wealthflow-mail-ingest.mjs');
+        const legacy = itemKey('m1', 'att-m1');
+        fake.docs.set(`wf-mail/${KEY}/items/${legacy}`, { d: 'already-here', parts: 0, filed: false });
+        const seen = await call({ body: WINDOW, gmail: { messages: ['m1'], byId: { m1: bankMessage('m1') } } });
+        expect(seen.status).toBe(200);
+        expect(fake.docs.get(`wf-mail/${KEY}/items/${legacy}`)).toMatchObject({
+            from: 'HNB Statements <no-reply@hnb.lk>', uid: 'u1', status: 'pending', cursor: 0,
+        });
+        expect(calls.some((c) => c.url.includes('/attachments/'))).toBe(false);
     });
 
     it('a small statement is stored inline, with no parts', async () => {

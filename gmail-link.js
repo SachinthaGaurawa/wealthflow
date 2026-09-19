@@ -337,6 +337,9 @@ export default async function handler(req, res) {
             for (const key of wanted) {
                 const itemRef = ref.collection('items').doc(key);
                 try {
+                    // merge-set would otherwise create a phantom filed manifest.
+                    const existing = await withDeadline(itemRef.get(), 8000, 'item');
+                    if (!existing.exists) { missed.push(key); continue; }
                     await withDeadline(itemRef.set({ filed: true, filedMs: Date.now() }, { merge: true }), 8000, 'item');
                     marked += 1;
                     try {
