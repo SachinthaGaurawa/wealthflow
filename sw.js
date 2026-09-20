@@ -5,7 +5,7 @@
 // bounded in-process statement drain); this worker owns only notifications,
 // caching and backup wake-ups.
 
-const CACHE_NAME = 'wealthflow-v7.69.32';
+const CACHE_NAME = 'wealthflow-v7.69.33';
 
 // How long the app shell waits for the network before falling back to the cached
 // copy. Long enough for a slow mobile connection to win the race, short enough

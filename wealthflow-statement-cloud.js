@@ -1,38 +1,37 @@
 /**/
-let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0;
+let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null;
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0};
-export const getState=()=>({ ...state });
-const say = (message, type = 'info') => { if (typeof window.notify === 'function') window.notify(message, type); };
-function change() { window.dispatchEvent(new CustomEvent('wf-statement-cloud', { detail: { ...state } })); }
+export const getState=()=>({...state});
+const say=(message,type='info')=>{if(window.notify)window.notify(message,type)};
+function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{detail:{...state}}))}
 function sdkUser(){try{return typeof window.firebase?.auth==='function'?window.firebase.auth().currentUser:null;}catch(_){return null;}}
 function currentUser(){return user||sdkUser();}
 function adoptUser(next){
-    if(!next||user?.uid===next.uid)return user;
-    user=next; unsubscribe?.(); unsubscribe=null; pending=[]; state.reviews=0;
-    const db = window.db || window.firebase?.firestore?.();
-    if (db) unsubscribe = db.collection('users').doc(user.uid).collection('statementReview').where('status', '==', 'pending').limit(100)
-        .onSnapshot(snapshot => { pending = snapshot.docs.map(d => ({ ...d.data(), id: d.id })); state.reviews = pending.length; change(); if (overlay) drawReview(); },
-            () => { state.error = 'statement-review-unavailable'; change(); });
-    return next;
+ if(!next||user?.uid===next.uid)return user;
+ user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;
+ const db=window.db||window.firebase?.firestore?.();
+ if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(100).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview()},()=>{state.error='statement-review-unavailable';change()});
+ return next
 }
-export async function request(path, method = 'GET', body) {
+async function reconcileLogin(){for(let n=0;n<20;n++){if(window._wfRecentSweep){await window._wfRecentSweep(false);return}await new Promise(r=>setTimeout(r,100))}}
+export async function request(path,method='GET',body){
     const active=currentUser();
-    if (!active || typeof active.getIdToken !== 'function') throw new Error('sign-in-required');
-    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 55000);
-    try {
-        const token = await active.getIdToken();
+    if(!active||typeof active.getIdToken!=='function')throw new Error('sign-in-required');
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),55000);
+    try{
+        const token=await active.getIdToken();
         const response = await fetch(path, { method, cache: 'no-store', credentials: 'same-origin', signal: controller.signal,
             headers: { Authorization: 'Bearer ' + token, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
             ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-        const result = await response.json().catch(() => null);
+        const result=await response.json().catch(()=>null);
         const sdk=sdkUser();
         if ((typeof window.firebase?.auth === 'function' && sdk?.uid !== active.uid) || (!sdk && user?.uid !== active.uid)) throw new Error('sign-in-changed');
         if (!response.ok || !result?.ok) throw new Error(result?.reason || 'statement-service-unavailable');
         return result;
-    } catch (error) { if (error?.name === 'AbortError') throw new Error('statement-request-timed-out'); throw error; }
-    finally { clearTimeout(timer); }
+    }catch(error){if(error?.name==='AbortError')throw new Error('statement-request-timed-out');throw error}
+    finally{clearTimeout(timer)}
 }
-export async function status() {
+export async function status(){
     const requestUid=currentUser()?.uid;
     try {
         const result = await request('/api/statement-vault');
@@ -42,38 +41,40 @@ export async function status() {
         if (error.message === 'statement-cloud-not-configured') Object.assign(state, { configured: false, saved: false, count: 0, error: '' });
         else { state.error = error.message; change(); throw error; }
     }
-    change(); return { ...state };
+    change();return {...state};
 }
-export async function save(entries) {
+export async function save(entries){
     await status();
-    if (!state.configured) return { ok: true, localOnly: true };
-    const result = await request('/api/statement-vault', 'PUT', { entries });
+    if(!state.configured)return {ok:true,localOnly:true};
+    const result=await request('/api/statement-vault','PUT',{entries});
     Object.assign(state, { saved: result.saved === true, count: result.count || 0, savedAt: result.savedAt || null, error: '' }); change();
     sync().catch(() => {});
     return result;
 }
-export async function remove() {
+export async function remove(){
     await status();
-    if (!state.configured) return { ok: true, localOnly: true };
-    const result = await request('/api/statement-vault', 'DELETE');
+    if(!state.configured)return {ok:true,localOnly:true};
+    const result=await request('/api/statement-vault','DELETE');
     Object.assign(state, { saved: false, count: 0, savedAt: null }); change(); return result;
 }
-export async function sync() {
-    if (syncPromise) return syncPromise;
+export async function sync(){
+    if(syncPromise)return syncPromise;
     adoptUser(currentUser());
     if(!state.configured||!state.saved||!currentUser())return {ok:false,reason:'cloud-vault-required'};
-    state.syncing = true; state.error = ''; change();
-    syncPromise = request('/api/statement-sync', 'POST', { action: 'sync' }).catch(error => { state.error = error.message; throw error; })
-        .finally(() => { state.syncing = false; syncPromise = null; change(); });
-    return syncPromise;
+    state.syncing=true;state.error='';change();
+    syncPromise=request('/api/statement-sync','POST',{action:'sync'}).then(result=>{
+        if(result.morePending&&!continuationTimer)continuationTimer=setTimeout(()=>{continuationTimer=null;sync().catch(()=>{})},750);
+        return result
+    }).catch(error=>{state.error=error.message;throw error})
+        .finally(()=>{state.syncing=false;syncPromise=null;change()});
+    return syncPromise
 }
-export async function authChanged(next) {
-    if (user?.uid === next?.uid && next) return;
-    unsubscribe?.(); unsubscribe=null; user=null; pending=[]; state.reviews=0;
-    state.configured = null; state.saved = false; state.count = 0; state.error = ''; change();
-    if (!next) { overlay?.remove(); overlay = null; return; }
-    adoptUser(next);
-    try { await status(); await sync(); } catch (error) { if (user?.uid === next.uid) say('Background statement sync could not start: ' + friendly(error.message), 'warn'); }
+export async function authChanged(next){
+ if(user?.uid===next?.uid&&next)return;
+ unsubscribe?.();unsubscribe=user=null;pending=[];state.reviews=0;
+ Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:''});change();
+ if(!next){clearTimeout(continuationTimer);continuationTimer=null;overlay?.remove();overlay=null;return}
+ adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
 }
 export function friendly(reason) {
     return ({ 'sign-in-required': 'Sign in to access your cloud statement vault.', 'statement-cloud-not-configured': 'Cloud statement processing is not configured; device processing remains available.',

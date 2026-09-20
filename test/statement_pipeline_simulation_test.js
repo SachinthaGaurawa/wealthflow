@@ -178,4 +178,10 @@ describe('in-process draining replaces the external task queue', () => {
         expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false });
         expect(setup.board).not.toHaveBeenCalled();
     });
+    it('can bound an interactive request to one durable work unit and report continuation', async () => {
+        const setup = simulation({ items: 3 });
+        const result = await runStatementSync({ ...setup.args, maxSteps: 1 });
+        expect(result).toMatchObject({ ok: true, processed: 1, morePending: true });
+        expect(setup.sourcePaths.filter(path => setup.db.docs.get(path).filed === true)).toHaveLength(1);
+    });
 });
