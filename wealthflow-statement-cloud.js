@@ -1,11 +1,22 @@
 /**/
-let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null;
+let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0;
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0};
 export const getState=()=>({ ...state });
 const say = (message, type = 'info') => { if (typeof window.notify === 'function') window.notify(message, type); };
 function change() { window.dispatchEvent(new CustomEvent('wf-statement-cloud', { detail: { ...state } })); }
+function sdkUser(){try{return typeof window.firebase?.auth==='function'?window.firebase.auth().currentUser:null;}catch(_){return null;}}
+function currentUser(){return user||sdkUser();}
+function adoptUser(next){
+    if(!next||user?.uid===next.uid)return user;
+    user=next; unsubscribe?.(); unsubscribe=null; pending=[]; state.reviews=0;
+    const db = window.db || window.firebase?.firestore?.();
+    if (db) unsubscribe = db.collection('users').doc(user.uid).collection('statementReview').where('status', '==', 'pending').limit(100)
+        .onSnapshot(snapshot => { pending = snapshot.docs.map(d => ({ ...d.data(), id: d.id })); state.reviews = pending.length; change(); if (overlay) drawReview(); },
+            () => { state.error = 'statement-review-unavailable'; change(); });
+    return next;
+}
 export async function request(path, method = 'GET', body) {
-    const active = user || window.firebase?.auth?.().currentUser;
+    const active=currentUser();
     if (!active || typeof active.getIdToken !== 'function') throw new Error('sign-in-required');
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 55000);
     try {
@@ -14,19 +25,20 @@ export async function request(path, method = 'GET', body) {
             headers: { Authorization: 'Bearer ' + token, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
             ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
         const result = await response.json().catch(() => null);
-        if ((user || window.firebase?.auth?.().currentUser)?.uid !== active.uid) throw new Error('sign-in-changed');
+        const sdk=sdkUser();
+        if ((typeof window.firebase?.auth === 'function' && sdk?.uid !== active.uid) || (!sdk && user?.uid !== active.uid)) throw new Error('sign-in-changed');
         if (!response.ok || !result?.ok) throw new Error(result?.reason || 'statement-service-unavailable');
         return result;
     } catch (error) { if (error?.name === 'AbortError') throw new Error('statement-request-timed-out'); throw error; }
     finally { clearTimeout(timer); }
 }
 export async function status() {
-    const requestUid = (user || window.firebase?.auth?.().currentUser)?.uid;
+    const requestUid=currentUser()?.uid;
     try {
         const result = await request('/api/statement-vault');
         Object.assign(state, { configured: true, saved: result.saved === true, count: result.count || 0, savedAt: result.savedAt || null, error: '' });
     } catch (error) {
-        if ((user || window.firebase?.auth?.().currentUser)?.uid !== requestUid) throw error;
+        if(currentUser()?.uid!==requestUid)throw error;
         if (error.message === 'statement-cloud-not-configured') Object.assign(state, { configured: false, saved: false, count: 0, error: '' });
         else { state.error = error.message; change(); throw error; }
     }
@@ -48,7 +60,8 @@ export async function remove() {
 }
 export async function sync() {
     if (syncPromise) return syncPromise;
-    if (!state.configured || !state.saved || !user) return { ok: false, reason: 'cloud-vault-required' };
+    adoptUser(currentUser());
+    if(!state.configured||!state.saved||!currentUser())return {ok:false,reason:'cloud-vault-required'};
     state.syncing = true; state.error = ''; change();
     syncPromise = request('/api/statement-sync', 'POST', { action: 'sync' }).catch(error => { state.error = error.message; throw error; })
         .finally(() => { state.syncing = false; syncPromise = null; change(); });
@@ -56,13 +69,10 @@ export async function sync() {
 }
 export async function authChanged(next) {
     if (user?.uid === next?.uid && next) return;
-    user = next; unsubscribe?.(); unsubscribe = null; pending = []; state.reviews = 0;
+    unsubscribe?.(); unsubscribe=null; user=null; pending=[]; state.reviews=0;
     state.configured = null; state.saved = false; state.count = 0; state.error = ''; change();
-    if (!user) { overlay?.remove(); overlay = null; return; }
-    const db = window.db || window.firebase?.firestore?.();
-    if (db) unsubscribe = db.collection('users').doc(user.uid).collection('statementReview').where('status', '==', 'pending').limit(100)
-        .onSnapshot(snapshot => { pending = snapshot.docs.map(d => ({ ...d.data(), id: d.id })); state.reviews = pending.length; change(); if (overlay) drawReview(); },
-            () => { state.error = 'statement-review-unavailable'; change(); });
+    if (!next) { overlay?.remove(); overlay = null; return; }
+    adoptUser(next);
     try { await status(); await sync(); } catch (error) { if (user?.uid === next.uid) say('Background statement sync could not start: ' + friendly(error.message), 'warn'); }
 }
 export function friendly(reason) {
@@ -70,7 +80,7 @@ export function friendly(reason) {
         'statement-request-timed-out': 'The request timed out; its final server state will be checked again.',
         'statement-service-unavailable': 'The service is unavailable. Your statements remain pending.' })[reason] || 'The cloud operation failed. Please retry; no successful completion was recorded.';
 }
-export const migrateUnlockedVault=entries=>Array.isArray(entries) && entries.length && !state.saved && save(entries);
+export const migrateUnlockedVault=entries=>Array.isArray(entries) && entries.length ? save(entries) : false;
 async function download(entry) {
     try {
         const sourceId = String(entry.sourcePath || '').split('/').pop();
@@ -148,7 +158,8 @@ function drawReview() {
     overlay.appendChild(box);
 }
 export function openReview() {
-    if (!user) return say('Sign in to review cloud statements.', 'warn');
+    adoptUser(currentUser());
+    if (!currentUser()) return say('Sign in to review cloud statements.', 'warn');
     overlay?.remove(); overlay = document.createElement('div'); overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
     overlay.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;';
     document.body.appendChild(overlay); drawReview();
@@ -159,6 +170,14 @@ if (typeof window !== 'undefined') {
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
     window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState };
-    const start = () => { if (window.firebase?.apps?.length) window.firebase.auth().onAuthStateChanged(next => authChanged(next)); };
+    const start=()=>{
+        if (authBound) return;
+        if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {
+            authBound=true;
+            window.firebase.auth().onAuthStateChanged(next => authChanged(next));
+            return;
+        }
+        if(++authAttempts<300)setTimeout(start,100);
+    };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true }); else start();
 }

@@ -14,6 +14,7 @@ function page(names = []) {
     const { document } = parseHTML('<html><body><div id="_sl_body"></div></body></html>');
     const context = vm.createContext({ document, window: { WFMailSenders: { normalizeSender } },
         currentUser: { uid: 'owner' }, requestAnimationFrame: fn => fn(), setTimeout: fn => fn(), notify: vi.fn(),
+        _mailSyncState: { stage: 'idle', error: null }, renderMailSync: vi.fn(),
         _senders: { stage: 'idle', pending: [], approved: [], blocked: [], legacyApproved: [], busy: '', error: null },
         _discover: { stage: 'idle' }, DISCOVERY_MONTHS: 24, _coverageStrip: () => '', _bankHuntPanel: () => '',
         _sendersLoad: vi.fn(), _sendersDo: vi.fn(async () => false), _ownedBanks: () => ['HNB', 'DFCC'],
@@ -76,8 +77,16 @@ describe('exact statement sender settings', () => {
         p.window.WFStatementCloud = { getState: () => ({ configured: true, saved: true }), sync: vi.fn(async () => { throw new Error('temporary failure'); }), openReview: vi.fn() };
         vm.runInContext('async ' + source('runMailSync'), p);
         await p.runMailSync();
-        expect(p.window.WFStatementCloud.openReview).toHaveBeenCalledOnce();
+        expect(p.window.WFStatementCloud.openReview).not.toHaveBeenCalled();
         expect(p.notify).toHaveBeenCalledWith('Background statement sync could not complete. Statements remain pending for retry.', 'warn');
+    });
+    it('surfaces a refused cloud start instead of treating it as a successful check', async () => {
+        const p = page();
+        p.window.WFStatementCloud = { getState: () => ({ configured: true, saved: true }), sync: vi.fn(async () => ({ ok: false, reason: 'cloud-vault-required' })), friendly: vi.fn(() => 'Sign in to access your cloud statement vault.'), openReview: vi.fn() };
+        vm.runInContext('async ' + source('runMailSync'), p);
+        await p.runMailSync();
+        expect(p.window.WFStatementCloud.openReview).not.toHaveBeenCalled();
+        expect(p.notify).toHaveBeenCalledWith('Sign in to access your cloud statement vault.', 'warn');
     });
     it('checks unknown cloud state before choosing a writer', async () => {
         const p = page(); let checked = false;

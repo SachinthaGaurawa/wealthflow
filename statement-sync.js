@@ -3,7 +3,7 @@ import { getAdminDb } from './admin-db.mjs';
 import { identify, userKeyFor, sendersOf } from './gmail-link.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
 import { syncMailbox } from './gmail-hook.js';
-import { policyFrom } from './wealthflow-mail-senders.mjs';
+import { policyFrom, matchSender } from './wealthflow-mail-senders.mjs';
 import { planMessage } from './wealthflow-mail-ingest.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, STATEMENT_LIMITS } from './statement-reader.mjs';
@@ -71,7 +71,6 @@ export async function checkpointRows(db, ref, uid, leaseToken, rows) {
         const snap = await tx.get(ref), source = snap.data();
         if (!snap.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
         if ((source.rowSetHash && source.rowSetHash !== rowSetHash) || (source.totalRows != null && source.totalRows !== rows.length)) throw new Error('statement-cursor-or-content-changed');
-        // A pre-upgrade partial source has no trustworthy ordering checkpoint.
         if (!source.rowSetHash && (source.cursor || 0) !== 0) throw new Error('statement-cursor-or-content-changed');
         tx.set(ref, { rowSetHash, totalRows: rows.length }, { merge: true });
     });
@@ -85,6 +84,31 @@ async function quarantineSource(db, uid, ref, leaseToken, reason) {
         if (!snap.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
         tx.set(reviewRef, { uid, sourcePath: ref.path, index: -1, status: 'pending', reason, filename: String(source.filename || ''), createdAt: Date.now() }, { merge: true });
         tx.set(ref, { status: 'needs_review', hasReview: true, filed: false, leaseToken: '', leaseUntil: 0, reviewReason: reason, updatedAt: Date.now() }, { merge: true });
+    });
+}
+
+async function rejectNonStatement(db, uid, ref, leaseToken, identity) {
+    await db.runTransaction(async tx => {
+        const snap = await tx.get(ref), source = snap.data();
+        if (!snap.exists || source.uid !== uid || source.leaseToken !== leaseToken) throw new Error('statement-lease-lost');
+        tx.set(ref, {
+            status: 'rejected_non_statement', filed: false, leaseToken: '', leaseUntil: 0,
+            rejectionReason: String(identity?.reason || 'document is not a bank statement').slice(0, 240),
+            identityConfidence: Number(identity?.confidence) || 0, updatedAt: Date.now(),
+        }, { merge: true });
+    });
+}
+
+async function retireUnapprovedSource(db, uid, mailRef, ref, now = Date.now()) {
+    return db.runTransaction(async tx => {
+        const [mailSnap, sourceSnap] = await Promise.all([tx.get(mailRef), tx.get(ref)]);
+        const mail = mailSnap.data(), source = sourceSnap.data();
+        if (!mailSnap.exists || mail.uid !== uid || !sourceSnap.exists || (source.uid && source.uid !== uid)
+            || !['pending', 'processing'].includes(source.status)
+            || (source.status === 'processing' && (source.leaseUntil || 0) > now)
+            || matchSender(sendersOf(mail), source.from || '').verdict === 'approved') return false;
+        tx.set(ref, { uid, status: 'rejected_unapproved_sender', filed: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+        return true;
     });
 }
 
@@ -112,14 +136,10 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch) {
     if (!bytes.length || bytes.length > STATEMENT_LIMITS.bytes) throw new Error('statement-attachment-size');
     const contentSha256 = createHash('sha256').update(bytes).digest('hex');
     if (source.contentSha256 && source.contentSha256 !== contentSha256) throw new Error('statement-attachment-content-mismatch');
-    // Pre-hash manifests are upgraded only after Gmail identity, sender policy,
-    // payload syntax and size have all been re-verified. Future reads then fail
-    // closed if Gmail ever serves different bytes for the same occurrence.
     if (!source.contentSha256 && typeof ref.set === 'function') await ref.set({ contentSha256 }, { merge: true });
     return { bytes, filename: item.filename, contentSha256 };
 }
 
-// Bounded automatic migration makes pre-upgrade unfiled manifests eligible.
 async function migrateItems(db, mailRef, mail, uid) {
     if (mail.statementMigrationDone) return false;
     let query = mailRef.collection('items').orderBy('__name__').limit(50);
@@ -172,12 +192,14 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     const page = await mailRef.collection('items').where('status', '==', 'pending').limit(50).get();
     let claimed = null, sourceRef;
     for (const doc of page.docs) {
+        if (await retireUnapprovedSource(db, uid, mailRef, doc.ref)) continue;
         const source = await claimSource(db, doc.ref, uid);
         if (source) { claimed = source; sourceRef = doc.ref; break; }
     }
     if (!claimed) {
         const expired = await mailRef.collection('items').where('status', '==', 'processing').where('leaseUntil', '<=', Date.now()).limit(50).get();
         for (const doc of expired.docs) {
+            if (await retireUnapprovedSource(db, uid, mailRef, doc.ref)) continue;
             const source = await claimSource(db, doc.ref, uid);
             if (source) { claimed = source; sourceRef = doc.ref; break; }
         }
@@ -187,7 +209,6 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     let entries = [], passwords = [];
     try {
         const vaultSnap = await db.collection(VAULT_ROOT).doc(uid).get();
-        // The reader, not vault existence, decides whether decryption is needed.
         if (vaultSnap.exists) {
             entries = await open(uid, vaultSnap.data());
             await db.runTransaction(async tx => {
@@ -197,23 +218,28 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             });
             passwords = candidatesFor(claimed.bank || '', entries);
         }
-        // Reload policy after ingestion; approval can be revoked during a run.
         const currentMail = (await mailRef.get()).data();
         const attachment = await attachmentBytes(claimed, sourceRef, token, sendersOf(currentMail), f);
         const layoutDocs = await db.collection('users').doc(uid).collection('statementLayouts').limit(100).get();
         const layouts = layoutDocs.docs.map(doc => doc.data());
         const { parsed, text } = await read({ ...attachment, passwords, bank: claimed.bank || '', layouts });
-        if (textVerdict(text || '').verdict !== VERDICT.STATEMENT) throw new Error('statement-layout-identity-needs-review');
-        if (!parsed?.understood || parsed.verdict !== 'parsed' || parsed.reconciliation?.ok === false || !Array.isArray(parsed.rows) || !parsed.rows.length) throw new Error('statement-layout-or-reconciliation-needs-review');
-        await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
-        const cursor = claimed.cursor || 0;
-        if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
-        const user = (await db.collection('users').doc(uid).get()).data() || {};
-        const statementType = parsed.layout?.statementType || '';
-        const rows = parsed.rows.slice(cursor, cursor + 10);
-        const allocations = { statementType, subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
-        const decisions = await classifySlice(rows, allocations, { board });
-        outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType });
+        const identity = textVerdict(text || '');
+        if (identity.verdict === VERDICT.NOT_STATEMENT) {
+            await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
+            outcome = { status: 'rejected_non_statement', rejected: 1 };
+        } else {
+            if (identity.verdict !== VERDICT.STATEMENT) throw new Error('statement-layout-identity-needs-review');
+            if (!parsed?.understood || parsed.verdict !== 'parsed' || parsed.reconciliation?.ok === false || !Array.isArray(parsed.rows) || !parsed.rows.length) throw new Error('statement-layout-or-reconciliation-needs-review');
+            await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
+            const cursor = claimed.cursor || 0;
+            if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
+            const user = (await db.collection('users').doc(uid).get()).data() || {};
+            const statementType = parsed.layout?.statementType || '';
+            const rows = parsed.rows.slice(cursor, cursor + 10);
+            const allocations = { statementType, subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
+            const decisions = await classifySlice(rows, allocations, { board });
+            outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType });
+        }
     } catch (error) {
         if (!permanentFailure(error)) {
             await db.runTransaction(async tx => {

@@ -8755,7 +8755,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.31';
+        var WF_APP_VERSION = '7.69.32';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -25750,7 +25750,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const docs = Array.isArray(r.body.items) ? r.body.items : [];
                 _mailSyncState.filed = Number(r.body.filed) || 0;
                 _mailSyncState.decided = r.body.decided === true;
-                _mailSyncState.pending = Number(r.body.pending) || docs.length;
+                _mailSyncState.pending = Number.isFinite(Number(r.body.approvedPending)) ? Number(r.body.approvedPending) : docs.length;
                 /* Same shape runMailSync() populates below — every field the
                  * card reads to draw a row (bank, filename, known, verdict,
                  * from, domain) comes straight off the stored manifest, which
@@ -25758,7 +25758,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                  * anything decrypts it. Only `stage` stays 'waiting': that is
                  * the truth here, and it is what tells the owner there is
                  * something to open runMailSync() for. */
-                _mailSyncState.items = docs.map((d) => ({
+                _mailSyncState.items = docs.filter((d) => _mailKnownNow(d, _mailSyncState.decided)).map((d) => ({
                     key: d.id,
                     bank: d.manifest && d.manifest.bank,
                     filename: d.manifest && d.manifest.filename,
@@ -25770,12 +25770,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     domain: (d.sender && d.sender.domain) || '',
                 }));
                 renderMailSync();
-            } catch (_) {
-                /* A boot-time check failing costs visibility, not
-                 * correctness — the owner can still open the card and press
-                 * "Check now", which is the same tested path this always
-                 * used to require. */
-            }
+            } catch (_) {}
         }
         window._mailBootCheck = _mailBootCheck;
 
@@ -25790,9 +25785,24 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (cloud.configured == null) { notify('Background statement processing is still being checked. Retry shortly.', 'warn'); return; }
             }
             if (cloud && cloud.configured === true && cloud.saved === true) {
-                try { await window.WFStatementCloud.sync(); }
-                catch (_) { notify('Background statement sync could not complete. Statements remain pending for retry.', 'warn'); }
-                window.WFStatementCloud.openReview();
+                _mailSyncState = { ..._mailSyncState, stage: 'running', error: null };
+                renderMailSync();
+                try {
+                    const result = await window.WFStatementCloud.sync();
+                    if (!result || result.ok !== true) {
+                        const reason = result && result.reason ? result.reason : 'statement-service-unavailable';
+                        notify(window.WFStatementCloud.friendly?.(reason) || 'Background statement sync could not start. Statements remain pending for retry.', 'warn');
+                        return;
+                    }
+                    if (Number(result.processed) > 0) notify(`${Number(result.processed)} statement${Number(result.processed) === 1 ? '' : 's'} processed securely in the background.`, 'success');
+                    window.WFStatementCloud.openReview();
+                } catch (_) {
+                    notify('Background statement sync could not complete. Statements remain pending for retry.', 'warn');
+                } finally {
+                    _mailSyncState.stage = 'idle';
+                    _mailSyncState.lastRun = Date.now();
+                    renderMailSync();
+                }
                 return;
             }
             const vault = window.WFVault;
@@ -25816,11 +25826,6 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             if (!window.WFMailIntake) return finish('Statement intake module is not loaded.');
 
-            /* GO AND LOOK, THEN LIST. Before this, a check listed the store and
-             * nothing else — so a statement the push never delivered (a lapsed
-             * watch, an aged-out history bookmark, a failed delivery) was
-             * invisible no matter how many times the button was pressed. See
-             * _recentSweep. */
             _mailSyncState.sweeping = true;
             renderMailSync();
             const swept = await _recentSweep(false);
@@ -25845,7 +25850,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
             _mailSyncState.filed = Number(_queue.body.filed) || 0;
             _mailSyncState.decided = _queue.body.decided === true;
-            let _totalPending = Number(_queue.body.pending) || 0;
+            let _totalPending = Number.isFinite(Number(_queue.body.approvedPending))
+                ? Number(_queue.body.approvedPending) : (Number(_queue.body.pending) || 0);
             _mailSyncState.pending = _totalPending;
             const _mailRow = (d) => ({
                 key: d.id,
@@ -25858,7 +25864,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 from: (d.manifest && d.manifest.from) || '',
                 domain: (d.sender && d.sender.domain) || '',
             });
-            const _queueDocs = Array.isArray(_queue.body.items) ? _queue.body.items : [];
+            const _queueDocs = (Array.isArray(_queue.body.items) ? _queue.body.items : [])
+                .filter((d) => _mailKnownNow(d, _mailSyncState.decided));
             _mailSyncState.items = _queueDocs.map(_mailRow);
             const _rowIndexByKey = new Map(_mailSyncState.items.map((row, index) => [row.key, index]));
             renderMailSync();
@@ -25869,19 +25876,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (window.WFBackfill) ledgerHashes = await window.WFBackfill.ledgerHashes(appData);
             } catch (_) { /* an empty set means "nothing known duplicate", never a crash */ }
 
-            /* Statements whose rows are parsed and waiting for the owner to file
-             * them. Filled by the loop, drained after it. */
             const _ready = [];
-            /* Statements the parser could not read because the LAYOUT is new to
-             * it — not because they were locked, not because they were empty.
-             * They are the only ones worth asking the owner about, and asking
-             * once is what teaches the reader. */
             const _teach = [];
-
-            /* HOW MANY WERE HELD FOR A PASSWORD, counted rather than merely
-             * shown per row. A statement that could not be opened is a
-             * statement that will never be filed, and the fix — unlock the
-             * vault — is one action for all of them, not one per row. */
             _mailSyncState.locked = 0;
 
             let _offset = 0;
@@ -25935,6 +25931,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 if (!pageDocs.length) break;
 
                 for (const d of pageDocs) {
+                    if (!_mailKnownNow(d, _mailSyncState.decided)) continue;
                     if (_rowIndexByKey.has(d.id)) continue;
                     const i = _mailSyncState.items.length;
                     _mailSyncState.items.push(_mailRow(d));
@@ -25944,6 +25941,7 @@ table.amort tbody tr { page-break-inside: avoid; }
 
                 for (let j = 0; j < pageDocs.length; j += 1) {
                     const d = pageDocs[j];
+                    if (!_mailKnownNow(d, _mailSyncState.decided)) continue;
                     const i = _rowIndexByKey.get(d.id);
                     try {
                         /* A SENDER NOBODY HAS APPROVED IS NOT OPENED.
@@ -28691,8 +28689,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.31</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.31</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.32</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.32</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>

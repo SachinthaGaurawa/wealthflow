@@ -451,7 +451,9 @@ describe('the check button stops re-offering what is done', () => {
         const at = link.indexOf("method === 'GET' && /[?&]items=1/");
         const block = link.slice(at);
         expect(block.indexOf('dedupeStored(rows)')).toBeLessThan(block.indexOf('manifest.filed === true'));
-        expect(block).toContain('.filter((r) => !(r.manifest && r.manifest.filed === true))');
+        expect(block).toContain("r.manifest.filed === true");
+        expect(block).toContain("r.manifest.status === 'rejected_non_statement'");
+        expect(block).toContain("r.manifest.status === 'rejected_unapproved_sender'");
     });
 
     it('and says how many, so an empty list is not mistaken for a broken one', () => {

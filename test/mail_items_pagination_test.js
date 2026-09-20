@@ -132,6 +132,7 @@ describe('attachment delivery is an exact sender allow-list', () => {
         expect(seen.status).toBe(200);
         expect(seen.body.decided).toBe(true);
         expect(seen.body.items[0].sender.verdict).toBe('new');
+        expect(seen.body.approvedPending).toBe(0);
         expect(seen.body.items[0].manifest).not.toHaveProperty('d');
         expect(seen.body.items[0].parts).toEqual([]);
         expect(fake.ops.some((o) => o.path === `${ITEMS}/no-policy/parts` && o.op === 'query')).toBe(false);
@@ -204,6 +205,15 @@ describe('limit/offset page through the backlog instead of returning it all at o
         const seen = await list('&limit=10');
         expect(ids(seen.body)).toEqual(['f1']);
         expect(seen.body.pending).toBe(1);
+    });
+
+    it('never offers a document the autonomous worker proved is not a statement', async () => {
+        store('doc0', { status: 'rejected_non_statement', rejectionReason: 'it reads as an itemised invoice' });
+        store('statement', { status: 'pending' });
+        const seen = await list('&limit=10');
+        expect(ids(seen.body)).toEqual(['statement']);
+        expect(seen.body.pending).toBe(1);
+        expect(seen.body.retiredNonStatements).toBe(1);
     });
 
     it('each page still carries the full attachment payload for its own items, not just metadata', async () => {

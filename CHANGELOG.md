@@ -1,5 +1,19 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.32 — 2026-09-20
+
+**What changed for you**
+
+- **Check now** now reports a real result and cannot silently return because the statement module missed Firebase's auth callback.
+- Every successful vault unlock re-syncs added or edited statement passwords to the encrypted autonomous vault.
+- Statement Sync shows only exact approved senders. Legacy unapproved mail is retired before its attachment is downloaded.
+- Deep content inspection retires proven invoices and receipts without ledger writes or misleading Needs Review cards.
+
+**Under the hood**
+
+- Gmail push remains the real-time trigger, with history reconciliation and a daily scheduled safety-net for delayed or dropped notifications.
+- Added cold-server simulations for delayed auth, refused cloud starts, updated passwords, unapproved legacy senders, and non-statement retirement.
+
 ## v7.69.31 — 2026-09-20
 
 **What changed for you**
