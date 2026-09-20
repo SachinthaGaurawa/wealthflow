@@ -479,8 +479,9 @@ describe('the scan query catches an unlisted bank', () => {
         expect(query).not.toContain('"statement"');
     });
 
-    it('bounds the volume with filename:pdf rather than by sender', () => {
-        expect(q({})).toContain('filename:pdf');
+    it('does not hide MIME-valid bank attachments behind Gmail filename metadata', () => {
+        expect(q({})).toContain('has:attachment');
+        expect(q({})).not.toContain('filename:');
     });
 
     it('applies no category filter, because banks land in Promotions', () => {

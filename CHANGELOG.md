@@ -1,5 +1,19 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.31 — 2026-09-20
+
+**What changed for you**
+
+- Historical scans now find valid PDF/HTML attachments from every exact approved sender even when the bank omits or encodes the filename.
+- The Statement Sync card shows the complete pending queue while iPhone safely opens one statement at a time; a large backlog no longer looks like a single scan result.
+- A clear queue status explains how many statements remain and that processing continues in memory-safe batches.
+
+**Under the hood**
+
+- Newly backfilled statements wake the same server-side autonomous statement reader, unanimous AI classification board, and durable ledger pipeline as live Gmail delivery.
+- Exact sender-address approval remains a fail-closed boundary before attachment bytes are fetched or processed.
+- Added regression coverage for filename-less bank PDFs, complete lightweight queue hydration, stable payload-to-row mapping, and autonomous owner gating.
+
 ## v7.69.30 — 2026-09-19
 
 **What changed for you**

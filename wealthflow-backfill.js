@@ -155,27 +155,11 @@ export async function ledgerHashes(appData, deps = {}) {
 
 /* ── 2. the plan ──────────────────────────────────────────────────────────── */
 
-/* Gmail's search is the cheapest filter available: a query that requires a PDF
- * attachment never fetches the rest of the mailbox.
+/* Gmail's search is the cheapest filter available: requiring an attachment and
+ * exact approved senders avoids fetching the rest of the mailbox.
  *
- * WHY THE SENDER LIST IS NO LONGER THE ONLY WAY IN. This query used to be
- * `has:attachment (from:a OR from:b ...)` over the four domains the ingest
- * allowlist happened to name. The owner banks with more than ten institutions,
- * and index.html's own bank dropdown lists fifteen — so eleven of them were
- * never even ASKED FOR. No parser bug, no rejection to look up: Gmail was
- * simply never told those messages existed.
- *
- * So the sender list stays, as the branch that catches a known bank whatever
- * its subject line says, and a keyword branch is added beside it to catch the
- * rest. The two are OR'd: a message qualifies by WHO sent it or by WHAT it
- * calls itself. `filename:pdf` keeps the volume sane either way, and no
- * category filter is applied because Gmail's search already spans Promotions
- * and Updates, which is where several banks land.
- *
- * Widening what is FETCHED does not widen what is TRUSTED. Every message still
- * has to pass the DKIM check in identifyBank before a single byte of it is
- * filed, and an unknown-but-signed sender is held for review rather than
- * accepted. See wealthflow-mail-ingest.mjs. */
+ * Routine scans use exact approved senders. Discovery is metadata-only and may
+ * use vocabulary; MIME and DKIM validation remain in the ingest policy. */
 
 /* What a bank statement calls itself. Kept deliberately short: each term is a
  * word that appears in the SUBJECT or BODY of a real statement mail, and every
@@ -263,7 +247,8 @@ export function planWindows({
      * evidence that can be explained to the owner rather than by a filter that
      * decides in silence.
      *
-     * The ROUTINE path is untouched — approved senders, PDFs, no keywords. */
+     * The ROUTINE path remains narrow — approved senders with attachments, no
+     * keyword guesses — while planMessage decides the supported MIME types. */
     if (discover) {
         /* TWO PASSES PER MONTH, BECAUSE ONE CANNOT REACH EVERY BANK.
          *
@@ -341,7 +326,8 @@ export function planWindows({
     for (let i = 0; i < depth; i++) {
         const hi = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i + 1, 1));
         const lo = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1));
-        const parts = ['has:attachment', '{filename:pdf filename:html filename:htm}', `after:${ymd(lo)}`, `before:${ymd(hi)}`];
+        // Exact senders constrain Gmail; the ingest policy validates MIME type.
+        const parts = ['has:attachment', `after:${ymd(lo)}`, `before:${ymd(hi)}`];
         if (any) parts.push(`(${any})`);
         windows.push({
             label: `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`,

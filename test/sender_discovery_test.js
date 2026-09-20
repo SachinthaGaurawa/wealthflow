@@ -91,7 +91,8 @@ describe('the routine scan is untouched', () => {
 
     it('a curated owner still gets exactly their own senders and no guessing', () => {
         const q = windowFor({ ...base, senders: ['from:hnb.lk'] }).query;
-        expect(q).toContain('filename:pdf');
+        expect(q).toContain('has:attachment');
+        expect(q).not.toContain('filename:');
         expect(q).toContain('from:hnb.lk');
         expect(q).not.toContain('"statement"');
         expect(q).not.toContain('-from:gmail.com');

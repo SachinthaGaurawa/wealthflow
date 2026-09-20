@@ -1,6 +1,7 @@
 /**/
 let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null;
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0};
+export const getState=()=>({ ...state });
 const say = (message, type = 'info') => { if (typeof window.notify === 'function') window.notify(message, type); };
 function change() { window.dispatchEvent(new CustomEvent('wf-statement-cloud', { detail: { ...state } })); }
 export async function request(path, method = 'GET', body) {

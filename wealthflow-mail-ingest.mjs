@@ -449,7 +449,9 @@ function walk(part, out) {
     if (!part) return out;
     if (Array.isArray(part.parts)) for (const p of part.parts) walk(p, out);
     // Gmail may inline a small MIME part in body.data.
-    if (part.filename && part.body
+    // Unnamed PDFs are real attachments; unnamed HTML is the mail body.
+    const namedOrPdf = !!part.filename || lower(part.mimeType) === 'application/pdf';
+    if (namedOrPdf && part.body
         && (part.body.attachmentId || typeof part.body.data === 'string')) out.push(part);
     return out;
 }
@@ -482,7 +484,7 @@ export function selectAttachments(payload) {
         take.push({
             attachmentId: p.body.attachmentId || '',
             inlineData: typeof p.body.data === 'string' ? p.body.data : '',
-            filename: p.filename,
+            filename: p.filename || '',
             size: Number(p.body.size) || 0,
         });
     }

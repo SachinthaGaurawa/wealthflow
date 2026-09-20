@@ -11,7 +11,7 @@
  * with the real network hard-blocked.
  * ===========================================================================*/
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { makeFakeAdmin, FAKE_SERVICE_ACCOUNT } from './fake-admin.mjs';
 
 process.env.FIREBASE_SERVICE_ACCOUNT = FAKE_SERVICE_ACCOUNT;
@@ -116,13 +116,13 @@ function mkRes() {
     return { res, seen };
 }
 
-async function call({ method = 'POST', token = 'good-token', body = {}, gmail = {} } = {}) {
+async function call({ method = 'POST', token = 'good-token', body = {}, gmail = {}, env = ENV, runStatementSync } = {}) {
     const { default: handler } = await import('../gmail-scan.js');
     const { res, seen } = mkRes();
     await handler(
         { method, url: '/api/gmail-scan', headers: token ? { authorization: `Bearer ${token}` } : {}, body },
         res,
-        { env: ENV, fetchImpl: stubGmail(gmail) },
+        { env, fetchImpl: stubGmail(gmail), ...(runStatementSync ? { runStatementSync } : {}) },
     );
     return seen;
 }
@@ -157,6 +157,52 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         expect(fake.docs.has(`wf-mail/${KEY}/items/${key}`), 'the manifest is not where the device looks').toBe(true);
         expect(fake.docs.get(`wf-mail/${KEY}/items/${key}`)).toMatchObject({ uid: 'u1', status: 'pending' });
         expect(fake.docs.get(`wf-mail/${KEY}/items/${key}`).contentSha256).toMatch(/^[a-f\d]{64}$/);
+    });
+
+    it('stores an approved PDF whose bank omitted the attachment filename', async () => {
+        connect();
+        const message = bankMessage('m-no-name', { filename: '' });
+        const seen = await call({
+            body: WINDOW,
+            gmail: { messages: ['m-no-name'], byId: { 'm-no-name': message } },
+        });
+
+        expect(seen.status).toBe(200);
+        expect(seen.body).toMatchObject({ ok: true, statements: 1 });
+        expect(calls.some((c) => c.url.includes('/attachments/att-m-no-name'))).toBe(true);
+    });
+
+    it('hands newly backfilled statements to the autonomous AI pipeline', async () => {
+        connect({ autonomous: true, uid: 'u1' });
+        const runStatementSync = vi.fn(async () => ({ ok: true, processed: 1 }));
+        const seen = await call({
+            body: WINDOW,
+            gmail: { messages: ['m1'], byId: { m1: bankMessage('m1') } },
+            env: { ...ENV, WEALTHFLOW_OWNER_UID: 'u1' },
+            runStatementSync,
+        });
+
+        expect(seen.status).toBe(200);
+        expect(seen.body).toMatchObject({ ok: true, statements: 1, queued: true });
+        expect(runStatementSync).toHaveBeenCalledTimes(1);
+        expect(runStatementSync.mock.calls[0][0]).toMatchObject({
+            owner: { uid: 'u1', email: OWNER }, action: 'drain', budgetMs: 20000,
+        });
+    });
+
+    it('does not start autonomous processing without an explicit owner match', async () => {
+        connect({ autonomous: true, uid: 'u1' });
+        const runStatementSync = vi.fn();
+        const seen = await call({
+            body: WINDOW,
+            gmail: { messages: ['m1'], byId: { m1: bankMessage('m1') } },
+            env: { ...ENV, WEALTHFLOW_OWNER_UID: 'someone-else' },
+            runStatementSync,
+        });
+
+        expect(seen.status).toBe(200);
+        expect(seen.body.queued).toBe(false);
+        expect(runStatementSync).not.toHaveBeenCalled();
     });
 
     it('fails the page closed when Gmail transiently refuses a message so the cursor cannot skip it', async () => {

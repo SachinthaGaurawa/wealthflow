@@ -685,6 +685,12 @@ describe('runMailSync() pages through the mailbox instead of loading it all at o
         expect(body).toMatch(/'\?items=1&limit='\s*\+\s*_MAIL_SYNC_PAGE\s*\+\s*'&offset='\s*\+\s*_offset/);
     });
 
+    it('preloads the complete lightweight queue so one iPhone payload does not look like one result', () => {
+        expect(body).toContain("'?items=1&metadata=1&limit=200'");
+        expect(body).toMatch(/_mailSyncState\.items\s*=\s*_queueDocs\.map\(_mailRow\)/);
+        expect(body).toContain('_rowIndexByKey.get(d.id)');
+    });
+
     it('the page size is small — a handful of statements, not the whole ceiling', () => {
         expect(body).toMatch(/_MAIL_SYNC_PAGE\s*=\s*_mailLowMemory\s*\?\s*1\s*:\s*6/);
         expect(body).toMatch(/_MAIL_READY_STATEMENT_BUDGET\s*=\s*_mailLowMemory\s*\?\s*1\s*:\s*6/);

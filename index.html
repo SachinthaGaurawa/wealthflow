@@ -8755,7 +8755,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.30';
+        var WF_APP_VERSION = '7.69.31';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -22690,7 +22690,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return String(email || '').replace(/[^a-z0-9]/g, '_');
         }
 
-        let _mailSyncState = { stage: 'idle', items: [], lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false, locked: 0 };
+        let _mailSyncState = { stage: 'idle', items: [], pending: 0, lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false, locked: 0 };
 
         /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
          * inherits the chip's own colour through stroke="currentColor", so each
@@ -24306,6 +24306,13 @@ table.amort tbody tr { page-break-inside: avoid; }
              * (it is a prefix, never reordered), so the existing data-msadd/
              * data-msblock/data-msdel handlers need no change. */
             const _msCap = _wfCap('mailSync', st.items);
+            const queueTotal = Math.max(Number(st.pending) || 0, st.items.length);
+            const queueStrip = queueTotal ? `<div style="margin-top:12px;padding:9px 12px;border-radius:9px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.2);color:var(--text2);font-size:12px;line-height:1.5;">
+                    <b>${_wfEsc(String(queueTotal))} statement${queueTotal === 1 ? '' : 's'} waiting.</b>
+                    ${st.stage === 'running'
+                        ? 'Processing a memory-safe batch now; the remaining statements stay queued automatically.'
+                        : 'Check now processes a safe batch; the rest remain visible and continue after each review.'}
+                </div>` : '';
             const rows = _msCap.rows.map((it, i) => `
                 <div class="wf-sync-item">
                     <div class="wf-sync-item-main">
@@ -24501,6 +24508,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ${banner}
                     ${lockStrip}
                     ${sweepStrip}
+                    ${queueStrip}
                     ${rows}
                     ${_scan.stage === 'running' ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">
                         Scanning ${_wfEsc(String(_scan.months))} months${_scan.label ? ' · ' + _wfEsc(_scan.label) : ''}${_scan.found ? ' · ' + _wfEsc(String(_scan.found)) + ' found' : ''}…
@@ -25742,6 +25750,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const docs = Array.isArray(r.body.items) ? r.body.items : [];
                 _mailSyncState.filed = Number(r.body.filed) || 0;
                 _mailSyncState.decided = r.body.decided === true;
+                _mailSyncState.pending = Number(r.body.pending) || docs.length;
                 /* Same shape runMailSync() populates below — every field the
                  * card reads to draw a row (bank, filename, known, verdict,
                  * from, domain) comes straight off the stored manifest, which
@@ -25820,19 +25829,41 @@ table.amort tbody tr { page-break-inside: avoid; }
                 notify(String(swept) + ' new statement' + (swept === 1 ? '' : 's') + ' found in your mailbox', 'success');
             }
 
-            /* wf-mail is client-sealed, so the server returns a bounded payload
-             * page. Each attachment is released before the next page arrives. */
-            /* Bound iOS peak memory to one encrypted attachment. */
             const _mailLowMemory = !!(window.__wfIOSStable
                 || (window._wfUseSafeDashboardCharts && window._wfUseSafeDashboardCharts()));
             const _MAIL_SYNC_PAGE = _mailLowMemory ? 1 : 6;
             const _MAIL_READY_STATEMENT_BUDGET = _mailLowMemory ? 1 : 6;
-            _mailSyncState.items = [];
+            let _queue;
+            try {
+                _queue = await _gmailLink('GET', null, '?items=1&metadata=1&limit=200');
+            } catch (e) {
+                return finish('Could not read the statement queue: ' + (e && e.message || 'unknown error'));
+            }
+            if (!_queue || !_queue.body || _queue.body.ok !== true) {
+                return finish('Could not read the statement queue'
+                    + (_queue && _queue.body && _queue.body.error ? ': ' + _queue.body.error : '.'));
+            }
+            _mailSyncState.filed = Number(_queue.body.filed) || 0;
+            _mailSyncState.decided = _queue.body.decided === true;
+            let _totalPending = Number(_queue.body.pending) || 0;
+            _mailSyncState.pending = _totalPending;
+            const _mailRow = (d) => ({
+                key: d.id,
+                bank: d.manifest && d.manifest.bank,
+                filename: d.manifest && d.manifest.filename,
+                stage: 'waiting',
+                note: null, reason: null,
+                known: _mailKnownNow(d, _mailSyncState.decided),
+                verdict: _mailVerdict(d, _mailSyncState.decided),
+                from: (d.manifest && d.manifest.from) || '',
+                domain: (d.sender && d.sender.domain) || '',
+            });
+            const _queueDocs = Array.isArray(_queue.body.items) ? _queue.body.items : [];
+            _mailSyncState.items = _queueDocs.map(_mailRow);
+            const _rowIndexByKey = new Map(_mailSyncState.items.map((row, index) => [row.key, index]));
+            renderMailSync();
             const set = (i, patch) => { Object.assign(_mailSyncState.items[i], patch); renderMailSync(); };
 
-            /* Built ONCE per run, not per statement: it is a scan of the whole
-             * ledger, and doing it inside the loop would make a ten-statement
-             * sync ten full passes over every record the app holds. */
             let ledgerHashes = new Set();
             try {
                 if (window.WFBackfill) ledgerHashes = await window.WFBackfill.ledgerHashes(appData);
@@ -25855,7 +25886,6 @@ table.amort tbody tr { page-break-inside: avoid; }
 
             let _offset = 0;
             let _sawFirstPage = false;
-            let _totalPending = 0;
             for (;;) {
                 let r;
                 try {
@@ -25904,47 +25934,17 @@ table.amort tbody tr { page-break-inside: avoid; }
                 const pageDocs = Array.isArray(r.body.items) ? r.body.items : [];
                 if (!pageDocs.length) break;
 
-                /* WHO SENT IT, AND WHETHER THE OWNER HAS SAID SO.
-                 *
-                 * `known` has been computed since the pipeline was written and
-                 * stored by nothing until now, so a verified stranger drew
-                 * exactly like a confirmed bank and there was no way to tell
-                 * from the screen why a receipt was sitting in it. Storing the
-                 * field and then not reading it would be the same defect one
-                 * step further along, in the very change that names it.
-                 *
-                 * `!== false` on purpose: every document written before this
-                 * has no such field, and an absent one must not turn a filed
-                 * statement into an accusation. */
-                /* AND DECIDED AGAINST THE LIST AS IT IS NOW. Reading only the
-                 * stored flag left the owner's actual complaint untouched:
-                 * every bill and receipt collected before the sender list
-                 * existed carries no flag at all, so it drew — and was opened,
-                 * parsed and offered for filing — exactly like a confirmed
-                 * bank's statement. See _mailKnownNow. */
-                const baseIndex = _mailSyncState.items.length;
-                _mailSyncState.items.push(...pageDocs.map(d => ({
-                    key: d.id,
-                    bank: d.manifest && d.manifest.bank,
-                    filename: d.manifest && d.manifest.filename,
-                    stage: 'waiting',
-                    note: null, reason: null,
-                    known: _mailKnownNow(d, _mailSyncState.decided),
-                    verdict: _mailVerdict(d, _mailSyncState.decided),
-                    from: (d.manifest && d.manifest.from) || '',
-                    /* Server-computed, from the same matchSender() the trust
-                     * decision itself uses — never re-parsed from `from` here.
-                     * Approve/Block need it: an address-scoped block only ever
-                     * catches the one exact address it names, and a sender that
-                     * mails from a different address next time (transactional
-                     * systems do this constantly) is then simply un-blocked. */
-                    domain: (d.sender && d.sender.domain) || '',
-                })));
+                for (const d of pageDocs) {
+                    if (_rowIndexByKey.has(d.id)) continue;
+                    const i = _mailSyncState.items.length;
+                    _mailSyncState.items.push(_mailRow(d));
+                    _rowIndexByKey.set(d.id, i);
+                }
                 renderMailSync();
 
                 for (let j = 0; j < pageDocs.length; j += 1) {
                     const d = pageDocs[j];
-                    const i = baseIndex + j;
+                    const i = _rowIndexByKey.get(d.id);
                     try {
                         /* A SENDER NOBODY HAS APPROVED IS NOT OPENED.
                          *
@@ -28691,8 +28691,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.30</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.30</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.31</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.31</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
