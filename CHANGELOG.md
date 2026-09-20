@@ -1,5 +1,18 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.30 — 2026-09-19
+
+**What changed for you**
+
+- Entering your WealthFlow PIN now unlocks the Bank Statement Password Vault for the same session.
+- If the vault is locked, **Check now** pauses before downloading any statements, opens the unlock prompt, and resumes automatically after a successful unlock.
+- Existing device vault entries are copied to the encrypted private cloud vault after unlock when cloud storage is configured, enabling autonomous processing without exposing plaintext passwords.
+
+**Under the hood**
+
+- The PIN remains memory-only: it is never retained, logged or uploaded.
+- Statement processing can no longer misclassify password-protected files as review failures merely because the saved-password vault was still locked.
+
 ## v7.69.29 — 2026-09-19
 
 **What changed for you**

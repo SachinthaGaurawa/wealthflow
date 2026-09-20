@@ -8755,7 +8755,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
         // exist yet when this script parses, so reading it here returned 'unknown'
         // (v7.44.0's bug). WF_APP_VERSION is part of the version-bump protocol and is
         // kept in lock-step with the six display/cache/package locations.
-        var WF_APP_VERSION = '7.69.29';
+        var WF_APP_VERSION = '7.69.30';
         try { window.WF_APP_VERSION = WF_APP_VERSION; } catch (_) {}
         var _WF_BUILD = 'v' + WF_APP_VERSION;
         try {
@@ -14883,6 +14883,16 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
+        async function _unlockStatementVaultFromPin(pin) {
+            const v = window.WFVault;
+            if (!v || !v.isSet() || v.isUnlocked()) return { ok: true, skipped: true };
+            let result;
+            try { result = await v.unlock(pin, { cloud: window._wfBankVaultCloud }); }
+            catch (_) { return { ok: false, reason: 'vault-unavailable' }; }
+            try { if (result?.ok) await window.WFStatementCloud?.migrateUnlockedVault(result.entries); } catch (_) {}
+            return result || { ok: false, reason: 'vault-unavailable' };
+        }
+
         let pinBuffer = '', pinMode = 'login', pinTemp = '';
 
         function buildNumpad(containerId) {
@@ -14994,7 +15004,9 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     const decoyIndicator = $('decoyIndicator');
                     if (decoyIndicator) decoyIndicator.style.display = 'none';
                     resetAutoLockTimer();
+                    const _statementVault = await _unlockStatementVaultFromPin(pin);
                     launchApp();
+                    if (_statementVault?.ok === false) notify('Statement-password vault is still locked. Unlock it before statement sync.', 'warn');
                 } else {
                     buildDots('loginDots', 6, 0);
                     $('loginErr').textContent = '❌ Incorrect PIN. Please try again.';
@@ -24509,21 +24521,8 @@ table.amort tbody tr { page-break-inside: avoid; }
             const vb = host.querySelector('#_ms_vault');
             if (vb) vb.onclick = () => {
                 try { triggerHaptic('light'); } catch (_) {}
-                /* RE-READ ON CLOSE, not "now press Check now again". The
-                 * statements are already in the store; the only thing that was
-                 * missing is the key, and once it is there the retry is not a
-                 * second decision the owner should have to make. */
-                openBankVault({
-                    onClose: () => {
-                        if (window.WFVault && window.WFVault.isUnlocked() && _mailSyncState.stage !== 'running') {
-                            runMailSync();
-                        }
-                    },
-                });
+                openBankVault({ closeOnUnlock: true, onClose: _resumeMailSyncAfterVault });
             };
-            /* The decision offered where the confusion is. Seeing an unfamiliar
-             * row and being sent to another screen to find it again is how a
-             * queue stops being read. */
             /* REMOVING A STATEMENT IS THE ONE ACTION HERE THAT CANNOT BE UNDONE,
              * so it asks first and says exactly what it will do. The bills and
              * receipts already in the store are what this is for: #167 stopped
@@ -25771,13 +25770,9 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window._mailBootCheck = _mailBootCheck;
 
-        /**
-         * Fetch what is waiting and run it through the device-side intake.
-         *
-         * Every stage transition is rendered as it happens, which is the entire
-         * point of the card: the owner sees a statement move from waiting to
-         * filed rather than being told afterwards that something occurred.
-         */
+        function _resumeMailSyncAfterVault() {
+            if (window.WFVault?.isUnlocked() && _mailSyncState.stage !== 'running') runMailSync();
+        }
         async function runMailSync() {
             let cloud = window.WFStatementCloud && window.WFStatementCloud.getState();
             if (cloud && cloud.configured == null) {
@@ -25789,6 +25784,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { await window.WFStatementCloud.sync(); }
                 catch (_) { notify('Background statement sync could not complete. Statements remain pending for retry.', 'warn'); }
                 window.WFStatementCloud.openReview();
+                return;
+            }
+            const vault = window.WFVault;
+            if (vault?.isSet() && !vault.isUnlocked()) {
+                openBankVault({ closeOnUnlock: true, onClose: _resumeMailSyncAfterVault });
                 return;
             }
             if (_mailSyncState.stage === 'running') return;
@@ -28691,8 +28691,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <button class="btn btn-secondary btn-sm" onclick="openModal('mdInstallGuide')">${(window.WFIcon ? WFIcon('fileText') : '')} View Guide</button>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.29</span> Infinity Engine — All systems operational.</div></div>
-                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.29</span>
+                <div class="setting-info"><div class="setting-label">App Version</div><div class="setting-desc">WealthFlow <span id="wfVerText">v7.69.30</span> Infinity Engine — All systems operational.</div></div>
+                <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.30</span>
             </div>
             <div class="setting-row">
                 <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
@@ -32987,8 +32987,12 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         : 'Could not unlock with that PIN';
                     return;
                 }
+                const unlockedEntries = Array.isArray(r.entries) ? r.entries : [];
+                try { await window.WFStatementCloud?.migrateUnlockedVault(unlockedEntries); }
+                catch (_) { notify('Vault unlocked; cloud migration will retry later.', 'warn'); }
                 try { triggerHaptic('success'); } catch (_) {}
-                renderEntries(r.entries || []);
+                if (opts.closeOnUnlock === true) { close(); return; }
+                renderEntries(unlockedEntries);
             };
             body.querySelector('#_bv_go').onclick = attempt;
             body.querySelector('#_bv_pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') attempt(); });

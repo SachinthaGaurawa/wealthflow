@@ -82,6 +82,47 @@ describe('the reason code survives the trip to the screen', () => {
     });
 });
 
+describe('a successful app login unlocks statement passwords for the session', () => {
+    it('derives the statement-vault key before launching the real dashboard', () => {
+        const login = fn('handlePinComplete');
+        const unlock = login.indexOf('_unlockStatementVaultFromPin(pin)');
+        const launch = login.indexOf('launchApp()', unlock);
+        expect(unlock).toBeGreaterThan(-1);
+        expect(launch).toBeGreaterThan(unlock);
+    });
+
+    it('uses the PIN only to unlock and never persists or uploads the PIN itself', () => {
+        const helper = fn('_unlockStatementVaultFromPin');
+        expect(helper).toContain("v.unlock(pin, { cloud: window._wfBankVaultCloud })");
+        expect(helper).not.toMatch(/(?:localStorage|sessionStorage|DB\.set|fetch)\s*\([^)]*pin/i);
+        expect(helper).not.toMatch(/password\s*:\s*pin/);
+    });
+
+    it('migrates already-saved local entries into the encrypted autonomous cloud vault', () => {
+        const helper = fn('_unlockStatementVaultFromPin');
+        expect(helper).toContain('window.WFStatementCloud?.migrateUnlockedVault(result.entries)');
+    });
+});
+
+describe('Check now never burns through a locked vault', () => {
+    it('opens the vault before marking the sync running or downloading statements', () => {
+        const body = fn('runMailSync');
+        const gate = body.indexOf('vault?.isSet() && !vault.isUnlocked()');
+        expect(gate).toBeGreaterThan(-1);
+        expect(body.indexOf("stage: 'running'", gate)).toBeGreaterThan(gate);
+        expect(body.indexOf('_recentSweep(false)', gate)).toBeGreaterThan(gate);
+    });
+
+    it('closes after a successful inline unlock and retries automatically', () => {
+        const sync = fn('runMailSync');
+        const modal = fn('openBankVault');
+        expect(sync).toMatch(/openBankVault\(\{[\s\S]{0,160}closeOnUnlock: true/);
+        expect(sync).toContain('onClose: _resumeMailSyncAfterVault');
+        expect(fn('_resumeMailSyncAfterVault')).toContain('runMailSync()');
+        expect(modal).toContain("if (opts.closeOnUnlock === true) { close(); return; }");
+    });
+});
+
 describe('what the card offers', () => {
     const card = fn('renderMailSync');
 
@@ -139,12 +180,12 @@ describe('what the card offers', () => {
         /* The statements are already in the store; the only thing missing was
          * the key. Making the owner press Check now again is asking them to
          * take the same decision twice. */
-        expect(card).toMatch(/onClose:[\s\S]{0,240}runMailSync\(\)/);
-        expect(card).toContain('WFVault.isUnlocked()');
+        expect(card).toContain('onClose: _resumeMailSyncAfterVault');
+        expect(fn('_resumeMailSyncAfterVault')).toContain('WFVault?.isUnlocked()');
     });
 
     it('it does not re-enter a run that is already going', () => {
-        expect(card).toContain("_mailSyncState.stage !== 'running'");
+        expect(fn('_resumeMailSyncAfterVault')).toContain("_mailSyncState.stage !== 'running'");
     });
 });
 
@@ -162,6 +203,12 @@ describe('the vault modal can tell its caller it closed', () => {
         const body = fn('openBankVault');
         expect(body).toMatch(/removeChild\(overlay\)[\s\S]{0,200}try \{ if \(typeof opts\.onClose/);
         expect(body).toMatch(/opts\.onClose\(\); \} catch \(_\)/);
+    });
+
+    it('an existing local vault is copied to the encrypted cloud vault on unlock', () => {
+        const body = fn('openBankVault');
+        expect(body).toContain('window.WFStatementCloud?.migrateUnlockedVault(unlockedEntries)');
+        expect(body).toContain('Array.isArray(r.entries)');
     });
 });
 
