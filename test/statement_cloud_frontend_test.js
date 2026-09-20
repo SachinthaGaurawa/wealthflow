@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { request, save, remove, dismissReview, authChanged } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, dismissReview, authChanged, getState } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
@@ -11,6 +11,11 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('private statement cloud frontend transport', () => {
+    it('exposes a defensive state snapshot to the real browser integration', () => {
+        const first = getState();
+        first.configured = 'tampered';
+        expect(getState().configured).not.toBe('tampered');
+    });
     it('starts an authenticated cloud collection automatically on every fresh sign-in', async () => {
         await authChanged(null);
         fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 }))
