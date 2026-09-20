@@ -624,12 +624,12 @@ describe('the sync loop', () => {
     });
 
     it('the decision flag is taken from the server before the rows are built', () => {
-        const flag = loop.indexOf('_mailSyncState.decided = r.body.decided === true');
+        const flag = loop.indexOf('_mailSyncState.decided = _queue.body.decided === true');
         // The sync now pages through the backlog (see gmail-link.js's
         // limit/offset): each page's rows are pushed onto the running list
         // rather than replacing it in one assignment, but the flag is still
         // set (once, on the first page) before any row that reads it exists.
-        const rows = loop.indexOf('_mailSyncState.items.push(...pageDocs.map');
+        const rows = loop.indexOf('_queueDocs.map(_mailRow)');
         expect(flag).toBeGreaterThan(-1);
         expect(rows).toBeGreaterThan(flag);
     });

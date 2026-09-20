@@ -363,12 +363,28 @@ export default async function handler(req, res, deps) {
         });
     }
 
+    /* Backfill wakes the live path's worker; failure leaves durable pending work. */
+    let queued = false;
+    if (state.autonomous === true && state.uid === env.WEALTHFLOW_OWNER_UID && stored.length > 0) {
+        try {
+            const run = deps && typeof deps.runStatementSync === 'function'
+                ? deps.runStatementSync
+                : (await import('./statement-sync.js')).runStatementSync;
+            await run({
+                db, owner: { uid: state.uid, email: state.email },
+                action: 'drain', env, f, budgetMs: 20000,
+            });
+            queued = true;
+        } catch (_) { /* Durable manifests remain pending; scheduled catch-up retries them. */ }
+    }
+
     return j(res, 200, {
         ok: true,
         window: { label: window.label },
         /* So the card can say "three senders are waiting for you to decide"
          * rather than leaving the strict rule looking like a silent failure. */
         discovered,
+        queued,
         ...pageResult({ ids, stored, skipped, pageToken: listed && listed.nextPageToken }),
     });
 }

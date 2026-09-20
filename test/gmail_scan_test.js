@@ -36,6 +36,7 @@ describe('the window is derived, never accepted', () => {
         expect(w.query).toContain('after:2026/08/01');
         expect(w.query).toContain('before:2026/09/01');
         expect(w.query).toContain('from:no-reply@hnb.lk');
+        expect(w.query).not.toContain('filename:');
     });
 
     it('walks backwards month by month', () => {

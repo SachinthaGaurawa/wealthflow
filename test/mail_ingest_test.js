@@ -466,6 +466,17 @@ describe('which attachment to take', () => {
         expect(r.take).toEqual([{ attachmentId: '', inlineData: data, filename: 'inline.pdf', size: 11 }]);
     });
 
+    it('takes an unnamed PDF MIME attachment but never mistakes the HTML mail body for one', () => {
+        const r = selectAttachments({ parts: [
+            { mimeType: 'text/html', body: { data: 'mail-body', size: 9 } },
+            { mimeType: 'application/pdf', body: { attachmentId: 'UNNAMED', size: 100 } },
+        ] });
+        expect(r.ok).toBe(true);
+        expect(r.take).toEqual([{
+            attachmentId: 'UNNAMED', inlineData: '', filename: '', size: 100,
+        }]);
+    });
+
     it('and ignores an unnamed part too', () => {
         const r = selectAttachments({ parts: [{ mimeType: 'application/pdf', body: { size: 10 } }] });
         expect(r.ok).toBe(false);
