@@ -25,9 +25,9 @@ function database(initial) {
     const docs = new Map(Object.entries(initial));
     const snap = path => ({ id: path.split('/').at(-1), ref: ref(path), exists: docs.has(path), data: () => structuredClone(docs.get(path)) });
     const query = (path, filters = [], count = Infinity, after = '') => ({ query: true, path, filters, count, after,
-        where(field, _, value) { return query(path, [...filters, [field, value]], count, after); },
+        where(field, op, value) { return query(path, [...filters, [field, op, value]], count, after); },
         orderBy() { return this; }, limit(value) { return query(path, filters, value, after); }, startAfter(value) { return query(path, filters, count, value); },
-        doc(id) { return ref(path + '/' + id); }, async get() { return { docs: [...docs.keys()].filter(key => key.startsWith(path + '/') && key.split('/').length === path.split('/').length + 1 && key.split('/').at(-1) > after && filters.every(([field, value]) => docs.get(key)[field] === value)).sort().slice(0, count).map(snap) }; }
+        doc(id) { return ref(path + '/' + id); }, async get() { return { docs: [...docs.keys()].filter(key => key.startsWith(path + '/') && key.split('/').length === path.split('/').length + 1 && key.split('/').at(-1) > after && filters.every(([field, op, value]) => op === '<=' ? docs.get(key)[field] <= value : docs.get(key)[field] === value)).sort().slice(0, count).map(snap) }; }
     });
     const ref = path => ({ path, id: path.split('/').at(-1), collection: name => query(path + '/' + name), get: async () => snap(path), set: async (value, opts) => docs.set(path, opts?.merge ? { ...docs.get(path), ...structuredClone(value) } : structuredClone(value)) });
     return { docs, doc: ref, collection: path => query(path), async runTransaction(fn) {
@@ -54,7 +54,7 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
     const initial = {
         'users/u': { expenses: [], cconetime: [], ccPayments: [], incomeRecv: [], subscriptions: [] },
         'wf-mail/owner_example_com': { uid: 'u', email: owner.email, refresh_token: 'synthetic-refresh', autonomous: true, senders },
-        ...Object.fromEntries(sourcePaths.map((path, i) => [path, { uid: 'u', bank: 'NTB', filename: 'AMEX_Statement_2026Sep.html', messageId: messageIds[i], status: 'pending', cursor: 0, filed: false }])),
+        ...Object.fromEntries(sourcePaths.map((path, i) => [path, { uid: 'u', bank: 'NTB', from: sender, filename: 'AMEX_Statement_2026Sep.html', messageId: messageIds[i], status: 'pending', cursor: 0, filed: false }])),
     };
     if (!noVault) initial['wf-statement-vault/u'] = { uid: 'u', savedAt: 100 };
     const db = database(initial);
@@ -121,6 +121,34 @@ describe('cold-server composed statement pipeline simulation', () => {
         const setup = simulation({ noVault: true });
         expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'needs_review' });
         expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'needs_review', reviewReason: 'NO_VAULT_KEYS' });
+    });
+    it('retires an actual invoice without filing it or creating a statement review', async () => {
+        const setup = simulation({ noVault: true, unencrypted: true });
+        setup.args.read = vi.fn(async () => ({
+            text: 'TAX INVOICE\nInvoice Number 7788\nInvoice Date 20/09/2026\nBill To Customer\nQuantity 2\nUnit Price 100.00\nSubtotal 200.00\nVAT 36.00\nTotal 236.00',
+            parsed: { understood: false, rows: [] },
+        }));
+        expect(await runStatementSync(setup.args)).toMatchObject({ status: 'rejected_non_statement', rejected: 1 });
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'rejected_non_statement', filed: false });
+        expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
+        expect(setup.board).not.toHaveBeenCalled();
+        expect([...setup.db.docs.keys()].some(path => path.includes('/statementReview/'))).toBe(false);
+    });
+    it('retires legacy mail from an unapproved sender before downloading its attachment', async () => {
+        const setup = simulation({ noVault: true, unencrypted: true });
+        setup.db.docs.set(setup.sourcePath, { ...setup.db.docs.get(setup.sourcePath), from: 'receipts@shop.example' });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 0 });
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'rejected_unapproved_sender', filed: false });
+        expect(setup.args.f.mock.calls.some(([url]) => String(url).includes('/messages/'))).toBe(false);
+        expect(setup.board).not.toHaveBeenCalled();
+        expect([...setup.db.docs.keys()].some(path => path.includes('/statementReview/'))).toBe(false);
+    });
+    it('also retires an expired in-flight item if its sender is no longer approved', async () => {
+        const setup = simulation({ noVault: true, unencrypted: true });
+        setup.db.docs.set(setup.sourcePath, { ...setup.db.docs.get(setup.sourcePath), from: 'receipts@shop.example', status: 'processing', leaseUntil: 1, leaseToken: 'expired' });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 0 });
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'rejected_unapproved_sender', leaseToken: '', leaseUntil: 0 });
+        expect(setup.args.f.mock.calls.some(([url]) => String(url).includes('/messages/'))).toBe(false);
     });
 });
 

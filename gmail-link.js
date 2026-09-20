@@ -493,7 +493,11 @@ export default async function handler(req, res) {
              * the raw `collapsed`: a rejected invoice/receipt must never
              * occupy a page slot a real statement could have used. */
             const done = eligible.filter((r) => r.manifest && r.manifest.filed === true).length;
-            const pending = eligible.filter((r) => !(r.manifest && r.manifest.filed === true));
+            const retiredNonStatements = eligible.filter((r) => r.manifest && r.manifest.status === 'rejected_non_statement');
+            const retiredUnapproved = eligible.filter((r) => r.manifest && r.manifest.status === 'rejected_unapproved_sender');
+            const pending = eligible.filter((r) => !(r.manifest && (r.manifest.filed === true
+                || r.manifest.status === 'rejected_non_statement' || r.manifest.status === 'rejected_unapproved_sender')));
+            const approvedPending = pending.filter((r) => verdictOf(r.manifest).verdict === 'approved').length;
 
             /* PAGINATED, NOT JUST CAPPED. `keep` used to always be the first
              * ITEMS_RETURN_MAX (200) pending statements, EVERY one's parts
@@ -564,6 +568,9 @@ export default async function handler(req, res) {
                  * so the numbers on the card always add up. */
                 filed: done,
                 rejectedNonStatements: legacyNonStatements.length,
+                retiredNonStatements: retiredNonStatements.length,
+                retiredUnapproved: retiredUnapproved.length,
+                approvedPending,
                 /* Pagination: how many pending statements exist beyond this
                  * page, and the total pending count (for a progress readout).
                  * A caller that never sends limit/offset gets `more: false`

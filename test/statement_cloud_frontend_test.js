@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { request, save, remove, dismissReview, authChanged, getState } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
@@ -28,6 +28,15 @@ describe('private statement cloud frontend transport', () => {
         expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ action: 'sync' });
         await authChanged(null);
     });
+    it('does not turn Check now into a no-op when the module missed the auth callback', async () => {
+        await authChanged(null);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }))
+            .mockResolvedValueOnce(reply(true, { ok: true, processed: 1 }));
+        await (await import('../wealthflow-statement-cloud.js')).status();
+        await expect(sync()).resolves.toMatchObject({ ok: true, processed: 1 });
+        expect(fetch.mock.calls[1][0]).toBe('/api/statement-sync');
+        await authChanged(null);
+    });
     it('sends exact passwords only to authenticated vault PUT without local plaintext storage', async () => {
         fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: false })).mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }));
         const entries = [{ password: ' 01021990 ', kind: 'birthday', format: 'DDMMYYYY' }];
@@ -38,6 +47,15 @@ describe('private statement cloud frontend transport', () => {
         expect(options.headers.Authorization).toBe('Bearer verified-token');
         expect(JSON.parse(options.body).entries).toEqual(entries);
         expect(window.localStorage.setItem).not.toHaveBeenCalled();
+    });
+    it('reconciles edited local passwords even when an older cloud vault already exists', async () => {
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }))
+            .mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 }))
+            .mockResolvedValueOnce(reply(true, { ok: true, processed: 0 }));
+        await migrateUnlockedVault([{ password: 'new-password' }, { password: 'other-password' }]);
+        expect(fetch.mock.calls.map(([path, options]) => [path, options.method])).toEqual([
+            ['/api/statement-vault', 'GET'], ['/api/statement-vault', 'PUT'], ['/api/statement-sync', 'POST'],
+        ]);
     });
     it('only permits local fallback for an explicitly unconfigured cloud', async () => {
         fetch.mockResolvedValueOnce(reply(false, { ok: false, reason: 'statement-cloud-not-configured' }));
