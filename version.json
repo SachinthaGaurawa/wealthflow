@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.69.32",
+  "latest": "7.69.33",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -517,6 +517,24 @@
           "title": "What changed for you",
           "items": [
             "The release brain has never run — and three other masked failures (#98)"
+          ]
+        }
+      ]
+    },
+    "7.69.33": {
+      "headline": "Statement backlog sync without request timeouts",
+      "date": "2026-09-20",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Check now processes one durable statement work unit per request and automatically continues the remaining queue, avoiding the previous long single-request timeout. Every fresh sign-in silently reconciles the latest two Gmail month-windows from exact approved senders before the encrypted vault worker unlocks them. A failed shared auto/manual request now produces one clear notification instead of two warnings."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Interactive server work is bounded independently of the scheduled safety-net. The server reports remaining work and the authenticated client resumes it through short sequential requests while preserving statement leases and exact sender enforcement."
           ]
         }
       ]

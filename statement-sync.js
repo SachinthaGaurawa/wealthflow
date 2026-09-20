@@ -270,7 +270,7 @@ async function enqueueStatementSync({ db, owner, env = process.env, f = fetch })
     return { queued: true };
 }
 
-export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000 }) {
+export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity }) {
     const start = Date.now();
     const uid = owner.uid, email = String(owner.email || '').toLowerCase();
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
@@ -291,13 +291,14 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     }
     let processed = 0, last = null;
     for (;;) {
-        if (Date.now() - start > budgetMs) break;
+        if (processed >= maxSteps || Date.now() - start > budgetMs) break;
         const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board });
         if (!step) break;
         processed += 1;
         last = step;
     }
-    return { ok: true, processed, migrationMore, recovered, ...(last || {}) };
+    const pending = await mailRef.collection('items').where('status', '==', 'pending').limit(1).get();
+    return { ok: true, processed, migrationMore, recovered, morePending: migrationMore || pending.docs.length > 0, ...(last || {}) };
 }
 
 export async function inspectReviewSource({ db, owner, id, env = process.env, f = fetch, open = openCloud, read = readStatement, attachment = attachmentBytes }) {
@@ -379,6 +380,6 @@ export default async function handler(req, res) {
     try {
         const owner = await admin.auth().getUser(settings.ownerUid);
         if (owner.disabled || !owner.email || !owner.emailVerified) return json(res, 403, { ok: false, reason: 'verified-owner-required' });
-        return json(res, 200, await runStatementSync({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect' }));
+        return json(res, 200, await runStatementSync({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: scheduled ? Infinity : 1 }));
     } catch (_) { return json(res, 503, { ok: false, reason: 'statement-sync-unavailable', configured: true }); }
 }

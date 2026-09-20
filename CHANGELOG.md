@@ -1,5 +1,13 @@
 # WealthFlow — CHANGELOG
 
+## v7.69.33 — 2026-09-20
+
+- Statement backlog processing is split into short, durable interactive requests instead of one request that can exceed the client timeout.
+- Remaining work continues automatically after each confirmed server response.
+- Every fresh sign-in performs a silent two-month exact-sender Gmail reconciliation before the encrypted cloud vault worker unlocks and files the queue.
+- Automatic sign-in sync no longer duplicates the warning owned by a manual **Check now** action.
+- Scheduled reconciliation retains its full time-boxed drain for autonomous catch-up.
+
 ## v7.69.32 — 2026-09-20
 
 **What changed for you**

@@ -190,6 +190,19 @@ describe('the scan finds and stores what is already in the mailbox', () => {
         });
     });
 
+    it('lets login reconciliation store the page before the bounded sync request drains it', async () => {
+        connect({ autonomous: true, uid: 'u1' });
+        const runStatementSync = vi.fn();
+        const seen = await call({
+            body: { ...WINDOW, deferProcessing: true },
+            gmail: { messages: ['m1'], byId: { m1: bankMessage('m1') } },
+            env: { ...ENV, WEALTHFLOW_OWNER_UID: 'u1' },
+            runStatementSync,
+        });
+        expect(seen.body).toMatchObject({ ok: true, statements: 1, queued: false });
+        expect(runStatementSync).not.toHaveBeenCalled();
+    });
+
     it('does not start autonomous processing without an explicit owner match', async () => {
         connect({ autonomous: true, uid: 'u1' });
         const runStatementSync = vi.fn();

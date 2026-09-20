@@ -4,7 +4,7 @@ import { request, save, remove, sync, dismissReview, authChanged, getState, migr
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
 beforeEach(() => {
-    vi.stubGlobal('window', { firebase: { auth: () => ({ currentUser: active }) }, dispatchEvent: vi.fn(), localStorage: { setItem: vi.fn() } });
+    vi.stubGlobal('window', { firebase: { auth: () => ({ currentUser: active }) }, dispatchEvent: vi.fn(), localStorage: { setItem: vi.fn() }, _wfRecentSweep: vi.fn(async () => 0) });
     vi.stubGlobal('CustomEvent', class { constructor(type, options) { this.type = type; this.detail = options.detail; } });
     vi.stubGlobal('fetch', vi.fn());
 });
@@ -18,6 +18,7 @@ describe('private statement cloud frontend transport', () => {
     });
     it('starts an authenticated cloud collection automatically on every fresh sign-in', async () => {
         await authChanged(null);
+        window._wfRecentSweep = vi.fn(async () => 0);
         fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 }))
             .mockResolvedValueOnce(reply(true, { ok: true, processed: 2 }));
         await authChanged(active);
@@ -26,6 +27,30 @@ describe('private statement cloud frontend transport', () => {
             ['/api/statement-sync', 'POST'],
         ]);
         expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ action: 'sync' });
+        expect(window._wfRecentSweep).toHaveBeenCalledWith(false);
+        await authChanged(null);
+    });
+    it('continues a bounded server backlog without holding one request open for every statement', async () => {
+        vi.useFakeTimers();
+        try {
+            await authChanged(null);
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 }))
+                .mockResolvedValueOnce(reply(true, { ok: true, processed: 1, morePending: true }))
+                .mockResolvedValueOnce(reply(true, { ok: true, processed: 1, morePending: false }));
+            await authChanged(active);
+            expect(fetch).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(750);
+            expect(fetch).toHaveBeenCalledTimes(3);
+            await authChanged(null);
+        } finally { vi.useRealTimers(); }
+    });
+    it('keeps automatic sign-in failures silent so Check now owns the single user notification', async () => {
+        await authChanged(null); window.notify = vi.fn();
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }))
+            .mockResolvedValueOnce(reply(false, { ok: false, reason: 'statement-sync-unavailable' }));
+        await authChanged(active);
+        expect(window.notify).not.toHaveBeenCalled();
+        expect(getState().error).toBe('statement-sync-unavailable');
         await authChanged(null);
     });
     it('does not turn Check now into a no-op when the module missed the auth callback', async () => {

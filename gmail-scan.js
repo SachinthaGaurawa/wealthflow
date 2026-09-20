@@ -92,11 +92,7 @@ export default async function handler(req, res, deps) {
 
     const ref = db.collection(MAIL_ROOT).doc(who.userKey);
 
-    /* THE STATE IS READ BEFORE THE WINDOW IS BUILT, and that ordering is the
-     * point: the window's query is now made of the owner's approved senders,
-     * which live in this document. Building it first would ask Gmail the old
-     * broad question — every PDF whose subject carries a common word — which is
-     * how bills and receipts reached a screen meant for statements. */
+    /* Read the sealed exact-sender policy before deriving the Gmail query. */
     let state;
     try {
         const snap = await withDeadline(ref.get(), 8000, 'wf-mail');
@@ -363,9 +359,9 @@ export default async function handler(req, res, deps) {
         });
     }
 
-    /* Backfill wakes the live path's worker; failure leaves durable pending work. */
+    /* Stored manifests are durable; the worker may drain them now or later. */
     let queued = false;
-    if (state.autonomous === true && state.uid === env.WEALTHFLOW_OWNER_UID && stored.length > 0) {
+    if (body.deferProcessing !== true && state.autonomous === true && state.uid === env.WEALTHFLOW_OWNER_UID && stored.length > 0) {
         try {
             const run = deps && typeof deps.runStatementSync === 'function'
                 ? deps.runStatementSync
