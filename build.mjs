@@ -144,7 +144,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripJs, stripHtml, tidy } from './build-strip.mjs';
 
 /** Files the browser is served and that carry comments worth removing. */
@@ -516,7 +516,14 @@ export async function verifyParses({ root, files, log = console.log }) {
     return true;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+let invokedDirectly = false;
+try {
+    invokedDirectly = !!process.argv[1]
+        && fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(path.resolve(process.argv[1]));
+} catch (_) {
+    invokedDirectly = import.meta.url === pathToFileURL(process.argv[1] || '').href;
+}
+if (invokedDirectly) {
     const write = process.argv.includes('--write');
     const hash = !process.argv.includes('--no-hash');
     try {

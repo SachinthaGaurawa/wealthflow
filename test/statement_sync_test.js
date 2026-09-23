@@ -132,6 +132,14 @@ describe('private source inspection and durable layout replay', () => {
         expect(args.data.get('users/u/statementReview/' + reviewId).status).toBe('retried');
         expect(await recoverPasswordFailures({ ...request, vaultSavedAt: 200 })).toBe(0);
     });
+    it('also recovers a legacy no-vault quarantine after the owner saves a vault', async () => {
+        const args = setup(), reviewId = createHash('sha256').update(args.sourcePath).digest('hex');
+        args.data.set('users/u/statementReview/' + reviewId, { uid: 'u', sourcePath: args.sourcePath, index: -1, status: 'pending' });
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), reviewReason: 'NO_VAULT_KEYS', vaultSavedAt: 0 });
+        expect(await recoverPasswordFailures({ db: args.db, mailRef: args.db.doc('wf-mail/owner_example_com'), uid: 'u', vaultSavedAt: 200 })).toBe(1);
+        expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', hasReview: false });
+        expect(args.data.get('users/u/statementReview/' + reviewId).status).toBe('retried');
+    });
     it('reports durable mapping success if queue delivery fails afterwards', async () => {
         const args = setup();
         const result = await mapReviewLayout({ ...args, rows: [row], inspect: async () => ({ text, bank: 'HNB', sourcePath: args.sourcePath }), learn: async () => ({ ok: true, template: { id: 't1' }, rows: [row] }), enqueue: async () => { throw new Error('queue-down'); } });

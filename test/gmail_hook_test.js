@@ -35,7 +35,7 @@
  * ===========================================================================*/
 
 import { describe, it, expect } from 'vitest';
-import { verifyPush, decodeEnvelope, messagesSince, recentMessages, MAIL_ROOT } from '../gmail-hook.js';
+import { verifyPush, decodeEnvelope, messagesSince, recentMessages, pushDeliveryStatus, MAIL_ROOT } from '../gmail-hook.js';
 
 const AUD = 'https://wealthflow-personal.vercel.app/api/gmail-hook';
 const SA = 'gmail-push@wf-project.iam.gserviceaccount.com';
@@ -211,6 +211,14 @@ describe('where statements are stored', () => {
          * choke on it. Separate roots so neither can be read as the other. */
         expect(MAIL_ROOT).toBe('wf-mail');
         expect(MAIL_ROOT).not.toBe('wf-inbox');
+    });
+});
+
+describe('Pub/Sub delivery completion', () => {
+    it('does not acknowledge a partially consumed durable Gmail collection', () => {
+        expect(pushDeliveryStatus({ status: 200, body: { ok: true, collectionPending: true } })).toBe(503);
+        expect(pushDeliveryStatus({ status: 200, body: { ok: true, collectionPending: false } })).toBe(200);
+        expect(pushDeliveryStatus({ status: 503, body: { ok: false } })).toBe(503);
     });
 });
 

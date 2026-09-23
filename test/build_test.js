@@ -377,6 +377,20 @@ describe('everything the build imports survives the deploy', () => {
         expect(fs.existsSync(path.join(ROOT, 'build-strip.mjs'))).toBe(true);
     });
 
+    it('recognises direct execution when the OS resolves the script through a symlinked parent path', () => {
+        const dir = stageDeployTree(rules);
+        const alias = path.join(os.tmpdir(), 'wf-build-alias-' + path.basename(dir));
+        try {
+            fs.symlinkSync(dir, alias, 'dir');
+            const out = execFileSync(process.execPath, [path.join(alias, 'build.mjs'), '--write'],
+                { cwd: dir, encoding: 'utf8', timeout: 120000 });
+            expect(out).toContain('written in place');
+        } finally {
+            try { fs.unlinkSync(alias); } catch (_) {}
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    }, 180000);
+
     it('THE REPRODUCTION: the build runs in a tree with the ignored files removed', () => {
         /* The static check above reads intent; this one runs the real command
          * the way Vercel runs it, in a copy of the repository with everything

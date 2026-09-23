@@ -164,14 +164,14 @@ export async function recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt }
     let recovered = 0;
     for (const doc of page.docs) {
         const previous = doc.data();
-        if (previous.reviewReason !== 'PASSWORD_FAILED' || previous.uid !== uid || (previous.cursor || 0) !== 0 || vaultSavedAt <= (previous.vaultSavedAt || 0)) continue;
+        if (!['PASSWORD_FAILED', 'NO_VAULT_KEYS'].includes(previous.reviewReason) || previous.uid !== uid || (previous.cursor || 0) !== 0 || vaultSavedAt <= (previous.vaultSavedAt || 0)) continue;
         const reviewId = createHash('sha256').update(doc.ref.path).digest('hex');
         const userRef = db.collection('users').doc(uid), reviewRef = userRef.collection('statementReview').doc(reviewId);
         recovered += await db.runTransaction(async tx => {
             const snap = await tx.get(doc.ref), source = snap.data();
             const review = await tx.get(reviewRef);
             const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', doc.ref.path));
-            if (!snap.exists || source.uid !== uid || source.status !== 'needs_review' || source.reviewReason !== 'PASSWORD_FAILED' || source.filed === true || (source.cursor || 0) !== 0 || vaultSavedAt <= (source.vaultSavedAt || 0) || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(entry => ['filed', 'duplicate'].includes(entry.data().status))) return 0;
+            if (!snap.exists || source.uid !== uid || source.status !== 'needs_review' || !['PASSWORD_FAILED', 'NO_VAULT_KEYS'].includes(source.reviewReason) || source.filed === true || (source.cursor || 0) !== 0 || vaultSavedAt <= (source.vaultSavedAt || 0) || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(entry => ['filed', 'duplicate'].includes(entry.data().status))) return 0;
             if (!review.exists || review.data().uid !== uid || review.data().status !== 'pending' || review.data().index !== -1) return 0;
             tx.set(reviewRef, { status: 'retried', retriedAt: Date.now() }, { merge: true });
             tx.set(doc.ref, { status: 'pending', hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: Date.now() }, { merge: true });
@@ -208,17 +208,20 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     let outcome;
     let entries = [], passwords = [];
     try {
-        const vaultSnap = await db.collection(VAULT_ROOT).doc(uid).get();
+        const vaultRef = db.collection(VAULT_ROOT).doc(uid);
+        const vaultSnap = await vaultRef.get();
+        const vaultSavedAt = vaultSnap.exists ? Number(vaultSnap.data().savedAt) || 0 : 0;
         if (vaultSnap.exists) {
             entries = await open(uid, vaultSnap.data());
             await db.runTransaction(async tx => {
                 const current = await tx.get(sourceRef), source = current.data();
                 if (!current.exists || source.uid !== uid || source.leaseToken !== claimed.leaseToken) throw new Error('statement-lease-lost');
-                tx.set(sourceRef, { vaultSavedAt: Number(vaultSnap.data().savedAt) || 0 }, { merge: true });
+                tx.set(sourceRef, { vaultSavedAt }, { merge: true });
             });
             passwords = candidatesFor(claimed.bank || '', entries);
         }
         const currentMail = (await mailRef.get()).data();
+        if (!currentMail || currentMail.uid !== uid || currentMail.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
         const attachment = await attachmentBytes(claimed, sourceRef, token, sendersOf(currentMail), f);
         const layoutDocs = await db.collection('users').doc(uid).collection('statementLayouts').limit(100).get();
         const layouts = layoutDocs.docs.map(doc => doc.data());
@@ -238,7 +241,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const rows = parsed.rows.slice(cursor, cursor + 10);
             const allocations = { statementType, subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             const decisions = await classifySlice(rows, allocations, { board });
-            outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType });
+            outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType,
+                mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });
         }
     } catch (error) {
         if (!permanentFailure(error)) {
@@ -277,7 +281,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, recovered = 0;
+    let migrationMore = false, collectionMore = false, recovered = 0;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
@@ -285,6 +289,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         if (String(profile.emailAddress || '').toLowerCase() !== email || !/^\d+$/.test(String(profile.historyId || ''))) throw new Error('gmail-profile-owner-mismatch');
         const intakeResult = await intake(db, { emailAddress: email, historyId: String(profile.historyId) }, { env, f });
         if (!intakeResult?.body?.ok) throw new Error('gmail-intake-unavailable');
+        collectionMore = intakeResult.body.collectionPending === true;
         migrationMore = await migrateItems(db, mailRef, mail, uid);
         const vault = await db.collection(VAULT_ROOT).doc(uid).get();
         recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
@@ -297,8 +302,21 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         processed += 1;
         last = step;
     }
-    const pending = await mailRef.collection('items').where('status', '==', 'pending').limit(1).get();
-    return { ok: true, processed, migrationMore, recovered, morePending: migrationMore || pending.docs.length > 0, ...(last || {}) };
+    const [pending, processing] = await Promise.all([
+        mailRef.collection('items').where('status', '==', 'pending').limit(1).get(),
+        mailRef.collection('items').where('status', '==', 'processing').limit(50).get(),
+    ]);
+    const now = Date.now();
+    const earliestLease = processing.docs.reduce((min, doc) => {
+        const lease = Number(doc.data()?.leaseUntil);
+        return Number.isFinite(lease) && lease > 0 ? Math.min(min, lease) : min;
+    }, Infinity);
+    const retryAfterMs = Number.isFinite(earliestLease)
+        ? Math.max(750, Math.min(180250, earliestLease - now + 250))
+        : 750;
+    const morePending = collectionMore || migrationMore || pending.docs.length > 0 || processing.docs.length > 0;
+    return { ok: true, processed, collectionMore, migrationMore, recovered, morePending,
+        ...(morePending ? { retryAfterMs: processing.docs.length ? retryAfterMs : 750 } : {}), ...(last || {}) };
 }
 
 export async function inspectReviewSource({ db, owner, id, env = process.env, f = fetch, open = openCloud, read = readStatement, attachment = attachmentBytes }) {
