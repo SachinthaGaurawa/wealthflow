@@ -79,7 +79,16 @@ export async function authChanged(next){
 export function friendly(reason) {
     return ({ 'sign-in-required': 'Sign in to access your cloud statement vault.', 'statement-cloud-not-configured': 'Cloud statement processing is not configured; device processing remains available.',
         'statement-request-timed-out': 'The request timed out; its final server state will be checked again.',
-        'statement-service-unavailable': 'The service is unavailable. Your statements remain pending.' })[reason] || 'The cloud operation failed. Please retry; no successful completion was recorded.';
+        'statement-service-unavailable': 'The service is unavailable. Your statements remain pending.',
+        'statement-sync-unavailable': 'Statement processing is temporarily unavailable. Nothing was lost; the queue will retry automatically.',
+        'statement-worker-retry-required': 'One statement needs a temporary retry. It remains queued and will not block the others.',
+        'autonomous-mailbox-not-enabled': 'Background processing is no longer authorised for this mailbox. Reconnect Gmail to resume.',
+        'gmail-profile-unavailable': 'Gmail could not be reached. Statements remain queued for automatic retry.',
+        'gmail-profile-owner-mismatch': 'The connected Gmail account no longer matches the signed-in WealthFlow owner.',
+        'gmail-intake-unavailable': 'Gmail collection did not complete. The durable cursor was preserved for automatic retry.',
+        'verified-owner-required': 'Verify the owner email before running autonomous statement processing.',
+        'cloud-vault-required': 'Save the unlocked statement passwords to the private cloud vault before background processing.',
+        'sign-in-changed': 'The signed-in account changed during the request. Retry after the current session finishes loading.' })[reason] || 'Statement processing could not complete. Nothing was filed; the queue remains safe for retry.';
 }
 export const migrateUnlockedVault=entries=>Array.isArray(entries) && entries.length ? save(entries) : false;
 async function download(entry) {

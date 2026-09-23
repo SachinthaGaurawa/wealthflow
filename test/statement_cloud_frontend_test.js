@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
@@ -67,6 +67,11 @@ describe('private statement cloud frontend transport', () => {
         expect(window.notify).not.toHaveBeenCalled();
         expect(getState().error).toBe('statement-sync-unavailable');
         await authChanged(null);
+    });
+    it('never reduces a known autonomous retry to the generic cloud failure toast', () => {
+        expect(friendly('statement-worker-retry-required')).toContain('will not block the others');
+        expect(friendly('gmail-profile-unavailable')).toContain('automatic retry');
+        expect(friendly('cloud-vault-required')).toContain('private cloud vault');
     });
     it('does not turn Check now into a no-op when the module missed the auth callback', async () => {
         await authChanged(null);

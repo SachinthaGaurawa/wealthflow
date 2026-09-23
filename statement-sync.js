@@ -14,6 +14,11 @@ import { textVerdict, VERDICT } from './wealthflow-statement-identity.js';
 
 export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
+const RETRY_MAX_MS = 180000;
+const PUBLIC_SYNC_REASONS = new Set([
+    'autonomous-mailbox-not-enabled', 'gmail-profile-unavailable', 'gmail-profile-owner-mismatch',
+    'gmail-intake-unavailable', 'verified-owner-required', 'statement-worker-retry-required'
+]);
 const permanentFailure = error => /^(?:PASSWORD_FAILED|NO_VAULT_KEYS|PDF_UNREADABLE|ATTACHMENT_TYPE_UNSUPPORTED|ATTACHMENT_SIZE_LIMIT|INVALID_ATTACHMENT|HTML_[A-Z_]+|STATEMENT_[A-Z_]+)$/.test(error?.message || '') || new Set([
     'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-cursor-or-content-changed',
     'statement-message-missing', 'statement-message-deleted', 'statement-sender-no-longer-approved',
@@ -56,8 +61,9 @@ export async function claimSource(db, ref, uid, now = Date.now()) {
     const leaseToken = randomUUID();
     return db.runTransaction(async tx => {
         const snap = await tx.get(ref), source = snap.data();
-        if (!snap.exists || source.filed === true || !['pending', 'processing'].includes(source.status) || (source.uid && source.uid !== uid) || (source.leaseUntil || 0) > now) return null;
-        tx.set(ref, { uid, status: 'processing', leaseToken, leaseUntil: now + 180000, updatedAt: now }, { merge: true });
+        if (!snap.exists || source.filed === true || !['pending', 'processing'].includes(source.status) || (source.uid && source.uid !== uid)
+            || (source.leaseUntil || 0) > now || (source.retryAt || 0) > now) return null;
+        tx.set(ref, { uid, status: 'processing', leaseToken, leaseUntil: now + 180000, retryAt: 0, updatedAt: now }, { merge: true });
         return { ...source, uid, leaseToken };
     });
 }
@@ -145,11 +151,16 @@ async function migrateItems(db, mailRef, mail, uid) {
     let query = mailRef.collection('items').orderBy('__name__').limit(50);
     if (mail.statementMigrationAfter) query = query.startAfter(mail.statementMigrationAfter);
     const page = await query.get();
-    for (const doc of page.docs) {
-        await db.runTransaction(async tx => {
+    /* Fifty serial Firestore transactions made the first Check now request
+     * spend several seconds only migrating old manifests. More importantly,
+     * a slow region could time out before the cursor was saved and repeat the
+     * same fifty writes forever. Independent documents are safe to migrate in
+     * bounded parallel groups; every transaction still re-reads its own row. */
+    for (let offset = 0; offset < page.docs.length; offset += 8) {
+        await Promise.all(page.docs.slice(offset, offset + 8).map(doc => db.runTransaction(async tx => {
             const snap = await tx.get(doc.ref), data = snap.data();
             if (snap.exists && !data.status && data.filed !== true) tx.set(doc.ref, { uid, status: 'pending', filed: false, cursor: 0 }, { merge: true });
-        });
+        })));
     }
     await mailRef.set({ statementMigrationDone: page.docs.length < 50, statementMigrationAfter: page.docs.at(-1)?.id || mail.statementMigrationAfter || '' }, { merge: true });
     return page.docs.length === 50;
@@ -189,7 +200,7 @@ export async function recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt }
  * same as it always has.
  */
 async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board }) {
-    const page = await mailRef.collection('items').where('status', '==', 'pending').limit(50).get();
+    const page = await mailRef.collection('items').where('status', '==', 'pending').limit(200).get();
     let claimed = null, sourceRef;
     for (const doc of page.docs) {
         if (await retireUnapprovedSource(db, uid, mailRef, doc.ref)) continue;
@@ -246,15 +257,24 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
     } catch (error) {
         if (!permanentFailure(error)) {
-            await db.runTransaction(async tx => {
+            const retry = await db.runTransaction(async tx => {
                 const snap = await tx.get(sourceRef), source = snap.data();
-                if (snap.exists && source.leaseToken === claimed.leaseToken && source.uid === uid) tx.set(sourceRef, { status: 'pending', leaseToken: '', leaseUntil: 0, updatedAt: Date.now() }, { merge: true });
+                if (!snap.exists || source.leaseToken !== claimed.leaseToken || source.uid !== uid) return 750;
+                const retryCount = Math.max(0, Number(source.retryCount) || 0) + 1;
+                const retryAfterMs = Math.min(RETRY_MAX_MS, 1000 * (2 ** Math.min(retryCount - 1, 8)));
+                const now = Date.now();
+                tx.set(sourceRef, { status: 'pending', leaseToken: '', leaseUntil: 0, retryAt: now + retryAfterMs,
+                    retryCount, lastRetryReason: String(error?.message || 'statement-worker-retry-required').slice(0, 120), updatedAt: now }, { merge: true });
+                return retryAfterMs;
             });
-            throw new Error('statement-worker-retry-required');
+            /* One unavailable attachment must not head-of-line block every
+             * later statement or turn an expected retry into a scary 503. */
+            outcome = { status: 'retry_pending', retry: 1, retryAfterMs: retry };
+        } else {
+            const reason = error.message;
+            await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason);
+            outcome = { status: 'needs_review', review: 1 };
         }
-        const reason = error.message;
-        await quarantineSource(db, uid, sourceRef, claimed.leaseToken, reason);
-        outcome = { status: 'needs_review', review: 1 };
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
     return outcome;
 }
@@ -294,16 +314,17 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const vault = await db.collection(VAULT_ROOT).doc(uid).get();
         recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
     }
-    let processed = 0, last = null;
+    let processed = 0, attempted = 0, last = null;
     for (;;) {
-        if (processed >= maxSteps || Date.now() - start > budgetMs) break;
+        if (attempted >= maxSteps || Date.now() - start > budgetMs) break;
         const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board });
         if (!step) break;
-        processed += 1;
+        attempted += 1;
+        if (step.status !== 'retry_pending') processed += 1;
         last = step;
     }
     const [pending, processing] = await Promise.all([
-        mailRef.collection('items').where('status', '==', 'pending').limit(1).get(),
+        mailRef.collection('items').where('status', '==', 'pending').limit(200).get(),
         mailRef.collection('items').where('status', '==', 'processing').limit(50).get(),
     ]);
     const now = Date.now();
@@ -311,12 +332,16 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const lease = Number(doc.data()?.leaseUntil);
         return Number.isFinite(lease) && lease > 0 ? Math.min(min, lease) : min;
     }, Infinity);
-    const retryAfterMs = Number.isFinite(earliestLease)
-        ? Math.max(750, Math.min(180250, earliestLease - now + 250))
-        : 750;
+    const pendingTimes = pending.docs.map(doc => Number(doc.data()?.retryAt) || 0);
+    const hasReadyPending = pendingTimes.some(at => at <= now);
+    const earliestRetry = pendingTimes.filter(at => at > now).reduce((min, at) => Math.min(min, at), Infinity);
+    const wakeAt = Math.min(earliestLease, earliestRetry);
+    const retryAfterMs = collectionMore || migrationMore || hasReadyPending
+        ? 750
+        : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
     const morePending = collectionMore || migrationMore || pending.docs.length > 0 || processing.docs.length > 0;
-    return { ok: true, processed, collectionMore, migrationMore, recovered, morePending,
-        ...(morePending ? { retryAfterMs: processing.docs.length ? retryAfterMs : 750 } : {}), ...(last || {}) };
+    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, ...(last || {}), morePending,
+        ...(morePending ? { retryAfterMs } : {}) };
 }
 
 export async function inspectReviewSource({ db, owner, id, env = process.env, f = fetch, open = openCloud, read = readStatement, attachment = attachmentBytes }) {
@@ -399,5 +424,11 @@ export default async function handler(req, res) {
         const owner = await admin.auth().getUser(settings.ownerUid);
         if (owner.disabled || !owner.email || !owner.emailVerified) return json(res, 403, { ok: false, reason: 'verified-owner-required' });
         return json(res, 200, await runStatementSync({ db, owner, action: body.action === 'drain' ? 'drain' : 'collect', maxSteps: scheduled ? Infinity : 1 }));
-    } catch (_) { return json(res, 503, { ok: false, reason: 'statement-sync-unavailable', configured: true }); }
+    } catch (error) {
+        const reason = String(error?.message || 'statement-sync-unavailable').slice(0, 160);
+        /* No email, uid, filename, transaction, or vault material is logged.
+         * The former empty catch made every production 503 indistinguishable. */
+        console.error('statement-sync-failed', { reason, code: String(error?.code || '').slice(0, 40) });
+        return json(res, 503, { ok: false, reason: PUBLIC_SYNC_REASONS.has(reason) ? reason : 'statement-sync-unavailable', configured: true });
+    }
 }

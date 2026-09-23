@@ -63,7 +63,9 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
         if (url === 'https://oauth2.googleapis.com/token') return { ok: true, json: async () => ({ access_token: 'synthetic-access' }) };
         if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/profile') return { ok: true, json: async () => ({ emailAddress: owner.email, historyId: '100' }) };
         const attachmentMatch = messageIds.find(id => url.includes('/messages/' + id + '/attachments/'));
-        if (attachmentMatch) return unavailable ? { ok: false, status: 503 } : { ok: true, json: async () => ({ data: ciphertexts.get(attachmentMatch).toString('base64url') }) };
+        if (attachmentMatch) return (unavailable === true || (unavailable === 'first' && attachmentMatch === messageIds[0]))
+            ? { ok: false, status: 503 }
+            : { ok: true, json: async () => ({ data: ciphertexts.get(attachmentMatch).toString('base64url') }) };
         const messageMatch = messageIds.find(id => url.includes('/messages/' + id));
         if (messageMatch) return { ok: true, json: async () => messages.get(messageMatch) };
         throw Error('unexpected external request');
@@ -106,8 +108,10 @@ describe('cold-server composed statement pipeline simulation', () => {
     });
     it('retains a retryable source after transient attachment transport failure', async () => {
         const setup = simulation({ unavailable: true });
-        await expect(runStatementSync(setup.args)).rejects.toThrow('statement-worker-retry-required');
-        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', leaseToken: '', filed: false });
+        const result = await runStatementSync(setup.args);
+        expect(result).toMatchObject({ ok: true, processed: 0, attempted: 1, status: 'retry_pending', morePending: true });
+        expect(result.retryAfterMs).toBeGreaterThanOrEqual(750);
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', leaseToken: '', filed: false, retryCount: 1, lastRetryReason: 'gmail-fetch-unavailable' });
         expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
         expect(setup.board).not.toHaveBeenCalled();
         expect([...setup.db.docs.keys()].some(path => path.includes('/statementReview/'))).toBe(false);
@@ -185,6 +189,15 @@ describe('in-process draining replaces the external task queue', () => {
         expect(result).toMatchObject({ ok: true, processed: 1, morePending: true });
         expect(setup.sourcePaths.filter(path => setup.db.docs.get(path).filed === true)).toHaveLength(1);
     });
+    it('backs off a transient poison statement so the next continuation can process later queue entries', async () => {
+        const setup = simulation({ items: 2, unavailable: 'first' });
+        const first = await runStatementSync({ ...setup.args, maxSteps: 1 });
+        expect(first).toMatchObject({ ok: true, processed: 0, attempted: 1, status: 'retry_pending', morePending: true, retryAfterMs: 750 });
+        expect(setup.db.docs.get(setup.sourcePaths[0])).toMatchObject({ status: 'pending', retryCount: 1 });
+        const second = await runStatementSync({ ...setup.args, maxSteps: 1 });
+        expect(second).toMatchObject({ ok: true, processed: 1, status: 'filed', morePending: true });
+        expect(setup.db.docs.get(setup.sourcePaths[1])).toMatchObject({ filed: true });
+    });
     it('continues Gmail collection even when the current ten-message page found no statement work', async () => {
         const setup = simulation({ items: 0 });
         const intake = vi.fn(async () => ({ body: { ok: true, collectionPending: true } }));
@@ -208,8 +221,8 @@ describe('in-process draining replaces the external task queue', () => {
             setup.db.docs.set('wf-statement-vault/u', { uid: 'u', savedAt: 200 });
             return originalBoard(...args);
         });
-        await expect(runStatementSync(setup.args)).rejects.toThrow('statement-worker-retry-required');
-        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false, leaseToken: '' });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, status: 'retry_pending', processed: 0 });
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false, leaseToken: '', lastRetryReason: 'statement-vault-changed-during-processing' });
         expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
         expect(setup.db.docs.get('users/u').ccPayments).toEqual([]);
     });
@@ -220,8 +233,8 @@ describe('in-process draining replaces the external task queue', () => {
             setup.db.docs.set('wf-mail/owner_example_com', { ...setup.db.docs.get('wf-mail/owner_example_com'), autonomous: false });
             return originalBoard(...args);
         });
-        await expect(runStatementSync(setup.args)).rejects.toThrow('statement-worker-retry-required');
-        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false });
+        expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, status: 'retry_pending', processed: 0 });
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false, lastRetryReason: 'autonomous-mailbox-disabled-during-processing' });
         expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
     });
 });
