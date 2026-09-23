@@ -265,7 +265,21 @@ export default async function handler(req, res) {
     const { db, reason } = await getInboxDb();
     if (!db) return j(res, 500, { ok: false, error: String(reason || 'database unavailable').slice(0, 300) });
 
-    return ingestMailbox(db, note, env, f, res);
+    /* A Pub/Sub delivery is acknowledged only after its staged Gmail id list
+     * has been consumed. ingestMailbox deliberately handles ten messages per
+     * pass so one serverless request stays bounded; a 2xx here used to tell
+     * Pub/Sub the job was finished after only the first pass. No browser exists
+     * to follow `collectionPending` on this path, so ask Pub/Sub to redeliver.
+     * Stable message/attachment ids and the durable cursor make that retry
+     * idempotent. Authenticated browser calls use syncMailbox() below and keep
+     * the 200 response so their own continuation timer can advance the batch. */
+    const result = await syncMailbox(db, note, { env, f });
+    return j(res, pushDeliveryStatus(result), result?.body || { ok: false, error: 'mailbox sync failed' });
+}
+
+export function pushDeliveryStatus(result) {
+    const status = Number(result?.status) || 500;
+    return status >= 200 && status < 300 && result?.body?.collectionPending === true ? 503 : status;
 }
 
 /** Shared collection path for verified push, authenticated login, and scheduled catch-up. */

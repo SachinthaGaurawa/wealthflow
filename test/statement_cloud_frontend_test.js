@@ -44,6 +44,21 @@ describe('private statement cloud frontend transport', () => {
             await authChanged(null);
         } finally { vi.useRealTimers(); }
     });
+    it('honours the server lease delay instead of polling an in-flight statement every 750ms', async () => {
+        vi.useFakeTimers();
+        try {
+            await authChanged(null);
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 2 }))
+                .mockResolvedValueOnce(reply(true, { ok: true, processed: 0, morePending: true, retryAfterMs: 5000 }))
+                .mockResolvedValueOnce(reply(true, { ok: true, processed: 1, morePending: false }));
+            await authChanged(active);
+            await vi.advanceTimersByTimeAsync(4999);
+            expect(fetch).toHaveBeenCalledTimes(2);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(fetch).toHaveBeenCalledTimes(3);
+            await authChanged(null);
+        } finally { vi.useRealTimers(); }
+    });
     it('keeps automatic sign-in failures silent so Check now owns the single user notification', async () => {
         await authChanged(null); window.notify = vi.fn();
         fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }))

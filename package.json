@@ -52,13 +52,13 @@
   "dependencies": {
     "firebase-admin": "^12.0.0",
     "linkedom": "0.18.13",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^9.1.1",
     "pdfjs-dist": "6.3.289"
   },
   "devDependencies": {
     "fast-check": "^3.19.0",
     "playwright": "^1.62.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "uuid": "^11.0.0"

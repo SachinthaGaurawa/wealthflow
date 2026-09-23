@@ -57,7 +57,7 @@ function makeRecord(row, decision, context, id, now) {
 }
 
 /** All reads precede writes; Firestore retries serialize concurrent settlement. */
-export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '' }) {
+export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
     if (!db || !uid || !sourceRef?.path || !leaseToken || !Array.isArray(rows) || rows.length > 30 || !rows.length || !Array.isArray(decisions) || decisions.length !== rows.length || !Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(totalRows) || totalRows < cursor + rows.length || !Number.isSafeInteger(now)) throw new Error('invalid-settlement-request');
     const userRef = db.collection('users').doc(uid);
     const ledgerRefs = rows.map((_, index) => userRef.collection('statementLedger').doc(sourceOccurrenceId(sourceRef.path, cursor + index)));
@@ -66,6 +66,15 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const sourceSnap = await tx.get(sourceRef);
         const source = sourceSnap.data() || {};
         if (!sourceSnap.exists || source.uid !== uid || source.leaseToken !== leaseToken || !Number.isFinite(source.leaseUntil) || source.leaseUntil <= now || (source.cursor || 0) !== cursor) throw new Error('statement-lease-lost');
+        if (mailRef) {
+            const mailSnap = await tx.get(mailRef), mail = mailSnap.data() || {};
+            if (!mailSnap.exists || mail.uid !== uid || mail.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
+        }
+        if (vaultRef) {
+            const vaultSnap = await tx.get(vaultRef);
+            const currentSavedAt = vaultSnap.exists ? Number(vaultSnap.data()?.savedAt) || 0 : 0;
+            if (vaultSnap.exists !== vaultExpected || currentSavedAt !== vaultSavedAt) throw new Error('statement-vault-changed-during-processing');
+        }
         const userSnap = await tx.get(userRef);
         const ledgerSnaps = [];
         for (const ref of ledgerRefs) ledgerSnaps.push(await tx.get(ref));

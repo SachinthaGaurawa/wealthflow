@@ -61,6 +61,7 @@ function simulation({ disagree = false, unavailable = false, items = 1, noVault 
     const ciphertexts = new Map(messageIds.map((id, i) => [id, unencrypted ? Buffer.from(plainFor(i)) : encryptedHtml(i)]));
     const f = vi.fn(async url => {
         if (url === 'https://oauth2.googleapis.com/token') return { ok: true, json: async () => ({ access_token: 'synthetic-access' }) };
+        if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/profile') return { ok: true, json: async () => ({ emailAddress: owner.email, historyId: '100' }) };
         const attachmentMatch = messageIds.find(id => url.includes('/messages/' + id + '/attachments/'));
         if (attachmentMatch) return unavailable ? { ok: false, status: 503 } : { ok: true, json: async () => ({ data: ciphertexts.get(attachmentMatch).toString('base64url') }) };
         const messageMatch = messageIds.find(id => url.includes('/messages/' + id));
@@ -183,5 +184,44 @@ describe('in-process draining replaces the external task queue', () => {
         const result = await runStatementSync({ ...setup.args, maxSteps: 1 });
         expect(result).toMatchObject({ ok: true, processed: 1, morePending: true });
         expect(setup.sourcePaths.filter(path => setup.db.docs.get(path).filed === true)).toHaveLength(1);
+    });
+    it('continues Gmail collection even when the current ten-message page found no statement work', async () => {
+        const setup = simulation({ items: 0 });
+        const intake = vi.fn(async () => ({ body: { ok: true, collectionPending: true } }));
+        const result = await runStatementSync({ ...setup.args, action: 'collect', intake, maxSteps: 1 });
+        expect(result).toMatchObject({ ok: true, processed: 0, collectionMore: true, morePending: true, retryAfterMs: 750 });
+        expect(intake).toHaveBeenCalledTimes(1);
+    });
+    it('reports an abandoned active lease and delays continuation until it can be reclaimed', async () => {
+        const setup = simulation();
+        const leaseUntil = Date.now() + 120000;
+        setup.db.docs.set(setup.sourcePath, { ...setup.db.docs.get(setup.sourcePath), status: 'processing', leaseToken: 'orphaned', leaseUntil });
+        const result = await runStatementSync(setup.args);
+        expect(result).toMatchObject({ ok: true, processed: 0, morePending: true });
+        expect(result.retryAfterMs).toBeGreaterThan(110000);
+        expect(result.retryAfterMs).toBeLessThanOrEqual(120250);
+    });
+    it('does not commit rows decrypted under a vault generation that changed during AI review', async () => {
+        const setup = simulation();
+        const originalBoard = setup.args.board;
+        setup.args.board = vi.fn(async (...args) => {
+            setup.db.docs.set('wf-statement-vault/u', { uid: 'u', savedAt: 200 });
+            return originalBoard(...args);
+        });
+        await expect(runStatementSync(setup.args)).rejects.toThrow('statement-worker-retry-required');
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false, leaseToken: '' });
+        expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
+        expect(setup.db.docs.get('users/u').ccPayments).toEqual([]);
+    });
+    it('does not commit after autonomous processing is revoked in flight', async () => {
+        const setup = simulation();
+        const originalBoard = setup.args.board;
+        setup.args.board = vi.fn(async (...args) => {
+            setup.db.docs.set('wf-mail/owner_example_com', { ...setup.db.docs.get('wf-mail/owner_example_com'), autonomous: false });
+            return originalBoard(...args);
+        });
+        await expect(runStatementSync(setup.args)).rejects.toThrow('statement-worker-retry-required');
+        expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'pending', filed: false });
+        expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
     });
 });
