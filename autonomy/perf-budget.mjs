@@ -407,7 +407,10 @@ export const BUDGETS = {
     // the ratchet: wealthflow-statement-cloud.js now honours the worker's lease
     // delay instead of polling an in-flight statement every 750 ms. Measured
     // 1,874,076 across the same 71 modules; no module or startup request added.
-    totalJsBytes: 1_875_000,
+    // Raised after replacing the generic statement failure toast with explicit
+    // recovery guidance. Measured 1,875,235; still 71 modules and no additional
+    // startup request.
+    totalJsBytes: 1_876_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
