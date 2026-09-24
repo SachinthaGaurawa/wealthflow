@@ -495,8 +495,14 @@ export default async function handler(req, res) {
             const done = eligible.filter((r) => r.manifest && r.manifest.filed === true).length;
             const retiredNonStatements = eligible.filter((r) => r.manifest && r.manifest.status === 'rejected_non_statement');
             const retiredUnapproved = eligible.filter((r) => r.manifest && r.manifest.status === 'rejected_unapproved_sender');
+            const reviewStatements = eligible.filter((r) => r.manifest && r.manifest.status === 'needs_review');
+            const passwordFailures = reviewStatements.filter((r) => {
+                const reason = String(r.manifest && r.manifest.reviewReason || '');
+                return reason === 'PASSWORD_FAILED' || reason === 'NO_VAULT_KEYS';
+            }).length;
             const pending = eligible.filter((r) => !(r.manifest && (r.manifest.filed === true
-                || r.manifest.status === 'rejected_non_statement' || r.manifest.status === 'rejected_unapproved_sender')));
+                || r.manifest.status === 'rejected_non_statement' || r.manifest.status === 'rejected_unapproved_sender'
+                || r.manifest.status === 'needs_review' || r.manifest.status === 'dismissed')));
             const approvedPending = pending.filter((r) => verdictOf(r.manifest).verdict === 'approved').length;
 
             /* PAGINATED, NOT JUST CAPPED. `keep` used to always be the first
@@ -570,6 +576,8 @@ export default async function handler(req, res) {
                 rejectedNonStatements: legacyNonStatements.length,
                 retiredNonStatements: retiredNonStatements.length,
                 retiredUnapproved: retiredUnapproved.length,
+                needsReviewStatements: reviewStatements.length,
+                passwordFailures,
                 approvedPending,
                 /* Pagination: how many pending statements exist beyond this
                  * page, and the total pending count (for a progress readout).
