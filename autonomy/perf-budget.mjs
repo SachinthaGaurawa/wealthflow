@@ -223,7 +223,10 @@ export const BUDGETS = {
     // replace two GPU-backed Chart.js canvases on mobile and async repaints are
     // coalesced until momentum scrolling is idle (measured 2,072,253). No new
     // script or request; this is a tightly ratcheted stability trade.
-    htmlBytes: 2_073_000,
+    // Raised for the post-cloud-sync mailbox refresh that prevents completed
+    // statements remaining visibly stuck as Waiting (measured 2,073,487).
+    // No new script or request; headroom remains below one kilobyte.
+    htmlBytes: 2_074_000,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

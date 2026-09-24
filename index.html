@@ -25795,6 +25795,12 @@ table.amort tbody tr { page-break-inside: avoid; }
                         notify(window.WFStatementCloud.friendly?.(reason) || 'Background statement sync could not start. Statements remain pending for retry.', 'warn');
                         return;
                     }
+                    /* The cloud worker mutates the durable mailbox rows, while
+                     * this card is backed by the last mailbox snapshot. Refresh
+                     * that cheap snapshot before reporting success so processed
+                     * or quarantined statements do not remain visibly stuck in
+                     * the old "Waiting" list until the next dashboard poll. */
+                    if (typeof _mailBootCheck === 'function') await _mailBootCheck();
                     if (Number(result.processed) > 0) notify(`${Number(result.processed)} statement${Number(result.processed) === 1 ? '' : 's'} processed securely in the background.`, 'success');
                     window.WFStatementCloud.openReview();
                 } catch (error) {
