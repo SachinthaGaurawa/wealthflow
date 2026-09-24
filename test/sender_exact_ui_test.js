@@ -14,6 +14,7 @@ function page(names = []) {
     const { document } = parseHTML('<html><body><div id="_sl_body"></div></body></html>');
     const context = vm.createContext({ document, window: { WFMailSenders: { normalizeSender } },
         currentUser: { uid: 'owner' }, requestAnimationFrame: fn => fn(), setTimeout: fn => fn(), notify: vi.fn(),
+        _mailBootCheck: vi.fn(async () => {}),
         _mailSyncState: { stage: 'idle', error: null }, renderMailSync: vi.fn(),
         _senders: { stage: 'idle', pending: [], approved: [], blocked: [], legacyApproved: [], busy: '', error: null },
         _discover: { stage: 'idle' }, DISCOVERY_MONTHS: 24, _coverageStrip: () => '', _bankHuntPanel: () => '',
@@ -70,6 +71,7 @@ describe('exact statement sender settings', () => {
         vm.runInContext('async ' + source('runMailSync'), p);
         await p.runMailSync();
         expect(p.window.WFStatementCloud.sync).toHaveBeenCalledOnce();
+        expect(p._mailBootCheck).toHaveBeenCalledOnce();
         expect(p.window.WFStatementCloud.openReview).toHaveBeenCalledOnce();
     });
     it('never falls back to a competing browser writer after cloud sync failure', async () => {

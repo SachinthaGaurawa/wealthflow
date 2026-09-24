@@ -208,10 +208,18 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         if (source) { claimed = source; sourceRef = doc.ref; break; }
     }
     if (!claimed) {
-        const expired = await mailRef.collection('items').where('status', '==', 'processing').where('leaseUntil', '<=', Date.now()).limit(50).get();
-        for (const doc of expired.docs) {
+        /* Combining status == processing with leaseUntil <= now requires a
+         * manually provisioned Firestore composite index.  That made a clean
+         * production project fail every Check now request before it could
+         * claim any work.  Fetch a bounded status-only page (covered by the
+         * automatic single-field index), then apply the lease predicate in
+         * memory.  claimSource transactionally re-checks both fields, so this
+         * remains safe when another worker renews or completes the lease. */
+        const processing = await mailRef.collection('items').where('status', '==', 'processing').limit(200).get();
+        const now = Date.now();
+        for (const doc of processing.docs.filter(entry => (Number(entry.data()?.leaseUntil) || 0) <= now)) {
             if (await retireUnapprovedSource(db, uid, mailRef, doc.ref)) continue;
-            const source = await claimSource(db, doc.ref, uid);
+            const source = await claimSource(db, doc.ref, uid, now);
             if (source) { claimed = source; sourceRef = doc.ref; break; }
         }
     }

@@ -23,14 +23,15 @@ function encryptedHtml(variant = 0) {
 }
 function database(initial) {
     const docs = new Map(Object.entries(initial));
+    const queryFilters = [];
     const snap = path => ({ id: path.split('/').at(-1), ref: ref(path), exists: docs.has(path), data: () => structuredClone(docs.get(path)) });
     const query = (path, filters = [], count = Infinity, after = '') => ({ query: true, path, filters, count, after,
         where(field, op, value) { return query(path, [...filters, [field, op, value]], count, after); },
         orderBy() { return this; }, limit(value) { return query(path, filters, value, after); }, startAfter(value) { return query(path, filters, count, value); },
-        doc(id) { return ref(path + '/' + id); }, async get() { return { docs: [...docs.keys()].filter(key => key.startsWith(path + '/') && key.split('/').length === path.split('/').length + 1 && key.split('/').at(-1) > after && filters.every(([field, op, value]) => op === '<=' ? docs.get(key)[field] <= value : docs.get(key)[field] === value)).sort().slice(0, count).map(snap) }; }
+        doc(id) { return ref(path + '/' + id); }, async get() { queryFilters.push(filters); return { docs: [...docs.keys()].filter(key => key.startsWith(path + '/') && key.split('/').length === path.split('/').length + 1 && key.split('/').at(-1) > after && filters.every(([field, op, value]) => op === '<=' ? docs.get(key)[field] <= value : docs.get(key)[field] === value)).sort().slice(0, count).map(snap) }; }
     });
     const ref = path => ({ path, id: path.split('/').at(-1), collection: name => query(path + '/' + name), get: async () => snap(path), set: async (value, opts) => docs.set(path, opts?.merge ? { ...docs.get(path), ...structuredClone(value) } : structuredClone(value)) });
-    return { docs, doc: ref, collection: path => query(path), async runTransaction(fn) {
+    return { docs, queryFilters, doc: ref, collection: path => query(path), async runTransaction(fn) {
         const writes = []; let writing = false;
         const result = await fn({ async get(r) { if (writing) throw Error('read-after-write'); return r.query ? r.get() : snap(r.path); }, set(r, value, opts) { writing = true; writes.push([r.path, structuredClone(value), opts]); } });
         for (const [path, value, opts] of writes) docs.set(path, opts?.merge ? { ...docs.get(path), ...value } : value);
@@ -154,6 +155,7 @@ describe('cold-server composed statement pipeline simulation', () => {
         expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 0 });
         expect(setup.db.docs.get(setup.sourcePath)).toMatchObject({ status: 'rejected_unapproved_sender', leaseToken: '', leaseUntil: 0 });
         expect(setup.args.f.mock.calls.some(([url]) => String(url).includes('/messages/'))).toBe(false);
+        expect(setup.db.queryFilters.every(filters => filters.length <= 1)).toBe(true);
     });
 });
 
