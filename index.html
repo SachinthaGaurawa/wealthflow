@@ -14883,13 +14883,50 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
+        async function _statementCloudEntries(entries) {
+            const out = Array.isArray(entries) ? entries.slice(0, 100) : [];
+            const seen = new Set(out.map((entry) => String(entry && entry.password || '')));
+            try {
+                const derived = typeof window.wfVaultDerivedPdfPasswords === 'function'
+                    ? await window.wfVaultDerivedPdfPasswords() : [];
+                for (const password of derived) {
+                    const value = String(password || '');
+                    if (!value || seen.has(value) || out.length >= 100) continue;
+                    seen.add(value);
+                    out.push({ id: `security-vault-${out.length}`, bank: '', label: 'Security vault PDF candidate', kind: 'derived', format: '', password: value });
+                }
+            } catch (_) {}
+            return out;
+        }
+
+        window._wfRefreshStatementCloudPasswords = async function (options = {}) {
+            let entries = [], bankEntriesKnown = !window.WFVault?.isSet();
+            try {
+                if (window.WFVault?.isUnlocked()) {
+                    const listed = await window.WFVault.list();
+                    if (listed?.ok) { entries = Array.isArray(listed.entries) ? listed.entries : []; bankEntriesKnown = true; }
+                }
+                const cloudEntries = await _statementCloudEntries(entries);
+                if (cloudEntries.length) return window.WFStatementCloud?.migrateUnlockedVault(cloudEntries);
+                if (options.removeIfEmpty === true && bankEntriesKnown) return window.WFStatementCloud?.remove();
+            } catch (_) {}
+            return false;
+        };
+
         async function _unlockStatementVaultFromPin(pin) {
             const v = window.WFVault;
-            if (!v || !v.isSet() || v.isUnlocked()) return { ok: true, skipped: true };
-            let result;
-            try { result = await v.unlock(pin, { cloud: window._wfBankVaultCloud }); }
+            let result = { ok: true, skipped: true, entries: [] };
+            try {
+                if (v && v.isSet() && !v.isUnlocked()) result = await v.unlock(pin, { cloud: window._wfBankVaultCloud });
+                else if (v && v.isUnlocked()) result = await v.list();
+            }
             catch (_) { return { ok: false, reason: 'vault-unavailable' }; }
-            try { if (result?.ok) await window.WFStatementCloud?.migrateUnlockedVault(result.entries); } catch (_) {}
+            try {
+                if (result?.ok) {
+                    const cloudEntries = await _statementCloudEntries(result.entries);
+                    if (cloudEntries.length) await window.WFStatementCloud?.migrateUnlockedVault(cloudEntries);
+                }
+            } catch (_) {}
             return result || { ok: false, reason: 'vault-unavailable' };
         }
 
@@ -15004,9 +15041,12 @@ try { window._wfStartDriveDurableAuth = _wfStartDriveDurableAuth; window._wfDisc
                     const decoyIndicator = $('decoyIndicator');
                     if (decoyIndicator) decoyIndicator.style.display = 'none';
                     resetAutoLockTimer();
-                    const _statementVault = await _unlockStatementVaultFromPin(pin);
                     launchApp();
-                    if (_statementVault?.ok === false) notify('Statement-password vault is still locked. Unlock it before statement sync.', 'warn');
+                    requestAnimationFrame(() => setTimeout(() => {
+                        _unlockStatementVaultFromPin(pin).then((_statementVault) => {
+                            if (_statementVault?.ok === false) notify('Statement-password vault is still locked. Unlock it before statement sync.', 'warn');
+                        }).catch(() => notify('Statement-password vault is still locked. Unlock it before statement sync.', 'warn'));
+                    }, 0));
                 } else {
                     buildDots('loginDots', 6, 0);
                     $('loginErr').textContent = '❌ Incorrect PIN. Please try again.';
@@ -22690,7 +22730,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             return String(email || '').replace(/[^a-z0-9]/g, '_');
         }
 
-        let _mailSyncState = { stage: 'idle', items: [], pending: 0, lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false, locked: 0 };
+        let _mailSyncState = { stage: 'idle', items: [], pending: 0, reviewStatements: 0, lastRun: 0, error: null, connected: null, filed: 0, sweeping: false, decided: false, locked: 0 };
 
         /* Icons, never emoji. wealthflow-icons.js renders real inline SVG that
          * inherits the chip's own colour through stroke="currentColor", so each
@@ -24297,14 +24337,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             const st = _mailSyncState;
             const connected = st.connected;
 
-            /* Unlike every other list in the app, this one grew straight from the
-             * array with no cap — a multi-year historical scan can leave hundreds
-             * of pending items here, each rebuilt into fresh markup on every page
-             * and every per-item status change during a sync run. Same fix as
-             * Expenses/Loans/etc: draw a bounded prefix, offer the rest on tap.
-             * Indices from the capped slice are still real indices into st.items
-             * (it is a prefix, never reordered), so the existing data-msadd/
-             * data-msblock/data-msdel handlers need no change. */
+            /* Bounded prefix; indices stay stable because the list is not reordered. */
             const _msCap = _wfCap('mailSync', st.items);
             const queueTotal = Math.max(Number(st.pending) || 0, st.items.length);
             const queueStrip = queueTotal ? `<div style="margin-top:12px;padding:9px 12px;border-radius:9px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.2);color:var(--text2);font-size:12px;line-height:1.5;">
@@ -24312,6 +24345,11 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ${st.stage === 'running'
                         ? 'Processing a memory-safe batch now; the remaining statements stay queued automatically.'
                         : 'Check now processes a safe batch; the rest remain visible and continue after each review.'}
+                </div>` : '';
+            const reviewTotal = Math.max(Number(st.reviewStatements) || 0, Number(window.WFStatementCloud?.getState?.().reviews) || 0);
+            const reviewStrip = reviewTotal ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:11px 13px;border-radius:10px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);color:var(--text2);font-size:12.5px;line-height:1.5;">
+                    <div style="flex:1;min-width:190px;"><b>${_wfEsc(String(reviewTotal))} statement${reviewTotal === 1 ? '' : 's'} processed and need review.</b> They are not waiting to be processed again.</div>
+                    <button class="btn btn-secondary btn-sm" id="_ms_reviews">Open reviews</button>
                 </div>` : '';
             const rows = _msCap.rows.map((it, i) => `
                 <div class="wf-sync-item">
@@ -24509,6 +24547,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                     ${lockStrip}
                     ${sweepStrip}
                     ${queueStrip}
+                    ${reviewStrip}
                     ${rows}
                     ${_scan.stage === 'running' ? `<div style="margin-top:10px;font-size:12px;color:var(--text3);">
                         Scanning ${_wfEsc(String(_scan.months))} months${_scan.label ? ' · ' + _wfEsc(_scan.label) : ''}${_scan.found ? ' · ' + _wfEsc(String(_scan.found)) + ' found' : ''}…
@@ -24531,6 +24570,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 try { triggerHaptic('light'); } catch (_) {}
                 openBankVault({ closeOnUnlock: true, onClose: _resumeMailSyncAfterVault });
             };
+            const rb = host.querySelector('#_ms_reviews');
+            if (rb) rb.onclick = () => window.WFStatementCloud?.openReview();
             /* REMOVING A STATEMENT IS THE ONE ACTION HERE THAT CANNOT BE UNDONE,
              * so it asks first and says exactly what it will do. The bills and
              * receipts already in the store are what this is for: #167 stopped
@@ -25672,14 +25713,7 @@ table.amort tbody tr { page-break-inside: avoid; }
         }
         window.openSenderList = openSenderList;
 
-        /* Why the last check could not be made, or null when it was made.
-         *
-         * THIS DISTINCTION IS THE POINT. The check used to return false for a
-         * failure and false for an unconnected mailbox, so the card said "Not
-         * connected" either way. When the endpoint was answering 500 to every
-         * request, that is the sentence it showed — calm, wrong, and impossible
-         * to tell apart from the truth. A check that could not be made is not an
-         * answer of "no". */
+        /* Why the last check could not be made, or null when it was made. */
         let _mailCheckError = null;
 
         /** Is there a connected mailbox for this user? */
@@ -25687,8 +25721,6 @@ table.amort tbody tr { page-break-inside: avoid; }
             try {
                 const r = await _gmailLink('GET');
                 if (!r) {
-                    /* No request was even attempted — nobody is signed in, so
-                     * there is no account whose mailbox this could be. */
                     _mailStatus = null; _mailCheckError = null;
                     return false;
                 }
@@ -25701,9 +25733,6 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
                 _mailStatus = r.body;
                 _mailCheckError = null;
-                /* `refresh_token` is what gmail-hook.js requires before it will do
-                 * anything, and the endpoint reports its presence as `connected`
-                 * without ever sending the value. */
                 return r.body.connected === true;
             } catch (e) {
                 _mailStatus = null;
@@ -25712,29 +25741,7 @@ table.amort tbody tr { page-break-inside: avoid; }
             }
         }
 
-        /**
-         * The cheap half of a sync, safe to run unattended — including
-         * automatically on boot, which runMailSync() itself must never be.
-         *
-         * THE OWNER'S REPORT: "auto checking වෙන්නේ නෑ අලුතින් bank
-         * statements ඇවිල්ලද කියලා" — the app never says whether anything
-         * new has arrived until the owner opens the card and presses
-         * "Check now" by hand. The comment on runMailSync() below explains
-         * why that button exists at all: on a phone, with a mailbox holding
-         * dozens of pending statements, runMailSync() decrypts and parses
-         * every one of them, synchronously, in a tight loop — and running
-         * THAT unattended on every app open was what repeatedly crashed
-         * Safari's WebContent process (#189).
-         *
-         * But asking "is there anything new" was never the expensive part.
-         * It costs the SAME network round trips runMailSync() itself makes
-         * first (_recentSweep, then a read of the store) — no PDF is ever
-         * opened, no vault key is ever asked for, nothing is decrypted or
-         * parsed, and nothing pops up a review screen. So THIS half can run
-         * on every boot: the owner sees what is waiting, named and dated,
-         * the moment the app opens, and the heavy half stays exactly where
-         * #189 put it back — one tap away, on demand, with the owner
-         * watching it happen. */
+        /* Cheap boot discovery only; parsing stays in the bounded sync path. */
         async function _mailBootCheck() {
             try {
                 _mailSyncState.connected = await _mailConnected();
@@ -25752,13 +25759,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                 _mailSyncState.filed = Number(r.body.filed) || 0;
                 _mailSyncState.decided = r.body.decided === true;
                 _mailSyncState.pending = Number.isFinite(Number(r.body.approvedPending)) ? Number(r.body.approvedPending) : docs.length;
-                /* Same shape runMailSync() populates below — every field the
-                 * card reads to draw a row (bank, filename, known, verdict,
-                 * from, domain) comes straight off the stored manifest, which
-                 * is written when the statement first arrives, long before
-                 * anything decrypts it. Only `stage` stays 'waiting': that is
-                 * the truth here, and it is what tells the owner there is
-                 * something to open runMailSync() for. */
+                _mailSyncState.reviewStatements = Number(r.body.needsReviewStatements) || 0;
+                _mailSyncState.locked = Number(r.body.passwordFailures) || 0;
                 _mailSyncState.items = docs.filter((d) => _mailKnownNow(d, _mailSyncState.decided)).map((d) => ({
                     key: d.id,
                     bank: d.manifest && d.manifest.bank,
@@ -32993,7 +32995,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                     return;
                 }
                 const unlockedEntries = Array.isArray(r.entries) ? r.entries : [];
-                try { await window.WFStatementCloud?.migrateUnlockedVault(unlockedEntries); }
+                try {
+                    const cloudEntries = await _statementCloudEntries(unlockedEntries);
+                    if (cloudEntries.length) await window.WFStatementCloud?.migrateUnlockedVault(cloudEntries);
+                }
                 catch (_) { notify('Vault unlocked; cloud migration will retry later.', 'warn'); }
                 try { triggerHaptic('success'); } catch (_) {}
                 if (opts.closeOnUnlock === true) { close(); return; }
@@ -33128,7 +33133,10 @@ Reply in 4-6 sentences. Highlight the biggest issue and one concrete next step. 
                         if (!r.ok) { notify('Could not save — secure storage refused the write', 'error'); return; }
                         try { triggerHaptic('success'); } catch (_) {}
                         let cloud;
-                        try { if (!window.WFStatementCloud) throw new Error('cloud-module-unavailable'); cloud = await window.WFStatementCloud.save(usable); }
+                        try {
+                            if (!window.WFStatementCloud) throw new Error('cloud-module-unavailable');
+                            cloud = await window.WFStatementCloud.save(await _statementCloudEntries(usable));
+                        }
                         catch (error) { notify('Saved encrypted on this device, but cloud vault saving failed. Background decryption is not enabled for these changes. Retry saving.', 'warn'); return; }
                         notify(cloud.localOnly ? `${usable.length} passwords encrypted on this device. Cloud processing is not configured.` : `${usable.length} passwords saved securely on this device and in your private cloud vault.`, 'success');
                         close();

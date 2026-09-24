@@ -83,12 +83,15 @@ describe('the reason code survives the trip to the screen', () => {
 });
 
 describe('a successful app login unlocks statement passwords for the session', () => {
-    it('derives the statement-vault key before launching the real dashboard', () => {
+    it('launches immediately and never waits for network-backed vault migration', () => {
         const login = fn('handlePinComplete');
-        const unlock = login.indexOf('_unlockStatementVaultFromPin(pin)');
-        const launch = login.indexOf('launchApp()', unlock);
+        const launch = login.indexOf('launchApp()');
+        const unlock = login.indexOf('_unlockStatementVaultFromPin(pin)', launch);
+        expect(launch).toBeGreaterThan(-1);
         expect(unlock).toBeGreaterThan(-1);
-        expect(launch).toBeGreaterThan(unlock);
+        expect(unlock).toBeGreaterThan(launch);
+        expect(login.slice(launch, unlock)).not.toMatch(/await\s+_unlockStatementVaultFromPin/);
+        expect(login).toContain('requestAnimationFrame(() => setTimeout(() =>');
     });
 
     it('uses the PIN only to unlock and never persists or uploads the PIN itself', () => {
@@ -100,7 +103,30 @@ describe('a successful app login unlocks statement passwords for the session', (
 
     it('migrates already-saved local entries into the encrypted autonomous cloud vault', () => {
         const helper = fn('_unlockStatementVaultFromPin');
-        expect(helper).toContain('window.WFStatementCloud?.migrateUnlockedVault(result.entries)');
+        expect(helper).toContain('_statementCloudEntries(result.entries)');
+        expect(helper).toContain('window.WFStatementCloud?.migrateUnlockedVault(cloudEntries)');
+    });
+
+    it('migrates security-vault candidates even when no separate bank-password vault exists', () => {
+        const helper = fn('_unlockStatementVaultFromPin');
+        expect(helper).not.toMatch(/!v\.isSet\(\).*return/);
+        expect(helper).toContain('_statementCloudEntries(result.entries)');
+        expect(helper).toContain('if (cloudEntries.length)');
+    });
+
+    it('adds only derived PDF candidates, not raw identity fields, to the autonomous vault', () => {
+        const helper = fn('_statementCloudEntries');
+        expect(helper).toContain('wfVaultDerivedPdfPasswords');
+        expect(helper).toContain("kind: 'derived'");
+        expect(helper).not.toMatch(/\.nic\b|\.dob\b|\.last4\b/);
+        expect(helper).toContain('out.length >= 100');
+    });
+
+    it('can refresh derived candidates after the identity vault changes without another login', () => {
+        expect(HTML).toContain('window._wfRefreshStatementCloudPasswords = async function');
+        const intelligence = fs.readFileSync(path.join(ROOT, 'wealthflow-intelligence.js'), 'utf8');
+        expect(intelligence).toContain('window._wfRefreshStatementCloudPasswords()');
+        expect(intelligence).toContain("window._wfRefreshStatementCloudPasswords({ removeIfEmpty: true })");
     });
 });
 
@@ -207,7 +233,8 @@ describe('the vault modal can tell its caller it closed', () => {
 
     it('an existing local vault is copied to the encrypted cloud vault on unlock', () => {
         const body = fn('openBankVault');
-        expect(body).toContain('window.WFStatementCloud?.migrateUnlockedVault(unlockedEntries)');
+        expect(body).toContain('_statementCloudEntries(unlockedEntries)');
+        expect(body).toContain('window.WFStatementCloud?.migrateUnlockedVault(cloudEntries)');
         expect(body).toContain('Array.isArray(r.entries)');
     });
 });

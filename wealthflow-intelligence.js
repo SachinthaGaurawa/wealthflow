@@ -163,6 +163,11 @@
                 await window._wfVaultCloud.push({ dk: _deviceSecret(), enc: record, updatedAt: record.updatedAt });
             }
         } catch (_) { /* saved locally regardless; syncs next time a connection exists */ }
+        try {
+            if (typeof window._wfRefreshStatementCloudPasswords === 'function') {
+                Promise.resolve(window._wfRefreshStatementCloudPasswords()).catch(function () {});
+            }
+        } catch (_) {}
         return true;
     }
 
@@ -187,6 +192,11 @@
         try {
             if (window._wfVaultCloud && typeof window._wfVaultCloud.push === 'function') {
                 window._wfVaultCloud.push({ dk: _deviceSecret(), enc: null, updatedAt: Date.now() }).catch(function () {});
+            }
+        } catch (_) {}
+        try {
+            if (typeof window._wfRefreshStatementCloudPasswords === 'function') {
+                Promise.resolve(window._wfRefreshStatementCloudPasswords({ removeIfEmpty: true })).catch(function () {});
             }
         } catch (_) {}
         return true;
@@ -448,6 +458,7 @@
      * EXPOSE
      * ========================================================================= */
     window.wfVault = { save: vaultSave, get: vaultGet, exists: vaultExists, clear: vaultClear, openModal: openVaultModal, syncFromCloud: _syncVaultFromCloud };
+    window.wfVaultDerivedPdfPasswords = async function () { return _pdfCandidatesFrom(await vaultGet()); };
     window.wfVaultPdfPasswords = vaultPdfPasswords;     // consumed by wealthflow-ai-v4.js PDF loader
     window.wfTrySemanticAllocate = trySemanticAllocate;  // consumed by wealthflow-autonomous.js
     window.wfMatchGoalOrLoan = matchGoalOrLoan;

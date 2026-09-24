@@ -216,6 +216,24 @@ describe('limit/offset page through the backlog instead of returning it all at o
         expect(seen.body.retiredNonStatements).toBe(1);
     });
 
+    it('does not re-queue statements already processed into Needs Review', async () => {
+        store('review-password', { status: 'needs_review', reviewReason: 'PASSWORD_FAILED' });
+        store('review-row', { status: 'needs_review', reviewReason: 'ai-consensus-unavailable' });
+        store('queued', { status: 'pending' });
+        const seen = await list('&limit=10');
+        expect(ids(seen.body)).toEqual(['queued']);
+        expect(seen.body.pending).toBe(1);
+        expect(seen.body.needsReviewStatements).toBe(2);
+        expect(seen.body.passwordFailures).toBe(1);
+    });
+
+    it('does not re-queue a statement review the owner dismissed', async () => {
+        store('dismissed', { status: 'dismissed' });
+        const seen = await list('&limit=10');
+        expect(seen.body.items).toEqual([]);
+        expect(seen.body.pending).toBe(0);
+    });
+
     it('each page still carries the full attachment payload for its own items, not just metadata', async () => {
         store('a0');
         const seen = await list('&limit=1');
