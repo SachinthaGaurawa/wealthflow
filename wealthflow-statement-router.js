@@ -101,8 +101,9 @@ function bestNameMatch(desc, list) {
 }
 
 function isCreditCardRow(row, ctx) {
-  if (ctx.statementType === 'credit_card') return true;
-  if (ctx.statementType === 'bank_account' || ctx.statementType === 'savings') return false;
+  const statementType = norm(ctx.statementType).replace(/\s+/g, '_');
+  if (statementType === 'credit_card') return true;
+  if (statementType === 'bank_account' || statementType === 'savings') return false;
   const last4 = row.card_last4 || ctx.card_last4;
   const entry = last4 && ctx.cardRegistry ? ctx.cardRegistry[last4] : null;
   return entry ? entry.type === 'credit_card' : false;

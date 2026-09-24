@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { validScheduleSecret, invokeBoard, classifySlice, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures } from '../statement-sync.js';
+import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 import fs from 'node:fs';
@@ -44,6 +44,15 @@ describe('statement worker authorization and board', () => {
             expect((await classifySlice([row], {}, { board }))[0].verified).toBe(false);
         }
         expect((await classifySlice([row], {}, { board: async () => good({ decisions: [{ ...decision, index: 1 }] }) }))[0].verified).toBe(false);
+    });
+    it('falls back only to deterministic generic routes when the board is unavailable', async () => {
+        const unavailable = async () => { throw new Error('provider deadline'); };
+        expect(await classifySlice([row], { statementType: 'bank_account' }, { board: unavailable })).toEqual([
+            { module: 'expenses', category: 'Other', allocationId: '', verified: true, deterministic: true }
+        ]);
+        expect(deterministicDecision({ ...row, needsReview: true }, { statementType: 'bank_account' })).toEqual({ verified: false, reason: 'ai-consensus-unavailable' });
+        expect(deterministicDecision({ ...row, narration: 'EASY PAYMENT 4/24' }, { statementType: 'credit_card' })).toEqual({ verified: false, reason: 'ai-consensus-unavailable' });
+        expect(deterministicDecision({ ...row, direction: 'credit', narration: 'PAYMENT THANK YOU' }, { statementType: 'credit_card' })).toMatchObject({ module: 'ccPayments', verified: true });
     });
     it('never claims an active lease or another owner source', async () => {
         let data = { status: 'pending', uid: 'u', leaseUntil: 1001 };
