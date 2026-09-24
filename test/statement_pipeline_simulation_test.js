@@ -99,13 +99,13 @@ describe('cold-server composed statement pipeline simulation', () => {
         expect(await runStatementSync(setup.args)).toMatchObject({ processed: 0 });
         expect(setup.db.docs.get('users/u').cconetime).toHaveLength(1);
     });
-    it('quarantines disagreement without financial writes', async () => {
+    it('uses deterministic routing when the external board is unavailable', async () => {
         const setup = simulation({ disagree: true });
-        expect(await runStatementSync(setup.args)).toMatchObject({ status: 'needs_review', review: 2 });
-        expect(setup.db.docs.get('users/u').cconetime).toEqual([]);
-        expect(setup.db.docs.get('users/u').ccPayments).toEqual([]);
-        expect(setup.db.docs.get(setup.sourcePath).filed).toBe(false);
-        expect([...setup.db.docs.keys()].filter(path => path.startsWith('users/u/statementReview/'))).toHaveLength(2);
+        expect(await runStatementSync(setup.args)).toMatchObject({ status: 'filed', filed: 2 });
+        expect(setup.db.docs.get('users/u').cconetime).toHaveLength(1);
+        expect(setup.db.docs.get('users/u').ccPayments).toHaveLength(1);
+        expect(setup.db.docs.get(setup.sourcePath).filed).toBe(true);
+        expect([...setup.db.docs.keys()].filter(path => path.startsWith('users/u/statementReview/'))).toHaveLength(0);
     });
     it('retains a retryable source after transient attachment transport failure', async () => {
         const setup = simulation({ unavailable: true });
