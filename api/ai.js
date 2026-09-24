@@ -403,8 +403,9 @@ export default async function handler(req, res) {
         ];
     }
 
-    // A missing credential is not a configured board member. A configured
-    // provider that fails remains in the roster and prevents unanimity.
+    // A missing credential is not a configured board member. Runtime failures
+    // remain visible in the audit roster, but spare configured engines can
+    // replace them once ten valid independent answers still agree exactly.
     const configured = { Gemini: geminiKey, DeepSeek: deepseekKey, Groq: groqKey, Ollama: ollamaKey,
         Anthropic: anthropicKey, xAI: xaiKey, Mistral: mistralKey, Together: togetherKey,
         Fireworks: fireworksKey, OpenRouter: openrouterKey, Cerebras: cerebrasKey,
@@ -447,7 +448,7 @@ export default async function handler(req, res) {
     // every success, failure and timeout in the decision record.
     const results = await Promise.all(engines.map(run));
     if (mode === 'unanimous') {
-        const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 10 });
+        const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 10, allowUnavailable: true });
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
         return res.status(decision.unanimous ? 200 : 422).json({

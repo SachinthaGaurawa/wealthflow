@@ -508,7 +508,15 @@ export function unanimousDecision(results, opts = {}) {
     }
     const unexpected = all.some(r => !r || !roster.includes(r.name));
     const agrees = values.length > 0 && values.every(v => v.key === values[0].key);
-    const unanimous = Boolean(rosterValid && !unexpected && !failed.length && !invalid.length && values.length === roster.length && agrees);
+    /* Availability is not a vote. A timed-out provider must not veto ten other
+     * independent engines that returned the exact same typed decision. Failed
+     * or malformed members are replaced by the remaining configured roster;
+     * an actual dissent still fails closed because `agrees` covers every valid
+     * answer, not merely the largest cluster. */
+    const allowUnavailable = opts.allowUnavailable === true;
+    const quorumReady = values.length >= minimumProviders;
+    const complete = allowUnavailable ? quorumReady : (!failed.length && !invalid.length && values.length === roster.length);
+    const unanimous = Boolean(rosterValid && !unexpected && complete && agrees);
     return {
         reply: unanimous ? JSON.stringify(values[0].value) : null,
         provider: unanimous ? 'parallel-unanimous-board' : null,
@@ -516,7 +524,7 @@ export function unanimousDecision(results, opts = {}) {
         unanimous, needsReview: !unanimous, minimumProviders, expected: roster, answered, failed, invalid,
         reason: unanimous ? null : !rosterValid ? 'insufficient_or_invalid_roster' : unexpected ? 'unexpected_provider' : failed.length ? 'provider_unavailable' : invalid.length ? 'invalid_response' : 'provider_disagreement',
         fields: unanimous ? values[0].value : null,
-        corroboration: { agreed: unanimous ? roster.length : 0, of: roster.length, score: unanimous ? 1 : 0,
+        corroboration: { agreed: unanimous ? values.length : 0, of: roster.length, score: unanimous ? values.length / roster.length : 0,
             dissent: agrees ? [] : values.map(v => ({ name: v.result.name })), nearMisses: [], numericConflict: !agrees },
     };
 }

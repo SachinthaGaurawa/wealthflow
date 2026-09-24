@@ -94,7 +94,7 @@ export const migrateUnlockedVault=entries=>Array.isArray(entries) && entries.len
 async function download(entry) {
     try {
         const sourceId = String(entry.sourcePath || '').split('/').pop();
-        const result = await request('/api/gmail-link?items=1');
+        const result = await request('/api/gmail-link?items=1&source=' + encodeURIComponent(sourceId));
         const item = result.items?.find(i => i.id === sourceId);
         if (!item) throw new Error('source-not-available');
         const encoded = item.manifest?.d || (item.parts || []).sort((a, b) => a.i - b.i).map(p => p.d).join('');

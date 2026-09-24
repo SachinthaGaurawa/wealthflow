@@ -91,4 +91,18 @@ describe('parallel unanimous endpoint', () => {
         expect(res.body.failed).toEqual(['SambaNova']); expect(res.body.reason).toBe('provider_unavailable');
         expect(res.body.reply).toBeNull(); expect(res.body.trustworthy).toBe(false);
     });
+    it('replaces one unavailable engine with an agreeing spare instead of failing the financial decision', async () => {
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
+        vi.stubGlobal('fetch', vi.fn(async url => {
+            if (url.includes('sambanova')) throw new Error('offline');
+            return { ok: true, json: async () => url.includes('googleapis')
+                ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
+                : { choices: [{ message: { content: '{"approved":true}' } }] } };
+        }));
+        const res = response(); await handler(request, res);
+        expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
+        expect(res.body.failed).toEqual(['SambaNova']);
+        expect(res.body.answered).toHaveLength(10);
+        expect(res.body.corroboration).toMatchObject({ agreed: 10, of: 11 });
+    });
 });

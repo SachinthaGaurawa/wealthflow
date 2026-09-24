@@ -520,9 +520,14 @@ export default async function handler(req, res) {
              * peak memory to one page's payloads instead of the whole queue's. */
             const limitMatch = /[?&]limit=(\d+)/.exec(String(req.url || ''));
             const offsetMatch = /[?&]offset=(\d+)/.exec(String(req.url || ''));
+            const sourceMatch = /[?&]source=([^&]+)/.exec(String(req.url || ''));
+            const sourceId = sourceMatch ? decodeURIComponent(sourceMatch[1]) : '';
             const limit = limitMatch ? Math.min(ITEMS_RETURN_MAX, Math.max(1, parseInt(limitMatch[1], 10))) : ITEMS_RETURN_MAX;
             const offset = offsetMatch ? Math.max(0, parseInt(offsetMatch[1], 10)) : 0;
-            const keep = pending.slice(offset, offset + limit);
+            /* Review download asks for one exact, owner-scoped source. It must
+             * not put Needs Review back into the processing queue or return a
+             * page of unrelated financial attachments. */
+            const keep = sourceId ? reviewStatements.filter(row => row.id === sourceId).slice(0, 1) : pending.slice(offset, offset + limit);
 
             const items = [];
             for (const row of keep) {

@@ -227,6 +227,15 @@ describe('limit/offset page through the backlog instead of returning it all at o
         expect(seen.body.passwordFailures).toBe(1);
     });
 
+    it('returns one exact review source for Download original without re-queueing it', async () => {
+        store('review-row', { status: 'needs_review', reviewReason: 'ai-consensus-unavailable' });
+        store('other-review', { status: 'needs_review', reviewReason: 'invalid-transaction' });
+        const seen = await call({ url: '/api/gmail-link?items=1&source=review-row' });
+        expect(ids(seen.body)).toEqual(['review-row']);
+        expect(seen.body.items[0]).toHaveProperty('parts');
+        expect(seen.body.pending).toBe(0);
+    });
+
     it('does not re-queue a statement review the owner dismissed', async () => {
         store('dismissed', { status: 'dismissed' });
         const seen = await list('&limit=10');
