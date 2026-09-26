@@ -5,6 +5,18 @@ import { windowFor } from '../gmail-scan.mjs';
 
 describe('exact sender intake boundary', () => {
     const entry = { id: 'statement@hnb.lk', status: 'approved' };
+    const mail = (subject, filename, from = entry.id) => ({
+        id: 'm-' + filename,
+        internalDate: '1788000000000',
+        payload: {
+            headers: [
+                { name: 'From', value: from },
+                { name: 'Subject', value: subject },
+                { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@hnb.lk' },
+            ],
+            parts: [{ filename, mimeType: 'application/pdf', body: { attachmentId: 'a', size: 500 } }],
+        },
+    });
     it('legacy domains and wildcards never authorize an import or a query', () => {
         for (const id of ['hnb.lk', '@hnb.lk', '*.hnb.lk', '*@hnb.lk', 'x@hnb.lk OR from:evil.example']) {
             const list = [{ id, status: 'approved' }];
@@ -38,6 +50,25 @@ describe('exact sender intake boundary', () => {
         const plan = planMessage(message, policyFrom([entry]));
         expect(plan.ok).toBe(false);
         expect(plan.items).toBeUndefined();
+    });
+    it('rejects bills, receipts and invoices even from the exact approved address', () => {
+        for (const [subject, filename] of [
+            ['Your utility bill is ready', 'utility-bill.pdf'],
+            ['Payment confirmation', 'Receipt-2402-5154-7274.pdf'],
+            ['Document attached', 'invoice-113674.pdf'],
+            ['Your monthly payslip', 'salary-slip.pdf'],
+        ]) {
+            const plan = planMessage(mail(subject, filename), policyFrom([entry]));
+            expect(plan.ok).toBe(false);
+            expect(plan.reason).toBe('the-attachment-is-not-a-bank-statement');
+            expect(plan.items).toBeUndefined();
+        }
+    });
+    it('allows a real statement name from the exact approved address', () => {
+        const plan = planMessage(mail('Your monthly e-statement', 'account-statement.pdf'), policyFrom([entry]));
+        expect(plan.ok).toBe(true);
+        expect(plan.items).toHaveLength(1);
+        expect(plan.items[0].approved).toBe(true);
     });
     it('an ordinary scan with no valid whitelist cannot query the mailbox', () => {
         const params = { months: 1, index: 0, now: Date.UTC(2026, 8, 12) };
