@@ -25797,6 +25797,8 @@ table.amort tbody tr { page-break-inside: avoid; }
                         notify(window.WFStatementCloud.friendly?.(reason) || 'Background statement sync could not start. Statements remain pending for retry.', 'warn');
                         return;
                     }
+                    /* Cloud success is also a completed mailbox scan. */
+                    if (typeof _markFirstScan === 'function') _markFirstScan();
                     /* The cloud worker mutates the durable mailbox rows, while
                      * this card is backed by the last mailbox snapshot. Refresh
                      * that cheap snapshot before reporting success so processed
