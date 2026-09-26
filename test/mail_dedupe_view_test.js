@@ -227,6 +227,7 @@ describe('a connected mailbox scans its own history once', () => {
         /* "No statements waiting" said the looking had been done. It had not. */
         expect(HTML).not.toContain('Connected. No statements waiting');
         expect(HTML).toContain('has not been scanned yet');
+        expect(HTML).toMatch(/result\.ok\s*!==\s*true[\s\S]*?_markFirstScan\(\)[\s\S]*?_mailBootCheck/);
     });
 
     it('scans a real span of history, not one month', () => {
