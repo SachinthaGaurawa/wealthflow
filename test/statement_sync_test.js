@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures } from '../statement-sync.js';
+import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, repairCategoriesInUser } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 import fs from 'node:fs';
@@ -57,6 +57,40 @@ describe('statement worker authorization and board', () => {
         expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'credit_card' })).toMatchObject({ module: 'cconetime', verified: true });
         expect(deterministicDecision({ ...row, narration: 'OUTWARD CEFT TRANSFER SISTER' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', category: 'Transfer', verified: true });
         expect(deterministicDecision({ ...row, direction: 'credit', narration: 'TRANSFER CREDIT-MOBILEBANKING' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', verified: true });
+    });
+    it('uses deterministic financial evidence instead of flattening known rows to Other', async () => {
+        const unavailable = async () => { throw new Error('offline'); };
+        const samples = [
+            ['POS TRANSACTION KEELLS SUPER KURUNEGALA', 'Groceries'],
+            ['CEFT CHARGES TRANSPORT', 'Bank Charges'],
+            ['POS TRANSACTION DIALOG AXIATA PLC', 'Telecom'],
+            ['ATM WITHDRAWAL KURUNEGALA CRM', 'Cash Withdrawal'],
+            ['POS TRANSACTION OISHII BURGER', 'Dining'],
+        ];
+        for (const [narration, category] of samples) {
+            expect((await classifySlice([{ ...row, narration }], { statementType: 'bank_account' }, { board: unavailable }))[0])
+                .toMatchObject({ module: 'expenses', category, verified: true, deterministic: true });
+        }
+        expect(deterministicDecision({ ...row, direction: 'credit', narration: 'MONTHLY SALARY CREDIT' }, { statementType: 'bank_account' }))
+            .toMatchObject({ module: 'incomeRecv', category: 'Salary', verified: true });
+    });
+    it('overrules a unanimous but direction-conflicting or generic AI classification', async () => {
+        const bad = { index: 0, module: 'incomeRecv', category: 'Other', allocationId: '' };
+        const board = vi.fn().mockResolvedValueOnce(good({ decisions: [bad] })).mockResolvedValueOnce(good({ approved: true }));
+        expect(await classifySlice([{ ...row, narration: 'POS TRANSACTION KEELLS SUPER' }], { statementType: 'bank_account' }, { board }))
+            .toEqual([{ module: 'expenses', category: 'Groceries', allocationId: '', verified: true, deterministic: true }]);
+    });
+    it('self-heals only generic statement categories with strong evidence', () => {
+        const original = { expenses: [
+            { id: 'a', source: 'statement', desc: 'POS TRANSACTION KEELLS SUPER', cat: 'Other' },
+            { id: 'b', source: 'statement', desc: 'UNKNOWN MERCHANT', cat: 'Other' },
+            { id: 'c', source: 'manual', desc: 'KEELLS', cat: 'Other' },
+        ], incomeRecv: [{ id: 'd', source: 'statement', name: 'MONTHLY SALARY', type: 'Income' }] };
+        const result = repairCategoriesInUser(original);
+        expect(result).toMatchObject({ expenses: 1, income: 1, total: 2 });
+        expect(result.user.expenses.map(x => x.cat)).toEqual(['Groceries', 'Other', 'Other']);
+        expect(result.user.incomeRecv[0].type).toBe('Salary');
+        expect(original.expenses[0].cat).toBe('Other');
     });
     it('never claims an active lease or another owner source', async () => {
         let data = { status: 'pending', uid: 'u', leaseUntil: 1001 };

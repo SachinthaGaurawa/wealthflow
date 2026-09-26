@@ -1,26 +1,3 @@
-// =============================================================================
-// WealthFlow — Statement Router  (drop-in classifier)
-//
-// WHY THIS EXISTS
-// Today every uploaded statement row is funnelled through _showCCReviewModal()
-// in index.html, whose Save button literally pushes 100% of rows into the
-// `cconetime` array ("Save selected to CC One-Time"). That is the entire reason
-// every upload lands in CC One-Time. This module is the missing piece: a single
-// pure function that looks at each row and decides which of your 6 tabs it
-// belongs in, with a confidence score and a "needs review" flag for the
-// Quarantine Zone.
-//
-// It is dependency-free and runs in the browser AND in Node (for tests).
-// It does NOT call any external API. Web-search enrichment (Tavily) and the
-// EODHD market lookups are deliberately kept as OPTIONAL async hooks you layer
-// on top — see `enrich` in classifyStatement(). Routing must work offline first.
-//
-// Modules it can return:
-//   income | expenses | subscriptions | cconetime | ccinstall | loans
-//   cc_payment  (a payment INTO a credit card → should trigger FIFO reconcile)
-//   goal_alloc  (matched one of the user's savings targets by name)
-// =============================================================================
-
 // ── detection vocab (Sri Lanka–aware) ──────────────────────────────────────
 const RE = {
   installment: /\b(instal+ment|easy\s*payment|flexi[\s-]*pay|e[\s-]?z\s*cash|emi|monthly\s*plan|0%\s*plan|\d{1,2}\s*(?:\/|of)\s*\d{1,2})\b/i,
@@ -33,6 +10,47 @@ const RE = {
   salary:     /\b(salary|payroll|wages|stipend|pension|dividend|interest\s*credit|profit)\b/i,
 };
 
+// Deterministic categories: unknown merchants remain Other.
+const EXPENSE_CATEGORY_RULES = [
+  ['Bank Charges', /\b(ceft\w*\s+charges?|slips?\s+charges?|bank\s+charges?|atm\s+(?:withdrawal\s+)?(?:fee|charge)|withdrawal\s+(?:fee|charge)|service\s+(?:fee|charge)|stamp\s+duty|debit\s+tax|annual\s+fee|late\s+(?:payment\s+)?fee|finance\s+charge|sms\s+(?:alert|charge)|maintenance\s+fee|ledger\s+fee)\b/i],
+  ['Cash Withdrawal', /\b(atm\s+(?:withdrawal|wtd|cash)|cash\s+(?:withdrawal|withdraw|wd))\b/i],
+  ['Groceries', /\b(keells?|cargills|food\s*city|arpico|glomark|laugfs\s+super|sathosa|spar|super\s*market|supermarket|grocery|mini\s*mart|provision)\b/i],
+  ['Dining', /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|mcdonald|dominos|dinemore|barista|spicy\s+food|food\s+court|canteen|grill|ice\s+cream)\b/i],
+  ['Telecom', /\b(dialog(?:\s+axiata)?|mobitel|slt(?:\s+mobitel)?|hutch|airtel|lanka\s*bell|reload|recharge|airtime|phone\s+bill)\b/i],
+  ['Utilities', /\b(ceb|leco|ceylon\s+electricity|electricity|water\s+board|nwsdb|water\s+bill|litro|laugfs\s+gas|gas\s+bill)\b/i],
+  ['Fuel', /\b(fuel|petrol|diesel|filling\s+station|ceypetco|lanka\s+ioc|sinopec|petroleum)\b/i],
+  ['Transport', /\b(uber|pick\s*me|taxi|railway|parking|toll|expressway|interchange|\brda\b|highway|car\s+wash|vehicle\s+service|transport)\b/i],
+  ['Health', /\b(pharmacy|hospital|medical|clinic|channelling|doc990|nawaloka|asiri|hemas|durdans|healthguard|dental|laboratory)\b/i],
+  ['Education', /\b(school|tuition|university|campus|course|institute|academy|college|book\s*(?:shop|store)|sarasavi|vijitha\s+yapa)\b/i],
+  ['Insurance', /\b(insurance|assurance|takaful|policy\s+premium|aia|ceylinco|allianz|janashakthi|fairfirst)\b/i],
+  ['Government', /\b(inland\s+revenue|motor\s+traffic|immigration|passport|municipal\s+council|government|license\s+fee)\b/i],
+  ['Shopping', /\b(daraz|amazon|aliexpress|odel|nolimit|fashion|clothing|textiles?|tex|singer|abans|softlogic|damro|electronics|furniture|hardware|gift\s+shop)\b/i],
+  ['Subscriptions', /\b(github|openai|chatgpt|adobe|microsoft\s*365|office\s*365|notion|canva|dropbox|vercel|cloudflare)\b/i],
+  ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube\s+premium|playstation|xbox|concert|bowling)\b/i],
+];
+
+export function expenseCategoryFor(row) {
+  const desc = descOf(row);
+  for (const [category, pattern] of EXPENSE_CATEGORY_RULES) if (pattern.test(desc)) return category;
+  return 'Other';
+}
+
+export function incomeCategoryFor(row) {
+  const desc = descOf(row);
+  const rules = [
+    ['Salary', /\b(salary|payroll|wages|emolument|stipend|net\s+pay)\b/i],
+    ['Interest', /\b(interest|int\s+cr|fd\s+interest|savings\s+interest)\b/i],
+    ['Dividend', /\b(dividend|div\s+cr)\b/i],
+    ['Rent', /\b(rent|rental|lease\s+income)\b/i],
+    ['Business', /\b(invoice|sales|business|merchant\s+settlement|freelance|consultancy|professional\s+fee|royalty)\b/i],
+    ['Pension', /\b(pension|epf|etf|gratuity)\b/i],
+    ['Gift', /\b(gift|donation|present)\b/i],
+    ['Refund', /\b(refund|reversal|chargeback|cashback|reimburse)\b/i],
+  ];
+  for (const [category, pattern] of rules) if (pattern.test(desc)) return category;
+  return 'Other';
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 
@@ -42,23 +60,6 @@ function toNumber(a) {
   return isNaN(n) ? 0 : n;
 }
 
-// The narration field, whatever the producer called it.
-//
-// WHY THIS EXISTS: wealthflow-statement-parser.js emits `narration`, and this
-// module only ever read `description`. Nothing was broken today because nothing
-// in index.html loads this file — it is an ES module and the app loads plain
-// scripts — but that made it a loaded gun rather than a safe one. Wired in as
-// it was, EVERY parsed row would arrive with `description === undefined`, so:
-//
-//   • desc would be '', which trips the "unreadable vendor" guard at the bottom
-//     of routeRow() and clamps confidence to 0.4 — below the 0.75 threshold, so
-//     every single row would be flagged needsReview;
-//   • no subscription, fee, fuel or cash-advance pattern could ever match, so
-//     every card charge would fall to the generic 'purchase' branch;
-//   • bestNameMatch() would match no savings target and no loan, so automatic
-//     loan and goal allocation would silently never fire.
-//
-// Reading both names costs one function call and removes the trap.
 function descOf(row) {
   if (!row) return '';
   return row.description != null && row.description !== '' ? row.description : (row.narration || '');
@@ -119,7 +120,7 @@ export function routeRow(row, ctx = {}) {
   const targetHit = bestNameMatch(rawDesc, ctx.targets);
   const loanHit   = bestNameMatch(rawDesc, ctx.loans);
 
-  let module, tabLabel, confidence, subtype = null, allocation = null;
+  let module, tabLabel, confidence, subtype = null, allocation = null, category = null;
 
   if (dir === 'credit') {
     // The account type is stronger evidence than narration. A card-side credit
@@ -127,18 +128,18 @@ export function routeRow(row, ctx = {}) {
     if (onCard || RE.ccPayment.test(desc)) {
       module = 'cc_payment'; tabLabel = 'CC Payment → FIFO reconcile'; confidence = 0.92;
     } else if (RE.salary.test(desc)) {
-      module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.9;
+      module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.9; category = incomeCategoryFor(row);
     } else if (loanHit) {
       module = 'loans'; tabLabel = 'Loan Repayment'; confidence = 0.6 + 0.35 * loanHit.score; allocation = loanHit;
     } else if (targetHit) {
       module = 'goal_alloc'; tabLabel = `Savings Target: ${targetHit.name}`; confidence = 0.6 + 0.35 * targetHit.score; allocation = targetHit;
     } else {
-      module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.7;
+      module = 'income'; tabLabel = 'Income & Investments'; confidence = 0.7; category = incomeCategoryFor(row);
     }
   } else { // debit
     if (targetHit)      { module = 'goal_alloc'; tabLabel = `Savings Target: ${targetHit.name}`; confidence = 0.6 + 0.35 * targetHit.score; allocation = targetHit; }
     else if (loanHit)   { module = 'loans'; tabLabel = 'Loan Repayment'; confidence = 0.6 + 0.35 * loanHit.score; allocation = loanHit; }
-    else if (RE.subscription.test(desc)) { module = 'subscriptions'; tabLabel = 'Subscriptions'; confidence = 0.9; }
+    else if (RE.subscription.test(desc)) { module = 'subscriptions'; tabLabel = 'Subscriptions'; confidence = 0.9; category = expenseCategoryFor(row); }
     else if (onCard) {
       if (RE.installment.test(desc))      { module = 'ccinstall'; tabLabel = 'CC Installments'; confidence = 0.85; }
       else if (RE.cashAdvance.test(desc)) { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'cash_advance'; confidence = 0.85; }
@@ -146,7 +147,7 @@ export function routeRow(row, ctx = {}) {
       else if (RE.fee.test(desc))         { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fee'; confidence = 0.8; }
       else                                { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'purchase'; confidence = 0.7; }
     } else {
-      module = 'expenses'; tabLabel = 'Monthly Expenses'; confidence = 0.7;
+      module = 'expenses'; tabLabel = 'Monthly Expenses'; confidence = 0.7; category = expenseCategoryFor(row);
     }
   }
 
@@ -160,7 +161,7 @@ export function routeRow(row, ctx = {}) {
   // nothing of that, so without this an unverified row could route with 0.9.
   const upstreamDoubt = row.needsReview === true || (row.direction !== undefined && !row.direction);
   return {
-    module, tabLabel, subtype, allocation,
+    module, tabLabel, subtype, allocation, category,
     confidence: Math.round(confidence * 100) / 100,
     needsReview: confidence < threshold || upstreamDoubt,
     fields: { date: row.date, desc: rawDesc, amount, ref: row.ref || null, dir },
@@ -184,24 +185,6 @@ export async function hashRow(row, ctx = {}) {
   return createHash('sha256').update(tuple).digest('hex');
 }
 
-// ── which OCCURRENCE of an identity a row is ────────────────────────────────
-//
-// hashRow answers "which transaction is this". It deliberately does NOT carry a
-// time, because its main job is to recognise the SAME transaction arriving from
-// two sources — a statement row and the entry the owner typed in by hand months
-// ago. A hand-typed entry has a date and no time. Put the time in the identity
-// and the two stop matching, which defeats the one thing cross-source dedup
-// exists for.
-//
-// But "same identity" is not the same claim as "same event". Two coffees at the
-// same shop, same price, same day, no reference printed — that is one identity
-// and two real transactions, and treating the second as a duplicate deletes
-// money the owner actually spent. Against a whole year of backfilled statements
-// that is not an edge case, it is Tuesday.
-//
-// So the time is used HERE instead: as the thing that tells two occurrences of
-// one identity apart, inside a single statement. A reference number does the
-// same job better when the bank prints one.
 export function occurrenceKey(row) {
   const ref = String((row && row.ref) || '').trim().toUpperCase();
   if (ref) return 'R:' + ref;
@@ -210,23 +193,6 @@ export function occurrenceKey(row) {
   return m ? 'T:' + m[0] : null;
 }
 
-// ── classify a whole statement + dedup against what's already stored ────────
-//   existingHashes: Set<string> of hashes already in the DB (manual + email)
-//   enrich:        optional async (row, routed) => routed  // e.g. Tavily lookup
-//
-// TWO DIFFERENT QUESTIONS, ANSWERED DIFFERENTLY
-//
-//   Against existingHashes — the ledger, including everything typed in by hand —
-//   an identity that is already stored is a duplicate, full stop. The stored
-//   copy may carry no reference and no time, so the hash is all there is to
-//   match on, and matching on it is exactly the point.
-//
-//   Within ONE statement, an identity seen twice is only a duplicate when both
-//   rows carry the SAME occurrence key. A bank does not print one transaction
-//   twice under one reference; it does print two identical purchases. Without a
-//   key to tell them apart there is no evidence of duplication, and silently
-//   dropping the second is worse than keeping a duplicate — a duplicate is
-//   visible and removable, a deleted transaction is neither.
 export async function classifyStatement({ rows = [], existingHashes = new Set(), enrich = null, ...ctx }) {
   const out = [];
   const stored = existingHashes instanceof Set ? existingHashes : new Set(existingHashes || []);
@@ -256,10 +222,6 @@ export async function classifyStatement({ rows = [], existingHashes = new Set(),
 
 const API = { routeRow, hashRow, occurrenceKey, classifyStatement };
 
-/* The page reaches this through window, the same way every other wired module
- * here does; the ESM export is what the tests import. Both spellings, one
- * object. Added when Statement Sync became the first caller to need it from
- * index.html — before that the module was imported only by tests. */
 if (typeof window !== 'undefined') window.WFStatementRouter = API;
 
 export default API;

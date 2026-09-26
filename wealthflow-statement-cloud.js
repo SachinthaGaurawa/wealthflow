@@ -121,7 +121,19 @@ async function mapLayout(entry) {
             } catch { say('Cloud layout saving was not completed. The original statement remains pending.', 'error'); }
             openReview();
         });
-    } catch { say('The original statement could not be opened for mapping. Its source remains securely pending; check your saved cloud passwords.', 'error'); }
+    } catch (error) {
+        const messages = {
+            PASSWORD_FAILED: 'The saved passwords did not unlock this statement. Add the exact PDF password to the statement vault, then retry.',
+            NO_VAULT_KEYS: 'No statement password is saved in the cloud vault. Save the PDF password, then retry mapping.',
+            'statement-message-missing': 'The original Gmail message reference is missing. Download the statement again or dismiss this orphaned review.',
+            'statement-message-deleted': 'The original Gmail message was deleted, so this old review cannot be mapped. Upload the statement again or dismiss it.',
+            'statement-attachment-identity-mismatch': 'The Gmail message no longer contains the exact attachment recorded by this review. Upload that statement again or dismiss this stale review.',
+            'statement-attachment-content-mismatch': 'The attachment now differs from the file originally recorded. It was not opened for safety; upload the intended statement again.',
+            'review-source-is-not-statement': 'The recovered document does not contain enough bank-statement identity evidence. It remains pending for safety.',
+            'review-source-text-unavailable': 'The document opened, but no usable statement text was recovered. Add the exact PDF password or upload a readable statement.',
+        };
+        say(messages[error?.message] || 'The original statement could not be reopened. Nothing was filed; upload the intended statement again or dismiss this stale review.', 'error');
+    }
 }
 function review(entry) {
     if (typeof window._showCCReviewModal !== 'function') return say('Statement review is not loaded yet.', 'warn');
