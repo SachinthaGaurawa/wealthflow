@@ -236,7 +236,21 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
         try {
             const result = await resolveReview({ db, uid, id: doc.id, decision, row: review.row });
             if (result?.resolved && !result.alreadyResolved) recovered += 1;
-        } catch (_) { /* Preserve the review on any dedup/schema conflict. */ }
+        } catch (error) {
+            /* A matching posted transaction proves this legacy review is a
+             * duplicate, not an unresolved financial decision.  Close only
+             * that exact duplicate without writing another ledger record.
+             * Every other schema/allocation conflict remains fail-closed for
+             * a human review. */
+            if (error?.message === 'matching-existing-entry-dismiss-or-edit') {
+                const result = await resolveReview({
+                    db, uid, id: doc.id,
+                    decision: { module: 'skip', category: 'Duplicate', allocationId: '', verified: true },
+                    row: review.row,
+                });
+                if (result?.resolved && !result.alreadyResolved) recovered += 1;
+            }
+        }
     }
     return { recovered, more: recovered >= cap || page.docs.length === 100 };
 }
