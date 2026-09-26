@@ -104,7 +104,7 @@ describe('statement ledger', () => {
     });
     it('resolves a persisted review once and safely rejects another owner', async () => {
         const args = fixture();
-        args.db.docs.delete('sources/s'); args.sourceRef = args.db.doc('wf-mail/owner/items/s');
+        args.db.docs.delete('sources/s'); args.sourceRef = args.db.doc('wf-mail/owner/items/m1.statement.pdf');
         args.db.docs.set(args.sourceRef.path, { uid: 'u', leaseToken: 'token', leaseUntil: 2000, cursor: 0 });
         args.decisions = [{ verified: false }]; await settleStatement(args);
         const id = sourceOccurrenceId(args.sourceRef.path, 0);
@@ -113,6 +113,7 @@ describe('statement ledger', () => {
         expect(await resolveReview(request)).toMatchObject({ ok: true, filed: true });
         expect(await resolveReview(request)).toMatchObject({ alreadyResolved: true });
         expect(args.db.docs.get('users/u').expenses).toHaveLength(1);
+        expect(args.db.docs.get('users/u/statementReview/' + id).reason).toBe('');
     });
     it('rejects impossible manual review edits without resolving or writing', async () => {
         const args = fixture();

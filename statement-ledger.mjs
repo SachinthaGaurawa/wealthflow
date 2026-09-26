@@ -154,7 +154,7 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
         const reviewSnap = await tx.get(reviewRef), review = reviewSnap.data();
         if (!reviewSnap.exists || review.uid !== uid) throw new Error('review-not-found');
         if (review.status !== 'pending') return { ok: true, resolved: true, alreadyResolved: true };
-        if (!/^wf-mail\/[a-z0-9_]+\/items\/[\w-]+$/.test(review.sourcePath || '')) throw new Error('invalid-review-source');
+        if (!/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) throw new Error('invalid-review-source');
         const sourceRef = db.doc(review.sourcePath);
         const sourceSnap = await tx.get(sourceRef), source = sourceSnap.data();
         if (!sourceSnap.exists || source.uid !== uid) throw new Error('review-source-owner-mismatch');
@@ -189,7 +189,7 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
         const unresolved = siblings.docs.some(doc => doc.id !== id && doc.data().status === 'pending');
         const complete = Number.isSafeInteger(source.totalRows) && source.cursor === source.totalRows;
         if (Object.keys(changes).length) tx.set(userRef, { ...changes, _lastModified: new Date(now) }, { merge: true });
-        tx.set(reviewRef, { status: dismissed ? 'dismissed' : 'resolved', resolvedAt: now, resolvedBy: uid }, { merge: true });
+        tx.set(reviewRef, { status: dismissed ? 'dismissed' : 'resolved', reason: '', resolvedAt: now, resolvedBy: uid }, { merge: true });
         if (ledgerSnap.exists) tx.set(ledgerRef, { status: dismissed ? 'dismissed' : 'filed', resolvedAt: now, resolvedBy: uid }, { merge: true });
         if (complete && !unresolved) tx.set(sourceRef, { status: 'filed', filed: true, hasReview: false, updatedAt: now }, { merge: true });
         else if (dismissed && review.index < 0 && !unresolved) tx.set(sourceRef, { status: 'dismissed', filed: false, hasReview: false, updatedAt: now }, { merge: true });
