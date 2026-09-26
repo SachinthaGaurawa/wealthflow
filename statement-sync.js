@@ -222,11 +222,13 @@ export async function recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt }
 /** Revisit old provider-outage reviews after deterministic failover is enabled. */
 export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
     const userRef = db.collection('users').doc(uid);
-    const page = await userRef.collection('statementReview').where('reason', '==', 'ai-consensus-unavailable').limit(Math.min(50, Math.max(1, limit))).get();
+    const cap = Math.min(50, Math.max(1, limit));
+    const page = await userRef.collection('statementReview').where('reason', '==', 'ai-consensus-unavailable').limit(100).get();
     let recovered = 0;
     for (const doc of page.docs) {
+        if (recovered >= cap) break;
         const review = doc.data();
-        if (review.uid !== uid || review.status !== 'pending' || review.reason !== 'ai-consensus-unavailable' || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[\w-]+$/.test(review.sourcePath || '')) continue;
+        if (review.uid !== uid || review.status !== 'pending' || review.reason !== 'ai-consensus-unavailable' || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
         const source = (await db.doc(review.sourcePath || '').get()).data() || {};
         if (source.uid !== uid || source.status !== 'needs_review') continue;
         const decision = deterministicDecision(review.row, { statementType: source.statementType || '' });
@@ -236,7 +238,7 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
             if (result?.resolved && !result.alreadyResolved) recovered += 1;
         } catch (_) { /* Preserve the review on any dedup/schema conflict. */ }
     }
-    return recovered;
+    return { recovered, more: recovered >= cap || page.docs.length === 100 };
 }
 
 /**
@@ -355,7 +357,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, collectionMore = false, recovered = 0, consensusRecovered = 0;
+    let migrationMore = false, collectionMore = false, recovered = 0, consensusRecovered = 0, consensusMore = false;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
@@ -367,7 +369,9 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         migrationMore = await migrateItems(db, mailRef, mail, uid);
         const vault = await db.collection(VAULT_ROOT).doc(uid).get();
         recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
-        consensusRecovered = await recoverConsensusFailures({ db, uid });
+        const consensus = await recoverConsensusFailures({ db, uid });
+        consensusRecovered = consensus.recovered;
+        consensusMore = consensus.more;
     }
     let processed = 0, attempted = 0, last = null;
     for (;;) {
@@ -391,10 +395,10 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const hasReadyPending = pendingTimes.some(at => at <= now);
     const earliestRetry = pendingTimes.filter(at => at > now).reduce((min, at) => Math.min(min, at), Infinity);
     const wakeAt = Math.min(earliestLease, earliestRetry);
-    const retryAfterMs = collectionMore || migrationMore || hasReadyPending
+    const retryAfterMs = collectionMore || migrationMore || consensusMore || hasReadyPending
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
-    const morePending = collectionMore || migrationMore || pending.docs.length > 0 || processing.docs.length > 0;
+    const morePending = collectionMore || migrationMore || consensusMore || pending.docs.length > 0 || processing.docs.length > 0;
     return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, consensusRecovered, ...(last || {}), morePending,
         ...(morePending ? { retryAfterMs } : {}) };
 }
