@@ -276,6 +276,27 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
     return { recovered, more: recovered >= cap || page.docs.length === 100 };
 }
 
+/** A revoked sender is an explicit owner policy decision, not a transaction
+ * classification question. Retire those whole-statement reviews without ever
+ * writing a financial record. */
+export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
+    const reviews = db.collection('users').doc(uid).collection('statementReview');
+    const cap = Math.min(50, Math.max(1, limit));
+    const page = await reviews.where('reason', '==', 'statement-sender-no-longer-approved').limit(100).get();
+    let recovered = 0;
+    for (const doc of page.docs) {
+        if (recovered >= cap) break;
+        const review = doc.data();
+        if (review.uid !== uid || review.status !== 'pending' || review.index !== -1) continue;
+        try {
+            const result = await resolveReview({ db, uid, id: doc.id,
+                decision: { module: 'skip', category: 'Sender revoked', allocationId: '', verified: true }, row: {} });
+            if (result?.resolved && !result.alreadyResolved) recovered += 1;
+        } catch (_) { /* Ownership/source inconsistencies remain visible. */ }
+    }
+    return { recovered, more: recovered >= cap || page.docs.length === 100 };
+}
+
 /**
  * Claims and fully processes exactly one pending statement, or returns null
  * when nothing is claimable. A thrown error (a transient fetch failure) is
@@ -392,7 +413,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, collectionMore = false, recovered = 0, consensusRecovered = 0, consensusMore = false;
+    let migrationMore = false, collectionMore = false, recovered = 0, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
@@ -407,6 +428,9 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const consensus = await recoverConsensusFailures({ db, uid });
         consensusRecovered = consensus.recovered;
         consensusMore = consensus.more;
+        const revoked = await recoverRevokedSenderReviews({ db, uid });
+        revokedRecovered = revoked.recovered;
+        revokedMore = revoked.more;
     }
     let processed = 0, attempted = 0, last = null;
     for (;;) {
@@ -430,11 +454,11 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const hasReadyPending = pendingTimes.some(at => at <= now);
     const earliestRetry = pendingTimes.filter(at => at > now).reduce((min, at) => Math.min(min, at), Infinity);
     const wakeAt = Math.min(earliestLease, earliestRetry);
-    const retryAfterMs = collectionMore || migrationMore || consensusMore || hasReadyPending
+    const retryAfterMs = collectionMore || migrationMore || consensusMore || revokedMore || hasReadyPending
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
-    const morePending = collectionMore || migrationMore || consensusMore || pending.docs.length > 0 || processing.docs.length > 0;
-    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, consensusRecovered, ...(last || {}), morePending,
+    const morePending = collectionMore || migrationMore || consensusMore || revokedMore || pending.docs.length > 0 || processing.docs.length > 0;
+    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, consensusRecovered, revokedRecovered, ...(last || {}), morePending,
         ...(morePending ? { retryAfterMs } : {}) };
 }
 
