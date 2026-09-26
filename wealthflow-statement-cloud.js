@@ -62,11 +62,11 @@ export async function sync(){
     adoptUser(currentUser());
     if(!state.configured||!state.saved||!currentUser())return {ok:false,reason:'cloud-vault-required'};
     state.syncing=true;state.error='';change();
-    const continueAfter=delay=>{if(!continuationTimer)continuationTimer=setTimeout(()=>{continuationTimer=null;sync().catch(()=>{})},delay)};
+    const again=delay=>{if(!continuationTimer)continuationTimer=setTimeout(()=>{continuationTimer=null;sync().catch(()=>{})},delay)};
     syncPromise=request('/api/statement-sync','POST',{action:'sync'}).then(result=>{
-        if(result.morePending)continueAfter(Math.max(750,Math.min(180250,Number(result.retryAfterMs)||750)))
+        if(result.morePending)again(Math.max(750,Math.min(180250,Number(result.retryAfterMs)||750)))
         return result
-    }).catch(error=>{state.error=error.message;if(error.message==='statement-request-timed-out')continueAfter(3000);throw error})
+    }).catch(e=>{state.error=e.message;if(e.message==='statement-request-timed-out')again(3000);throw e})
         .finally(()=>{state.syncing=false;syncPromise=null;change()});
     return syncPromise
 }
