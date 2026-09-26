@@ -70,8 +70,24 @@ export async function classifySlice(rows, allocations, { board = invokeBoard } =
  * category.
  */
 export function deterministicDecision(row, allocations = {}) {
+    const description = String(row?.narration || row?.description || '');
+    /* Transfers move money between accounts and must not be counted as new
+     * income or spending. This is also the contract shown in the review UI. */
+    if (/\b(?:inward|outward)?\s*(?:ceft\s+)?transfer\b|\btransfer\s+credit[-\s]*mobilebanking\b/i.test(description)) {
+        return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true };
+    }
     const routed = routeRow(row, { ...allocations, reviewThreshold: 0.7 });
     if (routed.needsReview) return { verified: false, reason: 'ai-consensus-unavailable' };
+    /* A keyword can prove that a debit is recurring, but it cannot prove which
+     * saved subscription owns it. Demote an unallocated match to the generic
+     * account-safe bucket instead of inventing an allocation or quarantining
+     * the row forever. */
+    if (routed.module === 'subscriptions' && !routed.allocation?.id) {
+        const statementType = String(allocations.statementType || '').toLowerCase().replace(/[-\s]+/g, '_');
+        return statementType === 'credit_card'
+            ? { module: 'cconetime', category: 'Card Purchase', allocationId: '', verified: true, deterministic: true }
+            : { module: 'expenses', category: 'Other', allocationId: '', verified: true, deterministic: true };
+    }
     const decisions = {
         expenses: { module: 'expenses', category: 'Other' },
         income: { module: 'incomeRecv', category: 'Income' },

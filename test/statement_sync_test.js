@@ -53,6 +53,10 @@ describe('statement worker authorization and board', () => {
         expect(deterministicDecision({ ...row, needsReview: true }, { statementType: 'bank_account' })).toEqual({ verified: false, reason: 'ai-consensus-unavailable' });
         expect(deterministicDecision({ ...row, narration: 'EASY PAYMENT 4/24' }, { statementType: 'credit_card' })).toEqual({ verified: false, reason: 'ai-consensus-unavailable' });
         expect(deterministicDecision({ ...row, direction: 'credit', narration: 'PAYMENT THANK YOU' }, { statementType: 'credit_card' })).toMatchObject({ module: 'ccPayments', verified: true });
+        expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'bank_account' })).toMatchObject({ module: 'expenses', verified: true });
+        expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'credit_card' })).toMatchObject({ module: 'cconetime', verified: true });
+        expect(deterministicDecision({ ...row, narration: 'OUTWARD CEFT TRANSFER SISTER' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', category: 'Transfer', verified: true });
+        expect(deterministicDecision({ ...row, direction: 'credit', narration: 'TRANSFER CREDIT-MOBILEBANKING' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', verified: true });
     });
     it('never claims an active lease or another owner source', async () => {
         let data = { status: 'pending', uid: 'u', leaseUntil: 1001 };
