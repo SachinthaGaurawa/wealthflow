@@ -425,10 +425,13 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         migrationMore = await migrateItems(db, mailRef, mail, uid);
         const vault = await db.collection(VAULT_ROOT).doc(uid).get();
         recovered = vault.exists ? await recoverPasswordFailures({ db, mailRef, uid, vaultSavedAt: vault.data().savedAt }) : 0;
-        const consensus = await recoverConsensusFailures({ db, uid });
+        /* Keep owner requests below the browser deadline; scheduled drains use
+         * larger batches and interactive calls continue via `morePending`. */
+        const recoveryLimit = maxSteps === Infinity ? 25 : 5;
+        const consensus = await recoverConsensusFailures({ db, uid, limit: recoveryLimit });
         consensusRecovered = consensus.recovered;
         consensusMore = consensus.more;
-        const revoked = await recoverRevokedSenderReviews({ db, uid });
+        const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit });
         revokedRecovered = revoked.recovered;
         revokedMore = revoked.more;
     }
