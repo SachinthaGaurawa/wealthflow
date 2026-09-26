@@ -246,7 +246,12 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
         const review = doc.data();
         if (review.uid !== uid || review.status !== 'pending' || review.reason !== 'ai-consensus-unavailable' || !Number.isSafeInteger(review.index) || review.index < 0 || !review.row || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
         const source = (await db.doc(review.sourcePath || '').get()).data() || {};
-        if (source.uid !== uid || source.status !== 'needs_review') continue;
+        /* Legacy versions could advance the parent manifest to a stale status
+         * while leaving a row-level review and ledger entry pending.  The
+         * transactional resolver below re-checks ownership, row-ledger state,
+         * deduplication and settlement validity; requiring one particular
+         * parent status here only makes valid reviews impossible to drain. */
+        if (source.uid !== uid) continue;
         const decision = deterministicDecision(review.row, { statementType: source.statementType || '' });
         if (!decision.verified) continue;
         try {
