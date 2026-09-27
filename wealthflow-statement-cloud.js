@@ -1,6 +1,6 @@
 /**/
 let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null;
-const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0};
+const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
 export const getState=()=>({...state});
 const say=(message,type='info')=>{if(window.notify)window.notify(message,type)};
 function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{detail:{...state}}))}
@@ -10,7 +10,7 @@ function adoptUser(next){
  if(!next||user?.uid===next.uid)return user;
  user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;
  const db=window.db||window.firebase?.firestore?.();
- if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(100).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview()},()=>{state.error='statement-review-unavailable';change()});
+ if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview()},()=>{state.error='statement-review-unavailable';change()});
  return next
 }
 async function reconcileLogin(){for(let n=0;n<20;n++){if(window._wfRecentSweep){await window._wfRecentSweep(false);return}await new Promise(r=>setTimeout(r,100))}}
@@ -64,6 +64,7 @@ export async function sync(){
     state.syncing=true;state.error='';change();
     const again=delay=>{if(!continuationTimer)continuationTimer=setTimeout(()=>{continuationTimer=null;sync().catch(()=>{})},delay)};
     syncPromise=request('/api/statement-sync','POST',{action:'sync'}).then(result=>{
+        state.queued=Math.max(0,Number(result.pendingRemaining)||0)+Math.max(0,Number(result.processingRemaining)||0);
         if(result.morePending)again(Math.max(750,Math.min(180250,Number(result.retryAfterMs)||750)))
         return result
     }).catch(e=>{state.error=e.message;if(e.message==='statement-request-timed-out')again(3000);throw e})
@@ -73,23 +74,23 @@ export async function sync(){
 export async function authChanged(next){
  if(user?.uid===next?.uid&&next)return;
  unsubscribe?.();unsubscribe=user=null;pending=[];state.reviews=0;
- Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:''});change();
+ Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:'',queued:0});change();
  if(!next){clearTimeout(continuationTimer);continuationTimer=null;overlay?.remove();overlay=null;return}
  adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
 }
 export function friendly(reason) {
-    return ({ 'sign-in-required': 'Sign in to access your cloud statement vault.', 'statement-cloud-not-configured': 'Cloud statement processing is not configured; device processing remains available.',
-        'statement-request-timed-out': 'The request timed out; its final server state will be checked again.',
-        'statement-service-unavailable': 'The service is unavailable. Your statements remain pending.',
-        'statement-sync-unavailable': 'Statement processing is temporarily unavailable. Nothing was lost; the queue will retry automatically.',
-        'statement-worker-retry-required': 'One statement needs a temporary retry. It remains queued and will not block the others.',
-        'autonomous-mailbox-not-enabled': 'Background processing is no longer authorised for this mailbox. Reconnect Gmail to resume.',
-        'gmail-profile-unavailable': 'Gmail could not be reached. Statements remain queued for automatic retry.',
-        'gmail-profile-owner-mismatch': 'The connected Gmail account no longer matches the signed-in WealthFlow owner.',
-        'gmail-intake-unavailable': 'Gmail collection did not complete. The durable cursor was preserved for automatic retry.',
+    return ({ 'sign-in-required': 'Sign in to use the statement vault.', 'statement-cloud-not-configured': 'Cloud processing is not configured; device processing is available.',
+        'statement-request-timed-out': 'Request timed out; the queue will check again.',
+        'statement-service-unavailable': 'Service unavailable; statements remain pending.',
+        'statement-sync-unavailable': 'Processing is unavailable; the safe queue will retry.',
+        'statement-worker-retry-required': 'A statement needs retry; it will not block the others.',
+        'autonomous-mailbox-not-enabled': 'Reconnect Gmail to resume background processing.',
+        'gmail-profile-unavailable': 'Gmail is unavailable; automatic retry is queued.',
+        'gmail-profile-owner-mismatch': 'Connected Gmail does not match this WealthFlow owner.',
+        'gmail-intake-unavailable': 'Gmail collection paused safely and will retry.',
         'verified-owner-required': 'Verify the owner email before running autonomous statement processing.',
-        'cloud-vault-required': 'Save the unlocked statement passwords to the private cloud vault before background processing.',
-        'sign-in-changed': 'The signed-in account changed during the request. Retry after the current session finishes loading.' })[reason] || 'Statement processing could not complete. Nothing was filed; the queue remains safe for retry.';
+        'cloud-vault-required': 'Save passwords to the private cloud vault first.',
+        'sign-in-changed': 'The account changed during the request; retry after loading.' })[reason] || 'Processing stopped safely; nothing was filed and the queue will retry.';
 }
 export const migrateUnlockedVault=entries=>Array.isArray(entries) && entries.length ? save(entries) : false;
 async function download(entry) {
@@ -123,14 +124,14 @@ async function mapLayout(entry) {
         });
     } catch (error) {
         const messages = {
-            PASSWORD_FAILED: 'The saved passwords did not unlock this statement. Add the exact PDF password to the statement vault, then retry.',
-            NO_VAULT_KEYS: 'No statement password is saved in the cloud vault. Save the PDF password, then retry mapping.',
-            'statement-message-missing': 'The original Gmail message reference is missing. Download the statement again or dismiss this orphaned review.',
-            'statement-message-deleted': 'The original Gmail message was deleted, so this old review cannot be mapped. Upload the statement again or dismiss it.',
-            'statement-attachment-identity-mismatch': 'The Gmail message no longer contains the exact attachment recorded by this review. Upload that statement again or dismiss this stale review.',
-            'statement-attachment-content-mismatch': 'The attachment now differs from the file originally recorded. It was not opened for safety; upload the intended statement again.',
-            'review-source-is-not-statement': 'The recovered document does not contain enough bank-statement identity evidence. It remains pending for safety.',
-            'review-source-text-unavailable': 'The document opened, but no usable statement text was recovered. Add the exact PDF password or upload a readable statement.',
+            PASSWORD_FAILED: 'Saved passwords did not unlock this statement. Add the exact PDF password.',
+            NO_VAULT_KEYS: 'Save the PDF password before mapping this statement.',
+            'statement-message-missing': 'Original Gmail reference is missing; upload again or dismiss.',
+            'statement-message-deleted': 'Original Gmail message was deleted; upload again or dismiss.',
+            'statement-attachment-identity-mismatch': 'The recorded attachment is missing; upload it again or dismiss.',
+            'statement-attachment-content-mismatch': 'Attachment content changed and was not opened; upload the intended file.',
+            'review-source-is-not-statement': 'The document lacks enough bank-statement evidence.',
+            'review-source-text-unavailable': 'No usable statement text was recovered; check its PDF password.',
         };
         say(messages[error?.message] || 'The original statement could not be reopened. Nothing was filed; upload the intended statement again or dismiss this stale review.', 'error');
     }
@@ -168,16 +169,23 @@ function drawReview() {
     const box = document.createElement('section'); box.className = 'md'; box.style.cssText = 'max-width:720px;width:94%;max-height:85vh;overflow:auto;padding:20px;background:var(--card);border-radius:16px;';
     const title = document.createElement('h3'); title.textContent = 'Statements needing review'; box.appendChild(title);
     const close = document.createElement('button'); close.className = 'btn btn-secondary'; close.textContent = 'Close'; close.onclick = () => { overlay.remove(); overlay = null; }; box.appendChild(close);
+    const summary = document.createElement('p');
+    summary.textContent = `${pending.length} review item${pending.length === 1 ? '' : 's'} shown${state.queued ? ` · ${state.queued} statement${state.queued === 1 ? '' : 's'} still processing automatically` : ' · processing queue is clear'}.`;
+    summary.style.cssText = 'margin:12px 0;color:var(--text2);'; box.appendChild(summary);
     if (!pending.length) { const p = document.createElement('p'); p.textContent = 'No transactions are awaiting review.'; box.appendChild(p); }
     for (const entry of pending) {
         const item = document.createElement('div'); item.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
-        const text = document.createElement('p'); text.textContent = `${entry.row?.date || (entry.receivedMs && new Date(entry.receivedMs).toLocaleDateString()) || 'Date ?'} · ${entry.row?.description || [entry.bank, entry.filename].filter(Boolean).join(' · ') || 'Statement'}`; item.appendChild(text);
+        const identity = [entry.bank, entry.filename].filter(Boolean).join(' · ');
+        const description = entry.row?.description || entry.row?.narration || '';
+        const text = document.createElement('p');
+        text.textContent = [entry.row?.date || (entry.receivedMs && new Date(entry.receivedMs).toLocaleDateString()) || 'Date ?', identity || 'Statement', description].filter(Boolean).join(' · ');
+        item.appendChild(text);
         const why = document.createElement('p'); why.textContent = String(entry.reason || 'Verification required'); item.appendChild(why);
         const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = entry.index < 0 || !entry.row?.amount ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } finally { button.disabled = false; } }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
         if (entry.index < 0 || !entry.row?.amount) { const dismiss = document.createElement('button'); dismiss.className = 'btn btn-ghost btn-sm'; dismiss.textContent = 'Dismiss statement'; dismiss.style.marginLeft = '8px'; dismiss.onclick = () => dismissReview(entry); item.appendChild(dismiss); }
     }
-    if (pending.length === 100) { const p = document.createElement('p'); p.textContent = 'Showing the first 100 pending reviews. More will appear as these are resolved.'; box.appendChild(p); }
+    if (pending.length === 500) { const p = document.createElement('p'); p.textContent = 'Showing the first 500 pending reviews. Resolve items to reveal any older remainder.'; box.appendChild(p); }
     overlay.appendChild(box);
 }
 export function openReview() {

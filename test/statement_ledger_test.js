@@ -84,10 +84,12 @@ describe('statement ledger', () => {
     });
     it('quarantines ambiguous prior manual matches without filing the source', async () => {
         const args = fixture({ expenses: [{ ...row, desc: 'Merchant', bank: 'Bank', card_last4: '1234', id: 'manual' }] });
+        args.db.docs.set('sources/s', { ...args.db.docs.get('sources/s'), filename: 'HNB-August.pdf', subject: 'Your eStatement', receivedMs: 12345, from: 'statements@bank.example' });
         expect(await settleStatement(args)).toMatchObject({ review: 1, status: 'needs_review' });
         expect(args.db.docs.get('users/u').expenses).toHaveLength(1);
         expect(args.db.docs.get('sources/s').filed).toBe(false);
-        expect([...args.db.docs.keys()].some(path => path.includes('/statementReview/'))).toBe(true);
+        const review = [...args.db.docs.entries()].find(([path]) => path.includes('/statementReview/'))?.[1];
+        expect(review).toMatchObject({ bank: 'Bank', filename: 'HNB-August.pdf', subject: 'Your eStatement', receivedMs: 12345, from: 'statements@bank.example', last4: '1234' });
     });
     it('quarantines cross-source bank references because references can repeat', async () => {
         const args = fixture({ expenses: [{ ...row, desc: 'Merchant', bank: 'Bank', card_last4: '1234', ref: 'r123', id: 'manual' }] }); args.rows = [{ ...row, ref: 'r123' }];

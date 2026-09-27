@@ -320,6 +320,32 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
     return { recovered, more: recovered >= cap || page.docs.length === 100 };
 }
 
+export async function repairReviewMetadata({ db, uid, limit = 100 }) {
+    const reviews = db.collection('users').doc(uid).collection('statementReview');
+    const page = await reviews.where('status', '==', 'pending').limit(Math.min(500, Math.max(1, limit))).get();
+    let repaired = 0;
+    for (const doc of page.docs) {
+        const review = doc.data();
+        if (review.uid !== uid || !/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(review.sourcePath || '')) continue;
+        if (review.bank && review.filename && Number(review.receivedMs) > 0) continue;
+        const sourceSnap = await db.doc(review.sourcePath).get();
+        const source = sourceSnap.data() || {};
+        if (!sourceSnap.exists || source.uid !== uid) continue;
+        const patch = {
+            bank: String(review.bank || source.bank || ''),
+            filename: String(review.filename || source.filename || ''),
+            subject: String(review.subject || source.subject || ''),
+            receivedMs: Number(review.receivedMs) || Number(source.receivedMs) || 0,
+            from: String(review.from || source.from || ''),
+            last4: String(review.last4 || source.last4 || ''),
+            metadataRepairedAt: Date.now(),
+        };
+        await doc.ref.set(patch, { merge: true });
+        repaired += 1;
+    }
+    return repaired;
+}
+
 export function repairCategoriesInUser(user) {
     const next = structuredClone(user || {});
     let expenses = 0, income = 0;
@@ -502,7 +528,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0;
+    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
@@ -527,6 +553,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         const revoked = await recoverRevokedSenderReviews({ db, uid, limit: recoveryLimit });
         revokedRecovered = revoked.recovered;
         revokedMore = revoked.more;
+        reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
     }
     let processed = 0, attempted = 0, last = null;
     for (;;) {
@@ -554,7 +581,8 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
     const morePending = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || pending.docs.length > 0 || processing.docs.length > 0;
-    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, ...(last || {}), morePending,
+    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired,
+        pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending,
         ...(morePending ? { retryAfterMs } : {}) };
 }
 

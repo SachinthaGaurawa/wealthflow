@@ -139,7 +139,17 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             }
             if (reason) {
                 outcome.review++;
-                writes.push([reviewRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'pending', reason, row: JSON.parse(JSON.stringify(row)), decision: JSON.parse(JSON.stringify(decision)), createdAt: now }]);
+                writes.push([reviewRefs[offset], {
+                    uid, sourcePath: sourceRef.path, index, status: 'pending', reason,
+                    row: JSON.parse(JSON.stringify(row)), decision: JSON.parse(JSON.stringify(decision)),
+                    bank: String(bank || source.bank || ''),
+                    filename: String(source.filename || ''),
+                    subject: String(source.subject || ''),
+                    receivedMs: Number(source.receivedMs) || 0,
+                    from: String(source.from || ''),
+                    last4: String(last4 || source.last4 || ''),
+                    createdAt: now,
+                }]);
             } else if (module !== 'skip') outcome.filed++;
             writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: reason ? 'review' : module === 'skip' ? 'skipped' : 'filed', module: module || '', fingerprint: hash(rowIdentity(row, context)), settledAt: now }]);
         });
