@@ -83,12 +83,14 @@ describe('statement worker authorization and board', () => {
     it('self-heals only generic statement categories with strong evidence', () => {
         const original = { expenses: [
             { id: 'a', source: 'statement', desc: 'POS TRANSACTION KEELLS SUPER', cat: 'Other' },
+            { id: 'legacy', statementKey: 'wf-mail/owner_example_com/items/statement.pdf', statementRow: 4, desc: 'CEFT CHARGES TRANSPORT', cat: 'Other' },
             { id: 'b', source: 'statement', desc: 'UNKNOWN MERCHANT', cat: 'Other' },
             { id: 'c', source: 'manual', desc: 'KEELLS', cat: 'Other' },
+            { id: 'forged', statementKey: 'manual/import', statementRow: 4, desc: 'KEELLS', cat: 'Other' },
         ], incomeRecv: [{ id: 'd', source: 'statement', name: 'MONTHLY SALARY', type: 'Income' }] };
         const result = repairCategoriesInUser(original);
-        expect(result).toMatchObject({ expenses: 1, income: 1, total: 2 });
-        expect(result.user.expenses.map(x => x.cat)).toEqual(['Groceries', 'Other', 'Other']);
+        expect(result).toMatchObject({ expenses: 2, income: 1, total: 3 });
+        expect(result.user.expenses.map(x => x.cat)).toEqual(['Groceries', 'Bank Charges', 'Other', 'Other', 'Other']);
         expect(result.user.incomeRecv[0].type).toBe('Salary');
         expect(original.expenses[0].cat).toBe('Other');
     });
