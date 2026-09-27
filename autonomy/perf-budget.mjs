@@ -420,7 +420,10 @@ export const BUDGETS = {
     // Raised after review() stopped routing a per-row invalid-amount review into
     // the whole-layout re-teacher, which hit mapReviewLayout's replay guard forever
     // once any sibling row had already filed. Measured 1,877,205; still 71 modules.
-    totalJsBytes: 1_877_205,
+    // Raised after adding reviewReasonText(): the consensus review board correctly
+    // flagged that a raw code like 'invalid-transaction' reached the review screen
+    // unexplained. Measured 1,879,847; still 71 modules and no additional request.
+    totalJsBytes: 1_879_847,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

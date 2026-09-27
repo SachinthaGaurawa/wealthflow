@@ -154,6 +154,11 @@ describe('private statement cloud frontend transport', () => {
         expect(parsed.transactions).toEqual([expect.objectContaining({ date: '2026-01-01', amount: 0, description: 'ATM WITHDRAWAL' })]);
         expect(typeof parsed.cloudReview).toBe('function');
         expect(window.notify).not.toHaveBeenCalledWith('The statement layout mapper is not loaded yet.', 'warn');
+        // The raw code must never reach the screen unexplained (flagged by the
+        // consensus review board on this exact change): the owner sees why the
+        // row needs attention and what to check, not the machine's reason string.
+        expect(parsed.transactions[0]._reviewWhy).not.toBe('invalid-transaction');
+        expect(parsed.transactions[0]._reviewWhy).toContain('amount, date or description could not be read correctly');
     });
     it('still sends a genuinely unread statement (no row, unmapped index) to the layout teacher', async () => {
         window._showCCReviewModal = vi.fn();
