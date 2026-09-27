@@ -606,7 +606,7 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
     if (!/^[a-f\d]{64}$/.test(id || '') || !owner.uid || !owner.email) throw new Error('invalid-review-request');
     const reviewRef = db.collection('users').doc(owner.uid).collection('statementReview').doc(id);
     const reviewSnap = await reviewRef.get(), review = reviewSnap.data();
-    if (!reviewSnap.exists || review.uid !== owner.uid || review.index !== -1 || review.status !== 'pending') throw new Error('whole-statement-review-required');
+    if (!reviewSnap.exists || review.uid !== owner.uid || !Number.isSafeInteger(review.index) || review.index < -1 || review.status !== 'pending') throw new Error('whole-statement-review-required');
     if (typeof review.statementText === 'string' && review.statementText.trim() && review.statementText.length <= 500000) {
         if (textVerdict(review.statementText).verdict !== VERDICT.STATEMENT) throw new Error('review-source-is-not-statement');
         return { ok: true, text: review.statementText, bank: review.bank || '', last4: review.last4 || '', filename: review.filename || 'Statement', sourcePath: review.sourcePath };
@@ -651,9 +651,17 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         const reviewSnap = await tx.get(reviewRef), sourceSnap = await tx.get(sourceRef);
         const review = reviewSnap.data(), source = sourceSnap.data();
         const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', sourceRef.path));
-        if (!reviewSnap.exists || review.uid !== owner.uid || review.index !== -1 || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.bank !== evidence.bank || source.filed === true || (source.cursor || 0) !== 0 || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate')) throw new Error('layout-replay-would-overlap-settled-data');
+        const siblingReviews = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', sourceRef.path));
+        if (!reviewSnap.exists || review.uid !== owner.uid || !Number.isSafeInteger(review.index) || review.index < -1 || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.bank !== evidence.bank || source.filed === true || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate')) throw new Error('layout-replay-would-overlap-settled-data');
         tx.set(layoutRef, { uid: owner.uid, bank: evidence.bank, template: result.template, savedAt: Date.now() });
-        tx.set(reviewRef, { status: 'mapped', mappedAt: Date.now(), templateId }, { merge: true });
+        const now = Date.now();
+        for (const doc of siblingReviews.docs) {
+            const sibling = doc.data();
+            if (sibling.uid === owner.uid && sibling.status === 'pending') tx.set(doc.ref, { status: doc.id === id ? 'mapped' : 'superseded_by_layout', mappedAt: now, templateId }, { merge: true });
+        }
+        for (const doc of ledger.docs) {
+            if (doc.data().status === 'review') tx.set(doc.ref, { status: 'superseded_by_layout', supersededAt: now, templateId }, { merge: true });
+        }
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
     });
     try { await enqueue({ db, owner, env, f }); return { ok: true, mapped: true, queued: true }; }

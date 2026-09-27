@@ -135,7 +135,7 @@ describe('private source inspection and durable layout replay', () => {
         const ref = path => ({ path, id: path.split('/').at(-1), collection: name => collection(path + '/' + name), get: async () => ({ exists: data.has(path), data: () => structuredClone(data.get(path)) }), set: async (value, opts) => data.set(path, opts?.merge ? { ...data.get(path), ...value } : value) });
         const db = { doc: ref, collection, async runTransaction(fn) {
             const writes = []; let writing = false;
-            const result = await fn({ async get(r) { if (writing) throw new Error('read-after-write'); if (r.query) return { docs: [...data.entries()].filter(([path, value]) => path.startsWith(r.path + '/') && value[r.field] === r.value).map(([path, value]) => ({ id: path.split('/').at(-1), data: () => structuredClone(value) })) }; return r.get(); }, set(r, value, options) { writing = true; writes.push([r.path, value, options]); } });
+            const result = await fn({ async get(r) { if (writing) throw new Error('read-after-write'); if (r.query) return { docs: [...data.entries()].filter(([path, value]) => path.startsWith(r.path + '/') && value[r.field] === r.value).map(([path, value]) => ({ id: path.split('/').at(-1), ref: ref(path), data: () => structuredClone(value) })) }; return r.get(); }, set(r, value, options) { writing = true; writes.push([r.path, value, options]); } });
             writes.forEach(([path, value, options]) => data.set(path, options?.merge ? { ...data.get(path), ...value } : value)); return result;
         } };
         const owner = { uid: 'u', email: 'owner@example.com' };
@@ -173,6 +173,17 @@ describe('private source inspection and durable layout replay', () => {
         const result = await mapReviewLayout({ ...args, rows: [row], inspect, learn: async () => ({ ok: true, template: { id: 'legacy', bank: 'HNB' }, rows: [row] }), enqueue: async () => ({ queued: true }) });
         expect(result).toMatchObject({ mapped: true, queued: true });
         expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', filed: false, cursor: 0 });
+    });
+    it('maps a malformed row review and atomically supersedes its old review ledger', async () => {
+        const args = setup(), reviewPath = 'users/u/statementReview/' + args.id;
+        args.data.set(reviewPath, { ...args.data.get(reviewPath), index: 4, reason: 'invalid-transaction', row: { amount: 25 } });
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), cursor: 10, totalRows: 10, hasReview: true });
+        args.data.set('users/u/statementLedger/' + args.id, { uid: 'u', sourcePath: args.sourcePath, index: 4, status: 'review', fingerprint: 'old' });
+        const inspect = value => inspectReviewSource({ ...value, f: args.f, open: args.open, read: args.read, attachment: args.attachment });
+        expect(await mapReviewLayout({ ...args, rows: [row], inspect, learn: async () => ({ ok: true, template: { id: 'fixed', bank: 'HNB' }, rows: [row] }), enqueue: async () => ({ queued: true }) })).toMatchObject({ mapped: true });
+        expect(args.data.get(reviewPath).status).toBe('mapped');
+        expect(args.data.get('users/u/statementLedger/' + args.id).status).toBe('superseded_by_layout');
+        expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', cursor: 0, hasReview: false, totalRows: 1 });
     });
     it('refuses replay overlapping settled rows and rejects invalid layout before mutation', async () => {
         const args = setup(); args.data.set('users/u/statementLedger/existing', { sourcePath: args.sourcePath, status: 'filed' });

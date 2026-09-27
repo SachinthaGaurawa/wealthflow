@@ -130,16 +130,8 @@ async function mapLayout(entry) {
             'statement-message-deleted': 'Original Gmail message was deleted; upload again or dismiss.',
             'statement-attachment-identity-mismatch': 'The recorded attachment is missing; upload it again or dismiss.',
             'statement-attachment-content-mismatch': 'Attachment content changed and was not opened; upload the intended file.',
-            'statement-attachment-invalid': 'Gmail returned an invalid attachment payload; retry the scan or upload the statement.',
-            'statement-attachment-size': 'The original attachment is empty or exceeds the secure statement size limit.',
-            'statement-sender-no-longer-approved': 'This statement sender is no longer approved. Add its exact email in Senders, then retry.',
-            'gmail-fetch-unavailable': 'Gmail could not return the original statement. Nothing was filed; retry when Gmail is available.',
-            'review-source-owner-mismatch': 'The saved review is no longer linked to this mailbox source. Nothing was filed.',
-            'whole-statement-review-required': 'This review was already changed or resolved. Refresh the review list.',
             'review-source-is-not-statement': 'The document lacks enough bank-statement evidence.',
             'review-source-text-unavailable': 'No usable statement text was recovered; check its PDF password.',
-            'layout-replay-would-overlap-settled-data': 'Some rows from this statement are already in WealthFlow, so replay was stopped to prevent duplicates.',
-            'layout-confirmation-does-not-reproduce-statement': 'The confirmed layout did not reproduce every statement row; nothing was filed.',
         };
         say(messages[error?.message] || 'The original statement could not be reopened. Nothing was filed; upload the intended statement again or dismiss this stale review.', 'error');
     }

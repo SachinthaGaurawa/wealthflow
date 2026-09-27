@@ -82,6 +82,12 @@ describe('statement ledger', () => {
         await expect(settleStatement(args)).rejects.toThrow('statement-cursor-or-content-changed');
         expect([...args.db.docs]).toEqual(before);
     });
+    it('replaces an occurrence deliberately superseded by a corrected layout', async () => {
+        const args = fixture(), id = sourceOccurrenceId(args.sourceRef.path, 0);
+        args.db.docs.set('users/u/statementLedger/' + id, { uid: 'u', sourcePath: args.sourceRef.path, index: 0, status: 'superseded_by_layout', fingerprint: 'old' });
+        expect(await settleStatement(args)).toMatchObject({ filed: 1, duplicates: 0 });
+        expect(args.db.docs.get('users/u/statementLedger/' + id).status).toBe('filed');
+    });
     it('quarantines ambiguous prior manual matches without filing the source', async () => {
         const args = fixture({ expenses: [{ ...row, desc: 'Merchant', bank: 'Bank', card_last4: '1234', id: 'manual' }] });
         args.db.docs.set('sources/s', { ...args.db.docs.get('sources/s'), filename: 'HNB-August.pdf', subject: 'Your eStatement', receivedMs: 12345, from: 'statements@bank.example' });
