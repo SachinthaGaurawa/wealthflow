@@ -123,6 +123,18 @@ describe('cold-server composed statement pipeline simulation', () => {
         expect(setup.args.open).not.toHaveBeenCalled();
         expect(setup.db.docs.get(setup.sourcePath).vaultSavedAt).toBeUndefined();
     });
+    it('accepts reconciled parser proof when PDF text ordering defeats keyword identity', async () => {
+        const setup = simulation({ noVault: true, unencrypted: true });
+        setup.args.read = vi.fn(async () => ({
+            text: 'HNB\n02/07/2026 KEELLS STORE 123.45 DR\n03/07/2026 PAYMENT THANK YOU 50.00 CR',
+            parsed: { understood: true, verdict: 'parsed', reconciliation: { ok: true }, rows: [
+                { date: '2026-07-02', narration: 'KEELLS STORE', amount: 123.45, direction: 'debit', directionSource: 'marker', needsReview: false, valid: true },
+                { date: '2026-07-03', narration: 'PAYMENT THANK YOU', amount: 50, direction: 'credit', directionSource: 'marker', needsReview: false, valid: true },
+            ], layout: { statementType: 'credit-card', accountLast4: '0276' } },
+        }));
+        expect(await runStatementSync(setup.args)).toMatchObject({ status: 'filed', filed: 2 });
+        expect(setup.db.docs.get(setup.sourcePath).filed).toBe(true);
+    });
     it('quarantines an encrypted statement without a vault instead of retrying forever', async () => {
         const setup = simulation({ noVault: true });
         expect(await runStatementSync(setup.args)).toMatchObject({ ok: true, processed: 1, status: 'needs_review' });

@@ -16,7 +16,8 @@ import { routeRow, expenseCategoryFor, incomeCategoryFor } from './wealthflow-st
 export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const RETRY_MAX_MS = 180000;
-const WHOLE_REPLAY_VERSION = 1;
+const PASSWORD_BATCH = 6;
+const WHOLE_REPLAY_VERSION = 2;
 const SAFE_WHOLE_REPLAY = new Set([
     'statement-layout-identity-needs-review',
     'statement-layout-or-reconciliation-needs-review',
@@ -420,14 +421,28 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const attachment = await attachmentBytes(claimed, sourceRef, token, sendersOf(currentMail), f);
         const layoutDocs = await db.collection('users').doc(uid).collection('statementLayouts').limit(100).get();
         const layouts = layoutDocs.docs.map(doc => doc.data());
-        const { parsed, text } = await read({ ...attachment, passwords, bank: claimed.bank || '', layouts });
+        const passwordOffset = Math.max(0, Number(claimed.passwordOffset) || 0);
+        const passwordBatch = passwords.slice(passwordOffset, passwordOffset + PASSWORD_BATCH);
+        let result;
+        try { result = await read({ ...attachment, passwords: passwordBatch, bank: claimed.bank || '', layouts }); }
+        catch (error) {
+            if (error?.message === 'PASSWORD_FAILED' && passwordOffset + PASSWORD_BATCH < passwords.length) {
+                const pending = new Error('statement-password-batch-pending');
+                pending.passwordOffset = passwordOffset + PASSWORD_BATCH;
+                throw pending;
+            }
+            throw error;
+        }
+        const { parsed, text } = result;
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '' };
-        const identity = textVerdict(text || '');
-        if (identity.verdict === VERDICT.NOT_STATEMENT) {
-            await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
-            outcome = { status: 'rejected_non_statement', rejected: 1 };
-        } else {
-            if (identity.verdict !== VERDICT.STATEMENT) throw new Error('statement-layout-identity-needs-review');
+            const identity = textVerdict(text || '');
+            const parserProof = parsed?.understood === true && parsed.verdict === 'parsed'
+                && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length > 0;
+            if (identity.verdict === VERDICT.NOT_STATEMENT) {
+                await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
+                outcome = { status: 'rejected_non_statement', rejected: 1 };
+            } else {
+            if (identity.verdict !== VERDICT.STATEMENT && !parserProof) throw new Error('statement-layout-identity-needs-review');
             if (!parsed?.understood || parsed.verdict !== 'parsed' || parsed.reconciliation?.ok === false || !Array.isArray(parsed.rows) || !parsed.rows.length) throw new Error('statement-layout-or-reconciliation-needs-review');
             await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
             const cursor = claimed.cursor || 0;
@@ -449,6 +464,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
                 const retryAfterMs = Math.min(RETRY_MAX_MS, 1000 * (2 ** Math.min(retryCount - 1, 8)));
                 const now = Date.now();
                 tx.set(sourceRef, { status: 'pending', leaseToken: '', leaseUntil: 0, retryAt: now + retryAfterMs,
+                    ...(Number.isSafeInteger(error?.passwordOffset) ? { passwordOffset: error.passwordOffset } : {}),
                     retryCount, lastRetryReason: String(error?.message || 'statement-worker-retry-required').slice(0, 120), updatedAt: now }, { merge: true });
                 return retryAfterMs;
             });
