@@ -35,21 +35,32 @@ export function expenseCategoryFor(row) {
   return 'Other';
 }
 
+const INCOME_CATEGORY_RULES = [
+  ['Salary', /\b(salary|payroll|wages|emolument|stipend|net\s+pay)\b/i],
+  ['Interest', /\b(interest|int\s+cr|fd\s+interest|savings\s+interest)\b/i],
+  ['Dividend', /\b(dividend|div\s+cr)\b/i],
+  ['Rent', /\b(rent|rental|lease\s+income)\b/i],
+  ['Business', /\b(invoice|sales|business|merchant\s+settlement|freelance|consultancy|professional\s+fee|royalty)\b/i],
+  ['Pension', /\b(pension|epf|etf|gratuity)\b/i],
+  ['Gift', /\b(gift|donation|present)\b/i],
+  ['Refund', /\b(refund|reversal|chargeback|cashback|reimburse)\b/i],
+];
+
 export function incomeCategoryFor(row) {
   const desc = descOf(row);
-  const rules = [
-    ['Salary', /\b(salary|payroll|wages|emolument|stipend|net\s+pay)\b/i],
-    ['Interest', /\b(interest|int\s+cr|fd\s+interest|savings\s+interest)\b/i],
-    ['Dividend', /\b(dividend|div\s+cr)\b/i],
-    ['Rent', /\b(rent|rental|lease\s+income)\b/i],
-    ['Business', /\b(invoice|sales|business|merchant\s+settlement|freelance|consultancy|professional\s+fee|royalty)\b/i],
-    ['Pension', /\b(pension|epf|etf|gratuity)\b/i],
-    ['Gift', /\b(gift|donation|present)\b/i],
-    ['Refund', /\b(refund|reversal|chargeback|cashback|reimburse)\b/i],
-  ];
-  for (const [category, pattern] of rules) if (pattern.test(desc)) return category;
+  for (const [category, pattern] of INCOME_CATEGORY_RULES) if (pattern.test(desc)) return category;
   return 'Other';
 }
+
+// The fixed vocabulary classifySlice's AI board is constrained to. Deriving
+// it from the same rule tables the deterministic router uses keeps the two
+// layers speaking one taxonomy, so an AI-driven category can never invent a
+// spelling the deterministic path would not also produce.
+export const CLASSIFY_CATEGORIES = [
+  ...EXPENSE_CATEGORY_RULES.map(([category]) => category),
+  ...INCOME_CATEGORY_RULES.map(([category]) => category),
+  'Card Payment', 'Card Purchase', 'Card Fee', 'Cash Advance', 'Needs Review', 'Other',
+];
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }

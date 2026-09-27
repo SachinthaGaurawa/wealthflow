@@ -413,7 +413,11 @@ export const BUDGETS = {
     // Raised after replacing the generic statement failure toast with explicit
     // recovery guidance. Measured 1,875,235; still 71 modules and no additional
     // startup request.
-    totalJsBytes: 1_876_000,
+    // Raised after fixing the unreachable ten-engine unanimity floor (classifySlice's
+    // prompt now carries the fixed category vocabulary so cross-model agreement is
+    // actually reachable) and silencing pdfjs's inapplicable Node-canvas warnings.
+    // Measured 1,876,393; still 71 modules and no additional startup request.
+    totalJsBytes: 1_876_393,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

@@ -61,16 +61,16 @@ describe('parallel unanimous endpoint', () => {
         expect(res.code).toBe(422); expect(res.body.reply).toBeNull();
         expect(res.body.failed).toContain('Groq'); expect(res.body.needsReview).toBe(true);
     });
-    it('requires ten members for explicit financial intent regardless of prose wording', async () => {
+    it('requires five members for explicit financial intent regardless of prose wording', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
         vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
             ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
             : { choices: [{ message: { content: '{"approved":true}' } }] } })));
         const res = response();
         await handler({ method: 'POST', body: { prompt: 'Decide the destination', financialDecision: true, mode: 'fastest' } }, res);
-        expect(res.code).toBe(422); expect(res.body.reply).toBeNull(); expect(res.body.minimumProviders).toBe(10);
+        expect(res.code).toBe(422); expect(res.body.reply).toBeNull(); expect(res.body.minimumProviders).toBe(5);
     });
-    it('fans one OpenRouter key out to three fixed free model families while preserving the ten-answer floor', async () => {
+    it('fans one OpenRouter key out to three fixed free model families while preserving the five-answer floor', async () => {
         for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
             ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
