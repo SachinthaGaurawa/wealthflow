@@ -27,6 +27,22 @@ const PUBLIC_SYNC_REASONS = new Set([
     'autonomous-mailbox-not-enabled', 'gmail-profile-unavailable', 'gmail-profile-owner-mismatch',
     'gmail-intake-unavailable', 'verified-owner-required', 'statement-worker-retry-required'
 ]);
+const PUBLIC_REVIEW_SOURCE_REASONS = new Set([
+    'PASSWORD_FAILED', 'NO_VAULT_KEYS', 'PDF_UNREADABLE',
+    'statement-message-missing', 'statement-message-deleted',
+    'statement-sender-no-longer-approved', 'statement-attachment-identity-mismatch',
+    'statement-attachment-content-mismatch', 'statement-attachment-invalid',
+    'statement-attachment-size', 'gmail-fetch-unavailable',
+    'review-source-text-unavailable', 'review-source-is-not-statement',
+    'review-source-owner-mismatch', 'whole-statement-review-required',
+    'layout-replay-would-overlap-settled-data',
+    'layout-confirmation-does-not-reproduce-statement',
+]);
+
+export function publicReviewSourceReason(error) {
+    const detail = String(error?.message || 'statement-layout-review-rejected');
+    return PUBLIC_REVIEW_SOURCE_REASONS.has(detail) ? detail : 'statement-layout-review-rejected';
+}
 export function merchantNameFor(row) {
     let value = String(row?.narration || row?.description || '').normalize('NFKC').toUpperCase();
     value = value.replace(/\b(?:POS\s+TRANSACTION|CARD\s+PURCHASE|DEBIT\s+CARD|VISA\s+DEBIT|MASTER(?:CARD)?\s+DEBIT|ECOM(?:MERCE)?\s+TRANSACTION)\b/g, ' ')
@@ -666,9 +682,13 @@ export default async function handler(req, res) {
                 const result = body.action === 'review-source' ? await inspectReviewSource({ db, owner, id: body.id }) : await mapReviewLayout({ db, owner, id: body.id, rows: body.rows });
                 return json(res, 200, result);
             } catch (error) {
-                const safe = new Set(['PASSWORD_FAILED', 'NO_VAULT_KEYS', 'statement-message-missing', 'statement-message-deleted', 'statement-attachment-identity-mismatch', 'statement-attachment-content-mismatch', 'review-source-text-unavailable', 'review-source-is-not-statement']);
-                const detail = String(error?.message || 'statement-layout-review-rejected');
-                return json(res, 422, { ok: false, reason: safe.has(detail) ? detail : 'statement-layout-review-rejected' });
+                const reason = publicReviewSourceReason(error);
+                /* Review ids, filenames, email addresses, statement text and
+                 * passwords are deliberately absent. The reason is a fixed
+                 * allow-listed code, so production logs remain actionable
+                 * without exposing financial or authentication material. */
+                console.warn('statement-review-source-failed', { action: body.action, reason });
+                return json(res, 422, { ok: false, reason });
             }
         }
         if (body.action === 'review') {

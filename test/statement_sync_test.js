@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser } from '../statement-sync.js';
+import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser, publicReviewSourceReason } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 import fs from 'node:fs';
@@ -117,6 +117,11 @@ describe('statement worker authorization and board', () => {
 });
 
 describe('private source inspection and durable layout replay', () => {
+    it('exposes only fixed actionable source failures and masks arbitrary errors', () => {
+        expect(publicReviewSourceReason(new Error('statement-sender-no-longer-approved'))).toBe('statement-sender-no-longer-approved');
+        expect(publicReviewSourceReason(new Error('gmail-fetch-unavailable'))).toBe('gmail-fetch-unavailable');
+        expect(publicReviewSourceReason(new Error('secret customer data'))).toBe('statement-layout-review-rejected');
+    });
     const text = 'HATTON NATIONAL BANK PLC\nSTATEMENT OF ACCOUNT\nAccount No: 004010123456 Statement Period 01/07/2026 to 31/07/2026\n01/07/2026 OPENING BALANCE 100000.00\n02/07/2026 KEELLS STORE 4250.00 95750.00\n03/07/2026 SALARY 250000.00 345750.00\n05/07/2026 CEB ELECTRICITY 8430.50 337319.50\n31/07/2026 CLOSING BALANCE 337319.50';
     function setup() {
         const id = 'a'.repeat(64), sourcePath = 'wf-mail/owner_example_com/items/item';
