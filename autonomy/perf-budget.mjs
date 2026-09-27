@@ -417,7 +417,10 @@ export const BUDGETS = {
     // prompt now carries the fixed category vocabulary so cross-model agreement is
     // actually reachable) and silencing pdfjs's inapplicable Node-canvas warnings.
     // Measured 1,876,393; still 71 modules and no additional startup request.
-    totalJsBytes: 1_876_393,
+    // Raised after review() stopped routing a per-row invalid-amount review into
+    // the whole-layout re-teacher, which hit mapReviewLayout's replay guard forever
+    // once any sibling row had already filed. Measured 1,877,205; still 71 modules.
+    totalJsBytes: 1_877_205,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
