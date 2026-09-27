@@ -27,10 +27,11 @@
  * hard-blocked, so the real project is never touched.
  * ===========================================================================*/
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeFakeAdmin, FAKE_SERVICE_ACCOUNT } from './fake-admin.mjs';
+import { readMailState } from '../gmail-link.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -43,6 +44,29 @@ const OWNER_KEY = 'owner_example_com';
 /* Shaped like a Google refresh token and nothing like a real one — long enough
  * to clear the length floor, no dots, no ya29./4/ prefix. */
 const TOKEN = '1//0g' + 'A'.repeat(40);
+
+describe('mailbox state read resilience', () => {
+    it('returns immediately on a healthy read without retry delay', async () => {
+        const get = vi.fn(async () => ({ exists: true }));
+        const pause = vi.fn();
+        await expect(readMailState({ get }, async promise => promise, pause)).resolves.toMatchObject({ exists: true });
+        expect(get).toHaveBeenCalledTimes(1);
+        expect(pause).not.toHaveBeenCalled();
+    });
+    it('retries one transient Firestore failure and remains bounded', async () => {
+        const get = vi.fn().mockRejectedValueOnce(new Error('UNAVAILABLE')).mockResolvedValueOnce({ exists: true });
+        const deadlines = [];
+        const deadline = async (promise, ms, what) => { deadlines.push([ms, what]); return promise; };
+        await expect(readMailState({ get }, deadline, async () => {})).resolves.toMatchObject({ exists: true });
+        expect(get).toHaveBeenCalledTimes(2);
+        expect(deadlines).toEqual([[8000, 'wf-mail'], [12000, 'wf-mail retry']]);
+    });
+    it('stops after the second failure', async () => {
+        const get = vi.fn(async () => { throw new Error('still unavailable'); });
+        await expect(readMailState({ get }, async promise => promise, async () => {})).rejects.toThrow('still unavailable');
+        expect(get).toHaveBeenCalledTimes(2);
+    });
+});
 
 beforeEach(async () => {
     fake.reset();
