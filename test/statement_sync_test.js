@@ -159,6 +159,16 @@ describe('private source inspection and durable layout replay', () => {
         expect([...args.data.keys()].some(path => path.startsWith('users/u/statementLayouts/'))).toBe(true);
         expect(enqueue).toHaveBeenCalledTimes(1);
     });
+    it('reopens and safely maps a legacy pending review even when its source status is stale', async () => {
+        const args = setup();
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), status: 'complete', filed: false });
+        const evidence = await inspectReviewSource(args);
+        expect(evidence).toMatchObject({ ok: true, bank: 'HNB', sourcePath: args.sourcePath });
+        const inspect = value => inspectReviewSource({ ...value, f: args.f, open: args.open, read: args.read, attachment: args.attachment });
+        const result = await mapReviewLayout({ ...args, rows: [row], inspect, learn: async () => ({ ok: true, template: { id: 'legacy', bank: 'HNB' }, rows: [row] }), enqueue: async () => ({ queued: true }) });
+        expect(result).toMatchObject({ mapped: true, queued: true });
+        expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', filed: false, cursor: 0 });
+    });
     it('refuses replay overlapping settled rows and rejects invalid layout before mutation', async () => {
         const args = setup(); args.data.set('users/u/statementLedger/existing', { sourcePath: args.sourcePath, status: 'filed' });
         const inspect = async () => ({ text, bank: 'HNB', sourcePath: args.sourcePath });
