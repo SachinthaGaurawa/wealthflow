@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, repairCategoriesInUser } from '../statement-sync.js';
+import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairCategoriesInUser } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 import fs from 'node:fs';
@@ -37,6 +37,7 @@ describe('statement worker authorization and board', () => {
         expect(await classifySlice([row], {}, { board })).toEqual([{ module: 'expenses', category: 'Food', allocationId: '', verified: true }]);
         expect(board).toHaveBeenCalledTimes(2);
         expect(row.amount).toBe(42);
+        expect(JSON.stringify(board.mock.calls[0][0])).toContain('MERCHANT');
     });
     it('quarantines veto, roster changes and malformed index mappings', async () => {
         for (const peer of [good({ approved: false }), { ...good({ approved: true }), expected: [...roster, 'new-engine'] }]) {
@@ -196,6 +197,31 @@ describe('private source inspection and durable layout replay', () => {
         expect(await recoverPasswordFailures({ db: args.db, mailRef: args.db.doc('wf-mail/owner_example_com'), uid: 'u', vaultSavedAt: 200 })).toBe(1);
         expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', hasReview: false });
         expect(args.data.get('users/u/statementReview/' + reviewId).status).toBe('retried');
+    });
+    it('replays every safe whole-statement failure, not only the first item', async () => {
+        const args = setup(); args.data.delete('users/u/statementReview/' + args.id); args.data.delete(args.sourcePath);
+        const reasons = ['statement-layout-or-reconciliation-needs-review', 'statement-layout-identity-needs-review', 'statement-attachment-identity-mismatch'];
+        reasons.forEach((reason, i) => {
+            const sourcePath = `wf-mail/owner_example_com/items/item${i}`, id = createHash('sha256').update(sourcePath).digest('hex');
+            args.data.set(sourcePath, { uid: 'u', status: 'needs_review', reviewReason: reason, cursor: 0, filed: false });
+            args.data.set('users/u/statementReview/' + id, { uid: 'u', sourcePath, index: -1, status: 'pending', reason });
+        });
+        const result = await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 });
+        expect(result).toEqual({ recovered: 3, more: false });
+        reasons.forEach((_, i) => expect(args.data.get(`wf-mail/owner_example_com/items/item${i}`)).toMatchObject({ status: 'pending', wholeReplayVersion: 1 }));
+        expect((await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 10 })).recovered).toBe(0);
+    });
+    it('bounds whole replay and keeps content mismatches or settled data fail-closed', async () => {
+        const args = setup(); args.data.delete('users/u/statementReview/' + args.id); args.data.delete(args.sourcePath);
+        for (const [i, reason] of ['statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-attachment-content-mismatch'].entries()) {
+            const sourcePath = `wf-mail/owner_example_com/items/review${i}`, id = createHash('sha256').update(sourcePath).digest('hex');
+            args.data.set(sourcePath, { uid: 'u', status: 'needs_review', reviewReason: reason, cursor: 0 });
+            args.data.set('users/u/statementReview/' + id, { uid: 'u', sourcePath, index: -1, status: 'pending', reason });
+            if (i === 1) args.data.set('users/u/statementLedger/settled', { sourcePath, status: 'filed' });
+        }
+        expect(await recoverWholeStatementFailures({ db: args.db, uid: 'u', limit: 1 })).toEqual({ recovered: 1, more: true });
+        expect(args.data.get('wf-mail/owner_example_com/items/review1').status).toBe('needs_review');
+        expect(args.data.get('wf-mail/owner_example_com/items/review2').status).toBe('needs_review');
     });
     it('reports durable mapping success if queue delivery fails afterwards', async () => {
         const args = setup();

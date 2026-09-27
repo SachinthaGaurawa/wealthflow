@@ -171,7 +171,7 @@ function drawReview() {
     if (!pending.length) { const p = document.createElement('p'); p.textContent = 'No transactions are awaiting review.'; box.appendChild(p); }
     for (const entry of pending) {
         const item = document.createElement('div'); item.style.cssText = 'padding:14px 0;border-bottom:1px solid var(--border);';
-        const text = document.createElement('p'); text.textContent = `${entry.row?.date || 'Unknown date'} · ${entry.row?.description || entry.row?.narration || 'Statement layout'} · ${entry.row?.amount || ''}`; item.appendChild(text);
+        const text = document.createElement('p'); text.textContent = `${entry.row?.date || (entry.receivedMs && new Date(entry.receivedMs).toLocaleDateString()) || 'Date ?'} · ${entry.row?.description || [entry.bank, entry.filename].filter(Boolean).join(' · ') || 'Statement'}`; item.appendChild(text);
         const why = document.createElement('p'); why.textContent = String(entry.reason || 'Verification required'); item.appendChild(why);
         const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = entry.index < 0 || !entry.row?.amount ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } finally { button.disabled = false; } }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
