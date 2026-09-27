@@ -599,7 +599,14 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
     if (!String(review.sourcePath || '').startsWith(mailRef.path + '/items/') || String(review.sourcePath).split('/').length !== 4) throw new Error('review-source-owner-mismatch');
     const sourceRef = db.doc(review.sourcePath), sourceSnap = await sourceRef.get(), source = sourceSnap.data();
     const mail = (await mailRef.get()).data();
-    if (!sourceSnap.exists || source.uid !== owner.uid || source.status !== 'needs_review' || source.filed === true || !mail || mail.uid !== owner.uid || mail.email !== String(owner.email).toLowerCase() || !mail.refresh_token) throw new Error('review-source-owner-mismatch');
+    /* A pending owner review is the durable authority for legacy records. Old
+     * workers sometimes left the source manifest in `complete`, `pending`, or
+     * another stale status after creating that review. Requiring the newer
+     * `needs_review` marker made those originals impossible to reopen even
+     * while the review was visibly pending. Ownership, not that denormalised
+     * status, is the security boundary; replay still proves there are no filed
+     * or duplicate ledger rows transactionally before it mutates anything. */
+    if (!sourceSnap.exists || source.uid !== owner.uid || source.filed === true || !mail || mail.uid !== owner.uid || mail.email !== String(owner.email).toLowerCase() || !mail.refresh_token) throw new Error('review-source-owner-mismatch');
     const vault = await db.collection(VAULT_ROOT).doc(owner.uid).get();
     let entries = [], passwords = [];
     try {
@@ -628,7 +635,7 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         const reviewSnap = await tx.get(reviewRef), sourceSnap = await tx.get(sourceRef);
         const review = reviewSnap.data(), source = sourceSnap.data();
         const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', sourceRef.path));
-        if (!reviewSnap.exists || review.uid !== owner.uid || review.index !== -1 || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.bank !== evidence.bank || source.status !== 'needs_review' || source.filed === true || (source.cursor || 0) !== 0 || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate')) throw new Error('layout-replay-would-overlap-settled-data');
+        if (!reviewSnap.exists || review.uid !== owner.uid || review.index !== -1 || review.status !== 'pending' || !sourceSnap.exists || source.uid !== owner.uid || source.bank !== evidence.bank || source.filed === true || (source.cursor || 0) !== 0 || (source.leaseUntil || 0) > Date.now() || ledger.docs.some(doc => doc.data().status === 'filed' || doc.data().status === 'duplicate')) throw new Error('layout-replay-would-overlap-settled-data');
         tx.set(layoutRef, { uid: owner.uid, bank: evidence.bank, template: result.template, savedAt: Date.now() });
         tx.set(reviewRef, { status: 'mapped', mappedAt: Date.now(), templateId }, { merge: true });
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
