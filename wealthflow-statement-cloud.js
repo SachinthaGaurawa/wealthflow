@@ -136,12 +136,39 @@ async function mapLayout(entry) {
         say(messages[error?.message] || 'The original statement could not be reopened. Nothing was filed; upload the intended statement again or dismiss this stale review.', 'error');
     }
 }
-function review(entry) {
+// Plain-language text for the codes validateSettlementRow() (statement-ledger.mjs)
+// and classifySlice() (statement-sync.js) return as a review's `reason`. Shown
+// directly to the owner in the review list and inside the single-row modal, so
+// a raw code like 'invalid-transaction' — which says nothing about what to
+// fix — must never reach that screen unexplained.
+function reviewReasonText(reason) {
+    return ({
+        'invalid-transaction': 'The amount, date or description could not be read correctly. Check this row against your statement and correct it.',
+        'unproven-direction': "Whether this was money in or money out could not be confirmed from the statement. Check it against the statement and set it below.",
+        'ai-consensus-unavailable': 'The independent AI review could not reach agreement on this transaction. Check it against the statement and confirm it yourself.',
+        'unanimous-decision-required': 'The independent AI review could not reach agreement on this transaction. Check it against the statement and confirm it yourself.',
+        'transfer-route-conflict': 'This looks like a transfer between your own accounts but was routed as spending or income. Confirm where it should go.',
+        'skip-requires-transfer-evidence': "This was marked as a transfer between your own accounts, but the statement doesn't clearly show that. Confirm where it should go.",
+        'income-direction-conflict': 'This was routed as income, but the statement direction does not support that. Confirm where it should go.',
+        'card-payment-context-required': 'This was routed as a card payment, but the statement does not support that. Confirm where it should go.',
+        'expense-direction-conflict': 'This was routed as spending, but the statement direction does not support that. Confirm where it should go.',
+        'card-charge-context-required': 'This was routed as a card charge, but the statement does not support that. Confirm where it should go.',
+    })[reason] || 'This transaction needs your confirmation. Check it against the statement before saving.';
+}
+export function review(entry) {
     if (typeof window._showCCReviewModal !== 'function') return say('Statement review is not loaded yet.', 'warn');
     const row = entry.row;
-    if (!row || !row.date || !row.amount || entry.index < 0) return mapLayout(entry);
+    // A missing/invalid date or amount on an already-indexed row (e.g. reason
+    // 'invalid-transaction') is a defect in ONE transaction, not proof the
+    // statement's layout is unread — mapLayout() re-teaches the whole layout,
+    // and once any sibling row from the same source has already filed,
+    // mapReviewLayout's replay guard rejects that unconditionally, leaving the
+    // entry permanently stuck with no explanation. The single-row modal below
+    // already renders editable date/amount inputs, so the fix is to let the
+    // owner correct or dismiss THIS row here, the same as any other review.
+    if (!row || entry.index < 0) return mapLayout(entry);
     overlay?.remove(); overlay = null;
-    window._showCCReviewModal({ transactions: [{ ...row, description: row.description || row.narration, _needsReview: true, _reviewWhy: entry.reason }],
+    window._showCCReviewModal({ transactions: [{ ...row, description: row.description || row.narration, _needsReview: true, _reviewWhy: reviewReasonText(entry.reason) }],
         fileName: 'Cloud statement review', card_last4: row.card_last4 || '',
         cloudReview: async decisions => {
             if (decisions.length !== 1) throw new Error('review-selection-required');
@@ -180,8 +207,17 @@ function drawReview() {
         const text = document.createElement('p');
         text.textContent = [entry.row?.date || (entry.receivedMs && new Date(entry.receivedMs).toLocaleDateString()) || 'Date ?', identity || 'Statement', description].filter(Boolean).join(' · ');
         item.appendChild(text);
-        const why = document.createElement('p'); why.textContent = String(entry.reason || 'Verification required'); item.appendChild(why);
-        const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = entry.index < 0 || !entry.row?.amount ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } finally { button.disabled = false; } }; item.appendChild(button);
+        // Row-level reasons (validateSettlementRow/classifySlice) get the plain-
+        // language text; whole-statement reasons keep their existing display —
+        // reviewReasonText()'s vocabulary is scoped to the former only, and a
+        // generic "this transaction needs confirmation" fallback would misdescribe
+        // an unmapped layout, which is not about any one transaction at all.
+        const rowLevel = Boolean(entry.row) && entry.index >= 0;
+        const why = document.createElement('p'); why.textContent = rowLevel ? reviewReasonText(entry.reason) : String(entry.reason || 'Verification required'); item.appendChild(why);
+        // Mirrors review()'s own routing decision exactly, so the label never
+        // promises an action (re-teaching a whole layout) that a per-row defect
+        // like an invalid amount cannot actually complete.
+        const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } finally { button.disabled = false; } }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
         if (entry.index < 0 || !entry.row?.amount) { const dismiss = document.createElement('button'); dismiss.className = 'btn btn-ghost btn-sm'; dismiss.textContent = 'Dismiss statement'; dismiss.style.marginLeft = '8px'; dismiss.onclick = () => dismissReview(entry); item.appendChild(dismiss); }
     }

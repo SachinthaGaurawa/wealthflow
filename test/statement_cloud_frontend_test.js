@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
@@ -136,5 +136,35 @@ describe('private statement cloud frontend transport', () => {
         fetch.mockResolvedValueOnce(reply(true, { ok: true, resolved: false }));
         await window.showConfirm.mock.calls[0][5]();
         expect(window.notify).toHaveBeenCalledWith('Dismissal was not completed. The statement remains pending.', 'error');
+    });
+    it('opens the single-row review for an invalid-amount row instead of re-teaching an already-read layout', async () => {
+        // Reason 'invalid-transaction' (statement-ledger.mjs) fires on an
+        // already-indexed row whose amount/date/description failed validation —
+        // the layout itself was read fine. Routing this into mapLayout() used to
+        // hit mapReviewLayout's "layout-replay-would-overlap-settled-data" guard
+        // forever once any sibling row from the same statement had already
+        // filed, since re-teaching a known layout can never satisfy it.
+        window._showCCReviewModal = vi.fn();
+        window.notify = vi.fn();
+        const entry = { id: 'row-review-id', index: 4, reason: 'invalid-transaction',
+            row: { date: '2026-01-01', amount: 0, description: 'ATM WITHDRAWAL', direction: 'debit', bank: 'HNB' } };
+        await review(entry);
+        expect(window._showCCReviewModal).toHaveBeenCalledTimes(1);
+        const [parsed] = window._showCCReviewModal.mock.calls[0];
+        expect(parsed.transactions).toEqual([expect.objectContaining({ date: '2026-01-01', amount: 0, description: 'ATM WITHDRAWAL' })]);
+        expect(typeof parsed.cloudReview).toBe('function');
+        expect(window.notify).not.toHaveBeenCalledWith('The statement layout mapper is not loaded yet.', 'warn');
+        // The raw code must never reach the screen unexplained (flagged by the
+        // consensus review board on this exact change): the owner sees why the
+        // row needs attention and what to check, not the machine's reason string.
+        expect(parsed.transactions[0]._reviewWhy).not.toBe('invalid-transaction');
+        expect(parsed.transactions[0]._reviewWhy).toContain('amount, date or description could not be read correctly');
+    });
+    it('still sends a genuinely unread statement (no row, unmapped index) to the layout teacher', async () => {
+        window._showCCReviewModal = vi.fn();
+        window.notify = vi.fn();
+        await review({ id: 'whole-statement-id', index: -1 });
+        expect(window._showCCReviewModal).not.toHaveBeenCalled();
+        expect(window.notify).toHaveBeenCalledWith('The statement layout mapper is not loaded yet.', 'warn');
     });
 });
