@@ -82,6 +82,34 @@ describe('parallel unanimous endpoint', () => {
         expect(res.body.expected).toEqual(expect.arrayContaining(['Gemini', 'DeepSeek', 'OpenRouterFinance', 'OpenRouterQwen', 'OpenRouterNemotron']));
         expect(fetch).toHaveBeenCalledTimes(12);
     });
+    it('uses the configured OpenRouter multimodal model on vision requests without the removed legacy function', async () => {
+        vi.stubEnv('OPENROUTER_API_KEY', 'test');
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"approved":true}' } }] }) })));
+        const res = response();
+        await handler({ method: 'POST', body: { prompt: 'Extract this statement as JSON', image: 'aW1hZ2U=', financialDecision: true } }, res);
+        expect(res.code).toBe(422);
+        expect(res.body.answered).toEqual(['OpenRouterQwen']);
+        expect(res.body.failed).toEqual([]);
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+    it('adds Cloudflare Workers AI as a text and vision-capable independent provider when both credentials exist', async () => {
+        vi.stubEnv('CLOUDFLARE_AI_API_TOKEN', 'test');
+        vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'account');
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"approved":true}' } }] }) })));
+        const res = response();
+        await handler({ method: 'POST', body: { prompt: 'Extract this statement as JSON', image: 'aW1hZ2U=', financialDecision: true } }, res);
+        expect(res.code).toBe(422);
+        expect(res.body.answered).toEqual(['CloudflareAI']);
+        expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/accounts/account/ai/v1/chat/completions'), expect.any(Object));
+    });
+    it('includes Eden AI once in the text board and accepts its nested gateway response', async () => {
+        vi.stubEnv('EDENAI_API_KEY', 'test');
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ openai: { status: 'success', generated_text: '{"approved":true}' } }) })));
+        const res = response(); await handler(request, res);
+        expect(res.code).toBe(422);
+        expect(res.body.answered).toEqual(['EdenAI']);
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
     it('does not call failing prose engines a second time after quorum exhaustion', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
         vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));

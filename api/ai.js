@@ -114,6 +114,9 @@ export default async function handler(req, res) {
     const nvidiaKey     = process.env.NVIDIA_API_KEY;
     const githubKey     = process.env.GITHUB_MODELS_TOKEN;
     const cohereKey     = process.env.COHERE_API_KEY;
+    const edenKey       = process.env.EDENAI_API_KEY;
+    const cloudflareToken = process.env.CLOUDFLARE_AI_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN;
+    const cloudflareAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
 
     // Vision requests need deterministic output (low temp) and more room for detail
     const isVision = !!image;
@@ -338,6 +341,15 @@ export default async function handler(req, res) {
     const fetchSambaNova = makeOAI({ name: 'SambaNova', provider: 'sambanova', key: sambanovaKey, url: 'https://api.sambanova.ai/v1/chat/completions', textModel: 'Meta-Llama-3.3-70B-Instruct', visionModel: 'Llama-3.2-90B-Vision-Instruct' });
     const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', textModel: 'meta/llama-3.3-70b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
     const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.inference.ai.azure.com/chat/completions', textModel: 'Llama-3.3-70B-Instruct', visionModel: 'gpt-4o', jsonMode: true });
+    const fetchCloudflare = makeOAI({
+        name: 'CloudflareAI',
+        provider: 'cloudflare:llama-4-scout',
+        key: cloudflareToken,
+        url: cloudflareAccount ? `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccount}/ai/v1/chat/completions` : '',
+        textModel: '@cf/meta/llama-4-scout-17b-16e-instruct',
+        visionModel: '@cf/meta/llama-4-scout-17b-16e-instruct',
+        jsonMode: true
+    });
 
     // ---------- ENGINE: ANTHROPIC CLAUDE (native Messages API, vision) ----------
     async function fetchAnthropic() {
@@ -373,6 +385,32 @@ export default async function handler(req, res) {
         return { reply: text, provider: 'cohere:command-r-plus' };
     }
 
+    // ---------- ENGINE: EDEN AI (aggregated text route) ----------
+    // Eden is intentionally one board member even though it is a gateway: the
+    // downstream model must not be counted multiple times as independent votes.
+    async function fetchEdenAI() {
+        if (image) throw new Error('EdenAI skipped (text-only here)');
+        if (!edenKey) throw new Error('EdenAI key not configured');
+        const r = await fetchWithTimeout('https://api.edenai.run/v2/text/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${edenKey}` },
+            body: JSON.stringify({ providers: 'openai/gpt-4o-mini', text: prompt, temperature: temp, max_tokens: Math.min(tokens, 2048) })
+        });
+        if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`EdenAI status ${r.status}: ${t.substring(0, 160)}`); }
+        const data = await r.json();
+        const queue = [data];
+        let text = '';
+        while (queue.length && !text) {
+            const value = queue.shift();
+            if (!value || typeof value !== 'object') continue;
+            const candidate = value.generated_text || value.message?.content || value.content || value.text;
+            if (typeof candidate === 'string' && candidate.trim()) text = candidate;
+            else Object.values(value).forEach(child => { if (child && typeof child === 'object') queue.push(child); });
+        }
+        if (!text) throw new Error('EdenAI returned empty');
+        return { reply: text, provider: 'edenai:openai-gpt-4o-mini' };
+    }
+
     // ---------- PARALLEL MULTI-ENGINE EXECUTION ----------
     // All engines fire SIMULTANEOUSLY (not one-by-one). This is dramatically
     // faster and more reliable: a slow/down provider no longer blocks the rest.
@@ -400,7 +438,8 @@ export default async function handler(req, res) {
             { name: 'NVIDIA',       fn: fetchNvidia },
             { name: 'Mistral',      fn: fetchMistral },
             { name: 'SambaNova',    fn: fetchSambaNova },
-            { name: 'OpenRouter',   fn: fetchOpenRouter }
+            { name: 'OpenRouterQwen', fn: fetchOpenRouterQwen },
+            { name: 'CloudflareAI', fn: fetchCloudflare }
         ];
     } else {
         engines = [
@@ -421,7 +460,9 @@ export default async function handler(req, res) {
             { name: 'NVIDIA',       fn: fetchNvidia },
             { name: 'GitHubModels', fn: fetchGitHub },
             { name: 'Cohere',       fn: fetchCohere },
-            { name: 'HF',           fn: fetchHuggingFace }
+            { name: 'HF',           fn: fetchHuggingFace },
+            { name: 'EdenAI',       fn: fetchEdenAI },
+            { name: 'CloudflareAI', fn: fetchCloudflare }
         ];
     }
 
@@ -431,7 +472,8 @@ export default async function handler(req, res) {
     const configured = { Gemini: geminiKey, DeepSeek: deepseekKey, Groq: groqKey, Ollama: ollamaKey,
         Anthropic: anthropicKey, xAI: xaiKey, Mistral: mistralKey, Together: togetherKey,
         Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey, Cerebras: cerebrasKey,
-        SambaNova: sambanovaKey, NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey };
+        SambaNova: sambanovaKey, NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
+        EdenAI: edenKey, CloudflareAI: cloudflareToken && cloudflareAccount };
     engines = engines.filter(engine => Boolean(configured[engine.name]) && providerAvailable(engine.name));
     // The required roster must match the task capability. A configured
     // text-only provider is not a missing vision voter; every eligible provider
