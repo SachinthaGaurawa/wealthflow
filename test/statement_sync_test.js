@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser, publicReviewSourceReason } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
+import { textVerdict, VERDICT } from '../wealthflow-statement-identity.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -173,6 +174,17 @@ describe('private source inspection and durable layout replay', () => {
         const result = await mapReviewLayout({ ...args, rows: [row], inspect, learn: async () => ({ ok: true, template: { id: 'legacy', bank: 'HNB' }, rows: [row] }), enqueue: async () => ({ queued: true }) });
         expect(result).toMatchObject({ mapped: true, queued: true });
         expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', filed: false, cursor: 0 });
+    });
+    it('lets an explicitly pending layout review reach the reconciled manual mapper even when identity is inconclusive', async () => {
+        const args = setup(), reviewPath = 'users/u/statementReview/' + args.id;
+        const ambiguous = 'HNB ACCOUNT ACTIVITY\n02/07/2026 POS TRANSACTION PIZZA HUT 4250.00\n03/07/2026 CREDIT 250000.00';
+        expect(textVerdict(ambiguous).verdict).not.toBe(VERDICT.STATEMENT);
+        args.data.set(reviewPath, { ...args.data.get(reviewPath), reason: 'statement-layout-identity-needs-review', statementText: ambiguous });
+        await expect(inspectReviewSource(args)).resolves.toMatchObject({ ok: true, text: ambiguous, sourcePath: args.sourcePath });
+
+        args.data.set(reviewPath, { ...args.data.get(reviewPath), reason: 'statement-layout-identity-needs-review', statementText: '' });
+        args.read.mockResolvedValueOnce({ text: ambiguous, parsed: { layout: { accountLast4: '3456' } } });
+        await expect(inspectReviewSource(args)).resolves.toMatchObject({ ok: true, text: ambiguous, sourcePath: args.sourcePath });
     });
     it('maps a malformed row review and atomically supersedes its old review ledger', async () => {
         const args = setup(), reviewPath = 'users/u/statementReview/' + args.id;

@@ -608,7 +608,14 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
     const reviewSnap = await reviewRef.get(), review = reviewSnap.data();
     if (!reviewSnap.exists || review.uid !== owner.uid || !Number.isSafeInteger(review.index) || review.index < -1 || review.status !== 'pending') throw new Error('whole-statement-review-required');
     if (typeof review.statementText === 'string' && review.statementText.trim() && review.statementText.length <= 500000) {
-        if (textVerdict(review.statementText).verdict !== VERDICT.STATEMENT) throw new Error('review-source-is-not-statement');
+        /* This is evidence for an explicit layout review, not an autonomous
+         * filing decision.  The identity classifier is intentionally strict
+         * during intake, but the documents that land here are precisely the
+         * ones it could not understand. Re-applying that same classifier here
+         * made the recovery UI impossible to open. Nothing is filed from this
+         * response: mapReviewLayout still requires a complete, reconciling
+         * learned layout and then atomically proves no rows were already
+         * settled. Ownership and source integrity remain mandatory below. */
         return { ok: true, text: review.statementText, bank: review.bank || '', last4: review.last4 || '', filename: review.filename || 'Statement', sourcePath: review.sourcePath };
     }
     const mailRef = db.collection('wf-mail').doc(userKeyFor(owner.email));
@@ -634,7 +641,6 @@ export async function inspectReviewSource({ db, owner, id, env = process.env, f 
         const bytes = await attachment(source, sourceRef, token, sendersOf(mail), f);
         const result = await read({ ...bytes, passwords, bank: source.bank || '', layouts: [] });
         if (typeof result.text !== 'string' || !result.text.trim() || result.text.length > 500000) throw new Error('review-source-text-unavailable');
-        if (textVerdict(result.text).verdict !== VERDICT.STATEMENT) throw new Error('review-source-is-not-statement');
         return { ok: true, text: result.text, bank: source.bank || '', last4: result.parsed?.layout?.accountLast4 || '', filename: source.filename || bytes.filename || '', sourcePath: sourceRef.path };
     } finally { passwords.fill(''); entries.forEach(entry => { entry.password = ''; }); }
 }
