@@ -17,6 +17,23 @@
 
 import * as Matrix from './ai-matrix.mjs';
 
+const providerCooldownUntil = new Map();
+function providerCooldownMs(error) {
+    const message = String(error?.message || error || '');
+    if (/credit balance|billing|insufficient[_\s-]*(?:credit|quota)|payment required|status 402/i.test(message)) return 6 * 60 * 60 * 1000;
+    if (/unauthori[sz]ed|forbidden|invalid api key|status 401|status 403/i.test(message)) return 60 * 60 * 1000;
+    if (/rate.?limit|quota|status 429/i.test(message)) return 2 * 60 * 1000;
+    if (/deadline|timed?\s*out|abort/i.test(message)) return 60 * 1000;
+    return 15 * 1000;
+}
+export function providerAvailable(name, now = Date.now()) {
+    return (providerCooldownUntil.get(name) || 0) <= now;
+}
+export function coolProvider(name, error, now = Date.now()) {
+    providerCooldownUntil.set(name, now + providerCooldownMs(error));
+}
+export function resetProviderCooldowns() { providerCooldownUntil.clear(); }
+
 /* Every eligible configured engine is started before any result is awaited.
  * A response is reduced only after all members settle or hit their individual
  * deadline, so a late dissent can never be silently discarded. */
@@ -313,7 +330,10 @@ export default async function handler(req, res) {
     const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', textModel: 'mistral-large-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
     const fetchTogether = makeOAI({ name: 'Together', provider: 'together', key: togetherKey, url: 'https://api.together.xyz/v1/chat/completions', textModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', visionModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' });
     const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
-    const fetchOpenRouter = makeOAI({ name: 'OpenRouter', provider: 'openrouter', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'meta-llama/llama-3.3-70b-instruct', visionModel: 'meta-llama/llama-3.2-90b-vision-instruct', extraHeaders: { 'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' } });
+    const openRouterHeaders = { 'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' };
+    const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
+    const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: true, extraHeaders: openRouterHeaders });
+    const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });
     const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', textModel: 'llama-3.3-70b', visionModel: null });
     const fetchSambaNova = makeOAI({ name: 'SambaNova', provider: 'sambanova', key: sambanovaKey, url: 'https://api.sambanova.ai/v1/chat/completions', textModel: 'Meta-Llama-3.3-70B-Instruct', visionModel: 'Llama-3.2-90B-Vision-Instruct' });
     const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', textModel: 'meta/llama-3.3-70b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
@@ -393,7 +413,9 @@ export default async function handler(req, res) {
             { name: 'Mistral',      fn: fetchMistral },
             { name: 'Together',     fn: fetchTogether },
             { name: 'Fireworks',    fn: fetchFireworks },
-            { name: 'OpenRouter',   fn: fetchOpenRouter },
+            { name: 'OpenRouterFinance', fn: fetchOpenRouterFinance },
+            { name: 'OpenRouterQwen', fn: fetchOpenRouterQwen },
+            { name: 'OpenRouterNemotron', fn: fetchOpenRouterNemotron },
             { name: 'Cerebras',     fn: fetchCerebras },
             { name: 'SambaNova',    fn: fetchSambaNova },
             { name: 'NVIDIA',       fn: fetchNvidia },
@@ -408,9 +430,9 @@ export default async function handler(req, res) {
     // replace them once ten valid independent answers still agree exactly.
     const configured = { Gemini: geminiKey, DeepSeek: deepseekKey, Groq: groqKey, Ollama: ollamaKey,
         Anthropic: anthropicKey, xAI: xaiKey, Mistral: mistralKey, Together: togetherKey,
-        Fireworks: fireworksKey, OpenRouter: openrouterKey, Cerebras: cerebrasKey,
+        Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey, Cerebras: cerebrasKey,
         SambaNova: sambanovaKey, NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey };
-    engines = engines.filter(engine => Boolean(configured[engine.name]));
+    engines = engines.filter(engine => Boolean(configured[engine.name]) && providerAvailable(engine.name));
     // The required roster must match the task capability. A configured
     // text-only provider is not a missing vision voter; every eligible provider
     // is still required and a failed eligible provider still blocks unanimity.
@@ -436,6 +458,7 @@ export default async function handler(req, res) {
             .then(() => engine.fn())
             .then(r => ({ ok: true, name: engine.name, reply: r.reply, provider: r.provider, ms: Date.now() - started })), deadline])
             .catch(e => {
+                coolProvider(engine.name, e);
                 console.warn(`[AI] ${engine.name} failed:`, e.message);
                 errorLog.push(`${engine.name}: ${e.message}`);
                 return { ok: false, name: engine.name, error: e.message, ms: Date.now() - started };

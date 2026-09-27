@@ -1,11 +1,20 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import handler from '../api/ai.js';
+import handler, { coolProvider, providerAvailable, resetProviderCooldowns } from '../api/ai.js';
 
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+afterEach(() => { resetProviderCooldowns(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 const response = () => ({ setHeader() {}, status(n) { this.code = n; return this; }, json(body) { this.body = body; return this; } });
 const request = { method: 'POST', body: { prompt: 'Return only JSON for this financial transaction', mode: 'fastest' } };
 
 describe('parallel unanimous endpoint', () => {
+    it('temporarily removes credit-less and timed-out providers without retaining financial data', () => {
+        coolProvider('Anthropic', new Error('credit balance is too low'), 1000);
+        coolProvider('Cohere', new Error('Provider response deadline exceeded'), 1000);
+        expect(providerAvailable('Anthropic', 1000 + 60 * 60 * 1000)).toBe(false);
+        expect(providerAvailable('Cohere', 1000 + 59 * 1000)).toBe(false);
+        expect(providerAvailable('Cohere', 1000 + 61 * 1000)).toBe(true);
+        expect(providerAvailable('Gemini', 1000)).toBe(true);
+        expect(providerAvailable('DeepSeek', 1000)).toBe(true);
+    });
     it('waits for late prose dissent instead of returning the first or third arrival', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
         const releases = [];
@@ -61,16 +70,17 @@ describe('parallel unanimous endpoint', () => {
         await handler({ method: 'POST', body: { prompt: 'Decide the destination', financialDecision: true, mode: 'fastest' } }, res);
         expect(res.code).toBe(422); expect(res.body.reply).toBeNull(); expect(res.body.minimumProviders).toBe(10);
     });
-    it('accepts only the entire ten-provider board and recognizes return JSON wording', async () => {
+    it('fans one OpenRouter key out to three fixed free model families while preserving the ten-answer floor', async () => {
         for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
             ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
             : { choices: [{ message: { content: '{"approved":true}' } }] } })));
         const res = response();
         await handler({ method: 'POST', body: { prompt: 'Return JSON with a decision', mode: 'fastest' } }, res);
-        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(10);
+        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(12);
         expect(res.body.unanimous).toBe(true); expect(res.body.financialDecision).toBe(true);
-        expect(fetch).toHaveBeenCalledTimes(10);
+        expect(res.body.expected).toEqual(expect.arrayContaining(['Gemini', 'DeepSeek', 'OpenRouterFinance', 'OpenRouterQwen', 'OpenRouterNemotron']));
+        expect(fetch).toHaveBeenCalledTimes(12);
     });
     it('does not call failing prose engines a second time after quorum exhaustion', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
@@ -78,7 +88,7 @@ describe('parallel unanimous endpoint', () => {
         const res = response(); await handler({ method: 'POST', body: { prompt: 'Hello' } }, res);
         expect(res.code).toBe(503); expect(fetch).toHaveBeenCalledTimes(2);
     });
-    it('keeps a failed tenth configured member in the required board', async () => {
+    it('lets the free OpenRouter reserve models replace a failed configured member', async () => {
         for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => {
             if (url.includes('sambanova')) throw new Error('offline');
@@ -87,9 +97,9 @@ describe('parallel unanimous endpoint', () => {
                 : { choices: [{ message: { content: '{"approved":true}' } }] } };
         }));
         const res = response(); await handler(request, res);
-        expect(res.code).toBe(422); expect(res.body.expected).toHaveLength(10);
-        expect(res.body.failed).toEqual(['SambaNova']); expect(res.body.reason).toBe('provider_unavailable');
-        expect(res.body.reply).toBeNull(); expect(res.body.trustworthy).toBe(false);
+        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(12);
+        expect(res.body.failed).toEqual(['SambaNova']); expect(res.body.unanimous).toBe(true);
+        expect(res.body.answered).toHaveLength(11); expect(res.body.trustworthy).toBe(true);
     });
     it('replaces one unavailable engine with an agreeing spare instead of failing the financial decision', async () => {
         for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
@@ -102,7 +112,7 @@ describe('parallel unanimous endpoint', () => {
         const res = response(); await handler(request, res);
         expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
         expect(res.body.failed).toEqual(['SambaNova']);
-        expect(res.body.answered).toHaveLength(10);
-        expect(res.body.corroboration).toMatchObject({ agreed: 10, of: 11 });
+        expect(res.body.answered).toHaveLength(12);
+        expect(res.body.corroboration).toMatchObject({ agreed: 12, of: 13 });
     });
 });

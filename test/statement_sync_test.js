@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairCategoriesInUser } from '../statement-sync.js';
+import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 import fs from 'node:fs';
@@ -197,6 +197,14 @@ describe('private source inspection and durable layout replay', () => {
         expect(await recoverPasswordFailures({ db: args.db, mailRef: args.db.doc('wf-mail/owner_example_com'), uid: 'u', vaultSavedAt: 200 })).toBe(1);
         expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', hasReview: false });
         expect(args.data.get('users/u/statementReview/' + reviewId).status).toBe('retried');
+    });
+    it('backfills bank, filename and received date on every legacy pending row review', async () => {
+        const args = setup();
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), receivedMs: 123456, subject: 'Monthly statement', from: 'statements@hnb.lk' });
+        args.data.set('users/u/statementReview/' + args.id, { uid: 'u', sourcePath: args.sourcePath, index: 4, status: 'pending', reason: 'invalid-transaction', row });
+        expect(await repairReviewMetadata({ db: args.db, uid: 'u' })).toBe(1);
+        expect(args.data.get('users/u/statementReview/' + args.id)).toMatchObject({ bank: 'HNB', filename: 'statement.pdf', receivedMs: 123456, subject: 'Monthly statement', from: 'statements@hnb.lk' });
+        expect(await repairReviewMetadata({ db: args.db, uid: 'u' })).toBe(0);
     });
     it('replays every safe whole-statement failure, not only the first item', async () => {
         const args = setup(); args.data.delete('users/u/statementReview/' + args.id); args.data.delete(args.sourcePath);
