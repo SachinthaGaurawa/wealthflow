@@ -67,6 +67,21 @@ export const ITEMS_RETURN_MAX = 200;
  * everything I can see" is always one call. */
 export const ITEMS_DELETE_MAX = 250;
 
+/** A mailbox-state read is idempotent. Retry once after a short yield because
+ * a fresh serverless instance can establish its Firestore channel just after
+ * the first bounded read fails. Successful reads pay no retry or delay. */
+export async function readMailState(ref, deadline = withDeadline, pause = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+    try { return await deadline(Promise.resolve().then(() => ref.get()), 8000, 'wf-mail'); }
+    catch (first) {
+        await pause(75);
+        try { return await deadline(Promise.resolve().then(() => ref.get()), 12000, 'wf-mail retry'); }
+        catch (second) {
+            second.firstFailure = String(first?.message || first || '').slice(0, 160);
+            throw second;
+        }
+    }
+}
+
 function j(res, code, body) {
     res.statusCode = code;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -601,7 +616,7 @@ export default async function handler(req, res) {
     if (method === 'GET') {
         let snap;
         try {
-            snap = await withDeadline(ref.get(), 8000, 'wf-mail');
+            snap = await readMailState(ref);
         } catch (_) {
             return j(res, 503, { ok: false, error: 'state unreadable' });
         }
