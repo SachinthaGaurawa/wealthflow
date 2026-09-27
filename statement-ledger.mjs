@@ -3,7 +3,9 @@ import { isStrictCalendarDate } from './otp-recovery.mjs';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-const modules = { expenses: 'expenses', income: 'incomeRecv', incomeRecv: 'incomeRecv', cconetime: 'cconetime', cc_payment: 'ccPayments', ccPayments: 'ccPayments', subscription: 'subscriptions', subscriptions: 'subscriptions' };
+const modules = { expenses: 'expenses', income: 'incomeRecv', incomeRecv: 'incomeRecv', cconetime: 'cconetime', cc_payment: 'ccPayments', ccPayments: 'ccPayments', subscription: 'subscriptions', subscriptions: 'subscriptions', skip: 'skip' };
+export const transferEvidence = row => /\b(?:inward|outward)?\s*(?:ceft\s+)?transfer\b|\btransfer\s+credit[-\s]*mobilebanking\b/i
+    .test(String(row?.description || row?.narration || row?.desc || row?.name || ''));
 
 export function amountCents(value) {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null;
@@ -27,6 +29,8 @@ export function validateSettlementRow(row, decision, { statementType = '' } = {}
     if (!decision || decision.verified !== true || !modules[decision.module] || !norm(decision.category)) return decision?.reason || 'unanimous-decision-required';
     const module = modules[decision.module];
     const card = /credit.?card|amex|card/i.test(statementType);
+    if (transferEvidence(row)) return module === 'skip' ? null : 'transfer-route-conflict';
+    if (module === 'skip') return 'skip-requires-transfer-evidence';
     if (module === 'incomeRecv' && (row.direction !== 'credit' || card)) return 'income-direction-conflict';
     if (module === 'ccPayments' && (row.direction !== 'credit' || !card)) return 'card-payment-context-required';
     if (['expenses', 'cconetime', 'subscriptions'].includes(module) && row.direction !== 'debit') return 'expense-direction-conflict';
@@ -81,7 +85,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const user = structuredClone(userSnap.data() || {});
         const changes = {};
         const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
-        const outcome = { filed: 0, duplicates: 0, review: 0, cursor: cursor + rows.length };
+        const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, cursor: cursor + rows.length };
         const writes = [];
         rows.forEach((row, offset) => {
             const index = cursor + offset, id = ledgerRefs[offset].id;
@@ -105,7 +109,9 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 outcome.duplicates++; return;
             }
             if (matching.length) reason = 'ambiguous-cross-source-match';
-            if (!reason && module === 'subscriptions') {
+            if (!reason && module === 'skip') {
+                outcome.skipped++;
+            } else if (!reason && module === 'subscriptions') {
                 const subs = user.subscriptions;
                 const subMatches = Array.isArray(subs) ? subs.filter(sub => sub.id === decision.allocationId) : [];
                 if (subMatches.length !== 1) reason = 'subscription-allocation-required';
@@ -134,8 +140,8 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             if (reason) {
                 outcome.review++;
                 writes.push([reviewRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'pending', reason, row: JSON.parse(JSON.stringify(row)), decision: JSON.parse(JSON.stringify(decision)), createdAt: now }]);
-            } else outcome.filed++;
-            writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: reason ? 'review' : 'filed', module: module || '', fingerprint: hash(rowIdentity(row, context)), settledAt: now }]);
+            } else if (module !== 'skip') outcome.filed++;
+            writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: reason ? 'review' : module === 'skip' ? 'skipped' : 'filed', module: module || '', fingerprint: hash(rowIdentity(row, context)), settledAt: now }]);
         });
         const hasReview = source.hasReview === true || outcome.review > 0;
         const final = outcome.cursor === totalRows;

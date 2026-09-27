@@ -7,7 +7,7 @@ import { policyFrom, matchSender } from './wealthflow-mail-senders.mjs';
 import { planMessage } from './wealthflow-mail-ingest.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, STATEMENT_LIMITS } from './statement-reader.mjs';
-import { settleStatement, resolveReview } from './statement-ledger.mjs';
+import { settleStatement, resolveReview, transferEvidence } from './statement-ledger.mjs';
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, VERDICT } from './wealthflow-statement-identity.js';
@@ -62,7 +62,7 @@ export async function classifySlice(rows, allocations, { board = invokeBoard } =
         /* Direction/account type and a strong merchant match are facts, not AI
          * opinions.  Never let a unanimous board turn a bank debit into income,
          * or flatten Keells/CEFT charges/Dialog back to Other. */
-        if (deterministic.verified && deterministic.module !== 'skip') {
+        if (deterministic.verified) {
             const strongCategory = deterministic.category !== 'Other' && deterministic.category !== 'Income';
             const compatibleSubscription = value.module === 'subscriptions' && value.allocationId
                 && (allocations.subscriptions || []).some(sub => sub.id === value.allocationId);
@@ -85,7 +85,7 @@ export function deterministicDecision(row, allocations = {}) {
     const description = String(row?.narration || row?.description || '');
     /* Transfers move money between accounts and must not be counted as new
      * income or spending. This is also the contract shown in the review UI. */
-    if (/\b(?:inward|outward)?\s*(?:ceft\s+)?transfer\b|\btransfer\s+credit[-\s]*mobilebanking\b/i.test(description)) {
+    if (transferEvidence({ description })) {
         return { module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true };
     }
     const routed = routeRow(row, { ...allocations, reviewThreshold: 0.7 });
