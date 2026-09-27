@@ -217,7 +217,12 @@ export async function readPdfStatement(bytes, passwords = []) {
     for (const password of attempts) {
         let task;
         try {
-            task = getDocument({ data: Uint8Array.from(buffer), password, isEvalSupported: false, useSystemFonts: false, disableFontFace: true, standardFontDataUrl });
+            // verbosity: ERRORS (0) — this path only ever calls getTextContent(),
+            // never render(), so pdfjs's Node canvas/DOMMatrix/Path2D polyfill
+            // warnings and per-glyph "glyf table not found" recovery notices are
+            // about a rendering path this code never takes; they were pure log
+            // noise on every statement, not a sign extraction was degraded.
+            task = getDocument({ data: Uint8Array.from(buffer), password, isEvalSupported: false, useSystemFonts: false, disableFontFace: true, standardFontDataUrl, verbosity: 0 });
             const doc = await task.promise;
             if (doc.numPages > STATEMENT_LIMITS.pages) fail('STATEMENT_PAGE_LIMIT');
             const lines = [];

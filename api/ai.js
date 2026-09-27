@@ -513,7 +513,13 @@ export default async function handler(req, res) {
     // every success, failure and timeout in the decision record.
     const results = await Promise.all(engines.map(run));
     if (mode === 'unanimous') {
-        const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 10, allowUnavailable: true });
+        // Five independent engines already gives real cross-checking (chance
+        // agreement on a categorical answer collapses fast per extra voter);
+        // ten was set once, never checked against how many of the configured
+        // providers are simultaneously healthy in practice, and silently
+        // failed every unanimous vote whenever fewer than ten were up at once
+        // — which is the normal case, not the exception, for free-tier keys.
+        const decision = Matrix.unanimousDecision(results, { task, expected: expectedNames, minimumProviders: 5, allowUnavailable: true });
         // Preserve a machine-readable quarantine outcome; no partial answer is
         // released to consumers that might otherwise file a majority guess.
         return res.status(decision.unanimous ? 200 : 422).json({

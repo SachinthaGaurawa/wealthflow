@@ -9,7 +9,7 @@ import path from 'node:path';
 
 const roster = Array.from({ length: 10 }, (_, index) => 'engine' + index);
 const row = { date: '2026-09-10', narration: 'Merchant', amount: 42, direction: 'debit', directionSource: 'column', needsReview: false };
-const decision = { index: 0, module: 'expenses', category: 'Food', allocationId: '' };
+const decision = { index: 0, module: 'expenses', category: 'Groceries', allocationId: '' };
 const good = fields => ({ unanimous: true, trustworthy: true, expected: roster, fields });
 
 describe('statement worker authorization and board', () => {
@@ -27,15 +27,15 @@ describe('statement worker authorization and board', () => {
         expect(validScheduleSecret({ headers: { authorization: 'Bearer ' + 'b'.repeat(24) } }, env)).toBe(false);
         expect(validScheduleSecret({ headers: { authorization: 'Bearer short' } }, { CRON_SECRET: 'short' })).toBe(false);
     });
-    it('requires every configured engine and at least ten experts', async () => {
+    it('requires every configured engine and at least five experts', async () => {
         const invoke = value => invokeBoard('Return only JSON.', async (_, res) => res.status(200).json(value));
         await expect(invoke(good({ decisions: [decision] }))).resolves.toMatchObject({ unanimous: true });
-        await expect(invoke({ ...good({}), expected: roster.slice(0, 9) })).rejects.toThrow('ai-consensus-unavailable');
+        await expect(invoke({ ...good({}), expected: roster.slice(0, 4) })).rejects.toThrow('ai-consensus-unavailable');
         await expect(invoke({ ...good({}), unanimous: false })).rejects.toThrow('ai-consensus-unavailable');
     });
     it('runs independent classification then independent unanimous peer approval without editing amounts', async () => {
         const board = vi.fn().mockResolvedValueOnce(good({ decisions: [decision] })).mockResolvedValueOnce(good({ approved: true }));
-        expect(await classifySlice([row], {}, { board })).toEqual([{ module: 'expenses', category: 'Food', allocationId: '', verified: true }]);
+        expect(await classifySlice([row], {}, { board })).toEqual([{ module: 'expenses', category: 'Groceries', allocationId: '', verified: true }]);
         expect(board).toHaveBeenCalledTimes(2);
         expect(row.amount).toBe(42);
         expect(JSON.stringify(board.mock.calls[0][0])).toContain('MERCHANT');
