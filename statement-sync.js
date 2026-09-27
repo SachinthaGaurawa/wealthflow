@@ -293,13 +293,16 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
 export function repairCategoriesInUser(user) {
     const next = structuredClone(user || {});
     let expenses = 0, income = 0;
+    const fromStatement = record => record?.source === 'statement'
+        || (/^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(record?.statementKey || ''))
+            && Number.isSafeInteger(record?.statementRow) && record.statementRow >= 0);
     if (Array.isArray(next.expenses)) next.expenses.forEach(record => {
-        if (record?.source !== 'statement' || !['', 'Other'].includes(String(record.cat || ''))) return;
+        if (!fromStatement(record) || !['', 'Other'].includes(String(record.cat || ''))) return;
         const category = expenseCategoryFor({ description: record.desc || record.description || record.name || '' });
         if (category !== 'Other') { record.cat = category; record.categorySource = 'statement-taxonomy-v1'; expenses += 1; }
     });
     if (Array.isArray(next.incomeRecv)) next.incomeRecv.forEach(record => {
-        if (record?.source !== 'statement' || !['', 'Other', 'Income'].includes(String(record.type || ''))) return;
+        if (!fromStatement(record) || !['', 'Other', 'Income'].includes(String(record.type || ''))) return;
         const category = incomeCategoryFor({ description: record.name || record.desc || record.description || '' });
         if (category !== 'Other') { record.type = category; record.categorySource = 'statement-taxonomy-v1'; income += 1; }
     });
