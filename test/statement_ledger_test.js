@@ -40,6 +40,25 @@ describe('statement ledger', () => {
         expect(validateSettlementRow(row, { ...decision, verified: false })).toBe('unanimous-decision-required');
         expect(validateSettlementRow({ ...row, direction: 'credit' }, decision)).toBe('expense-direction-conflict');
     });
+    it('enforces the debit-credit and transfer routing matrix after every AI decision', () => {
+        const credit = { ...row, direction: 'credit' };
+        expect(validateSettlementRow(credit, { module: 'incomeRecv', category: 'Salary', verified: true })).toBe(null);
+        expect(validateSettlementRow(credit, decision)).toBe('expense-direction-conflict');
+        expect(validateSettlementRow(row, { module: 'incomeRecv', category: 'Salary', verified: true })).toBe('income-direction-conflict');
+        const transfer = { ...credit, description: 'TRANSFER CREDIT-MOBILEBANKING' };
+        expect(validateSettlementRow(transfer, { module: 'incomeRecv', category: 'Income', verified: true })).toBe('transfer-route-conflict');
+        expect(validateSettlementRow(transfer, { module: 'skip', category: 'Transfer', verified: true })).toBe(null);
+        expect(validateSettlementRow(row, { module: 'skip', category: 'Transfer', verified: true })).toBe('skip-requires-transfer-evidence');
+    });
+    it('records a proven transfer as skipped without changing any financial array', async () => {
+        const args = fixture();
+        args.rows = [{ ...row, description: 'OUTWARD CEFT TRANSFER SISTER' }];
+        args.decisions = [{ module: 'skip', category: 'Transfer', verified: true }];
+        expect(await settleStatement(args)).toMatchObject({ filed: 0, skipped: 1, review: 0, status: 'filed' });
+        expect(args.db.docs.get('users/u')).toEqual({});
+        const ledger = [...args.db.docs.entries()].find(([path]) => path.includes('/statementLedger/'))?.[1];
+        expect(ledger).toMatchObject({ status: 'skipped', module: 'skip' });
+    });
     it('atomically writes user array, identity and final source while preserving encrypted manifest', async () => {
         const args = fixture(); const result = await settleStatement(args);
         expect(result).toMatchObject({ filed: 1, status: 'filed' });

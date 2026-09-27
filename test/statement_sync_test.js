@@ -80,6 +80,14 @@ describe('statement worker authorization and board', () => {
         expect(await classifySlice([{ ...row, narration: 'POS TRANSACTION KEELLS SUPER' }], { statementType: 'bank_account' }, { board }))
             .toEqual([{ module: 'expenses', category: 'Groceries', allocationId: '', verified: true, deterministic: true }]);
     });
+    it('never lets a unanimous board turn a transfer into income or spending', async () => {
+        for (const [direction, module] of [['credit', 'incomeRecv'], ['debit', 'expenses']]) {
+            const wrong = { index: 0, module, category: direction === 'credit' ? 'Income' : 'Other', allocationId: '' };
+            const board = vi.fn().mockResolvedValueOnce(good({ decisions: [wrong] })).mockResolvedValueOnce(good({ approved: true }));
+            expect(await classifySlice([{ ...row, direction, narration: direction === 'credit' ? 'TRANSFER CREDIT-MOBILEBANKING' : 'OUTWARD CEFT TRANSFER SISTER' }], { statementType: 'bank_account' }, { board }))
+                .toEqual([{ module: 'skip', category: 'Transfer', allocationId: '', verified: true, deterministic: true }]);
+        }
+    });
     it('self-heals only generic statement categories with strong evidence', () => {
         const original = { expenses: [
             { id: 'a', source: 'statement', desc: 'POS TRANSACTION KEELLS SUPER', cat: 'Other' },
