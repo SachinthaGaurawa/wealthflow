@@ -182,7 +182,18 @@ export async function attachmentBytes(source, ref, token, senders, f = fetch) {
     const message = await response.json();
     const plan = planMessage(message, policyFrom(senders));
     if (!plan.ok) throw new Error('statement-sender-no-longer-approved');
-    const items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
+    let items = plan.items.filter(item => item.key === ref.id || item.legacyKey === ref.id);
+    /* Gmail may remint an attachmentId when an old message is read again. That
+     * changed both historical document keys, leaving a perfectly valid source
+     * in permanent review even though the exact attachment was still present.
+     * Recover only from immutable manifest evidence and only when it selects a
+     * single attachment. The SHA-256 pin below remains the final authority. */
+    if (items.length === 0 && source.attachmentId) {
+        items = plan.items.filter(item => item.attachmentId === source.attachmentId);
+    }
+    if (items.length === 0 && source.filename && Number.isFinite(Number(source.size))) {
+        items = plan.items.filter(item => item.filename === source.filename && Number(item.size) === Number(source.size));
+    }
     if (items.length !== 1) throw new Error('statement-attachment-identity-mismatch');
     const item = items[0];
     let payload;

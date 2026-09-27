@@ -303,6 +303,7 @@ export default async function handler(req, res, deps) {
 
                 const write = planWrite(b64, {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
+                    attachmentId: item.attachmentId || '', size: item.size,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
                     contentSha256: createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex'),
                     backfilled: true,

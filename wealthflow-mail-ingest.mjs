@@ -588,6 +588,7 @@ export function repairManifest(manifest, item, { uid = '' } = {}) {
     fill('from', item && item.from);
     fill('bank', item && item.bank);
     fill('messageId', item && item.messageId);
+    fill('attachmentId', item && item.attachmentId);
     fill('filename', item && item.filename);
     fill('subject', item && item.subject);
     fill('receivedMs', item && item.receivedMs);
