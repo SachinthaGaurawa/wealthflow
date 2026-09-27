@@ -91,7 +91,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             const index = cursor + offset, id = ledgerRefs[offset].id;
             const context = { bank, last4, statementType, sourcePath: sourceRef.path, index };
             const fingerprint = hash(rowIdentity(row, context));
-            if (ledgerSnaps[offset].exists) {
+            if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');
                 outcome.duplicates++; return;
             }
