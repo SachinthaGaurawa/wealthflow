@@ -222,6 +222,21 @@ describe('statement worker attachment policy', () => {
         expect(result.bytes.toString()).toBe('%PDF-inline');
         expect(f).toHaveBeenCalledTimes(1);
     });
+    it('recovers a legacy source by one exact attachment manifest match', async () => {
+        const data = Buffer.from('%PDF-legacy').toString('base64url');
+        const f = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => message })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ data }) });
+        const result = await attachmentBytes({ messageId: 'm1', filename: 'statement.pdf', size: 100 }, { id: 'obsolete-key' }, 'token', senders, f);
+        expect(result.bytes.toString()).toBe('%PDF-legacy');
+    });
+    it('keeps an ambiguous legacy attachment match in review', async () => {
+        const duplicate = structuredClone(message);
+        duplicate.payload.parts.push({ filename: 'statement.pdf', mimeType: 'application/pdf', body: { attachmentId: 'a2', size: 100 } });
+        const f = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => duplicate });
+        await expect(attachmentBytes({ messageId: 'm1', filename: 'statement.pdf', size: 100 }, { id: 'obsolete-key' }, 'token', senders, f))
+            .rejects.toThrow('statement-attachment-identity-mismatch');
+        expect(f).toHaveBeenCalledTimes(1);
+    });
     it('pins every attachment to SHA-256 and rejects changed ciphertext', async () => {
         const plan = planMessage(message, policyFrom(senders));
         const data = Buffer.from('%PDF-test').toString('base64url');
