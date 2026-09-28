@@ -50,6 +50,31 @@ describe('statement ledger', () => {
         expect(validateSettlementRow(transfer, { module: 'skip', category: 'Transfer', verified: true })).toBe(null);
         expect(validateSettlementRow(row, { module: 'skip', category: 'Transfer', verified: true })).toBe('skip-requires-transfer-evidence');
     });
+    it('files a card charge the classifier proved via the owner registry even when the parser never read statementType', () => {
+        // This is the exact live bug: deterministicDecision()/the AI board already
+        // fall back to Settings -> Manage cards & accounts (by last-4 + bank) when
+        // the statement's own layout does not declare a type, but this final gate
+        // used to re-derive "is this a card?" from statementType alone and silently
+        // disagreed, quarantining an already-correctly-classified row to review.
+        const cardRow = { ...row, direction: 'debit' };
+        const ctx = { statementType: '', card_last4: '9911', bank: 'DFCC', cardRegistry: { '9911': { type: 'credit_card', bank: 'DFCC' } } };
+        expect(validateSettlementRow(cardRow, { module: 'cconetime', category: 'Shopping', verified: true }, ctx)).toBe(null);
+    });
+    it('still refuses a card charge with no statement or registry proof of a credit-card account', () => {
+        const cardRow = { ...row, direction: 'debit' };
+        expect(validateSettlementRow(cardRow, { module: 'cconetime', category: 'Shopping', verified: true }, {})).toBe('card-charge-context-required');
+        // Registry match exists but says bank account, not credit card.
+        const ctx = { card_last4: '9911', bank: 'DFCC', cardRegistry: { '9911': { type: 'bank_account', bank: 'DFCC' } } };
+        expect(validateSettlementRow(cardRow, { module: 'cconetime', category: 'Shopping', verified: true }, ctx)).toBe('card-charge-context-required');
+        // Registry match exists for the last four digits but at a different bank.
+        const collision = { card_last4: '9911', bank: 'Sampath', cardRegistry: { '9911': { type: 'credit_card', bank: 'DFCC' } } };
+        expect(validateSettlementRow(cardRow, { module: 'cconetime', category: 'Shopping', verified: true }, collision)).toBe('card-charge-context-required');
+    });
+    it('recognizes a registry-matched credit-card payment the same way', () => {
+        const credit = { ...row, direction: 'credit' };
+        const ctx = { card_last4: '9911', bank: 'DFCC', cardRegistry: { '9911': { type: 'credit_card', bank: 'DFCC' } } };
+        expect(validateSettlementRow(credit, { module: 'cc_payment', category: 'Card Payment', verified: true }, ctx)).toBe(null);
+    });
     it('records a proven transfer as skipped without changing any financial array', async () => {
         const args = fixture();
         args.rows = [{ ...row, description: 'OUTWARD CEFT TRANSFER SISTER' }];
@@ -141,6 +166,27 @@ describe('statement ledger', () => {
         expect(await resolveReview(request)).toMatchObject({ alreadyResolved: true });
         expect(args.db.docs.get('users/u').expenses).toHaveLength(1);
         expect(args.db.docs.get('users/u/statementReview/' + id).reason).toBe('');
+    });
+    it('settles a registry-recognized credit-card charge end to end when the parser could not read statementType', async () => {
+        const args = fixture();
+        args.bank = 'DFCC'; args.last4 = '9911'; args.statementType = '';
+        args.cardRegistry = { '9911': { type: 'credit_card', bank: 'DFCC' } };
+        args.decisions = [{ module: 'cconetime', category: 'Shopping', verified: true }];
+        expect(await settleStatement(args)).toMatchObject({ filed: 1, status: 'filed' });
+        expect(args.db.docs.get('users/u').cconetime).toHaveLength(1);
+    });
+    it('resolves a per-row credit-card review using the owner card registry when the source never read statementType', async () => {
+        const args = fixture({ settings: { cardRegistry: { '9911': { type: 'credit_card', bank: 'DFCC' } } } });
+        args.db.docs.delete('sources/s'); args.sourceRef = args.db.doc('wf-mail/owner/items/m2.statement.pdf');
+        args.db.docs.set(args.sourceRef.path, { uid: 'u', leaseToken: 'token', leaseUntil: 2000, cursor: 0 });
+        args.bank = 'DFCC'; args.last4 = '9911'; args.statementType = '';
+        args.decisions = [{ verified: false }];
+        await settleStatement(args);
+        const id = sourceOccurrenceId(args.sourceRef.path, 0);
+        const decision = { module: 'cconetime', category: 'Shopping', verified: true };
+        const request = { db: args.db, uid: 'u', id, row: {}, decision, now: 1200 };
+        expect(await resolveReview(request)).toMatchObject({ ok: true, filed: true });
+        expect(args.db.docs.get('users/u').cconetime).toHaveLength(1);
     });
     it('rejects impossible manual review edits without resolving or writing', async () => {
         const args = fixture();
