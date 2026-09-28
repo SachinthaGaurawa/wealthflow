@@ -232,7 +232,12 @@ export const BUDGETS = {
     // Diagnostics "Copy diagnostics" button, and the standalone copy-
     // diagnostics payload includes it and the per-reason review-queue summary
     // (measured 2,076,356). No new script or request.
-    htmlBytes: 2_076_400,
+    // Raised again same day: the layout-teach modal's ambiguous-dates warning
+    // no longer points at "Read it differently" when readings.length is 1 —
+    // reachable when two tied date-order candidates produce identical rows
+    // and dedupe to one entry, still flagged ambiguous, leaving the owner
+    // looking for a button the modal never drew (measured 2,077,271).
+    htmlBytes: 2_077_400,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is

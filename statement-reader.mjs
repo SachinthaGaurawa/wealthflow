@@ -62,22 +62,43 @@ async function parse(text, htmlForData = '') {
     context.inputHtml = htmlForData;
     try {
         let parsed = vm.runInContext('window.WFStatementParser.parseStatement(inputText)', context, { timeout: 2000 });
-        if (!parsed.rows.length && htmlForData) {
-            const data = vm.runInContext('window.WFHtmlStatement._layerScripts(inputHtml)', context, { timeout: 2000 });
+        // Merges rows found outside the primary <table>/plain-text reading into
+        // inputText and re-parses, the same way regardless of which layer found
+        // them. Neither layer below ever marks a statement understood: both can
+        // assume an unmarked row's direction, so completeness always needs the
+        // owner's eyes.
+        const mergeEmbedded = (data, reason) => {
             if (data.length > STATEMENT_LIMITS.rows) fail('STATEMENT_ROW_LIMIT');
-            if (data.length) {
-                const lines = data.map(r => `${r.date} ${r.narration} ${r.amount.toFixed(2)} ${r.direction === 'credit' ? 'CR' : 'DR'}`).join('\n');
-                context.inputText = `${text}\n${lines}`;
-                parsed = vm.runInContext('window.WFStatementParser.parseStatement(inputText)', context, { timeout: 2000 });
-                // The legacy data reader can assume unmarked debit direction.
-                // Require review until the layout has explicit evidence.
-                parsed.verdict = 'unverified'; parsed.understood = false;
-                parsed.reason = 'Embedded transaction data requires completeness verification.';
-                parsed.layout ||= {};
-                parsed.layout.embeddedRows = data.length;
-                parsed.layout.explicitDirectionRows = data.filter(r => r.directionSource && r.directionSource !== 'assumed').length;
-                parsed.layout.embeddedCompletenessVerified = false;
-                text = context.inputText;
+            if (!data.length) return false;
+            const lines = data.map(r => `${r.date} ${r.narration} ${r.amount.toFixed(2)} ${r.direction === 'credit' ? 'CR' : 'DR'}`).join('\n');
+            context.inputText = `${text}\n${lines}`;
+            parsed = vm.runInContext('window.WFStatementParser.parseStatement(inputText)', context, { timeout: 2000 });
+            parsed.verdict = 'unverified'; parsed.understood = false;
+            parsed.reason = reason;
+            parsed.layout ||= {};
+            parsed.layout.embeddedRows = data.length;
+            parsed.layout.explicitDirectionRows = data.filter(r => r.directionSource && r.directionSource !== 'assumed').length;
+            parsed.layout.embeddedCompletenessVerified = false;
+            text = context.inputText;
+            return true;
+        };
+        if (!parsed.rows.length && htmlForData) {
+            const scripted = vm.runInContext('window.WFHtmlStatement._layerScripts(inputHtml)', context, { timeout: 2000 });
+            if (!mergeEmbedded(scripted, 'Embedded transaction data requires completeness verification.')) {
+                // Neither a <table> layout the parser understood nor a script-
+                // embedded data array existed. wealthflow-html-statement.js calls
+                // this reading _layerText: one transaction per text line, or —
+                // deliberately last, the loosest of the three — a flattened
+                // date/description/amount scan for a <div> grid where no single
+                // line holds a whole row. It already existed and is already
+                // tested (test/estatement_parse_shapes_test.js) but nothing in
+                // this file ever called it, so an export whose real transaction
+                // dates are outside any <table> and never touch a <script> tag —
+                // exactly what a "Consolidated eStatement" bank export can look
+                // like — was unreadable to both the automatic pipeline and "Map
+                // statement layout", which share this one function.
+                const lined = vm.runInContext('window.WFHtmlStatement._layerText(inputHtml)', context, { timeout: 2000 });
+                mergeEmbedded(lined, 'Statement rows were read line by line; verify before filing.');
             }
         }
         if (parsed.rows.length > STATEMENT_LIMITS.rows || parsed.candidateRows > STATEMENT_LIMITS.rows) fail('STATEMENT_ROW_LIMIT');

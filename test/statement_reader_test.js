@@ -77,6 +77,38 @@ describe('server statement reader', () => {
         expect(result.parsed.understood).toBe(false);
         expect(result.text).not.toContain('never execute');
     });
+    it('falls back to line-by-line reading when a statement has no <table> or script-embedded data', async () => {
+        // A "Consolidated eStatement" export that lays out each field of a
+        // transaction in its own <div> instead of a <table> row or a script
+        // array — real dates and amounts, but neither layer that existed here
+        // before could see them: the primary parser gets each field on a
+        // separate line once htmlText() flattens the document, and until this
+        // fix nothing else was ever tried.
+        const html = '<html><body><h1>Nations Trust Bank Consolidated Statement</h1>'
+            + '<div>14/09/2026</div><div>KEELLS STORE</div><div>123.45 DR</div>'
+            + '<div>15/09/2026</div><div>SALARY PAYMENT</div><div>50000.00 CR</div>'
+            + '</body></html>';
+        const result = await readStatement({ bytes: Buffer.from(html), filename: 'statement.html' });
+        expect(result.parsed.rows).toHaveLength(2);
+        expect(result.parsed.rows.map(r => [r.amount, r.direction])).toEqual([[123.45, 'debit'], [50000, 'credit']]);
+        expect(result.parsed.verdict).toBe('unverified');
+        expect(result.parsed.understood).toBe(false);
+        expect(result.parsed.reason).toMatch(/line by line/i);
+    });
+    it('tries line-by-line reading only after both the table and script layers find nothing', async () => {
+        // Same statement as above, but with a script-embedded array present too.
+        // The script layer must win — it is the more reliable source — and the
+        // line reading must never even run.
+        const row = ['14/09/2026', 'KEELLS STORE', '123.45', 'DR'];
+        const html = '<html><body><h1>AMEX Statement</h1>'
+            + `<script>var transactions=${JSON.stringify([row])};</script>`
+            + '<div>15/09/2026</div><div>SALARY PAYMENT</div><div>50000.00 CR</div>'
+            + '</body></html>';
+        const result = await readStatement({ bytes: Buffer.from(html), filename: 'statement.html' });
+        expect(result.parsed.rows).toHaveLength(1);
+        expect(result.parsed.rows[0].amount).toBe(123.45);
+        expect(result.parsed.reason).toMatch(/embedded transaction data/i);
+    });
     it('bounds attachments and returns sanitized malformed-PDF errors', async () => {
         await expect(readStatement({ bytes: Buffer.alloc(STATEMENT_LIMITS.bytes + 1), filename: 's.html' })).rejects.toMatchObject({ code: 'ATTACHMENT_SIZE_LIMIT' });
         await expect(readStatement({ bytes: Buffer.from('%PDF-broken'), filename: 's.pdf' })).rejects.toMatchObject({ code: 'PDF_UNREADABLE' });

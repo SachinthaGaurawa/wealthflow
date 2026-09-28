@@ -161,6 +161,27 @@ describe('propose(): reading a statement nobody taught us', () => {
         expect(readings[0].template.order).toBe('dmy');
     });
 
+    it('can dedupe an ambiguous tie down to one reading, and still flags it', () => {
+        // Every transaction date below has day == month, so the day-first and
+        // month-first interpretations of EVERY row compute the identical ISO
+        // date — uniq() dedupes them to a single entry by row content, but the
+        // ambiguous flag (set by comparing template.order, not row content)
+        // survives onto that one surviving reading. A caller that assumes
+        // "ambiguous implies more than one reading exists" is wrong; the
+        // teach modal used to be one such caller (see layout_teach_wiring_test.js).
+        const { P, M } = loadBoth();
+        const palindromic = [
+            'ACCOUNT STATEMENT', 'OPENING BALANCE 100,000.00',
+            '03.03.2026 KEELLS SUPER COLOMBO 4,250.00 95,750.00',
+            '05.05.2026 SALARY MAY 250,000.00 345,750.00',
+            '07.07.2026 CEB ELECTRICITY 8,430.50 337,319.50',
+            'CLOSING BALANCE 337,319.50',
+        ].join('\n');
+        const readings = M.propose(palindromic, P.parseStatement, { bank: 'DFCC' });
+        expect(readings).toHaveLength(1);
+        expect(readings[0].ambiguous).toBe(true);
+    });
+
     it('refuses a reading that scatters rows across the calendar', () => {
         const { P, M } = loadBoth();
         // Every reading offered must keep the statement inside a plausible
