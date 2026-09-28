@@ -129,11 +129,122 @@ export const BUDGETS = {
     // FUTURE, so the mailbox's existing statements were unreachable and the
     // backfill engine merged in #142 had no caller for its scan half at all.
     // This is the button, the depth picker, the progress state and the driver.
-    // Raised for the Statement Sync proactive vault-lock warning and boot check
-    // (PR #195, Part 4): the locked state was silent until after manual sync
-    // runs, and password vault saving dropped bankless passwords. The card now
-    // proactively prompts unlock and re-runs sync on close.
-    htmlBytes: 1_784_000,        // measured 1,764,620 with proactive lock card and boot check
+    /* Raised from 1_754_000. The mailbox card now scans the inbox's history by
+     * itself the first time it finds a connected mailbox with nothing in it.
+     *
+     * That is not a feature so much as the repair of a false statement: a Gmail
+     * watch reports only what arrives NEXT, so a freshly connected mailbox had
+     * never had anything look at the mail already in it, and the card said
+     * "Connected. No statements waiting" — true, and completely misleading. The
+     * owner reported it twice, the second time after being told it was fixed.
+     *
+     * Roughly 2.5 KB on 1.75 MB, for the trigger, the once-only marker, and the
+     * comments explaining why an automatic Gmail read is bounded and runs once. */
+    /* Raised for the sweep that clears what the keyword search left behind:
+     * the card's strip, the confirmation that names every sender and count
+     * before anything is deleted, the chunked delete, and the header parser
+     * that stops a display name being read as the address. Roughly 5 KB on
+     * 1.81 MB — all of it on a path that deletes documents, where the comment
+     * explaining WHY a key is named explicitly is worth its bytes. */
+    /* Raised for the settings that did nothing. Eight switches were writing a
+     * value nothing read; four of them now gate a feature that already existed
+     * and three raise the alert their own label promises. Most of these bytes
+     * are the comments recording WHICH switch was dead and why the fix is where
+     * it is — the audit is the expensive part, and it should not have to be
+     * done twice. */
+    /* Raised for the sender-coverage strip: the panel that answers "which of my
+     * banks can actually send me a statement", which is the question behind
+     * "ten accounts, three syncing". It is markup and a short reader over the
+     * account registry, and it belongs on the screen where the owner asks —
+     * a report they have to go and find is a report nobody reads. */
+    /* Raised for the quarantine learning loop. A statement from a bank whose
+     * layout the parser has never seen used to come back as `rows: []` — the
+     * same value an empty month returns — and was dropped in silence with a
+     * green tick. The page now holds those statements back, offers the reading
+     * wealthflow-layout-memory.js derived from the page itself, and remembers
+     * the one the owner confirms. Most of the growth is the confirmation screen,
+     * which is built with createElement and textContent because every value on
+     * it came out of somebody else's PDF. */
+    /* Raised for the local-day fix. Thirty-seven places in this app answered
+     * "what is today" with new Date().toISOString().slice(0,10) — today in UTC —
+     * which in Colombo is YESTERDAY until 05:30, and on the first of a month
+     * files the transaction into the previous month's tab. The growth is one
+     * script tag and the reproduction written beside the helper it replaced. */
+    /* Raised for the money-export fix and the startup work: _csvMoney (the CSV
+     * was writing raw binary floats into a file people open in Excel), and
+     * ensureChart/_wfChartThen replacing three eagerly-loaded vendor libraries.
+     * Most of the growth is the measurements written beside each — 6.1 s to
+     * interactive on a throttled phone, and which 195 KB bought nothing. */
+    /* Raised for the four defects the owner reported together: the Gmail
+     * junk filter (a document-type check that only ever ran for unrecognised
+     * senders), the reactive binding (each handler had to remember
+     * renderDash() and several did not), live thousands separators in every
+     * amount field rather than only the ones present at page load, and the
+     * password vault asking what KIND of thing a password is.
+     *
+     * AND THIS CEILING NOW MEASURES SOMETHING THE OWNER NEVER DOWNLOADS.
+     * build.mjs strips the comments out of the deployed copy: index.html ships
+     * at about 1.49 MB and the modules at about 1.15 MB, roughly 28% below the
+     * numbers below. The ceiling still measures the source, deliberately —
+     * source is what grows, and a budget that fell every time somebody wrote a
+     * comment explaining a bug would be an incentive to stop explaining bugs. */
+    /* Raised again for the Liquidity & Credit Hub the owner asked to be taken
+     * seriously. A pawn ticket turned out to need part payments, renewals that
+     * change the rate and the term, a month-by-month history and an undo on
+     * every row; the debtor ledger had no edit and no undo at all. Most of the
+     * growth is the two screens and the sentences on them that say what a
+     * choice will cost before it is made. */
+    // Raised for a real data-loss bug: openBankVault's save handler required a
+    // non-empty Bank field and silently dropped any password entry without
+    // one, even though candidatesFor() tries every saved password regardless
+    // of bank match. Real new logic, not drift.
+    // Cloud statement custody, login catch-up and authenticated review controls
+    // add 4,062 bytes to the source HTML (measured 2,035,924). The new deferred
+    // cloud module adds one nonblocking request. This explicit measured increase
+    // retains the two-script first-paint ceiling and under 1% size headroom.
+    // Raised again for the cross-device vault sync fix: the Firestore glue for
+    // `users/{uid}/vault/{bankpw,secvault}` and the two updated call sites add
+    // 244 bytes (measured 2,050,244). No new script requests.
+    // Raised again for the boot-time hydrate() wiring that makes isSet()/
+    // exists() accurate on a device that has never opened the vault UI here
+    // (measured 2,051,489). No new script requests.
+    // Raised again for the mail-sync pagination fix: GET items=1 used to
+    // return every pending statement's full attachment in one response
+    // (up to 200, tens to hundreds of MB on a phone) — the actual root
+    // cause of "the app crashes while email statements sync". runMailSync
+    // now fetches, processes and releases a few statements' payloads at a
+    // time instead of the whole backlog at once (measured 2,055,080). No
+    // new script requests.
+    // Raised for the bounded statement-review window. The modal now carries
+    // explicit model capture/navigation code so one 200-row statement mounts
+    // 12 heavy form rows, not all 200 (measured 2,062,845). No new script or
+    // network request; the narrow headroom keeps future growth visible.
+    // Raised for the iOS compositor-safe dashboard path: accessible DOM bars
+    // replace two GPU-backed Chart.js canvases on mobile and async repaints are
+    // coalesced until momentum scrolling is idle (measured 2,072,253). No new
+    // script or request; this is a tightly ratcheted stability trade.
+    // Raised for the post-cloud-sync mailbox refresh that prevents completed
+    // statements remaining visibly stuck as Waiting (measured 2,073,487).
+    // No new script or request; headroom remains below one kilobyte.
+    // Raised 2026-09-28 for the layout-teach diagnostics wiring: the "cannot
+    // read this statement" path now records a structural reason (date shapes
+    // found / rows found / reconciled, never a statement figure) for the
+    // Diagnostics "Copy diagnostics" button, and the standalone copy-
+    // diagnostics payload includes it and the per-reason review-queue summary
+    // (measured 2,076,356). No new script or request.
+    // Raised again same day: the layout-teach modal's ambiguous-dates warning
+    // no longer points at "Read it differently" when readings.length is 1 —
+    // reachable when two tied date-order candidates produce identical rows
+    // and dedupe to one entry, still flagged ambiguous, leaving the owner
+    // looking for a button the modal never drew (measured 2,077,271).
+    // Raised again same day: statementRetrying wiring in the Diagnostics
+    // "Copy diagnostics" payload. processOneStatement()'s transient-failure
+    // retry branch has written lastRetryReason/retryCount to a source on
+    // every attempt since that branch existed, and nothing ever read it back
+    // — a statement can sit in the server's own exponential-backoff loop
+    // indefinitely with the one fact that explains it invisible to everyone
+    // (measured 2,078,121).
+    htmlBytes: 2_078_121,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -238,8 +349,134 @@ export const BUDGETS = {
     // RAISED for wealthflow-vault.js, the PIN-derived bank-password store, plus
     // the window global added to wealthflow-statement-router.js so the page can
     // reach classifyStatement. Moves ONCE, to the measured figure, ~1% headroom.
-    totalJsBytes: 1_523_000,     // measured 1,507,140 across 56 modules
-    largestModuleBytes: 210_000, // measured 203,927 (wealthflow-ai-v4.js)
+    /* Raised for two modules the owner asked for by name, both of which are
+     * arithmetic rather than UI: wealthflow-verify-matrix.js (which payouts and
+     * bills are due, confirmed, late or flagged — the rule that a static
+     * calendar must never post money) and wealthflow-liquidity.js (pawn
+     * interest and a debtor ledger that survives partial repayments and
+     * top-ups). Both are pure, both are tested without a browser, and both
+     * replace arithmetic that would otherwise have been written inline in
+     * index.html where nothing could test it. */
+    /* Raised for Phase 2: wealthflow-whatif.js, plus applyOverrides() in
+     * wealthflow-cashflow-engine.js. Both are arithmetic, not interface — a
+     * scenario is compiled into projection options and the projection is walked
+     * day by day, exactly as the baseline is. Writing either inline in
+     * index.html would cost no module and no request, and would make the one
+     * rule that decides whether a scenario is safer — the trough, never the
+     * closing balance — untestable in isolation, which is the trade this file
+     * has now recorded a dozen times.
+     *
+     * Moves ONCE, to just above the measured figure. */
+    /* Raised for wealthflow-sender-discovery.js — the module that finds the
+     * owner's banks instead of asking them to. It is the narrowing that used to
+     * be done by two Gmail query clauses which decided in silence: a bank
+     * sending a ZIP, or a subject reading "Monthly Account Summary", was not
+     * ranked low but ABSENT. Moving that judgement into a module is what makes
+     * it explainable on screen and testable here, and it is why the query got
+     * simpler while the file count went up. */
+    /* Raised for wealthflow-institutions.js — the ONE description of a bank,
+     * from which the picker, the mail allowlist and the search tokens are now
+     * derived. It costs a file and removes a class of defect: the picker
+     * offered fourteen institutions while the mail pipeline knew four, and
+     * nothing compared them, which is why an owner with ten accounts saw three
+     * of them sync. A cross-check test pinned that gap; this deletes it. */
+    /* Raised for the vault wiring in wealthflow-pdf-unlock.js: a locked PDF now
+     * tries every password the owner already saved before anyone is asked for
+     * one. The passwords, the derived guesses and the ordering all existed —
+     * this module was simply not calling them, while two other callers were. */
+    /* Raised for wealthflow-layout-memory.js. It does NOT add a second row
+     * reader — that is the whole design: it learns only the DATE SHAPE, rewrites
+     * the text into a form the real parser already matches, and hands it back,
+     * so there is still exactly one implementation of a transaction row and one
+     * reconciliation. The bytes are the derivation, the self-verification that
+     * refuses a template it cannot read back, and the two named regex mistakes
+     * written down so they are not made a third time. */
+    /* Raised for wealthflow-when.js AND for what including .mjs revealed.
+     *
+     * The filter was /^wealthflow-.*\.js$/, so wealthflow-mail-ingest.mjs and
+     * wealthflow-mail-senders.mjs — 69 KB of first-party code, one of it loaded
+     * by index.html — had never been counted by this ratchet at all. The ceiling
+     * has been "held" for months over a figure that was 4.3% short, and any
+     * module added with that extension would have been free forever.
+     *
+     * What this number counts, stated plainly so the next raise is honest: every
+     * first-party wealthflow-* module on disk, browser and server alike. It is a
+     * proxy for how much first-party code this project carries, not a byte-exact
+     * browser payload — two of the modules never reach a browser. */
+    /* Raised for wealthflow-approval-bot.mjs — the rules behind the Telegram
+     * approval button. It is a first-party wealthflow-* module so this ceiling
+     * counts it, though it never reaches a browser: it is imported by the
+     * serverless webhook and by the CI notifier. See the note above about what
+     * this number actually measures. */
+    /* Raised for wealthflow-reactive.js, wealthflow-money-input.js,
+     * wealthflow-password-shapes.js and wealthflow-statement-identity.js — the
+     * four modules the owner's four reported defects needed. Deployed, after
+     * the strip, these 69 modules are about 1,147 KB rather than the 1,775 KB
+     * this ceiling counts; see the note on htmlBytes for why the ceiling still
+     * measures the source. */
+    /* And for wealthflow-pawn.js, which now owns everything a pawn ticket
+     * costs. wealthflow-liquidity.js imports and re-exports it rather than
+     * keeping a second copy of the arithmetic. */
+    // Measured 1,842,217 across 71 modules after cloud vault/review integration;
+    // encrypted HTML intake and exact sender gates account for the other growth.
+    // Raised for repairing pre-upgrade statement manifests whose missing sender
+    // evidence made an owner-approved bank look unapproved forever. The same
+    // change also records a SHA-256 attachment digest so repeated processing
+    // can prove it received identical ciphertext. Measured on this tree; no new
+    // module or browser request.
+    // Raised after the autonomous statement continuation fix genuinely fired
+    // the ratchet: wealthflow-statement-cloud.js now honours the worker's lease
+    // delay instead of polling an in-flight statement every 750 ms. Measured
+    // 1,874,076 across the same 71 modules; no module or startup request added.
+    // Raised after replacing the generic statement failure toast with explicit
+    // recovery guidance. Measured 1,875,235; still 71 modules and no additional
+    // startup request.
+    // Raised after fixing the unreachable ten-engine unanimity floor (classifySlice's
+    // prompt now carries the fixed category vocabulary so cross-model agreement is
+    // actually reachable) and silencing pdfjs's inapplicable Node-canvas warnings.
+    // Measured 1,876,393; still 71 modules and no additional startup request.
+    // Raised after review() stopped routing a per-row invalid-amount review into
+    // the whole-layout re-teacher, which hit mapReviewLayout's replay guard forever
+    // once any sibling row had already filed. Measured 1,877,205; still 71 modules.
+    // Raised after adding reviewReasonText(): the consensus review board correctly
+    // flagged that a raw code like 'invalid-transaction' reached the review screen
+    // unexplained. Measured 1,879,847; still 71 modules and no additional request.
+    // Raised after wiring the owner's card/account registry (Settings -> Manage
+    // cards & accounts) into the autonomous pipeline's account-type determination,
+    // in both the primary path and the subscription-vs-card-charge decision.
+    // Measured 1,879,854; still 71 modules and no additional request.
+    // Raised after adding the bank cross-check to the registry's last-4 lookup,
+    // guarding against a last-4 collision between two of the owner's own
+    // accounts at different banks. Measured 1,880,338; still 71 modules.
+    // Raised 2026-09-28 after wiring propose()'s failure diagnostics into
+    // wealthflow-layout-memory.js and wealthflow-statement-cloud.js's new
+    // reviewSummary() (both feed the Diagnostics "Copy diagnostics" payload
+    // in wealthflow-update-system.js). Measured 1,886,095; still 71 modules.
+    // 2026-09-28: +2,581 for wealthflow-statement-cloud.js's confirmLayout() —
+    // retries the one POST that actually confirms a taught layout on a
+    // transient network/timeout failure, instead of forcing the owner back
+    // through the whole teach modal to retry it. Measured 1,888,676.
+    // 2026-09-28: +416 for confirmLayout() switching from a denylist to an
+    // allowlist of retryable reasons (an automated review on the PR that
+    // introduced it found two real bugs in the denylist: PDF_UNREADABLE was
+    // missing, so a deterministically-unreadable PDF retried twice for no
+    // benefit; and whole-statement-review-required — thrown by inspect()
+    // ahead of the replay guard on the exact lost-response retry this
+    // existed for — read as an ordinary permanent failure instead of
+    // "may already be confirmed"). Measured 1,889,092.
+    // 2026-09-28: +802 for request()'s catch normalizing a raw fetch()
+    // network-level TypeError (a dropped connection/DNS failure — the Fetch
+    // spec's own signal for "no network") into statement-service-unavailable.
+    // Another automated-review finding on the same PR: confirmLayout()'s
+    // retryable allowlist could never match an unnormalized raw TypeError,
+    // so the single most common real "no network" case never retried.
+    // Measured 1,889,894.
+    // 2026-09-28: +1,472 for wealthflow-statement-cloud.js's retryAttemptsSummary()
+    // and the runStatementSync()/sync() wiring that feeds it — the same
+    // lastRetryReason surfacing the htmlBytes note above explains. Measured
+    // 1,891,366.
+    totalJsBytes: 1_891_366,
+    largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
     // ceiling still holding is pre-emptive slackening. It has now genuinely
@@ -294,7 +531,29 @@ export const BUDGETS = {
     // one quietly becomes the one that matters. It also has to be unit-testable:
     // wealthflow-intelligence.js is an IIFE with no exports and consequently no
     // test file, and crypto holding bank passwords cannot ship untested.
-    moduleCount: 56,   // measured 56
+    /* 60 -> 61 for wealthflow-layout-memory.js. A file, not an inline block,
+     * for the same reason as the last one: it is the only thing that knows how
+     * a learned layout is stored, and inlining it into index.html would put a
+     * second copy of that knowledge next to the parser it feeds. */
+    /* 61 -> 64: +1 for wealthflow-when.js and +2 that were always here and never
+     * counted, because the measurer could not see a .mjs. */
+    /* 65 -> 69. Four modules for the owner's four reported defects, and each
+     * one is a file rather than an inline block for the same reason as every
+     * entry above it: each owns a rule that more than one caller needs, and
+     * inlining any of them into index.html would put a second copy of that rule
+     * next to the first. wealthflow-statement-identity.js decides what a
+     * document IS (the server plans with it, the device confirms with it);
+     * wealthflow-reactive.js owns the repaint and the "what actually arrived"
+     * rule (getMonthlyData and the advisor both read it);
+     * wealthflow-money-input.js owns how an amount field behaves while it is
+     * being typed into; wealthflow-password-shapes.js owns how a date of birth
+     * can be written (the vault offers the list, the ID vault derives from it). */
+    /* 69 -> 70 for wealthflow-pawn.js. A file rather than more of
+     * wealthflow-liquidity.js because a pawn ticket has arithmetic of its own —
+     * month-by-month accrual on a balance that changes, a term schedule with
+     * more than one rate, payments allocated interest-first — and it is
+     * exercised by its own test without a browser. */
+    moduleCount: 71,   // measured 71; authenticated cloud statement interface
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained
@@ -337,7 +596,23 @@ export const BUDGETS = {
     // already shipped actually run. The device half of the mail pipeline could
     // not execute at all without the second, which is the defect this change
     // exists to fix.
-    scriptTags: 63,              // measured 63
+    /* 65 -> 66 for wealthflow-institutions.js. It is a REQUEST, not just a
+     * file, and that is the trade recorded here: the alternative was to inline
+     * the bank descriptions into index.html, where the picker and the mail
+     * pipeline could drift apart again exactly as they did. Deferred by
+     * type=module, so it does not block the first paint. */
+    /* 66 -> 67 for wealthflow-layout-memory.js, deferred, so it costs a request
+     * and nothing at first paint. */
+    /* 68 -> 65. THIS CEILING WENT DOWN, which it has not done before: Chart.js,
+     * jsPDF and jspdf-autotable are no longer fetched at startup. jsPDF was
+     * already lazy-loaded by _loadPdfLibs() and the eager tag merely made that a
+     * no-op; `autoTable` is called nowhere in this repository and had been
+     * downloaded on every startup, by everyone, forever. */
+    /* 65 -> 68 for the three new browser modules. All three are
+     * type="module", so they are deferred and none of them blocks first paint —
+     * renderBlockingScripts below is unchanged at 2, which is the number that
+     * actually decides how fast the page appears. */
+    scriptTags: 70,              // measured 70; new cloud module is nonblocking
     // TIGHTENED: 6 -> 2, the biggest move this ceiling has made. Issue #65 was
     // "4 third-party scripts block first paint": four gstatic.com Firebase tags
     // that halted parsing until someone else's CDN answered. One was deleted as
@@ -380,8 +655,15 @@ export function measure({ repoDir = process.cwd() } = {}) {
 
     let modules = [];
     try {
+        /* `.mjs` TOO. The filter was /^wealthflow-.*\.js$/, so a module named
+         * with the other extension every ESM file in the world uses was invisible
+         * to this ratchet: its bytes were not counted, it could not push
+         * totalJsBytes or moduleCount over any ceiling, and the budget would have
+         * reported a clean bill of health while the payload grew. A gate that
+         * passes because it examined nothing is the failure this whole file
+         * exists to prevent. */
         modules = fs.readdirSync(repoDir)
-            .filter((f) => /^wealthflow-.*\.js$/.test(f))
+            .filter((f) => /^wealthflow-.*\.m?js$/.test(f))
             .map((f) => ({ file: f, bytes: bytes(path.join(repoDir, f)) }))
             .sort((a, b) => b.bytes - a.bytes);
     } catch { modules = []; }
