@@ -318,7 +318,7 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
          * deduplication and settlement validity; requiring one particular
          * parent status here only makes valid reviews impossible to drain. */
         if (source.uid !== uid) continue;
-        const decision = deterministicDecision(review.row, { statementType: source.statementType || '', card_last4: source.last4 || '', cardRegistry });
+        const decision = deterministicDecision(review.row, { statementType: source.statementType || '', card_last4: source.last4 || '', bank: source.bank || '', cardRegistry });
         if (!decision.verified) continue;
         try {
             const result = await resolveReview({ db, uid, id: doc.id, decision, row: review.row });
@@ -505,7 +505,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // always existed but was never reachable from the autonomous pipeline:
             // this is the same Firestore user document already fetched above, so
             // wiring it through costs no extra read.
-            const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', cardRegistry: user.settings?.cardRegistry || {},
+            const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', cardRegistry: user.settings?.cardRegistry || {},
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             const decisions = await classifySlice(rows, allocations, { board });
             outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType,

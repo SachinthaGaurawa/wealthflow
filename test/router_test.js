@@ -169,6 +169,17 @@ describe('routeRow: business rules (the original misrouting bug)', () => {
     expect(r.module).toBe('ccinstall');
   });
 
+  it('refuses a last-4 match against the registry when the statement is from a different bank', () => {
+    // Last-4 alone is not a unique key: the owner could hold a card ending
+    // 4471 at HNB and a savings account also ending 4471 at Sampath. Trusting
+    // the registry on last-4 alone would misfile every Sampath row as a
+    // credit-card charge.
+    const ctx = { card_last4: '4471', bank: 'Sampath', cardRegistry: { '4471': { type: 'credit_card', bank: 'HNB' } } };
+    const r = routeRow({ description: 'EZ PAYMENT INSTALLMENT 4/24', amount: 12500, drcr: 'DR' }, ctx);
+    expect(r.module).not.toBe('ccinstall');
+    expect(r.module).not.toBe('cconetime');
+  });
+
   it('does not treat a registered bank account as a card just because it has a registry entry', () => {
     const ctx = { card_last4: '9021', cardRegistry: { '9021': { type: 'bank_account', bank: 'Sampath' } } };
     const r = routeRow({ description: 'CEYPETCO FUEL STATION', amount: 8000, drcr: 'DR' }, ctx);

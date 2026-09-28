@@ -118,7 +118,14 @@ export function isCreditCardRow(row, ctx) {
   if (statementType === 'bank_account' || statementType === 'savings') return false;
   const last4 = row.card_last4 || ctx.card_last4;
   const entry = last4 && ctx.cardRegistry ? ctx.cardRegistry[last4] : null;
-  return entry ? entry.type === 'credit_card' : false;
+  if (!entry) return false;
+  // Last-4 alone is not a unique key across the owner's own accounts — two of
+  // their own cards, at two different banks, can share the same last four
+  // digits. When both the registry entry and this statement's own detected
+  // bank are known, require them to agree before trusting the match; a last-4
+  // hit against the wrong bank is exactly the collision this guards against.
+  if (entry.bank && ctx.bank && norm(entry.bank) !== norm(ctx.bank)) return false;
+  return entry.type === 'credit_card';
 }
 
 // ── the core router for ONE row ─────────────────────────────────────────────
