@@ -449,7 +449,15 @@ export const BUDGETS = {
     // retries the one POST that actually confirms a taught layout on a
     // transient network/timeout failure, instead of forcing the owner back
     // through the whole teach modal to retry it. Measured 1,888,676.
-    totalJsBytes: 1_888_676,
+    // 2026-09-28: +416 for confirmLayout() switching from a denylist to an
+    // allowlist of retryable reasons (an automated review on the PR that
+    // introduced it found two real bugs in the denylist: PDF_UNREADABLE was
+    // missing, so a deterministically-unreadable PDF retried twice for no
+    // benefit; and whole-statement-review-required — thrown by inspect()
+    // ahead of the replay guard on the exact lost-response retry this
+    // existed for — read as an ordinary permanent failure instead of
+    // "may already be confirmed"). Measured 1,889,092.
+    totalJsBytes: 1_889_092,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

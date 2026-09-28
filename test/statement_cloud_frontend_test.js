@@ -271,6 +271,41 @@ describe('private statement cloud frontend transport', () => {
             expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('may already be confirmed'), 'warn');
             await authChanged(null);
         });
+        it('reports whole-statement-review-required the same way — inspect() throws it FIRST, before the replay guard, for this exact lost-response case', async () => {
+            // Flagged by an automated (Codex) review on this exact PR: when
+            // attempt 1 commits but its response is lost, mapReviewLayout's own
+            // replay guard is never reached on the retry — inspect() (which it
+            // calls first, every attempt) rejects with this reason as soon as it
+            // sees the review is no longer 'pending'. Treating it as an ordinary
+            // permanent failure would tell the owner nothing happened when the
+            // statement may already be filed.
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'whole-statement-review-required' }));
+            review({ id: 'whole-statement-id', index: -1 });
+            await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('may already be confirmed'), 'warn');
+            await authChanged(null);
+        });
+        it('never retries a deterministically unreadable PDF', async () => {
+            // Flagged by an automated (Codex) review: PDF_UNREADABLE is a real,
+            // permanent server reason (PUBLIC_REVIEW_SOURCE_REASONS) — retrying
+            // downloads and re-parses the same broken PDF up to two more times
+            // for no possible benefit.
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'PDF_UNREADABLE' }));
+            review({ id: 'whole-statement-id', index: -1 });
+            await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(window.notify).toHaveBeenCalledWith('Cloud layout saving was not completed. The original statement remains pending.', 'error');
+            await authChanged(null);
+        });
         it('gives up after a bounded number of retries rather than retrying forever', async () => {
             window._showCCReviewModal = vi.fn();
             window._teachStatementLayout = teachWith(oneRow);

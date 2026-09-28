@@ -124,24 +124,20 @@ async function download(entry) {
         const link = document.createElement('a'); link.href = url; link.rel = 'noopener'; link.download = item.manifest?.filename || 'statement.pdf'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { say('The original statement is unavailable for download. The review remains pending.', 'error'); }
 }
-// Every reason mapReviewLayout()/inspectReviewSource() can explicitly return
-// for action:'layout' names a real, permanent fact about the statement or
-// its evidence — retrying changes nothing. Anything else reaching here can
-// only be a raw network failure, a timeout, or a generic 5xx (request()'s
-// own fallback 'statement-service-unavailable'): exactly the kind of blip a
-// mobile connection causes and a few seconds later recovers from. Forcing
-// the owner back through the whole teach modal (re-fetch the source,
-// re-propose a reading, re-tap through every date) just to retry the one
-// POST that actually confirms it is real friction for a failure that costs
-// nothing to retry automatically instead.
-const LAYOUT_CONFIRM_PERMANENT_REASONS = new Set([
-    'PASSWORD_FAILED', 'NO_VAULT_KEYS', 'statement-message-missing', 'statement-message-deleted',
-    'statement-sender-no-longer-approved', 'statement-attachment-identity-mismatch',
-    'statement-attachment-content-mismatch', 'statement-attachment-invalid', 'statement-attachment-size',
-    'gmail-fetch-unavailable', 'review-source-text-unavailable', 'review-source-is-not-statement',
-    'review-source-owner-mismatch', 'whole-statement-review-required',
-    'layout-confirmation-does-not-reproduce-statement', 'layout-not-mapped',
-]);
+// An ALLOWLIST, not a denylist: every reason mapReviewLayout()/
+// inspectReviewSource() can explicitly name (statement-sync.js's own
+// PUBLIC_REVIEW_SOURCE_REASONS, e.g. PDF_UNREADABLE, a bad password, the
+// statement not reproducing) means the server successfully diagnosed and
+// reported something specific — never a blip retrying fixes, so it is never
+// worth enumerating here just to keep it out. Only these two — a client-side
+// timeout, and request()'s own generic fallback for a non-ok response that
+// named no specific reason at all — are actual raw network/5xx conditions,
+// exactly the kind of thing a mobile connection causes and a few seconds
+// later recovers from. Forcing the owner back through the whole teach modal
+// (re-fetch the source, re-propose a reading, re-tap through every date)
+// just to retry the one POST that actually confirms it is real friction for
+// a failure that costs nothing to retry automatically instead.
+const LAYOUT_CONFIRM_RETRYABLE_REASONS = new Set(['statement-request-timed-out', 'statement-service-unavailable']);
 const LAYOUT_CONFIRM_RETRIES = 2;
 async function confirmLayout(entry, rows) {
     for (let attempt = 0; ; attempt += 1) {
@@ -150,13 +146,23 @@ async function confirmLayout(entry, rows) {
             if (result.mapped !== true) throw new Error('layout-not-mapped');
             return result;
         } catch (error) {
-            // A previous attempt — this call's own earlier try, or an even
-            // earlier session — may already have gone through: mapReviewLayout's
-            // replay guard is what reports that, and it is a result to surface
-            // accurately, never a fresh failure to retry into (retrying it again
-            // would just repeat the exact same, correct rejection forever).
-            if (error?.message === 'layout-replay-would-overlap-settled-data') { error.mightAlreadyBeMapped = true; throw error; }
-            if (attempt >= LAYOUT_CONFIRM_RETRIES || LAYOUT_CONFIRM_PERMANENT_REASONS.has(error?.message)) throw error;
+            // Either mapReviewLayout's own replay guard, or — when an EARLIER
+            // attempt actually committed but its response was lost — the
+            // ordinary "not pending any more" check inside the inspect() call
+            // that guard sits behind (mapReviewLayout re-runs inspect() on
+            // every attempt, and inspect() itself throws this first if the
+            // review is no longer pending). Both mean the same thing here:
+            // this exact review is no longer pending, and this flow only
+            // ever reaches it by successfully reading it moments ago — so
+            // the far more likely explanation than someone else's write is
+            // this call's own earlier, unacknowledged success. Either way it
+            // is a result to surface accurately, never a fresh failure to
+            // retry into (retrying it again would just repeat the exact
+            // same, correct rejection forever).
+            if (error?.message === 'layout-replay-would-overlap-settled-data' || error?.message === 'whole-statement-review-required') {
+                error.mightAlreadyBeMapped = true; throw error;
+            }
+            if (attempt >= LAYOUT_CONFIRM_RETRIES || !LAYOUT_CONFIRM_RETRYABLE_REASONS.has(error?.message)) throw error;
             await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
         }
     }
