@@ -59,6 +59,12 @@ describe('statement worker authorization and board', () => {
         expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'credit_card' })).toMatchObject({ module: 'cconetime', verified: true });
         expect(deterministicDecision({ ...row, narration: 'OUTWARD CEFT TRANSFER SISTER' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', category: 'Transfer', verified: true });
         expect(deterministicDecision({ ...row, direction: 'credit', narration: 'TRANSFER CREDIT-MOBILEBANKING' }, { statementType: 'bank_account' })).toMatchObject({ module: 'skip', verified: true });
+        // processOneStatement wires the owner's Settings -> Manage cards & accounts
+        // registry into allocations precisely so this same 'credit_card' verdict is
+        // reachable when the parser itself could not read a statementType from the
+        // document — not only when it could, as every case above assumes.
+        expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { card_last4: '4471', cardRegistry: { 4471: { type: 'credit_card' } } })).toMatchObject({ module: 'cconetime', verified: true });
+        expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { card_last4: '4471', cardRegistry: { 4471: { type: 'bank_account' } } })).toMatchObject({ module: 'expenses', verified: true });
     });
     it('uses deterministic financial evidence instead of flattening known rows to Other', async () => {
         const unavailable = async () => { throw new Error('offline'); };

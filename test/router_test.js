@@ -157,6 +157,54 @@ describe('routeRow: business rules (the original misrouting bug)', () => {
     expect(r.module).toBe('ccinstall');
   });
 
+  // The owner's own card/account registry (Settings -> Manage cards & accounts,
+  // window.wfCardRegistry) is the ground truth for which last-4 is a credit
+  // card vs a bank account. isCreditCardRow() already falls back to it whenever
+  // the parser could not determine statementType from the document itself —
+  // this proves that fallback actually does its job, not just that it's
+  // syntactically present.
+  it('falls back to the card registry for account type when the parser could not tell', () => {
+    const ctx = { card_last4: '4471', cardRegistry: { '4471': { type: 'credit_card', bank: 'HNB' } } };
+    const r = routeRow({ description: 'EZ PAYMENT INSTALLMENT 4/24', amount: 12500, drcr: 'DR' }, ctx);
+    expect(r.module).toBe('ccinstall');
+  });
+
+  it('refuses a last-4 match against the registry when the statement is from a different bank', () => {
+    // Last-4 alone is not a unique key: the owner could hold a card ending
+    // 4471 at HNB and a savings account also ending 4471 at Sampath. Trusting
+    // the registry on last-4 alone would misfile every Sampath row as a
+    // credit-card charge.
+    const ctx = { card_last4: '4471', bank: 'Sampath', cardRegistry: { '4471': { type: 'credit_card', bank: 'HNB' } } };
+    const r = routeRow({ description: 'EZ PAYMENT INSTALLMENT 4/24', amount: 12500, drcr: 'DR' }, ctx);
+    expect(r.module).not.toBe('ccinstall');
+    expect(r.module).not.toBe('cconetime');
+  });
+
+  it('does not treat a registered bank account as a card just because it has a registry entry', () => {
+    const ctx = { card_last4: '9021', cardRegistry: { '9021': { type: 'bank_account', bank: 'Sampath' } } };
+    const r = routeRow({ description: 'CEYPETCO FUEL STATION', amount: 8000, drcr: 'DR' }, ctx);
+    expect(r.module).not.toBe('cconetime');
+    expect(r.module).not.toBe('ccinstall');
+  });
+
+  it('a row carrying its own card_last4 overrides the statement-level one', () => {
+    // Two-card statement edge case: the statement's own last4 says one card,
+    // but this individual row is stamped with the other.
+    const ctx = { card_last4: '1111', cardRegistry: { '1111': { type: 'bank_account' }, '2222': { type: 'credit_card' } } };
+    const r = routeRow({ description: 'CEYPETCO FUEL STATION', amount: 8000, drcr: 'DR', card_last4: '2222' }, ctx);
+    expect(r.module).toBe('cconetime');
+    expect(r.subtype).toBe('fuel');
+  });
+
+  it('the parser-read statementType still wins over the registry when both are present', () => {
+    // A document read as a bank account IS one, even if its last4 happens to
+    // also be registered as a credit card elsewhere (e.g. a stale/reused entry)
+    // — the direct read of THIS statement is stronger evidence than a lookup.
+    const ctx = { statementType: 'bank_account', card_last4: '4471', cardRegistry: { '4471': { type: 'credit_card' } } };
+    const r = routeRow({ description: 'EZ PAYMENT INSTALLMENT 4/24', amount: 12500, drcr: 'DR' }, ctx);
+    expect(r.module).not.toBe('ccinstall');
+  });
+
   it('empty/unreadable descriptions are correctly flagged needsReview', () => {
     const r = routeRow({ description: '', amount: 1000, drcr: 'DR' }, { statementType: 'bank_account' });
     expect(r.needsReview).toBe(true);
