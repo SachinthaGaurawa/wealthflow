@@ -99,8 +99,13 @@ describe('the hardcoded release history is gone', () => {
         // tally, and the comments recording what the old behaviour cost. The
         // duplicated release history this ceiling was created to keep out has not
         // come back — that is asserted separately, above and below.
+        // Raised from 115_000 (measured 115,442) on 2026-09-28: _collectDiagnostics()
+        // now attaches the statement-review reason summary and layout-teach
+        // attempt history the Diagnostics feature needs to be actionable without
+        // any statement content. Not the hardcoded history this ceiling guards
+        // against — that is still asserted above and below, unchanged.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(115_000);
+        expect(bytes).toBeLessThan(115_500);
     });
 });
 

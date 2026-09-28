@@ -273,11 +273,38 @@
      * Every distinct date shape on the page, in every part-order that yields a
      * real calendar date, run through the real parser. What comes back is a
      * ranked list of readings — not an answer. The owner picks, once. */
+    /* Attached to the array propose() returns, never as an enumerable property
+     * (equality checks against a bare [] must keep passing) — the point is a
+     * caller CAN read readings.diag to say something more specific than "could
+     * not be read" when readings is empty, without this module ever touching
+     * the statement's actual figures or narrations. */
+    function withDiag(arr, diag) {
+        try { Object.defineProperty(arr, 'diag', { value: diag, enumerable: false }); } catch (_) {}
+        return arr;
+    }
+
+    /* Which of three distinct, genuinely different failures this was — never
+     * a guess dressed as an explanation. Each branch names a class of statement
+     * that class of failure actually looks like, so the owner (or whoever reads
+     * this next) knows what to check for, without any figure from the statement
+     * ever leaving the browser. */
+    function diagText(diag) {
+        if (!diag) return '';
+        if (!diag.shapesFound) return 'No date-shaped text was found on the page at all — it may be a scanned image with no selectable text, or a layout with no reference to try.';
+        if (!diag.candidatesWithRows) return 'Found ' + diag.shapesFound + ' possible date format' + (diag.shapesFound === 1 ? '' : 's') + ' on the page, but none of them lined up with any transaction amount nearby.';
+        if (!diag.candidatesReconciled) {
+            if (diag.monthScattered) return 'Found dated rows, but the dates spread across too many different months for one statement — something other than a real date (a reference number, an account digit run) is likely being read as one.';
+            return 'Found dated rows, but too few of them looked like real transactions (a valid amount, a real calendar date) to trust any reading — the money-amount format on this statement may differ from what WealthFlow expects.';
+        }
+        return '';
+    }
+
     function propose(text, parse, opts) {
         var src = String(text || '');
         opts = opts || {};
         parse = parse || (W && W.WFStatementParser && W.WFStatementParser.parseStatement);
-        if (typeof parse !== 'function') return [];
+        var diag = { shapesFound: 0, candidatesWithRows: 0, candidatesReconciled: 0, monthScattered: 0 };
+        if (typeof parse !== 'function') return withDiag([], diag);
 
         var seen = Object.create(null), shapes = [];
         var srcLines = src.split(/\r?\n/);
@@ -291,6 +318,7 @@
                 if (shapes.length >= 8) break;
             }
         }
+        diag.shapesFound = shapes.length;
 
         var orders = ['dmy', 'mdy', 'ymd'];
         var out = [];
@@ -302,8 +330,18 @@
                     try { res = parse(normalise(src, tpl), { __learned: true }); } catch (_) { continue; }
                     var rows = (res && res.rows) || [];
                     if (!rows.length) continue;
+                    diag.candidatesWithRows++;
                     var score = scoreReading(rows, res);
-                    if (score <= 0) continue;
+                    if (score <= 0) {
+                        var months = Object.create(null);
+                        for (var ridx = 0; ridx < rows.length; ridx++) {
+                            var dd = String((rows[ridx] || {}).date || '');
+                            if (/^\d{4}-\d{2}-\d{2}$/.test(dd)) months[dd.slice(0, 7)] = 1;
+                        }
+                        if (Object.keys(months).length > 3) diag.monthScattered++;
+                        continue;
+                    }
+                    diag.candidatesReconciled++;
                     out.push({ template: tpl, rows: rows, reconciliation: res.reconciliation, score: score });
                 }
             }
@@ -338,7 +376,7 @@
             uniq.push(out[k]);
             if (uniq.length >= 4) break;
         }
-        return uniq;
+        return withDiag(uniq, diag);
     }
 
     function scoreReading(rows, res) {
@@ -546,7 +584,7 @@
 
     var API = {
         V: V, KEY: KEY, TRY_LIMIT: TRY_LIMIT,
-        propose: propose, learn: learn, normalise: normalise,
+        propose: propose, learn: learn, normalise: normalise, diagText: diagText,
         remember: remember, recall: recall, forget: forget,
         templateId: templateId, makeTemplate: makeTemplate,
         shapeOf: shapeOf, isoFrom: isoFrom, moneyOn: moneyOn, runsOn: runsOn,

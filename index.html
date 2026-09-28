@@ -9001,6 +9001,16 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 const _summary = { totalErrors: log.length, fromThisBuild: fromThis, staleFromOlderBuilds: log.length - fromThis, uniqueMessages: uniqueMsgs };
                 const _health = _wfCollectHealth();
                 const _issues = _wfDetectIssues(_health, _summary);
+                // Statement processing: aggregate reason counts + the last few
+                // "Map statement layout" attempts' structural breakdown (date
+                // shapes found, how many produced rows, how many reconciled).
+                // No date, amount, narration or description is ever in here —
+                // only reason codes, bank names and counts, so this is safe to
+                // paste into chat and is the direct fix for "I can't tell you
+                // what's wrong because I can't see any of my financial data."
+                let _stReview = null;
+                try { _stReview = (window.WFStatementCloud && window.WFStatementCloud.reviewSummary) ? window.WFStatementCloud.reviewSummary() : null; } catch (_) { _stReview = null; }
+                const _layoutAttempts = Array.isArray(window._wfLayoutAttempts) ? window._wfLayoutAttempts.slice(0, 10) : [];
                 payload = JSON.stringify({
                     build: _WF_BUILD,
                     when: new Date().toISOString(),
@@ -9014,6 +9024,8 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     dom: (function () { try { return document.getElementsByTagName('*').length; } catch (_) { return -1; } })(),
                     summary: _summary,
                     health: _health,
+                    statementReview: _stReview,
+                    layoutTeachAttempts: _layoutAttempts,
                     errors: log
                 }, null, 2);
             } catch (e) { payload = 'diagnostics unavailable: ' + (e && e.message); }
@@ -26403,6 +26415,18 @@ table.amort tbody tr { page-break-inside: avoid; }
          * happens the screen says so rather than picking one quietly, because a
          * silently transposed month is a year of misfiled transactions.
          */
+        // Diagnostics ("Copy diagnostics" button) needs to see WHY a layout
+        // teach attempt failed, not just that it did — with nothing from the
+        // statement itself (no date, amount, narration or description), only
+        // the structural counts propose() already tracks. Newest first, capped
+        // so the payload the owner copies stays small.
+        function _recordLayoutAttempt(bank, diag, outcome) {
+            try {
+                window._wfLayoutAttempts = window._wfLayoutAttempts || [];
+                window._wfLayoutAttempts.unshift({ bank: String(bank || ''), at: Date.now(), outcome, diag: diag || null });
+                if (window._wfLayoutAttempts.length > 15) window._wfLayoutAttempts.length = 15;
+            } catch (_) {}
+        }
         function _teachStatementLayout(queue, done) {
             const list = (Array.isArray(queue) ? queue : []).slice();
             const learned = [];
@@ -26413,6 +26437,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 /* Said out loud. A statement that is silently skipped because a
                  * script did not load is precisely the failure this whole
                  * feature exists to end. */
+                _recordLayoutAttempt('', null, 'layout-reader-not-loaded');
                 notify('A statement needs a layout confirmed, but the layout reader did not load. It is still held and will be offered again.', 'warn');
                 finish();
                 return;
@@ -26424,11 +26449,15 @@ table.amort tbody tr { page-break-inside: avoid; }
                 let readings = [];
                 try { readings = M.propose(item.text, P.parseStatement, { bank: item.bank }) || []; } catch (_) { readings = []; }
                 if (!readings.length) {
+                    const why = (M.diagText && readings.diag) ? M.diagText(readings.diag) : '';
+                    _recordLayoutAttempt(item.bank, readings.diag, 'no-reading');
                     notify('WealthFlow still cannot read the ' + item.bank
-                        + ' statement. It is held, not lost — send it in and it will be added to the reader.', 'warn');
+                        + ' statement. It is held, not lost — send it in and it will be added to the reader.'
+                        + (why ? (' ' + why) : ''), 'warn');
                     step();
                     return;
                 }
+                _recordLayoutAttempt(item.bank, readings.diag, readings.length + ' reading(s) offered' + (readings[0]?.ambiguous ? ', ambiguous' : ''));
                 _showLayoutTeachModal(item, readings, (accepted, reading) => {
                     if (accepted && reading) {
                         let stored = null;
@@ -28704,7 +28733,7 @@ table.amort tbody tr { page-break-inside: avoid; }
                 <span class="badge bg-g" id="wfVerPill" style="padding:6px 12px;">v7.69.33</span>
             </div>
             <div class="setting-row">
-                <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes or misbehaves, tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory) so the exact cause can be fixed fast.</div></div>
+                <div class="setting-info"><div class="setting-label">Diagnostics</div><div class="setting-desc">If a page ever crashes, misbehaves, or a statement is stuck in "Needs review", tap this right after and send me the result — it captures the last errors with full technical detail (stack, page, memory), plus why statements are stuck (reason counts, bank names, and why "Map statement layout" couldn't read one), with no date, amount, or transaction detail ever included, so the exact cause can be fixed fast.</div></div>
                 <button class="btn btn-secondary btn-sm" onclick="_wfCopyDiagnostics(this)">Copy diagnostics</button>
                 <button class="btn btn-ghost btn-sm" onclick="_wfClearDiagnostics(this)" style="margin-left:8px;">Clear log</button>
             </div>
