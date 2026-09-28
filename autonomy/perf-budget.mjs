@@ -226,7 +226,13 @@ export const BUDGETS = {
     // Raised for the post-cloud-sync mailbox refresh that prevents completed
     // statements remaining visibly stuck as Waiting (measured 2,073,487).
     // No new script or request; headroom remains below one kilobyte.
-    htmlBytes: 2_074_000,
+    // Raised 2026-09-28 for the layout-teach diagnostics wiring: the "cannot
+    // read this statement" path now records a structural reason (date shapes
+    // found / rows found / reconciled, never a statement figure) for the
+    // Diagnostics "Copy diagnostics" button, and the standalone copy-
+    // diagnostics payload includes it and the per-reason review-queue summary
+    // (measured 2,076,356). No new script or request.
+    htmlBytes: 2_076_400,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -430,7 +436,11 @@ export const BUDGETS = {
     // Raised after adding the bank cross-check to the registry's last-4 lookup,
     // guarding against a last-4 collision between two of the owner's own
     // accounts at different banks. Measured 1,880,338; still 71 modules.
-    totalJsBytes: 1_880_338,
+    // Raised 2026-09-28 after wiring propose()'s failure diagnostics into
+    // wealthflow-layout-memory.js and wealthflow-statement-cloud.js's new
+    // reviewSummary() (both feed the Diagnostics "Copy diagnostics" payload
+    // in wealthflow-update-system.js). Measured 1,886,095; still 71 modules.
+    totalJsBytes: 1_886_095,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

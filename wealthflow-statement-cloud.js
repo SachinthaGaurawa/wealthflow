@@ -2,6 +2,24 @@
 let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null;
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
 export const getState=()=>({...state});
+// For the Diagnostics "Copy diagnostics" button: why statements are actually
+// stuck, in aggregate, with no date/amount/narration/description ever
+// included — only the reason code and bank name, the same two fields the
+// review list already shows the owner on screen. This is what turns "nothing
+// is being added" into an actionable report without asking for statement
+// content.
+export function reviewSummary(){
+    const byReason={};
+    let wholeStatement=0,perRow=0;
+    for(const entry of pending){
+        const reason=String(entry.reason||'unknown');
+        byReason[reason]=(byReason[reason]||0)+1;
+        if(entry.index<0||!entry.row)wholeStatement++;else perRow++;
+    }
+    const wholeStatements=pending.filter(e=>e.index<0||!e.row).slice(0,20)
+        .map(e=>({bank:e.bank||'',filename:e.filename||'',reason:e.reason||''}));
+    return {total:pending.length,wholeStatement,perRow,byReason,wholeStatements};
+}
 const say=(message,type='info')=>{if(window.notify)window.notify(message,type)};
 function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{detail:{...state}}))}
 function sdkUser(){try{return typeof window.firebase?.auth==='function'?window.firebase.auth().currentUser:null;}catch(_){return null;}}
@@ -168,15 +186,26 @@ export function review(entry) {
     // owner correct or dismiss THIS row here, the same as any other review.
     if (!row || entry.index < 0) return mapLayout(entry);
     overlay?.remove(); overlay = null;
-    window._showCCReviewModal({ transactions: [{ ...row, description: row.description || row.narration, _needsReview: true, _reviewWhy: reviewReasonText(entry.reason) }],
-        fileName: 'Cloud statement review', card_last4: row.card_last4 || '',
-        cloudReview: async decisions => {
-            if (decisions.length !== 1) throw new Error('review-selection-required');
-            const choice = decisions[0];
-            const result = await request('/api/statement-sync', 'POST', { action: 'review', id: entry.id, row: choice.row, decision: choice.decision });
-            if (result.resolved !== true) throw new Error('review-not-resolved');
-            say('Statement review saved securely.', 'success'); return result;
-        } }, row.bank || 'Bank', null);
+    // review() used to hand off to the global modal with no guard: a throw
+    // there (malformed row data, the modal builder itself) unwound through the
+    // caller's bare `await review(entry)` as an unhandled rejection — nothing
+    // shown, the button just re-enabled, which looks exactly like "I clicked
+    // it and nothing happened." mapLayout() above already fails this safely;
+    // this brings review() to the same standard.
+    try {
+        window._showCCReviewModal({ transactions: [{ ...row, description: row.description || row.narration, _needsReview: true, _reviewWhy: reviewReasonText(entry.reason) }],
+            fileName: 'Cloud statement review', card_last4: row.card_last4 || '',
+            cloudReview: async decisions => {
+                if (decisions.length !== 1) throw new Error('review-selection-required');
+                const choice = decisions[0];
+                const result = await request('/api/statement-sync', 'POST', { action: 'review', id: entry.id, row: choice.row, decision: choice.decision });
+                if (result.resolved !== true) throw new Error('review-not-resolved');
+                say('Statement review saved securely.', 'success'); return result;
+            } }, row.bank || 'Bank', null);
+    } catch {
+        say('This review could not be opened. It remains pending; try again or download the original statement.', 'error');
+        openReview();
+    }
 }
 export function dismissReview(entry) {
     const commit = async () => {
@@ -217,7 +246,7 @@ function drawReview() {
         // Mirrors review()'s own routing decision exactly, so the label never
         // promises an action (re-teaching a whole layout) that a per-row defect
         // like an invalid amount cannot actually complete.
-        const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } finally { button.disabled = false; } }; item.appendChild(button);
+        const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; } }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
         if (entry.index < 0 || !entry.row?.amount) { const dismiss = document.createElement('button'); dismiss.className = 'btn btn-ghost btn-sm'; dismiss.textContent = 'Dismiss statement'; dismiss.style.marginLeft = '8px'; dismiss.onclick = () => dismissReview(entry); item.appendChild(dismiss); }
     }
@@ -236,7 +265,7 @@ if (typeof window !== 'undefined') {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary };
     const start=()=>{
         if (authBound) return;
         if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {

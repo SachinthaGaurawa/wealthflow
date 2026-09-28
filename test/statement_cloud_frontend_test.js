@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review, reviewSummary, openReview } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
+// A minimal stand-in for the DOM, only for the one test below that must reach
+// openReview()'s real rendering path (no environment: 'jsdom' here — this
+// suite is pure-logic-only by design). Every element it hands back is the
+// same shape drawReview() actually touches: className/style/textContent as
+// plain settable fields, onclick as a settable slot, appendChild as a no-op.
+const fakeElement = () => ({ style: {}, appendChild: () => {}, replaceChildren: () => {}, setAttribute: () => {}, remove: () => {}, classList: { add: () => {} } });
+const fakeDocument = () => ({ createElement: () => fakeElement(), body: { appendChild: () => {} } });
 beforeEach(() => {
     vi.stubGlobal('window', { firebase: { auth: () => ({ currentUser: active }) }, dispatchEvent: vi.fn(), localStorage: { setItem: vi.fn() }, _wfRecentSweep: vi.fn(async () => 0) });
     vi.stubGlobal('CustomEvent', class { constructor(type, options) { this.type = type; this.detail = options.detail; } });
     vi.stubGlobal('fetch', vi.fn());
+    vi.stubGlobal('document', fakeDocument());
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -166,5 +174,41 @@ describe('private statement cloud frontend transport', () => {
         await review({ id: 'whole-statement-id', index: -1 });
         expect(window._showCCReviewModal).not.toHaveBeenCalled();
         expect(window.notify).toHaveBeenCalledWith('The statement layout mapper is not loaded yet.', 'warn');
+    });
+    it('surfaces a broken review modal instead of leaving the click looking like it did nothing', async () => {
+        // Before this fix, review() called _showCCReviewModal with no guard: a
+        // synchronous throw there unwound through the caller's bare
+        // `await review(entry)` as an unhandled rejection — nothing shown to the
+        // owner, the button just silently re-enabled. That is indistinguishable
+        // from "the button doesn't work", which is exactly what was reported.
+        window._showCCReviewModal = vi.fn(() => { throw new Error('modal build failed'); });
+        window.notify = vi.fn();
+        const entry = { id: 'row-review-id', index: 2, reason: 'unproven-direction',
+            row: { date: '2026-01-01', amount: 500, description: 'PAYMENT', direction: 'debit', bank: 'HNB' } };
+        await review(entry); // must not throw — the whole point of the fix
+        expect(window.notify).toHaveBeenCalledWith(
+            'This review could not be opened. It remains pending; try again or download the original statement.', 'error');
+        await authChanged(null); // the catch path reopens the list (openReview -> adoptUser); reset it like every other test here does
+    });
+    it('aggregates why statements are stuck without any date, amount, narration or description — for Diagnostics', async () => {
+        // Same two fields the review list already shows the owner on screen
+        // (reason + bank), nothing more — this is what "Copy diagnostics" now
+        // sends, and it must never carry a figure from anyone's statement.
+        const term = { onSnapshot: (ok) => { ok({ docs }); return () => {}; } };
+        const docs = [
+            { id: 'r1', data: () => ({ reason: 'card-charge-context-required', index: 5, row: { amount: 4250, description: 'KEELLS' }, bank: 'DFCC' }) },
+            { id: 'r2', data: () => ({ reason: 'card-charge-context-required', index: 7, row: { amount: 900, description: 'CARGILLS' }, bank: 'DFCC' }) },
+            { id: 'r3', data: () => ({ reason: 'statement-layout-or-reconciliation-needs-review', index: -1, bank: 'NTB', filename: 'ntb-aug.pdf' }) },
+        ];
+        window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => term } ) }) }) }) };
+        await openReview();
+        const summary = reviewSummary();
+        expect(summary.total).toBe(3);
+        expect(summary.perRow).toBe(2);
+        expect(summary.wholeStatement).toBe(1);
+        expect(summary.byReason).toEqual({ 'card-charge-context-required': 2, 'statement-layout-or-reconciliation-needs-review': 1 });
+        expect(summary.wholeStatements).toEqual([{ bank: 'NTB', filename: 'ntb-aug.pdf', reason: 'statement-layout-or-reconciliation-needs-review' }]);
+        expect(JSON.stringify(summary)).not.toMatch(/4250|900|KEELLS|CARGILLS/);
+        await authChanged(null);
     });
 });

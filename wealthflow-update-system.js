@@ -1142,6 +1142,25 @@
                 d.detectedIssues = issues.slice(0, 12);
             }
         } catch (_) {}
+        // Statement processing: why entries in "Statements needing review" are
+        // actually stuck, in aggregate (reason codes + bank names only — no
+        // date, amount, narration or description; the same two fields the
+        // review list already shows on screen), plus the last several layout
+        // "teach" attempts with propose()'s structural breakdown (how many
+        // date-shaped candidates were found, how many produced rows, how many
+        // reconciled). Nothing here is a guess about the cause — it is the
+        // exact counts the classifier and the layout reader already computed,
+        // so a pasted report can be acted on without asking for the statement.
+        try {
+            if (window.WFStatementCloud && typeof window.WFStatementCloud.reviewSummary === 'function') {
+                d.statementReview = window.WFStatementCloud.reviewSummary();
+            }
+        } catch (_) {}
+        try {
+            if (Array.isArray(window._wfLayoutAttempts) && window._wfLayoutAttempts.length) {
+                d.layoutTeachAttempts = window._wfLayoutAttempts.slice(0, 10);
+            }
+        } catch (_) {}
         // hard size cap: an oversized payload is silently dropped by the endpoint,
         // which would look to the user like their report vanished again
         try {
@@ -1149,6 +1168,8 @@
             if (s.length > 24000) {
                 delete d.health;
                 d.errors = (d.errors || []).slice(0, 3);
+                if (d.statementReview && d.statementReview.wholeStatements) d.statementReview.wholeStatements = d.statementReview.wholeStatements.slice(0, 5);
+                d.layoutTeachAttempts = (d.layoutTeachAttempts || []).slice(0, 5);
                 d._trimmed = true;
             }
         } catch (_) {}

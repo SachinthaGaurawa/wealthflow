@@ -176,6 +176,55 @@ describe('propose(): reading a statement nobody taught us', () => {
         expect(M.propose('', P.parseStatement)).toEqual([]);
         expect(M.propose('no numbers and no dates at all', P.parseStatement)).toEqual([]);
     });
+
+    // The Diagnostics "Copy diagnostics" button is the owner's only channel
+    // for reporting an unreadable statement without pasting real financial
+    // data into chat. It reads readings.diag, so an empty result must still
+    // equal [] by value (nothing above must regress) while separately
+    // carrying WHY — three genuinely distinct failure classes, not a guess.
+    it('carries a non-enumerable diag alongside an empty result, without breaking array equality', () => {
+        const { P, M } = loadBoth();
+        const none = M.propose('no numbers and no dates at all', P.parseStatement);
+        expect(none).toEqual([]);                    // the existing contract, unchanged
+        expect(Object.keys(none)).toEqual([]);        // diag must not be enumerable
+        expect(none.diag).toEqual({ shapesFound: 0, candidatesWithRows: 0, candidatesReconciled: 0, monthScattered: 0 });
+    });
+
+    it('diag distinguishes "no date shapes at all" from "dates but no nearby amounts"', () => {
+        const { P, M } = loadBoth();
+        const none = M.propose('no numbers and no dates at all', P.parseStatement);
+        expect(none.diag.shapesFound).toBe(0);
+        expect(M.diagText(none.diag)).toMatch(/no date-shaped text/i);
+
+        const noMoney = M.propose(['ACCOUNT STATEMENT', '02.07.2026 A NARRATION WITH NO AMOUNT', '05.07.2026 ANOTHER LINE'].join('\n'), P.parseStatement);
+        expect(noMoney).toEqual([]);
+        expect(noMoney.diag.shapesFound).toBeGreaterThan(0);
+        expect(noMoney.diag.candidatesWithRows).toBe(0);
+        expect(M.diagText(noMoney.diag)).toMatch(/none of them lined up with any transaction amount/i);
+    });
+
+    it('diag flags month-scattered rows as its own distinct failure class', () => {
+        const { P, M } = loadBoth();
+        const scattered = [
+            'ACCOUNT STATEMENT', 'OPENING BALANCE 100,000.00',
+            '02.01.2026 A 1,000.00 99,000.00', '02.03.2026 B 1,000.00 98,000.00',
+            '02.06.2026 C 1,000.00 97,000.00', '02.09.2026 D 1,000.00 96,000.00',
+            'CLOSING BALANCE 96,000.00',
+        ].join('\n');
+        const readings = M.propose(scattered, P.parseStatement);
+        expect(readings.diag.candidatesWithRows).toBeGreaterThan(0);
+        expect(readings.diag.monthScattered).toBeGreaterThan(0);
+    });
+
+    it('diagText covers every branch with its own wording and is silent once there is a reading', () => {
+        const { M } = loadBoth();
+        expect(M.diagText(null)).toBe('');
+        expect(M.diagText({ shapesFound: 0, candidatesWithRows: 0, candidatesReconciled: 0, monthScattered: 0 })).toMatch(/no date-shaped text/i);
+        expect(M.diagText({ shapesFound: 2, candidatesWithRows: 0, candidatesReconciled: 0, monthScattered: 0 })).toMatch(/2 possible date formats/i);
+        expect(M.diagText({ shapesFound: 1, candidatesWithRows: 3, candidatesReconciled: 0, monthScattered: 0 })).toMatch(/too few of them looked like real transactions/i);
+        expect(M.diagText({ shapesFound: 1, candidatesWithRows: 3, candidatesReconciled: 0, monthScattered: 2 })).toMatch(/too many different months/i);
+        expect(M.diagText({ shapesFound: 1, candidatesWithRows: 3, candidatesReconciled: 2, monthScattered: 0 })).toBe('');
+    });
 });
 
 describe('learn(): the owner corrected the rows', () => {
