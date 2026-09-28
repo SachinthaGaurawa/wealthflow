@@ -178,7 +178,7 @@ export function routeRow(row, ctx = {}) {
   // direction it had to assume (a statement printing no running balance) or read
   // from wording; the router's own confidence is about the CATEGORY and knows
   // nothing of that, so without this an unverified row could route with 0.9.
-  const upstreamDoubt = row.needsReview === true || (row.direction !== undefined && !row.direction);
+  const upstreamDoubt = (row.needsReview === true && !(ctx.reconciliationBypassed && row.directionSource === 'assumed')) || (row.direction !== undefined && !row.direction);
   return {
     module, tabLabel, subtype, allocation, category,
     confidence: Math.round(confidence * 100) / 100,

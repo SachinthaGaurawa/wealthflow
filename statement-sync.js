@@ -511,10 +511,17 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const cardRegistry = user.settings?.cardRegistry || {};
             let documentClass = null;
             const textToMatch = text || '';
-            for (const [key, entry] of Object.entries(cardRegistry)) {
-                if (key && textToMatch.includes(key)) {
-                    if (entry.type === 'credit_card') documentClass = 'credit_card_statement';
-                    else documentClass = key.length === 4 ? 'debit_card_statement' : 'bank_statement';
+            for (const card of Object.values(cardRegistry)) {
+                if (card.last4 && textToMatch.includes(card.last4)) {
+                    documentClass = card.type === 'credit' || card.type === 'credit_card' ? 'credit_card_statement' : (card.type === 'debit' ? 'debit_card_statement' : 'bank_statement');
+                    parsed.layout = parsed.layout || {};
+                    parsed.layout.accountLast4 = card.last4;
+                    break;
+                }
+                if (card.number && textToMatch.includes(card.number)) {
+                    documentClass = 'bank_statement';
+                    parsed.layout = parsed.layout || {};
+                    parsed.layout.accountLast4 = card.number.slice(-4);
                     break;
                 }
             }
@@ -559,10 +566,11 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // this is the same Firestore user document already fetched above, so
             // wiring it through costs no extra read.
             const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', cardRegistry: user.settings?.cardRegistry || {},
+                reconciliationBypassed: confirmedBypass,
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             const decisions = await classifySlice(rows, allocations, { board });
             outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {},
-                mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });
+                mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists, reconciliationBypassed: confirmedBypass });
         }
     } catch (error) {
         if (!permanentFailure(error)) {

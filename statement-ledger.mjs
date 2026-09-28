@@ -26,7 +26,8 @@ export function sourceOccurrenceId(sourcePath, absoluteIndex) {
 
 export function validateSettlementRow(row, decision, ctx = {}) {
     if (!row || !isStrictCalendarDate(row.date) || !amountCents(row.amount) || !norm(row.description || row.narration)) return 'invalid-transaction';
-    if (row.needsReview !== false || row.valid === false || !['balance', 'marker', 'column', 'sign'].includes(row.directionSource) || !['debit', 'credit'].includes(row.direction)) return 'unproven-direction';
+    const directionProven = ['balance', 'marker', 'column', 'sign'].includes(row.directionSource) || (ctx.reconciliationBypassed && row.directionSource === 'assumed');
+    if ((row.needsReview !== false && !ctx.reconciliationBypassed) || row.valid === false || !directionProven || !['debit', 'credit'].includes(row.direction)) return 'unproven-direction';
     if (!decision || decision.verified !== true || !modules[decision.module] || !norm(decision.category)) return decision?.reason || 'unanimous-decision-required';
     const module = modules[decision.module];
     // Same source of truth the classifier used (statement's own declared type,
@@ -70,7 +71,7 @@ function makeRecord(row, decision, context, id, now) {
 }
 
 /** All reads precede writes; Firestore retries serialize concurrent settlement. */
-export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
+export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false, reconciliationBypassed = false }) {
     if (!db || !uid || !sourceRef?.path || !leaseToken || !Array.isArray(rows) || rows.length > 30 || !rows.length || !Array.isArray(decisions) || decisions.length !== rows.length || !Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(totalRows) || totalRows < cursor + rows.length || !Number.isSafeInteger(now)) throw new Error('invalid-settlement-request');
     const userRef = db.collection('users').doc(uid);
     const ledgerRefs = rows.map((_, index) => userRef.collection('statementLedger').doc(sourceOccurrenceId(sourceRef.path, cursor + index)));
@@ -101,7 +102,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             // card_last4 here is only isCreditCardRow()'s expected input key (below);
             // it is never persisted under that name — makeRecord()'s stored
             // card_last4 field still reads from context.last4, unchanged.
-            const context = { bank, last4, card_last4: last4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
+            const context = { bank, last4, card_last4: last4, statementType, cardRegistry, sourcePath: sourceRef.path, index, reconciliationBypassed };
             const fingerprint = hash(rowIdentity(row, context));
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');
