@@ -96,6 +96,24 @@ describe('server statement reader', () => {
         expect(result.parsed.understood).toBe(false);
         expect(result.parsed.reason).toMatch(/line by line/i);
     });
+    it('keeps two genuinely identical same-day transactions distinct in the line-by-line reading', async () => {
+        // A P1 finding on the PR that introduced the line-by-line fallback:
+        // _layerText (unlike _layerScripts, which this same adapter already
+        // patches) still called wealthflow-html-statement.js's own _dedupe(),
+        // so an ATM fee charged twice on the same day at the identical amount
+        // — a real, ordinary occurrence, not a parsing artifact — silently
+        // lost the second charge before WFStatementParser.parseStatement()
+        // ever got a chance to apply its own tested duplicate-preserving logic.
+        const html = '<html><body><h1>Nations Trust Bank Consolidated Statement</h1>'
+            + '<div>14/09/2026</div><div>ATM WITHDRAWAL FEE</div><div>60.00 DR</div>'
+            + '<div>14/09/2026</div><div>ATM WITHDRAWAL FEE</div><div>60.00 DR</div>'
+            + '</body></html>';
+        const result = await readStatement({ bytes: Buffer.from(html), filename: 'statement.html' });
+        expect(result.parsed.rows).toHaveLength(2);
+        expect(result.parsed.rows.map(r => [r.date, r.amount, r.direction])).toEqual([
+            ['2026-09-14', 60, 'debit'], ['2026-09-14', 60, 'debit'],
+        ]);
+    });
     it('tries line-by-line reading only after both the table and script layers find nothing', async () => {
         // Same statement as above, but with a script-embedded array present too.
         // The script layer must win — it is the more reliable source — and the

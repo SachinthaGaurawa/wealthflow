@@ -19,8 +19,18 @@ async function tools() {
     // Cache source modules, but isolate mutable input globals per parse.
     const context = vm.createContext({ window: {}, DOMParser, console: { log() {} } }, { codeGeneration: { strings: false, wasm: false } });
     vm.runInContext(parser, context, { timeout: 2000 });
-    const adapter = html.replace('return _dedupe(_fromScripts(h));', 'return _fromScripts(h);');
+    // Both exports feed rows into text lines that WFStatementParser.parseStatement()
+    // re-parses, and that parser already has its own tested logic for keeping
+    // two genuinely identical printed transactions distinct (see
+    // statement_ledger_test.js: "does not erase legitimate repeated purchases
+    // within one source"). Deduping here, one layer earlier, would drop the
+    // second of two real same-day, same-amount transactions — a bank fee
+    // charged twice, two identical purchases — before that logic ever saw it.
+    let adapter = html.replace('return _dedupe(_fromScripts(h));', 'return _fromScripts(h);');
     if (adapter === html) fail('HTML_READER_ADAPTER_UNAVAILABLE');
+    const adapter2 = adapter.replace('return _dedupe(_fromTextLines(h));', 'return _fromTextLines(h);');
+    if (adapter2 === adapter) fail('HTML_READER_ADAPTER_UNAVAILABLE');
+    adapter = adapter2;
     vm.runInContext(adapter, context, { timeout: 2000 });
     return { context, DOMParser };
 }
