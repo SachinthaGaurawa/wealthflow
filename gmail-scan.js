@@ -16,9 +16,16 @@
  * are indistinguishable by the time anything reads them, which is the point —
  * a second ingestion path would be a second set of bugs.
  *
- * A rescan is free. The item key is (messageId, attachmentId), so a message
- * seen twice addresses the same document and is skipped when it is already
- * there. That makes "run it again" a safe answer to any interruption.
+ * A rescan is free. The item key is (messageId, filename, size) — properties
+ * of the MIME part, not a token minted per request — so a message seen twice
+ * addresses the same document and is skipped when it is already there. That
+ * makes "run it again" a safe answer to any interruption.
+ *
+ * It used to key on Gmail's attachmentId, which carries no such promise. When
+ * that token was reminted the key moved, the skip found nothing, and the same
+ * statement was stored again under a new name. The legacy name is still
+ * checked here so the first run after the change recognises what is already
+ * held rather than duplicating all of it once more on the way to fixing it.
  *
  * ── BOUNDED, BECAUSE A MAILBOX IS NOT ─────────────────────────────────────
  *
@@ -30,10 +37,17 @@
  * ===========================================================================*/
 
 import { getAdminDb, withDeadline } from './admin-db.mjs';
-import { identify } from './gmail-link.mjs';
+import { identify, sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
+import {
+    normalizeList, approvedClauses, policyFrom, recordSighting,
+} from './wealthflow-mail-senders.mjs';
+import { monthKey } from './wealthflow-sender-discovery.js';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
-import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
+import {
+    planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
+} from './wealthflow-mail-ingest.mjs';
 import { MAIL_ROOT, windowFor, listUrl, boundedMax, pageResult } from './gmail-scan.mjs';
+import { createHash } from 'node:crypto';
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
@@ -76,16 +90,9 @@ export default async function handler(req, res, deps) {
 
     const body = await readBody(req);
 
-    /* The window is DERIVED, never accepted. See gmail-scan.mjs: a free-text
-     * query parameter would turn a credential that can read the whole mailbox
-     * into a general mail-search proxy. */
-    const window = windowFor({ months: body.months, index: body.index, now: body.now });
-    if (!window) {
-        return j(res, 400, { ok: false, error: 'that is not a window this scan can ask for' });
-    }
-
     const ref = db.collection(MAIL_ROOT).doc(who.userKey);
 
+    /* Read the sealed exact-sender policy before deriving the Gmail query. */
     let state;
     try {
         const snap = await withDeadline(ref.get(), 8000, 'wf-mail');
@@ -95,6 +102,44 @@ export default async function handler(req, res, deps) {
     }
     if (!state || !state.refresh_token) {
         return j(res, 409, { ok: false, error: 'no mailbox is connected yet', connected: false });
+    }
+
+    /* Read from the sealed document, never from the request. See windowFor. */
+    const senderList = normalizeList(sendersOf(state));
+    const policy = policyFrom(senderList);
+    /* Accumulates this page's sightings; written back once at the end rather
+     * than per message, because a document write per mail is how a scan of a
+     * busy month becomes a quota bill. */
+    let seen = senderList;
+
+    /* The window is DERIVED, never accepted. See gmail-scan.mjs: a free-text
+     * query parameter would turn a credential that can read the whole mailbox
+     * into a general mail-search proxy. */
+    const window = windowFor({
+        months: body.months, index: body.index, now: body.now,
+        senders: approvedClauses(senderList),
+        /* THE ONE THING THE CALLER MAY WIDEN, AND IT WIDENS NOTHING THAT GETS
+         * STORED. A discovery run asks Gmail for every message with an
+         * attachment in the window, minus the personal mailboxes — no file-type
+         * gate and no vocabulary, because both of those made banks with
+         * different habits invisible rather than merely lower-ranked.
+         *
+         * It is also the run that reads LEAST: headers only, no body, no
+         * attachment. The old rule was that mail from an unapproved sender is
+         * refused before an attachment is fetched. This makes that structural
+         * instead of conditional — a discovery run over an entire mailbox
+         * cannot copy one document out of it, whatever the policy says.
+         *
+         * The query is still DERIVED here, never accepted, for the same reason
+         * as always: a caller-shaped query against a credential that can read a
+         * whole mailbox is a general mail-search proxy. */
+        discover: body.discover === true ? true : null,
+        /* The institutions the owner holds, off their own records. Names only —
+         * see windowFor: they are looked up, never used as text. */
+        banks: Array.isArray(body.banks) ? body.banks : [],
+    });
+    if (!window) {
+        return j(res, 400, { ok: false, error: 'that is not a window this scan can ask for' });
     }
 
     let token;
@@ -122,49 +167,154 @@ export default async function handler(req, res, deps) {
 
     const ids = ((listed && listed.messages) || []).map((m) => m && m.id).filter(Boolean);
     const stored = [];
+    /* References to messages refused for a sender reason — see planHold. */
+    const held = [];
     const skipped = [];
+    const retryFailures = [];
 
-    for (const id of ids.slice(0, boundedMax(body.max))) {
+    /* Headers only on a discovery window. `format=metadata` returns From,
+     * Subject and internalDate and NO body — so the loop below physically
+     * cannot reach an attachment, rather than choosing not to. */
+    const discovering = window.discovery === true;
+    const fmt = discovering
+        ? 'format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date'
+        : 'format=full';
+
+    for (const id of ids.slice(0, boundedMax(body.max, discovering))) {
         let msg;
         try {
-            const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`, { headers: authed(token) });
-            if (!r.ok) continue;                       // one unreadable message is not a failed scan
+            const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?${fmt}`, { headers: authed(token) });
+            if (r.status === 404) continue;             // Deleted mail is permanently gone.
+            if (!r.ok) { retryFailures.push({ id, stage: 'message' }); continue; }
             msg = await r.json();
-        } catch (_) { continue; }
+        } catch (_) { retryFailures.push({ id, stage: 'message' }); continue; }
+
+        /* A DISCOVERY RUN ENDS HERE. It has the sender, the subject and the
+         * date, which is everything the ranking needs, and it has downloaded
+         * nothing. planMessage() below expects a full message and would find no
+         * parts in a metadata one — calling it anyway would report every sender
+         * as "no attachment" and quietly teach the owner the opposite of the
+         * truth. */
+        if (discovering) {
+            const hdrs = {};
+            for (const h of (msg && msg.payload && msg.payload.headers) || []) {
+                if (h && h.name) hdrs[String(h.name).toLowerCase()] = h.value;
+            }
+            seen = recordSighting(seen, {
+                from: hdrs.from || '',
+                subject: hdrs.subject || '',
+                now: Date.now(),
+                /* The month the MESSAGE landed in, not the month of the run.
+                 * Recurrence is the strongest signal discovery has, and
+                 * stamping every sighting with today would make every sender
+                 * look like it wrote once. */
+                month: monthKey(Number(msg.internalDate) || window.after),
+            });
+            continue;
+        }
+
+        /* ── THE WINDOW IS A CONSTRAINT, NOT A REQUEST ───────────────────
+         *
+         * The owner reported that choosing a month range still pulled
+         * everything. The query is right — every window carries after: and
+         * before: — but nothing on this side had ever CHECKED it. Gmail's
+         * after:/before: are day-granular and evaluated in the account's own
+         * timezone, while these bounds are built in UTC, so the edges of a
+         * window are Gmail's interpretation rather than ours; and a page token
+         * belongs to the search that minted it, so a mismatched one would page
+         * through a different month entirely with nothing to notice.
+         *
+         * internalDate is the message's own receipt time, from Google, in
+         * milliseconds. Comparing it to the window turns the range from
+         * something we asked for into something that holds. A message outside
+         * it is not an error and not worth telling the owner about — it is
+         * simply not part of the month they chose. */
+        const landed = Number(msg.internalDate);
+        if (Number.isFinite(landed) && landed > 0
+            && (landed < window.after || landed >= window.before)) {
+            continue;
+        }
 
         /* The SAME plan the live hook applies: allowlisted sender, DKIM held,
          * an attachment worth taking. A second copy of that judgement is a
          * second place for a statement to be accepted that should not be. */
-        const plan = planMessage(msg);
+        const plan = planMessage(msg, policy);
+
+        /* THE GATHERING THE OWNER ASKED FOR — but only when this message
+         * could ever become a statement. See worthSighting() in
+         * wealthflow-mail-ingest.mjs: it still lets through anything held
+         * for a reason a tap fixes, so a real candidate is never a wall —
+         * "not on your list" with no way to get on it — but no longer records
+         * a newsletter or a personal mailbox as a "sender" the owner then has
+         * to go find and block. gmail-hook.js's push handler applies the
+         * identical gate for the identical reason. */
+        if (worthSighting(plan)) {
+            seen = recordSighting(seen, {
+                from: plan.from, subject: plan.subject, now: Date.now(),
+                month: monthKey(Number(msg.internalDate) || window.after),
+            });
+        }
+
         if (!plan.ok) {
             if (isWorthTelling(plan)) {
                 skipped.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
             }
+            /* HELD, NOT DROPPED — the same rule as the push hook, applied here
+             * because a rule kept in one of this pair and not the other is this
+             * repository's most repeated defect. */
+            const hold = planHold(plan, msg);
+            if (hold) { held.push(hold); }
             continue;
         }
 
         for (const item of plan.items) {
             const itemRef = ref.collection('items').doc(item.key);
             try {
-                /* Already here: a rescan, or a message the push already took.
-                 * The key is (messageId, attachmentId), so this is the same
-                 * document either way and there is nothing to do. */
+                // Repair current or legacy duplicates without downloading again.
                 const existing = await itemRef.get();
-                if (existing.exists) continue;
+                if (existing.exists) {
+                    const patch = repairManifest(existing.data(), item, { uid: who.uid });
+                    if (Object.keys(patch).length) await itemRef.set(patch, { merge: true });
+                    continue;
+                }
+                if (item.legacyKey && item.legacyKey !== item.key) {
+                    const priorRef = ref.collection('items').doc(item.legacyKey);
+                    const prior = await priorRef.get();
+                    if (prior && prior.exists) {
+                        const patch = repairManifest(prior.data(), item, { uid: who.uid });
+                        if (Object.keys(patch).length) await priorRef.set(patch, { merge: true });
+                        continue;
+                    }
+                }
 
-                const ar = await f(
-                    `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
-                    + `/attachments/${encodeURIComponent(item.attachmentId)}`,
-                    { headers: authed(token) },
-                );
-                if (!ar.ok) continue;
-                const att = await ar.json();
+                let att;
+                if (item.inlineData) {
+                    att = { data: item.inlineData };
+                } else {
+                    const ar = await f(
+                        `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
+                        + `/attachments/${encodeURIComponent(item.attachmentId)}`,
+                        { headers: authed(token) },
+                    );
+                    if (!ar.ok) throw new Error('attachment-fetch-failed');
+                    att = await ar.json();
+                }
                 const b64 = String(att.data || '').replace(/-/g, '+').replace(/_/g, '/');
 
                 const write = planWrite(b64, {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
+                    attachmentId: item.attachmentId || '', size: item.size,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
+                    contentSha256: createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex'),
                     backfilled: true,
+                    uid: who.uid,
+                    status: 'pending',
+                    /* FINALLY STORED. planMessage computed `known` from the
+                     * first day and no manifest had a place for it, so the
+                     * device could not tell a confirmed bank from a merely
+                     * verified stranger and drew them identically. */
+                    known: item.known !== false,
+                    from: item.from || '',
                 });
                 if (!write.ok) {
                     skipped.push({ bank: item.bank, reason: write.reason, text: REJECT_TEXT[write.reason] });
@@ -180,16 +330,58 @@ export default async function handler(req, res, deps) {
                 await itemRef.set(write.manifest);
                 stored.push({ key: item.key, bank: item.bank, filename: item.filename });
             } catch (_) {
-                /* This attachment did not land. The manifest was not written, so
-                 * the device will never see a partial statement, and the next
-                 * scan of this window picks it up. Not a failed page. */
+                // Fail the page closed; successful writes are safe to retry.
+                retryFailures.push({ id, stage: 'attachment' });
             }
         }
+    }
+
+    /* One write for the whole page. A failure here loses sightings, never a
+     * statement — the statements are already stored — so it is caught and the
+     * page still reports success. */
+    let discovered = 0;
+    try {
+        if (seen !== senderList || held.length) {
+            discovered = seen.filter((e) => e && e.status === 'new').length;
+            await withDeadline(ref.set({
+                ...(seen !== senderList ? { [SENDERS_FIELD]: seen } : {}),
+                ...(held.length ? { [HELD_FIELD]: mergeHeld(state && state[HELD_FIELD], held) } : {}),
+            }, { merge: true }), 8000, 'wf-mail senders');
+        }
+    } catch (_) { /* the scan succeeded; the suggestions can wait for the next page */ }
+
+    if (retryFailures.length) {
+        return j(res, 503, {
+            ok: false,
+            error: 'Some Gmail messages could not be stored. This page was not advanced and is safe to retry.',
+            retryable: true,
+            failed: retryFailures.length,
+            stored: stored.length,
+        });
+    }
+
+    /* Stored manifests are durable; the worker may drain them now or later. */
+    let queued = false;
+    if (body.deferProcessing !== true && state.autonomous === true && state.uid === env.WEALTHFLOW_OWNER_UID && stored.length > 0) {
+        try {
+            const run = deps && typeof deps.runStatementSync === 'function'
+                ? deps.runStatementSync
+                : (await import('./statement-sync.js')).runStatementSync;
+            await run({
+                db, owner: { uid: state.uid, email: state.email },
+                action: 'drain', env, f, budgetMs: 20000,
+            });
+            queued = true;
+        } catch (_) { /* Durable manifests remain pending; scheduled catch-up retries them. */ }
     }
 
     return j(res, 200, {
         ok: true,
         window: { label: window.label },
+        /* So the card can say "three senders are waiting for you to decide"
+         * rather than leaving the strict rule looking like a silent failure. */
+        discovered,
+        queued,
         ...pageResult({ ids, stored, skipped, pageToken: listed && listed.nextPageToken }),
     });
 }

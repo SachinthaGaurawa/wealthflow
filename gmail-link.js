@@ -40,7 +40,47 @@
 import { getAdminDb, withDeadline } from './admin-db.mjs';
 import {
     MAIL_ROOT, identify, looksLikeRefreshToken, linkRecord, statusOf, missingConfig,
+    SENDERS_FIELD, sendersOf, heldOf,
 } from './gmail-link.mjs';
+import { dedupeStored, BANKS, releasedBy } from './wealthflow-mail-ingest.mjs';
+import { nameVerdict, VERDICT as STATEMENT_ID } from './wealthflow-statement-identity.js';
+import {
+    addSender, setStatus, removeSender, normalizeList, groupForDisplay, REASON_TEXT,
+    matchSender, policyFrom,
+} from './wealthflow-mail-senders.mjs';
+
+/* How many stored documents this endpoint will look at, and how many
+ * statements it will return once duplicates are collapsed.
+ *
+ * The scan ceiling is the higher of the two on purpose: a store carrying
+ * several copies of each statement must still be able to yield a full page of
+ * DISTINCT ones. Both are bounded because this runs inside a function with a
+ * deadline, and an unbounded read of someone's whole mail history is how that
+ * deadline gets hit. */
+export const ITEMS_SCAN_MAX = 400;
+export const ITEMS_RETURN_MAX = 200;
+
+/* How many statements one delete request may name. Bounded because each one is
+ * a document read plus several deletes inside a function with a deadline, and
+ * because an unbounded delete list is the shape of request that empties a
+ * store by accident. It is comfortably above ITEMS_RETURN_MAX so "remove
+ * everything I can see" is always one call. */
+export const ITEMS_DELETE_MAX = 250;
+
+/** A mailbox-state read is idempotent. Retry once after a short yield because
+ * a fresh serverless instance can establish its Firestore channel just after
+ * the first bounded read fails. Successful reads pay no retry or delay. */
+export async function readMailState(ref, deadline = withDeadline, pause = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+    try { return await deadline(Promise.resolve().then(() => ref.get()), 8000, 'wf-mail'); }
+    catch (first) {
+        await pause(75);
+        try { return await deadline(Promise.resolve().then(() => ref.get()), 12000, 'wf-mail retry'); }
+        catch (second) {
+            second.firstFailure = String(first?.message || first || '').slice(0, 160);
+            throw second;
+        }
+    }
+}
 
 function j(res, code, body) {
     res.statusCode = code;
@@ -115,7 +155,252 @@ export default async function handler(req, res) {
 
     const ref = db.collection(MAIL_ROOT).doc(who.userKey);
 
+    /* ── THE OWNER'S STATEMENT-SENDER LIST ───────────────────────────────────
+     *
+     * Read and written here rather than from the page for the reason every
+     * other wf-mail field is: firestore.rules seals that branch to clients, and
+     * the two things that actually CONSULT this list — the push hook and the
+     * scan endpoint — have no browser in front of them at all.
+     *
+     * Every mutation goes through wealthflow-mail-senders.mjs, which is where
+     * normalisation, the ceilings and the refusals live. This handler does not
+     * parse an address, decide what is a domain, or trim a list: a second copy
+     * of those rules is a second set of answers, and the two would drift. */
+    /* THE BANKS THIS PIPELINE ALREADY RECOGNISES, SERVED RATHER THAN COPIED.
+     *
+     * The device needs this to answer "which of my banks can actually send me a
+     * statement" — the question behind "ten accounts, three syncing". It could
+     * keep its own copy of the list; it must not. There are already two lists
+     * of Sri Lankan banks in this repository (the picker in index.html and the
+     * domain allowlist here) and the gap between them is the defect being
+     * fixed. A third copy on the device would be the same mistake, made while
+     * repairing it. Names only: the domains are the server's business. */
+    const knownBanks = [...new Set(BANKS.map((b) => b && b.name).filter(Boolean))];
+
+    if (/[?&]senders=1/.test(String(req.url || ''))) {
+        if (method === 'DELETE') return j(res, 405, { ok: false, error: 'use POST with an action' });
+
+        let snap;
+        try {
+            snap = await withDeadline(ref.get(), 8000, 'wf-mail senders');
+        } catch (_) {
+            return j(res, 503, { ok: false, error: 'sender list unreadable' });
+        }
+        const current = normalizeList(sendersOf(snap && snap.exists ? snap.data() : null));
+
+        if (method === 'GET') {
+            return j(res, 200, { ok: true, senders: current, knownBanks, ...groupForDisplay(current) });
+        }
+
+        const body = await readBody(req);
+        const action = String((body && body.action) || '').toLowerCase();
+        const value = (body && body.value) != null ? String(body.value) : '';
+        const now = Date.now();
+        let result;
+
+        if (action === 'add') {
+            result = addSender(current, value, {
+                status: body && body.status === 'blocked' ? 'blocked' : 'approved',
+                name: (body && body.name) || '',
+                now,
+            });
+            if (!result.ok) {
+                /* The refusal is named in a sentence the owner can act on —
+                 * "that is a personal mailbox" tells them what to do next,
+                 * where "invalid" sends them to look for a bug. */
+                return j(res, 400, {
+                    ok: false, error: REASON_TEXT[result.reason] || 'that could not be added',
+                    reason: result.reason,
+                });
+            }
+        } else if (action === 'status') {
+            result = setStatus(current, value, String((body && body.status) || ''), { now });
+            if (!result.ok) return j(res, 404, { ok: false, error: 'no such sender' });
+        } else if (action === 'remove') {
+            result = removeSender(current, value);
+            if (!result.ok) return j(res, 404, { ok: false, error: 'no such sender' });
+        } else {
+            return j(res, 400, { ok: false, error: 'action must be add, status or remove' });
+        }
+
+        try {
+            await withDeadline(ref.set({ [SENDERS_FIELD]: result.list }, { merge: true }), 8000, 'wf-mail senders');
+        } catch (_) {
+            return j(res, 503, { ok: false, error: 'could not save the sender list' });
+        }
+        /* ── RELEASING WHAT THE OLD ANSWER REFUSED ────────────────────────
+         *
+         * A message refused for a sender reason is HELD as a reference rather
+         * than dropped (see planHold). Approving the sender is the moment that
+         * refusal became wrong, so it is the moment to say which held messages
+         * are now owed to the owner.
+         *
+         * This reports them; it does not fetch them. The fetch belongs to the
+         * scan endpoint, which already owns the credential exchange and the
+         * attachment rules — doing it here would be a second copy of both, and
+         * two copies of a fetch policy is one more than can be kept in step. */
+        let releasable = [];
+        try {
+            const heldNow = heldOf(snap && snap.exists ? snap.data() : null);
+            const decide = policyFrom(result.list).decide;
+            releasable = heldNow.filter((h) => releasedBy(h, decide));
+        } catch (_) { releasable = []; }
+
+        /* ── BLOCKING A SENDER, AND WHAT WAS ALREADY THERE ────────────────
+         *
+         * THE OWNER'S REPORT: "I blocked it. It doesn't work." Blocking only
+         * ever stopped FUTURE mail being fetched — the GET items handler
+         * below recomputes each stored item's verdict against the CURRENT
+         * list on every read, so a blocked sender's old statements kept
+         * their place in the pending queue forever, still offered for
+         * review, looking exactly like the block button did nothing.
+         *
+         * So the one action here that unambiguously names a single sender —
+         * blocking it — also clears what that sender already put in the
+         * store. This is not the general "delete by rule" the comment two
+         * screens down refuses to add: the rule is not evaluated by this
+         * endpoint on its own initiative, it runs only as the direct,
+         * bounded consequence of the owner's own action, against the list
+         * their action just produced. */
+        let purged = 0;
+        const justBlocked = (action === 'status' && String((body && body.status) || '').toLowerCase() === 'blocked')
+            || (action === 'add' && body && body.status === 'blocked');
+        if (justBlocked) {
+            try {
+                const snap2 = await withDeadline(ref.collection('items').limit(ITEMS_SCAN_MAX).get(), 8000, 'wf-mail items');
+                for (const doc of (snap2 && snap2.docs) || []) {
+                    const manifest = doc.data();
+                    if (manifest && manifest.filed === true) continue;
+                    const from = String((manifest && manifest.from) || '').trim();
+                    if (!from || matchSender(result.list, from).verdict !== 'blocked') continue;
+                    try {
+                        const ps = await withDeadline(doc.ref.collection('parts').get(), 8000, 'parts');
+                        for (const part of (ps && ps.docs) || []) await part.ref.delete();
+                        await withDeadline(doc.ref.delete(), 8000, 'item');
+                        purged += 1;
+                    } catch (_) { /* left for the next block or a manual Remove; never fails the block itself */ }
+                }
+            } catch (_) { /* the block already saved; a failed sweep costs tidiness, not correctness */ }
+        }
+
+        return j(res, 200, {
+            ok: true, senders: result.list, knownBanks, ...groupForDisplay(result.list),
+            /* Named so the screen can say it: "3 statements were waiting on
+             * this sender." A number the owner watches fall to zero is a better
+             * answer than a list that quietly got longer. */
+            releasable: releasable.length,
+            released: releasable.map((h) => ({
+                messageId: h.messageId, from: h.from, subject: h.subject,
+                bank: h.bank || null, heldMs: h.heldMs || null,
+            })).slice(0, 20),
+            /* How many already-stored statements were cleared out because
+             * this action blocked their sender. */
+            purged,
+        });
+    }
+
+    /* ── REMOVING WHAT IS ALREADY STORED ─────────────────────────────────────
+     *
+     * #167 stopped unapproved senders being FETCHED. It removed none of what
+     * was already in the store, so the bills and receipts the owner complained
+     * about were still on their screen after a fix that claimed to address
+     * them. That is the same shape as #164 and #165 — a change to future
+     * writes, presented as a repair of what is on the screen — and it is the
+     * third time, so it is being closed rather than noted.
+     *
+     * DELETION IS THE ONE ACTION HERE THAT CANNOT BE UNDONE. Everything else in
+     * this file collapses, hides or refuses; this erases a document. So it is
+     * done ONLY against keys the caller names, one explicit list, never by a
+     * rule this endpoint evaluates for itself. "Delete everything matching a
+     * pattern" is a sentence that, with one bad pattern, ends someone's
+     * statement history — and no reading of the owner's request requires it. */
+    if (method === 'POST' && /[?&]items=1/.test(String(req.url || ''))) {
+        const body = await readBody(req);
+        const action = String((body && body.action) || '');
+        if (action !== 'delete' && action !== 'filed') {
+            return j(res, 400, { ok: false, error: 'action must be delete or filed' });
+        }
+        const keys = Array.isArray(body.keys) ? body.keys : [];
+        const wanted = [...new Set(keys.map((k) => String(k || '').trim()).filter(Boolean))]
+            .slice(0, ITEMS_DELETE_MAX);
+        if (!wanted.length) return j(res, 400, { ok: false, error: 'name at least one statement' });
+
+        /* ── DONE, NOT DELETED ───────────────────────────────────────────────
+         *
+         * Nothing marked a statement as dealt with, so every press of Check now
+         * re-listed, re-decrypted and re-parsed every statement ever stored.
+         * The owner saw the same statements forever and the phone paid for it
+         * each time.
+         *
+         * The obvious fix — delete the item once it is filed — is WRONG, and
+         * quietly so. The existence check on this document is the only thing
+         * stopping the push hook and the scanner re-fetching the same
+         * attachment; delete it and the next scan stores it again, so the
+         * statement returns and the duplicate bug it was meant to end comes
+         * back worse. So the manifest STAYS as the record that this attachment
+         * has been dealt with, and only the parts — the base64 payload, which
+         * is essentially all of the bytes — are dropped.
+         *
+         * ORDER MATTERS AND IS THE OPPOSITE OF THE DELETE BELOW. The flag is
+         * written FIRST and the parts dropped after. The other way round, a
+         * failure between the two leaves a statement with no parts and no flag:
+         * it would be listed forever, fail to assemble every time, and look
+         * like a corrupt statement rather than a finished one. */
+        if (action === 'filed') {
+            let marked = 0;
+            const missed = [];
+            for (const key of wanted) {
+                const itemRef = ref.collection('items').doc(key);
+                try {
+                    // merge-set would otherwise create a phantom filed manifest.
+                    const existing = await withDeadline(itemRef.get(), 8000, 'item');
+                    if (!existing.exists) { missed.push(key); continue; }
+                    await withDeadline(itemRef.set({ filed: true, filedMs: Date.now() }, { merge: true }), 8000, 'item');
+                    marked += 1;
+                    try {
+                        const ps = await withDeadline(itemRef.collection('parts').get(), 8000, 'parts');
+                        for (const part of (ps && ps.docs) || []) await part.ref.delete();
+                    } catch (_) {
+                        /* The flag landed, so the statement will not be offered
+                         * again. Parts left behind cost storage and nothing
+                         * else — never correctness. */
+                    }
+                } catch (_) { missed.push(key); }
+            }
+            return j(res, 200, { ok: true, marked, missed });
+        }
+
+        let deleted = 0;
+        const failed = [];
+        for (const key of wanted) {
+            const itemRef = ref.collection('items').doc(key);
+            try {
+                /* PARTS FIRST, MANIFEST LAST — the reverse of the write order,
+                 * and for the same reason. A reader treats the manifest as the
+                 * proof every part landed, so deleting the manifest first would
+                 * leave orphaned parts that no longer belong to anything; this
+                 * way an interrupted delete leaves a manifest whose parts are
+                 * short, which the device already handles as an unreadable
+                 * statement rather than as a wrong one. */
+                const ps = await withDeadline(itemRef.collection('parts').get(), 8000, 'parts');
+                for (const part of (ps && ps.docs) || []) await part.ref.delete();
+                await withDeadline(itemRef.delete(), 8000, 'item');
+                deleted += 1;
+            } catch (_) {
+                /* Named rather than swallowed: a delete that silently did
+                 * nothing is how the row comes back on the next refresh and the
+                 * owner concludes the button is broken. */
+                failed.push(key);
+            }
+        }
+        return j(res, 200, { ok: true, deleted, failed });
+    }
+
     if (method === 'GET' && /[?&]items=1/.test(String(req.url || ''))) {
+        /* Dashboard discovery is metadata, not attachment delivery.
+         * metadata=1 returns manifests/verdicts/counts without either the
+         * inline ciphertext field or parts subdocuments. */
+        const metadataOnly = /[?&]metadata=1(?:&|$)/.test(String(req.url || ''));
         /* The pending statements, assembled parts and all.
          *
          * These go through the server for the same reason the status does: the
@@ -123,18 +408,206 @@ export default async function handler(req, res) {
          * is the CIPHERTEXT exactly as gmail-hook stored it — this endpoint
          * holds no vault key and decrypts nothing. The PDF is opened on the
          * device, with a password that never leaves it. */
+
+        /* ── WHOSE MAIL THIS IS, DECIDED NOW — NOT WHEN IT ARRIVED ───────────
+         *
+         * The manifest carries a `known` flag written at fetch time. Reading
+         * only that flag leaves two holes, and both are the owner's actual
+         * complaint:
+         *
+         *   - EVERY DOCUMENT STORED BEFORE THE SENDER LIST EXISTED HAS NO SUCH
+         *     FIELD. Those are precisely the bills and receipts a keyword
+         *     search pulled in, and an absent flag reads as "known" — so they
+         *     draw on the card exactly like a confirmed bank's statement.
+         *   - A DECISION MADE LATER CHANGES NOTHING. Block a sender today and
+         *     the mail it already sent keeps its old flag forever.
+         *
+         * So the verdict is recomputed on every listing, against the list as it
+         * stands, by the same matchSender the hook and the scanner use. The
+         * stored flag stays where it is: this endpoint decides what to SAY
+         * about a document, and never rewrites it. */
+        let senderList = [];
         try {
-            const snap = await withDeadline(ref.collection('items').limit(25).get(), 8000, 'wf-mail items');
-            const items = [];
+            const mailDoc = await withDeadline(ref.get(), 8000, 'wf-mail senders');
+            senderList = normalizeList(sendersOf(mailDoc && mailDoc.exists ? mailDoc.data() : null));
+        } catch (_) {
+            /* This read is the attachment authorisation boundary. Treating a
+             * failed read as an empty/unconfigured list used to make
+             * `senderMayOpen` true and disclose every stored payload. Fail the
+             * listing instead: no bytes cross the wire and no stored item is
+             * changed or deleted. */
+            return j(res, 503, { ok: false, error: 'sender list unreadable' });
+        }
+        /* A successful policy read is a decision even when the list is empty:
+         * zero approvals means zero attachment permissions. Discovery may show
+         * metadata for a new sender, but only an exact approved address may
+         * receive payload bytes. */
+        const decided = true;
+        const verdictOf = (manifest) => {
+            const from = String((manifest && manifest.from) || '').trim();
+            /* NO SENDER RECORDED IS NOT AN ANSWER OF "STRANGER". Documents
+             * written before the From header was stored cannot be attributed to
+             * anybody, and a statement from a real bank would be indistinguish-
+             * able from a receipt if absence were read as refusal. `unrecorded`
+             * is its own verdict, and the device neither holds nor sweeps it. */
+            if (!from) return { verdict: 'unrecorded', id: '', name: '', address: '', domain: '' };
+            const hit = matchSender(senderList, from);
+            return {
+                verdict: hit.verdict,
+                id: (hit.entry && hit.entry.id) || '',
+                name: (hit.entry && hit.entry.name) || '',
+                /* The address, not the raw header: a display name is chosen by
+                 * the sender, and this one ends up on a confirmation that asks
+                 * the owner to delete something. */
+                address: hit.address || '',
+                /* The domain too, alongside the address: blocking has to act on
+                 * it (see index.html's Block sender button) rather than
+                 * reparsing the From header a second time on the device. */
+                domain: hit.domain || '',
+            };
+        };
+
+        try {
+            /* THE CAP USED TO BE 25, AND IT WAS THE WRONG SHAPE OF LIMIT.
+             *
+             * A deep scan of two years across ten banks stores far more than
+             * twenty-five statements, so the owner could run a successful
+             * backfill and still be shown a fraction of it with nothing saying
+             * why. The ceiling is now high enough to hold a real history, and
+             * it is applied AFTER duplicates are collapsed so a store full of
+             * repeats cannot crowd out real statements. */
+            const snap = await withDeadline(ref.collection('items').limit(ITEMS_SCAN_MAX).get(), 8000, 'wf-mail items');
+            const rows = [];
             for (const doc of (snap && snap.docs) || []) {
-                const parts = [];
-                try {
-                    const ps = await withDeadline(doc.ref.collection('parts').get(), 8000, 'parts');
-                    for (const p of (ps && ps.docs) || []) parts.push(p.data());
-                } catch (_) { /* an unreadable part shows up as a short assembly */ }
-                items.push({ id: doc.id, manifest: doc.data(), parts });
+                rows.push({ id: doc.id, ref: doc.ref, manifest: doc.data() });
             }
-            return j(res, 200, { ok: true, items });
+
+            /* Collapsed BEFORE the parts are read. Assembling every copy of a
+             * statement only to throw all but one away is the same work done
+             * several times over, on a phone, for nothing. */
+            const collapsed = dedupeStored(rows);
+
+            // Old releases stored obvious invoices/receipts before the
+            // universal content-name veto existed. Do not keep presenting
+            // those legacy records as statements. This is a reversible view
+            // filter (no financial record or Gmail message is deleted).
+            const legacyNonStatements = collapsed.filter((r) => {
+                const m = r.manifest || {};
+                return nameVerdict({ subject: m.subject || '', filenames: [m.filename || ''] }).verdict === STATEMENT_ID.NOT_STATEMENT;
+            });
+            const legacyRejectedIds = new Set(legacyNonStatements.map((r) => r.id));
+            const eligible = collapsed.filter((r) => !legacyRejectedIds.has(r.id));
+
+            /* AND THEN THE FINISHED ONES ARE DROPPED — after the collapse, not
+             * before. A statement stored several times may have been marked on
+             * any one of those copies; filtering first would let an unmarked
+             * copy survive the collapse and be offered again, which is the
+             * duplicate the owner reported wearing a different hat.
+             *
+             * Filtered from `eligible` (post legacy-non-statement veto), not
+             * the raw `collapsed`: a rejected invoice/receipt must never
+             * occupy a page slot a real statement could have used. */
+            const done = eligible.filter((r) => r.manifest && r.manifest.filed === true).length;
+            const retiredNonStatements = eligible.filter((r) => r.manifest && r.manifest.status === 'rejected_non_statement');
+            const retiredUnapproved = eligible.filter((r) => r.manifest && r.manifest.status === 'rejected_unapproved_sender');
+            const reviewStatements = eligible.filter((r) => r.manifest && r.manifest.status === 'needs_review');
+            const passwordFailures = reviewStatements.filter((r) => {
+                const reason = String(r.manifest && r.manifest.reviewReason || '');
+                return reason === 'PASSWORD_FAILED' || reason === 'NO_VAULT_KEYS';
+            }).length;
+            const pending = eligible.filter((r) => !(r.manifest && (r.manifest.filed === true
+                || r.manifest.status === 'rejected_non_statement' || r.manifest.status === 'rejected_unapproved_sender'
+                || r.manifest.status === 'needs_review' || r.manifest.status === 'dismissed')));
+            const approvedPending = pending.filter((r) => verdictOf(r.manifest).verdict === 'approved').length;
+
+            /* PAGINATED, NOT JUST CAPPED. `keep` used to always be the first
+             * ITEMS_RETURN_MAX (200) pending statements, EVERY one's parts
+             * fetched and returned in one response — so a real backlog handed
+             * the device up to 200 full PDF attachments (each easily 0.5-3MB
+             * of base64) in a single JSON payload, before it had processed
+             * even one of them. That is a peak of tens to hundreds of MB on a
+             * phone, held for the whole sync, which is exactly the shape of
+             * "the app crashes while — or right after — email statements
+             * sync". `limit`/`offset` (both optional; absent behaves exactly
+             * as before, one page of up to ITEMS_RETURN_MAX) let the device
+             * ask for a few statements' worth of attachments at a time,
+             * process and release each page, then ask for the next — bounding
+             * peak memory to one page's payloads instead of the whole queue's. */
+            const limitMatch = /[?&]limit=(\d+)/.exec(String(req.url || ''));
+            const offsetMatch = /[?&]offset=(\d+)/.exec(String(req.url || ''));
+            const sourceMatch = /[?&]source=([^&]+)/.exec(String(req.url || ''));
+            const sourceId = sourceMatch ? decodeURIComponent(sourceMatch[1]) : '';
+            const limit = limitMatch ? Math.min(ITEMS_RETURN_MAX, Math.max(1, parseInt(limitMatch[1], 10))) : ITEMS_RETURN_MAX;
+            const offset = offsetMatch ? Math.max(0, parseInt(offsetMatch[1], 10)) : 0;
+            /* Review download asks for one exact, owner-scoped source. It must
+             * not put Needs Review back into the processing queue or return a
+             * page of unrelated financial attachments. */
+            const keep = sourceId ? reviewStatements.filter(row => row.id === sourceId).slice(0, 1) : pending.slice(offset, offset + limit);
+
+            const items = [];
+            for (const row of keep) {
+                const sender = verdictOf(row.manifest);
+                /* If an allow-list has made a decision, bytes from a rejected
+                 * sender never cross the wire. The old client downloaded the
+                 * whole receipt/bill before deciding not to open it. */
+                /* Exact allow-list, fail closed. `new`, `blocked`,
+                 * `unrecorded`, or any future/malformed verdict is metadata
+                 * only. There is deliberately no legacy-known fallback here. */
+                const senderMayOpen = sender.verdict === 'approved';
+                const includePayload = !metadataOnly && senderMayOpen;
+                const parts = [];
+                if (includePayload) {
+                    try {
+                        const ps = await withDeadline(row.ref.collection('parts').get(), 8000, 'parts');
+                        for (const p of (ps && ps.docs) || []) parts.push(p.data());
+                    } catch (_) { /* an unreadable part shows up as a short assembly */ }
+                }
+                /* Alongside the manifest, never inside it. The manifest is
+                 * what the hook wrote; this is what the list says today, and
+                 * merging the two would make a re-decision look like a stored
+                 * fact. */
+                let manifest = row.manifest;
+                if (!includePayload && manifest && Object.prototype.hasOwnProperty.call(manifest, 'd')) {
+                    manifest = { ...manifest };
+                    delete manifest.d;
+                }
+                const item = { id: row.id, manifest, sender };
+                /* Keep the established full-payload response shape for the
+                 * explicit sync path. Metadata responses omit parts entirely. */
+                if (!metadataOnly) item.parts = parts;
+                items.push(item);
+            }
+            /* `duplicates` is reported rather than hidden: the owner asked why
+             * the same statements kept appearing, and a number they can watch
+             * fall to zero is a better answer than a list that quietly got
+             * shorter. */
+            return j(res, 200, {
+                ok: true, items, scanned: rows.length,
+                duplicates: rows.length - collapsed.length,
+                /* Whether the sender verdicts above mean anything at all. The
+                 * device gates every decision it makes from them on this. */
+                decided,
+                approvedCount: senderList.filter((e) => e.status === 'approved').length,
+                /* Reported, not hidden: "12 already filed" is the sentence that
+                 * tells the owner an empty list means finished rather than
+                 * broken. Computed from the same collapse the list came from,
+                 * so the numbers on the card always add up. */
+                filed: done,
+                rejectedNonStatements: legacyNonStatements.length,
+                retiredNonStatements: retiredNonStatements.length,
+                retiredUnapproved: retiredUnapproved.length,
+                needsReviewStatements: reviewStatements.length,
+                passwordFailures,
+                approvedPending,
+                /* Pagination: how many pending statements exist beyond this
+                 * page, and the total pending count (for a progress readout).
+                 * A caller that never sends limit/offset gets `more: false`
+                 * whenever the (unpaginated, up-to-200) page already covers
+                 * everything pending — unchanged from before pagination
+                 * existed unless the backlog itself exceeds 200. */
+                more: offset + keep.length < pending.length,
+                pending: pending.length,
+            });
         } catch (_) {
             return j(res, 503, { ok: false, error: 'items unreadable' });
         }
@@ -143,7 +616,7 @@ export default async function handler(req, res) {
     if (method === 'GET') {
         let snap;
         try {
-            snap = await withDeadline(ref.get(), 8000, 'wf-mail');
+            snap = await readMailState(ref);
         } catch (_) {
             return j(res, 503, { ok: false, error: 'state unreadable' });
         }

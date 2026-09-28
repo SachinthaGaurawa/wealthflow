@@ -1,7 +1,7 @@
 {
   "schema": "wealthflow.merchants/v2",
-  "version": 108,
-  "updated": "2026-08-27",
+  "version": 126,
+  "updated": "2026-09-12",
   "source": "wealthflow-auto",
   "taxonomy": {
     "goesTo": [
@@ -44,8 +44,22 @@
     ]
   },
   "note": "Auto-expanded + re-verified every 6h by .github/workflows/merchant-sync.yml (engine: Test/merchant-expand.cjs). The app fetches this on launch via WFMerchants.syncRemote(), re-verifies every entry against taxonomy.categories, and merges the valid ones into window.WFMerchants. Each entry: {key (lowercase merchant signal), category, goesTo}. Seed registry precedence always wins; this list only adds coverage.",
-  "count": 916,
+  "count": 950,
   "merchants": [
+    {
+      "key": "hnb",
+      "category": "Bank Charges",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "nation trust",
+      "category": "Bank Charges",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
     {
       "key": "bake house",
       "category": "Dining",
@@ -535,6 +549,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "shangri",
+      "category": "Dining",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "shanmugas",
@@ -2315,6 +2336,13 @@
       "source": "seed"
     },
     {
+      "key": "hemas",
+      "category": "Health",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "hemas hospital",
       "category": "Health",
       "goesTo": "expenses",
@@ -2420,6 +2448,13 @@
       "source": "seed"
     },
     {
+      "key": "medihelp",
+      "category": "Health",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "mediplus",
       "category": "Health",
       "goesTo": "expenses",
@@ -2439,6 +2474,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "national hospital",
+      "category": "Health",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "navinna",
@@ -3358,6 +3400,13 @@
       "source": "web-verified"
     },
     {
+      "key": "dialog internet",
+      "category": "Internet",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "fiber",
       "category": "Internet",
       "goesTo": "subscription",
@@ -3384,6 +3433,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "hutch home broadband",
+      "category": "Internet",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "internet bill",
@@ -3547,6 +3603,20 @@
       "source": "web-verified"
     },
     {
+      "key": "amw",
+      "category": "Other",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "hilton",
+      "category": "Other",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "abans",
       "category": "Shopping",
       "goesTo": "expenses",
@@ -3594,6 +3664,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "apple",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "apple store",
@@ -3895,6 +3972,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "majestic city",
+      "category": "Shopping",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "mint pay",
@@ -4247,6 +4331,13 @@
       "source": "seed"
     },
     {
+      "key": "asana",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "atlassian",
       "category": "Software",
       "goesTo": "subscription",
@@ -4303,6 +4394,13 @@
       "source": "seed"
     },
     {
+      "key": "bitbucket",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "bitdefender",
       "category": "Software",
       "goesTo": "expenses",
@@ -4336,6 +4434,13 @@
       "goesTo": "expenses",
       "confidence": 0.95,
       "source": "ai-consensus"
+    },
+    {
+      "key": "ceynet",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "chatgpt",
@@ -4583,6 +4688,13 @@
       "source": "ai-consensus"
     },
     {
+      "key": "ibmcloud",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "icloud",
       "category": "Software",
       "goesTo": "subscription",
@@ -4672,6 +4784,13 @@
       "goesTo": "subscription",
       "confidence": 0.99,
       "source": "web-verified"
+    },
+    {
+      "key": "monday",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
     },
     {
       "key": "ms365",
@@ -4884,6 +5003,13 @@
       "source": "ai-consensus"
     },
     {
+      "key": "trello",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
+    },
+    {
       "key": "trend micro",
       "category": "Software",
       "goesTo": "expenses",
@@ -4924,6 +5050,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "woocommerce",
+      "category": "Software",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "ai-consensus"
     },
     {
       "key": "wordpress",
@@ -4996,6 +5129,13 @@
       "source": "seed"
     },
     {
+      "key": "acorn tv",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "amazon prime",
       "category": "Streaming",
       "goesTo": "subscription",
@@ -5059,6 +5199,13 @@
       "source": "seed"
     },
     {
+      "key": "binge",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "crunchyroll",
       "category": "Streaming",
       "goesTo": "subscription",
@@ -5101,6 +5248,13 @@
       "source": "ai-consensus"
     },
     {
+      "key": "disney+ hotstar",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "disneyhotstar",
       "category": "Streaming",
       "goesTo": "expenses",
@@ -5129,11 +5283,25 @@
       "source": "seed"
     },
     {
+      "key": "hbo go",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "hbo max",
       "category": "Streaming",
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "hbogo",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "hbomax",
@@ -5190,6 +5358,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "paramount",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "paramount+",
@@ -5290,11 +5465,25 @@
       "source": "seed"
     },
     {
+      "key": "vimeo",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "viu",
       "category": "Streaming",
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "we tv",
+      "category": "Streaming",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "wwe network",
@@ -5486,6 +5675,13 @@
       "source": "web-verified"
     },
     {
+      "key": "dialogtv",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "etisalat",
       "category": "Telecom",
       "goesTo": "subscription",
@@ -5620,6 +5816,13 @@
     },
     {
       "key": "lankabell wifi",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
+      "key": "lankacom",
       "category": "Telecom",
       "goesTo": "subscription",
       "confidence": 0.99,
@@ -5822,6 +6025,13 @@
       "source": "seed"
     },
     {
+      "key": "suntel",
+      "category": "Telecom",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "ace cabs",
       "category": "Transport",
       "goesTo": "expenses",
@@ -5848,6 +6058,13 @@
       "goesTo": "expenses",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "bus",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "busconnect",
@@ -6109,6 +6326,13 @@
       "source": "seed"
     },
     {
+      "key": "sri lankan",
+      "category": "Transport",
+      "goesTo": "expenses",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "sri lankan airlines",
       "category": "Transport",
       "goesTo": "expenses",
@@ -6270,6 +6494,13 @@
       "source": "seed"
     },
     {
+      "key": "ceb electricity",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
+    },
+    {
       "key": "ceylon electricity",
       "category": "Utilities",
       "goesTo": "subscription",
@@ -6415,6 +6646,13 @@
       "goesTo": "subscription",
       "confidence": 1,
       "source": "seed"
+    },
+    {
+      "key": "nwsdb water",
+      "category": "Utilities",
+      "goesTo": "subscription",
+      "confidence": 0.99,
+      "source": "web-verified"
     },
     {
       "key": "prepaid meter",

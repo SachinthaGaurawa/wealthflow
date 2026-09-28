@@ -52,6 +52,7 @@
  * successful statements through it and asserts total silence.
  * ===========================================================================*/
 
+import { wideQuery, PASS } from './wealthflow-sender-discovery.js';
 import { hashRow } from './wealthflow-statement-router.js';
 
 const s = (v) => (v == null ? '' : String(v)).trim();
@@ -154,10 +155,39 @@ export async function ledgerHashes(appData, deps = {}) {
 
 /* ── 2. the plan ──────────────────────────────────────────────────────────── */
 
-/* Gmail's search is the cheapest filter available: a query that names the
- * senders and requires an attachment never fetches the rest of the mailbox. The
- * sender list is the same allowlist the live path uses, passed in rather than
- * duplicated, because a second copy of it would drift. */
+/* Gmail's search is the cheapest filter available: requiring an attachment and
+ * exact approved senders avoids fetching the rest of the mailbox.
+ *
+ * Routine scans use exact approved senders. Discovery is metadata-only and may
+ * use vocabulary; MIME and DKIM validation remain in the ingest policy. */
+
+/* What a bank statement calls itself. Kept deliberately short: each term is a
+ * word that appears in the SUBJECT or BODY of a real statement mail, and every
+ * addition widens the net for the quarantine queue too, so a term that also
+ * matches shopping receipts costs the owner a review. */
+/* WHY `invoice` AND `bill` ARE NOT HERE.
+ *
+ * They were, and they are the direct cause of the owner's report that bills and
+ * receipts were arriving in a screen meant for bank statements. Those two words
+ * describe every non-statement financial mail ever sent — a utility bill, a
+ * shop receipt, a subscription charge, a phone top-up — and they were used
+ * TWICE: once to build the Gmail query, so the mail was fetched, and again in
+ * looksLikeStatement, so it was accepted. Each one matched both times.
+ *
+ * The rest of this list earns its place: `statement`, its spellings, and the
+ * three `advice` forms are what Sri Lankan banks actually title these mails,
+ * and none of them appears on a receipt. The rule for adding a term is
+ * unchanged and is now the whole point of the file: a word that also matches
+ * something that is not a statement costs the owner a review, so it does not
+ * go in. */
+export const STATEMENT_TERMS = [
+    'statement',
+    'e-statement',
+    'estatement',
+    'account advice',
+    'credit advice',
+    'debit advice',
+];
 
 /** One month, as Gmail's after:/before: want it. */
 const ymd = (d) => `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`;
@@ -169,17 +199,136 @@ const ymd = (d) => `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart
  * function of its inputs — a scan planner that reads the clock cannot be
  * tested, and this one decides how much of someone's mailbox gets read.
  */
-export function planWindows({ months = 24, now = Date.now(), senders = [] } = {}) {
+export function planWindows({
+    months = 24, now = Date.now(), senders = [], terms = STATEMENT_TERMS,
+    /* OPT-IN, AND IT DID NOT USE TO BE. `discover` defaulted to true back when
+     * it only meant "also match the statement vocabulary" — a harmless extra
+     * clause. It now selects a different question entirely: headers only,
+     * nothing downloaded, nothing stored. Defaulting to that would turn every
+     * caller that never heard of the flag into a run that imports nothing and
+     * reports success. A mode that reads less must be asked for. */
+    discover = false,
+    includeTerms = null,
+    /* Picker names off the owner's own records. Resolved against the canonical
+     * institution list inside wideQuery(), so an unknown name contributes no
+     * clause rather than reaching a Gmail query. */
+    banks = [],
+} = {}) {
     const depth = Math.max(1, Math.min(120, Math.floor(num(months)) || 1));
-    const from = s(senders.map((x) => s(x)).filter(Boolean).map((d) => `from:${d}`).join(' OR '));
+    /* Accepts either bare domains or ready-made `from:` clauses, because the
+     * sender list hands over the latter and the built-in bank list the former.
+     * Normalising here means neither caller has to know what the other does. */
+    const fromClauses = arr(senders).map((x) => s(x)).filter(Boolean)
+        .map((d) => (d.startsWith('from:') ? d : `from:${d}`));
+
+    /* THE KEYWORD BRANCH IS FOR DISCOVERY, NOT FOR ROUTINE SCANNING.
+     *
+     * `has:attachment filename:pdf OR "statement"` asks Gmail for every PDF in
+     * the mailbox whose subject carries a common word, which is how a screen
+     * for bank statements filled up with everything else. Once the owner has
+     * approved even one sender, the question narrows to those senders and the
+     * keyword branch is dropped: an unapproved sender is then not fetched and
+     * discarded, it is never asked for — no quota, no download, no row.
+     *
+     * With no approved senders it stays on, because that is the only way to
+     * find out what to approve. */
+    /* ── DISCOVERY IS A DIFFERENT QUESTION NOW, NOT A WIDER ANSWER ────────
+     *
+     * The old discovery kept `filename:pdf` and the six-phrase vocabulary and
+     * merely added them to the approved senders. Both gates are fatal and both
+     * are invisible when they fire: a bank that sends a password-protected ZIP
+     * is not in `filename:pdf`, and a subject reading "Monthly Account Summary"
+     * matches none of the phrases. Neither is ranked low — both are ABSENT,
+     * with nothing to say they were ever excluded.
+     *
+     * So a discovery run now asks wideQuery(): every message with an attachment
+     * in the window, minus the personal mailboxes, and nothing else. The
+     * narrowing moves to wealthflow-sender-discovery.js, where it is done on
+     * evidence that can be explained to the owner rather than by a filter that
+     * decides in silence.
+     *
+     * The ROUTINE path remains narrow — approved senders with attachments, no
+     * keyword guesses — while planMessage decides the supported MIME types. */
+    if (discover) {
+        /* TWO PASSES PER MONTH, BECAUSE ONE CANNOT REACH EVERY BANK.
+         *
+         *   attachments  everything with a file attached, whatever the mail
+         *                CALLS itself. This is the pass that finds a bank whose
+         *                subject reads "Monthly Account Summary" or a bare
+         *                reference number.
+         *
+         *   wording      everything that SAYS statement, attached or not. This
+         *                is the pass that finds a bank which emails "your
+         *                statement is ready, log in to view it" and attaches
+         *                nothing — a mail the attachment pass cannot see by
+         *                construction, not by oversight.
+         *
+         * They are separate windows rather than one OR-ed query so each can be
+         * paged, resumed and reported on its own, and so a mailbox where one
+         * pass is enormous does not starve the other of the run's budget. */
+        const out = [];
+        const stop = new Date(now);
+        for (let i = 0; i < depth; i++) {
+            const hi = new Date(Date.UTC(stop.getUTCFullYear(), stop.getUTCMonth() - i + 1, 1));
+            const lo = new Date(Date.UTC(stop.getUTCFullYear(), stop.getUTCMonth() - i, 1));
+            const month = `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`;
+            /* NAMED FIRST, AND THE ORDER IS THE POINT.
+             *
+             * A run is bounded, so a truncated one must still have answered the
+             * question. The named pass is the precise one — it asks which
+             * address Sampath writes from, rather than enumerating a mailbox
+             * and ranking it — so putting it first means the first calls spent
+             * are the ones that produce a row with an address in it. The two
+             * sweeps follow for recall, and a run that never reaches them has
+             * still done the useful half.
+             *
+             * It is skipped entirely when the owner has no banks on record:
+             * wideQuery returns '' for an empty token list, and a window with
+             * no query would ask Gmail for everything. */
+            for (const pass of [PASS.NAMED, PASS.ATTACHMENTS, PASS.WORDING]) {
+                const query = wideQuery({ after: lo.getTime(), before: hi.getTime(), pass, banks });
+                if (!query) continue;
+                out.push({
+                    label: month,
+                    pass,
+                    query,
+                    after: lo.getTime(),
+                    before: hi.getTime(),
+                    /* The handler reads headers only for a discovery window and
+                     * never downloads an attachment. Carried on the window
+                     * rather than re-derived, so the plan and the fetch cannot
+                     * disagree about which kind of run this is. */
+                    discovery: true,
+                });
+            }
+        }
+        return out;
+    }
+
+    /* THE VOCABULARY IS FOR SOMEONE WHO HAS APPROVED NOBODY.
+     *
+     * `fromClauses` is not the right test on its own: the caller substitutes
+     * the four built-in bank domains when the owner has approved nothing, so
+     * the list is never empty and the vocabulary would never be used — a
+     * first-time owner would then see only those four banks on their very first
+     * scan and no way to notice the others existed. `includeTerms` lets the
+     * caller say which of the two situations it is in, and defaults to the old
+     * reading when it does not. */
+    const useTerms = includeTerms === null ? !fromClauses.length : includeTerms === true;
+    /* Quoted, because several are two words and an unquoted "account advice"
+     * would ask Gmail for two separate terms. */
+    const termClauses = !useTerms ? [] : (Array.isArray(terms) ? terms : []).map((t) => s(t)).filter(Boolean)
+        .map((t) => `"${t.replace(/"/g, '')}"`);
+    const any = s([...fromClauses, ...termClauses].join(' OR '));
     const windows = [];
     const end = new Date(now);
 
     for (let i = 0; i < depth; i++) {
         const hi = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i + 1, 1));
         const lo = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - i, 1));
+        // Exact senders constrain Gmail; the ingest policy validates MIME type.
         const parts = ['has:attachment', `after:${ymd(lo)}`, `before:${ymd(hi)}`];
-        if (from) parts.push(`(${from})`);
+        if (any) parts.push(`(${any})`);
         windows.push({
             label: `${lo.getUTCFullYear()}-${String(lo.getUTCMonth() + 1).padStart(2, '0')}`,
             query: parts.join(' '),
@@ -196,6 +345,8 @@ export function planWindows({ months = 24, now = Date.now(), senders = [] } = {}
  * rest of the app's state, and complete enough that resuming does not re-read a
  * window that already finished. */
 export function startCursor(opts = {}) {
+    const now = num(opts.now) || Date.now();
+    const months = Math.max(1, Math.min(120, Math.floor(num(opts.months)) || 1));
     return {
         windows: planWindows(opts),
         index: 0,
@@ -203,8 +354,104 @@ export function startCursor(opts = {}) {
         done: false,
         scanned: 0,
         statements: 0,
-        started: num(opts.now) || Date.now(),
+        started: now,
+        /* THE CLOCK AND THE DEPTH TRAVEL WITH THE CURSOR.
+         *
+         * planWindows() is a pure function of (months, now), and the server
+         * rebuilds the very same window from the (months, now, index) it is
+         * sent. So the clock a scan STARTED with is part of that scan's
+         * identity: resume it against a fresh Date.now() and index 7 addresses
+         * a different month on each side. Carrying them here is what lets a
+         * cursor be put down and picked up — across a pause, a reload, or a
+         * week — and still mean the same thing. */
+        months,
+        now,
     };
+}
+
+/* ── RESUMING ─────────────────────────────────────────────────────────────
+ *
+ * MAX_WINDOWS_PER_RUN bounds one RUN. Nothing bounded the SCAN, because
+ * nothing carried a run's end into the next one: every call to the caller in
+ * index.html built a fresh cursor at index 0. Twenty-four planned windows, six
+ * done, and the message said "run it again to continue" — so the owner pressed
+ * it again and got months one through six a second time. Months seven through
+ * twenty-four were not slow to arrive. They were unreachable, by any number of
+ * presses, and the same six months were re-fetched every time.
+ *
+ * That is the whole of "not all my statements sync". The plan was right, the
+ * windows were right, the queries were right; the cursor was thrown away
+ * between runs.
+ *
+ * These two functions are the memory. They are pure and they are here rather
+ * than in the page for the same reason the planner is: what decides how much
+ * of someone's mailbox gets read should be testable without a mailbox. */
+
+/* Bumped when the persisted shape changes meaning. A cursor from an older
+ * version is dropped rather than guessed at — resuming half-understood state
+ * into a scan of somebody's mail is worse than starting over. */
+export const CURSOR_VERSION = 1;
+
+/** The small, storable record of where a scan got to. */
+export function serializeCursor(cursor) {
+    const c = cursor || {};
+    if (!arr(c.windows).length) return null;
+    return {
+        v: CURSOR_VERSION,
+        months: num(c.months),
+        now: num(c.now),
+        index: num(c.index),
+        pageToken: c.pageToken ? String(c.pageToken) : null,
+        scanned: num(c.scanned),
+        statements: num(c.statements),
+        done: !!c.done,
+        total: arr(c.windows).length,
+    };
+}
+
+/**
+ * A cursor to scan with: the saved one when it is still the same scan, a fresh
+ * one otherwise.
+ *
+ * A saved cursor is resumable only when it is the current version, not already
+ * finished, planned to the same depth, and pointing somewhere inside its own
+ * plan. Anything else — a different depth requested, a corrupt record, an index
+ * past the end — starts over, which is always correct and merely slower.
+ *
+ * Note what is NOT a reason to refuse: age. A month-old half-finished scan
+ * still describes real months of a real mailbox, and its windows are all in the
+ * past, so they cannot have changed. Refusing it on age would restart at index
+ * 0 — which is precisely the bug this exists to close.
+ */
+export function resumeCursor(saved, opts = {}) {
+    const want = Math.max(1, Math.min(120, Math.floor(num(opts.months)) || 1));
+    const fresh = () => startCursor({ ...opts, months: want });
+    const sv = saved && typeof saved === 'object' ? saved : null;
+    if (!sv) return fresh();
+    if (num(sv.v) !== CURSOR_VERSION) return fresh();
+    if (sv.done) return fresh();
+    if (num(sv.months) !== want) return fresh();
+    if (!num(sv.now)) return fresh();
+
+    const c = startCursor({ ...opts, months: want, now: num(sv.now) });
+    const index = num(sv.index);
+    if (!(index >= 0) || index >= c.windows.length) return fresh();
+
+    c.index = index;
+    c.pageToken = sv.pageToken ? String(sv.pageToken) : null;
+    c.scanned = num(sv.scanned);
+    c.statements = num(sv.statements);
+    c.done = false;
+    return c;
+}
+
+/** How far along a scan is, as a fraction, for something to draw. */
+export function scanProgress(cursor) {
+    const c = cursor || {};
+    const total = arr(c.windows).length;
+    if (!total) return 0;
+    if (c.done) return 1;
+    return Math.max(0, Math.min(1, num(c.index) / total));
 }
 
 /**
@@ -287,9 +534,9 @@ export function runSummary(result) {
 }
 
 const API = {
-    LEDGER_SOURCES, HASH_BATCH, MAX_WINDOWS_PER_RUN, NOTIFY_REASONS,
+    LEDGER_SOURCES, HASH_BATCH, MAX_WINDOWS_PER_RUN, NOTIFY_REASONS, CURSOR_VERSION,
     rowFromRecord, ledgerHashes, planWindows, startCursor, nextStep, advance,
-    shouldPause, notifiable, runSummary,
+    shouldPause, notifiable, runSummary, serializeCursor, resumeCursor, scanProgress,
 };
 
 /* The page reaches this through window, the same way every other wired

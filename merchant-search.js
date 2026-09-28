@@ -166,24 +166,24 @@ export default async function handler(req) {
         return json({ ok: false, reason: 'no_search_provider', merchant });
     }
 
-    for (const [name, fn] of providers) {
-        try {
-            const text = await fn();
-            if (!text || !text.trim()) continue;
-            // explicit "CATEGORY: X" wins (gemini); else keyword-map the prose
-            let category = 'Other';
-            const m = /CATEGORY:\s*([A-Za-z()&\s]+)/i.exec(text);
-            if (m && CATEGORIES.includes(m[1].trim())) category = m[1].trim();
-            else category = categorise(text);
-            const description = text.replace(/CATEGORY:.*/i, '').replace(/\s+/g, ' ').trim().slice(0, 180);
-            return json({
-                ok: true, provider: name, merchant, category,
-                description: description || null,
-                confidence: category === 'Other' ? 0.5 : 0.82
-            });
-        } catch (e) {
-            // try next provider
-        }
-    }
-    return json({ ok: false, reason: 'all_providers_failed', merchant });
+    const settled = await Promise.allSettled(providers.map(async ([name, fn]) => {
+        const text = await fn();
+        if (!text || !text.trim()) throw new Error('empty');
+        const match = /CATEGORY:\s*([A-Za-z()&\s]+)/i.exec(text);
+        const category = match && CATEGORIES.includes(match[1].trim()) ? match[1].trim() : categorise(text);
+        return { name, category, description: text.replace(/CATEGORY:.*/i, '').replace(/\s+/g, ' ').trim().slice(0, 180) };
+    }));
+    const answers = settled.filter(x => x.status === 'fulfilled').map(x => x.value);
+    if (!answers.length) return json({ ok: false, reason: 'all_providers_failed', merchant });
+    const useful = answers.filter(x => x.category !== 'Other');
+    if (!useful.length) return json({ ok: false, reason: 'merchant_unresolved', merchant, answered: answers.map(x => x.name) });
+    const categories = [...new Set(useful.map(x => x.category))];
+    if (categories.length !== 1) return json({ ok: false, reason: 'provider_disagreement', merchant,
+        votes: useful.map(x => ({ provider: x.name, category: x.category })) });
+    const agreeing = useful.filter(x => x.category === categories[0]);
+    const confidence = agreeing.length >= 2 ? 0.9 : 0.72;
+    return json({ ok: true, provider: agreeing.length >= 2 ? 'consensus:' + agreeing.map(x => x.name).join(',') : agreeing[0].name,
+        providers: answers.map(x => x.name), failed: providers.map(x => x[0]).filter(name => !answers.some(a => a.name === name)),
+        merchant, category: categories[0], description: agreeing.map(x => x.description).find(Boolean) || null,
+        confidence, consensus: { agreed: agreeing.length, answered: answers.length, configured: providers.length } });
 }

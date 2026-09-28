@@ -1,6 +1,6 @@
 {
   "_comment": "HOW THIS WORKS: 'latest' is the version AVAILABLE to users. The running build is CURRENT_VERSION inside wealthflow-update-system.js. To announce an update: publish new app files AND set 'latest' here to the new number. Users on an older version see the 'Update available' banner. 'type' = full | minor | security. List a version in 'mandatory' to force it.",
-  "latest": "7.69.24",
+  "latest": "7.69.33",
   "mandatory": [
     "7.16.0",
     "7.16.1"
@@ -517,6 +517,168 @@
           "title": "What changed for you",
           "items": [
             "The release brain has never run — and three other masked failures (#98)"
+          ]
+        }
+      ]
+    },
+    "7.69.33": {
+      "headline": "Statement backlog sync without request timeouts",
+      "date": "2026-09-20",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Check now processes one durable statement work unit per request and automatically continues the remaining queue, avoiding the previous long single-request timeout. Every fresh sign-in silently reconciles the latest two Gmail month-windows from exact approved senders before the encrypted vault worker unlocks them. A failed shared auto/manual request now produces one clear notification instead of two warnings."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Interactive server work is bounded independently of the scheduled safety-net. The server reports remaining work and the authenticated client resumes it through short sequential requests while preserving statement leases and exact sender enforcement."
+          ]
+        }
+      ]
+    },
+    "7.69.32": {
+      "headline": "Statement Sync that starts, unlocks and filters correctly",
+      "date": "2026-09-20",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Check now no longer exits silently when Firebase auth finishes after the statement module loads. Every successful vault unlock reconciles newly added or edited passwords with the encrypted autonomous vault. Only exact approved sender addresses are shown in Statement Sync."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Deep document inspection now retires proven invoices and receipts without ledger writes or misleading Needs Review cards. Legacy mail from unapproved senders is retired before attachment download, while Gmail push, history reconciliation and the daily safety-net remain active."
+          ]
+        }
+      ]
+    },
+    "7.69.31": {
+      "headline": "Complete autonomous bank-statement backfill",
+      "date": "2026-09-20",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Historical scans now find supported attachments from every exact approved sender even when a bank omits or encodes the filename. The full pending queue remains visible while iPhone processes one statement at a time, so a multi-statement mailbox can no longer look like a single result."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "New historical statements wake the same encrypted autonomous reader, unanimous AI classification board and durable ledger pipeline used by live Gmail delivery. Exact sender-address enforcement remains fail-closed before attachment bytes are fetched."
+          ]
+        }
+      ]
+    },
+    "7.69.30": {
+      "headline": "Statement passwords unlock with your app sign-in",
+      "date": "2026-09-19",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Entering your WealthFlow PIN now unlocks the Bank Statement Password Vault for the same session. Check now pauses before downloading statements when that vault is locked, opens the unlock prompt, and resumes automatically after a successful unlock."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "The PIN is used only in memory and is never stored or uploaded. Existing device vault entries are copied to the encrypted private cloud vault after unlock when cloud storage is configured, so autonomous processing can use them without exposing plaintext passwords."
+          ]
+        }
+      ]
+    },
+    "7.69.29": {
+      "headline": "Statement Sync reliability and accuracy repair",
+      "date": "2026-09-19",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+        "Old waiting statements regain missing sender metadata on a safe rescan, small inline Gmail attachments are accepted, unencrypted statements no longer require a password vault, every fresh sign-in starts cloud processing, and a dedicated daily catch-up closes gaps left by delayed or dropped push notifications."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+        "Historical scan pages fail closed on transient Gmail errors, stored ciphertext is pinned to SHA-256, PDF columns are reconstructed in visual order, statement parsing uses isolated VM state, stale filed keys cannot create phantom records, and connected-mailbox status no longer asks for a replacement credential."
+          ]
+        }
+      ]
+    },
+    "7.69.28": {
+      "headline": "Statement Sync no longer exhausts iPhone memory",
+      "date": "2026-09-13",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Checking for statements now downloads metadata only. On iPhone and iPad, explicit sync processes one complete statement at a time, then opens its review, so encrypted attachments and parsed rows cannot accumulate until Safari restarts."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Closed full-screen blur modals leave the compositor tree, PDF files are no longer copied into redundant text strings, mail-card paints wait for scroll idle, icon observers scan only added nodes, and Service Worker cache writes no longer block navigation or delete the backup cache."
+          ]
+        }
+      ]
+    },
+    "7.69.27": {
+      "headline": "iPhone dashboard scrolling is compositor-safe",
+      "date": "2026-09-13",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Fast scrolling after Statement Sync no longer collides with background chart loading or cloud repaints. iPhone and iPad use lightweight, accessible dashboard charts that preserve every financial value without GPU canvas pressure."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Mobile dashboard Chart.js warm-up is disabled, asynchronous model updates wait for scroll idle before committing DOM changes, and crash reloads no longer restore the same dangerous scroll position. Real-browser pressure tests cover repeated scroll-time repaint requests."
+          ]
+        }
+      ]
+    },
+    "7.69.26": {
+      "headline": "Statement review memory is now bounded",
+      "date": "2026-09-13",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Even a statement with hundreds of transactions now keeps only 12 editable rows mounted at once on iPhone and iPad. Previous/Next preserves every edit, while Save, cloud review, bulk routing and AI auto-sort still process the complete statement."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "The review modal no longer treats its live DOM as the transaction database. Executable 200-row pressure simulations prove that rapid navigation remains bounded and hidden rows are never dropped."
+          ]
+        }
+      ]
+    },
+    "7.69.25": {
+      "headline": "Statement Sync repaired",
+      "date": "2026-09-13",
+      "sections": [
+        {
+          "title": "What changed for you",
+          "items": [
+            "Only exact approved statement addresses are collected; a rolling 14-day reconciliation recovers messages missed behind Gmail's history cursor; obvious legacy invoices and receipts no longer appear as statements."
+          ]
+        },
+        {
+          "title": "Under the hood",
+          "items": [
+            "Every eligible AI engine is now heard before reduction, structured financial AI fails closed, autonomous security review fails closed, and duplicate matching is timezone-stable."
           ]
         }
       ]

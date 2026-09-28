@@ -78,7 +78,7 @@
         const mine = (charges || []).filter(c => _matchLast4(c, last4, card, bankIsUnique));
         const pays = (payments || []).filter(p => _matchLast4(p, last4, card, bankIsUnique));
         const amt = c => _num(c.combinedTotal != null ? c.combinedTotal : c.amount);
-        const ym = new Date().toISOString().slice(0, 7);
+        const ym = window.WFWhen.thisMonth();
         const monthOf = r => String((r && (r.date || r.createdAt)) || '').slice(0, 7);
         const outstanding = mine.filter(c => !c.paid).reduce((s, c) => s + amt(c), 0);
         const spentThisMonth = mine.filter(c => monthOf(c) === ym).reduce((s, c) => s + amt(c), 0);
@@ -102,7 +102,10 @@
         if (dt < todayMid) { const nm = m + 1; dt = mk(y + Math.floor(nm / 12), nm % 12); }
         return dt;
     }
-    function _daysUntil(dt) { if (!dt) return null; return Math.round((dt - new Date(new Date().toISOString().slice(0, 10))) / 86400000); }
+    /* Counted from LOCAL midnight. `new Date('2026-08-01')` is UTC midnight —
+     * 05:30 local — so a due date less than five and a half hours away rounded to
+     * the wrong number of days, and a card due today could read as due tomorrow. */
+    function _daysUntil(dt) { if (!dt) return null; return window.WFWhen.daysBetween(new Date(), dt); }
     function _fmtDate(dt) { try { return dt.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); } catch (_) { return ''; } }
 
     function _utilColor(u) { if (u == null) return '#8b95a8'; if (u < 30) return '#22c55e'; if (u < 70) return '#f59e0b'; return '#ef4444'; }

@@ -49,7 +49,7 @@
    ============================================================================ */
 
 import fs from 'node:fs';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { secretEquals, bearerOf } from './cron-auth.mjs';
 
 /* =============================================================================
    AUTHENTICATION  —  this endpoint was completely open
@@ -96,22 +96,10 @@ export function isLocalInvocation(req) {
     return !!(req && req[LOCAL_INVOCATION] === true);
 }
 
-/** Constant-time compare that also hides the length of either input. */
-function secretEquals(a, b) {
-    if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
-    const ha = createHash('sha256').update(a).digest();
-    const hb = createHash('sha256').update(b).digest();
-    return timingSafeEqual(ha, hb);
-}
-
-function bearerOf(req) {
-    try {
-        const h = (req && req.headers) || {};
-        const raw = h.authorization || h.Authorization || '';
-        const m = /^Bearer\s+(.+)$/i.exec(String(raw).trim());
-        return m ? m[1].trim() : '';
-    } catch (_) { return ''; }
-}
+/* The constant-time compare and the bearer reader moved to cron-auth.mjs when
+ * /api/gmail-renew needed the same two. A second copy of a security decision is
+ * a second set of answers, and the two drift until one of them is the lenient
+ * one. The behaviour here is unchanged — same functions, one home. */
 
 /**
  * Decide whether this request may run the brain.

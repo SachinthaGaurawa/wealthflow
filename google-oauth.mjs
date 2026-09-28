@@ -35,6 +35,7 @@ export async function accessTokenFrom(refreshToken, env, fetchImpl) {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
     });
     if (!r.ok) throw new Error('token refresh rejected');  // never includes the token
     const out = await r.json();
