@@ -2,21 +2,7 @@
 let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[];
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
 export const getState=()=>({...state});
-// For the Diagnostics "Copy diagnostics" button, same privacy scope as
-// reviewSummary() below (bank + filename + reason, nothing from inside the
-// statement): a statement stuck in the server's own exponential-backoff
-// retry loop (runStatementSync's transient-failure branch) never reaches
-// the review list at all — it is still 'pending', just not ready to try
-// again yet — so it was invisible to every diagnostic this app could
-// produce. retryAttemptsSummary() is what turns that silence into the one
-// fact that actually explains it.
 export const retryAttemptsSummary=()=>retrying.map(r=>({bank:r.bank||'',filename:r.filename||'',retryCount:r.retryCount||0,lastRetryReason:r.lastRetryReason||''}));
-// For the Diagnostics "Copy diagnostics" button: why statements are actually
-// stuck, in aggregate, with no date/amount/narration/description ever
-// included — only the reason code and bank name, the same two fields the
-// review list already shows the owner on screen. This is what turns "nothing
-// is being added" into an actionable report without asking for statement
-// content.
 export function reviewSummary(){
     const byReason={};
     let wholeStatement=0,perRow=0;
@@ -57,15 +43,6 @@ export async function request(path,method='GET',body){
         return result;
     }catch(error){
         if(error?.name==='AbortError')throw new Error('statement-request-timed-out');
-        // A dropped connection or DNS failure rejects fetch() itself with a
-        // raw, browser-native TypeError ("Failed to fetch" / "NetworkError
-        // when attempting to fetch resource") per the Fetch spec — carrying
-        // no meaning to any caller matching a known reason code. Every such
-        // caller (sync()'s own continuation on 'statement-request-timed-out';
-        // confirmLayout()'s small retryable allowlist) silently treated the
-        // single most common real-world failure — no network at all — as an
-        // unrecognized, non-retryable one. Fold it into the same generic
-        // fallback an ok:false response with no reason already uses.
         if(error instanceof TypeError)throw new Error('statement-service-unavailable');
         throw error;
     }
@@ -200,7 +177,10 @@ async function mapLayout(entry) {
             if (!learned?.[0]?.rows?.length) { say('No complete layout was confirmed. The statement remains in Needs Review.', 'warn'); openReview(); return; }
             try {
                 const result = await confirmLayout(entry, learned[0].rows);
-                say(result.queued === true ? 'Statement layout verified, saved and queued for background processing.' : 'Statement layout is saved. Scheduling is still pending; background catch-up will retry.', result.queued === true ? 'success' : 'warn');
+                if (result.filed > 0 && result.review === 0) say(`${result.filed} statement transaction${result.filed === 1 ? '' : 's'} verified and filed.`, 'success');
+                else if (result.review > 0) say(`The layout was saved, but ${result.review} transaction${result.review === 1 ? '' : 's'} still need${result.review === 1 ? 's' : ''} review before filing.`, 'warn');
+                else if (result.queued === true) say('Statement layout verified. Remaining rows are continuing in the background.', 'info');
+                else say('The layout was saved, but no transaction was filed. Check the review queue for the blocking evidence.', 'warn');
                 await sync().catch(() => say('The layout is saved, but the immediate processing request failed. Its queued statement remains pending for retry.', 'warn'));
             } catch (error) {
                 say(error?.mightAlreadyBeMapped

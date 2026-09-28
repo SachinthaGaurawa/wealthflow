@@ -53,7 +53,7 @@ describe('statement worker authorization and board', () => {
             { module: 'expenses', category: 'Other', allocationId: '', verified: true, deterministic: true }
         ]);
         expect(deterministicDecision({ ...row, needsReview: true }, { statementType: 'bank_account' })).toEqual({ verified: false, reason: 'ai-consensus-unavailable' });
-        expect(deterministicDecision({ ...row, narration: 'EASY PAYMENT 4/24' }, { statementType: 'credit_card' })).toEqual({ verified: false, reason: 'ai-consensus-unavailable' });
+        expect(deterministicDecision({ ...row, narration: 'EASY PAYMENT 4/24' }, { statementType: 'credit_card' })).toMatchObject({ module: 'ccinstall', category: 'Installment', verified: true });
         expect(deterministicDecision({ ...row, direction: 'credit', narration: 'PAYMENT THANK YOU' }, { statementType: 'credit_card' })).toMatchObject({ module: 'ccPayments', verified: true });
         expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'bank_account' })).toMatchObject({ module: 'expenses', verified: true });
         expect(deterministicDecision({ ...row, narration: 'POS TRANSACTION DIALOG AXIATA PLC' }, { statementType: 'credit_card' })).toMatchObject({ module: 'cconetime', verified: true });
@@ -162,10 +162,10 @@ describe('private source inspection and durable layout replay', () => {
         await expect(inspectReviewSource({ ...args, owner: { uid: 'other', email: args.owner.email } })).rejects.toThrow('whole-statement-review-required');
     });
     it('atomically saves only validated learned template and resumes unfiled source', async () => {
-        const args = setup(); const enqueue = vi.fn(async () => ({ queued: true }));
+        const args = setup(); const enqueue = vi.fn(async () => ({ filed: 1, review: 0, status: 'filed', morePending: false }));
         const inspect = value => inspectReviewSource({ ...value, f: args.f, open: args.open, read: args.read, attachment: args.attachment });
         const learn = vi.fn(async () => ({ ok: true, template: { id: 't1', bank: 'HNB', v: 1 }, rows: [row] }));
-        expect(await mapReviewLayout({ ...args, rows: [row], inspect, learn, enqueue })).toMatchObject({ mapped: true, queued: true });
+        expect(await mapReviewLayout({ ...args, rows: [row], inspect, learn, enqueue })).toMatchObject({ mapped: true, queued: false, filed: 1, review: 0, replayStatus: 'filed' });
         expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', totalRows: 1, cursor: 0, filed: false });
         expect(args.data.get('users/u/statementReview/' + args.id).status).toBe('mapped');
         expect([...args.data.keys()].some(path => path.startsWith('users/u/statementLayouts/'))).toBe(true);
@@ -177,8 +177,8 @@ describe('private source inspection and durable layout replay', () => {
         const evidence = await inspectReviewSource(args);
         expect(evidence).toMatchObject({ ok: true, bank: 'HNB', sourcePath: args.sourcePath });
         const inspect = value => inspectReviewSource({ ...value, f: args.f, open: args.open, read: args.read, attachment: args.attachment });
-        const result = await mapReviewLayout({ ...args, rows: [row], inspect, learn: async () => ({ ok: true, template: { id: 'legacy', bank: 'HNB' }, rows: [row] }), enqueue: async () => ({ queued: true }) });
-        expect(result).toMatchObject({ mapped: true, queued: true });
+        const result = await mapReviewLayout({ ...args, rows: [row], inspect, learn: async () => ({ ok: true, template: { id: 'legacy', bank: 'HNB' }, rows: [row] }), enqueue: async () => ({ filed: 1, review: 0, status: 'filed', morePending: false }) });
+        expect(result).toMatchObject({ mapped: true, queued: false, filed: 1, review: 0 });
         expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', filed: false, cursor: 0 });
     });
     it('lets an explicitly pending layout review reach the reconciled manual mapper even when identity is inconclusive', async () => {
@@ -217,7 +217,7 @@ describe('private source inspection and durable layout replay', () => {
         const args = setup();
         const inspect = value => inspectReviewSource({ ...value, f: args.f, open: args.open, read: args.read, attachment: args.attachment });
         await expect(mapReviewLayout({ ...args, rows: confirmed.slice(0, 1), inspect, enqueue: vi.fn() })).rejects.toThrow('layout-confirmation-does-not-reproduce-statement');
-        expect(await mapReviewLayout({ ...args, rows: confirmed, inspect, enqueue: async () => ({ queued: true }) })).toMatchObject({ mapped: true });
+        expect(await mapReviewLayout({ ...args, rows: confirmed, inspect, enqueue: async () => ({ filed: 3, review: 0, status: 'filed', morePending: false }) })).toMatchObject({ mapped: true, filed: 3, review: 0 });
         expect(args.data.get(args.sourcePath).totalRows).toBe(3);
     });
     it('retries password failures only for a newer vault and never overlaps settled data', async () => {

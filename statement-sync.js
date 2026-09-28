@@ -120,6 +120,7 @@ export function deterministicDecision(row, allocations = {}) {
         income: { module: 'incomeRecv', category: routed.category || incomeCategoryFor(row) },
         cc_payment: { module: 'ccPayments', category: 'Card Payment' },
         cconetime: { module: 'cconetime', category: routed.subtype === 'fuel' ? 'Fuel' : routed.subtype === 'fee' ? 'Card Fee' : routed.subtype === 'cash_advance' ? 'Cash Advance' : 'Card Purchase' },
+        ccinstall: { module: 'ccinstall', category: 'Installment' },
     };
     const decision = decisions[routed.module];
     return decision ? { ...decision, allocationId: '', verified: true, deterministic: true }
@@ -550,19 +551,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     return outcome;
 }
 
-/**
- * Drains whatever is pending for one owner, in-process, bounded by wall
- * clock rather than by a durable external queue. Cloud Tasks would need a
- * paid Google Cloud queue provisioned by a GCP administrator; this needs
- * nothing beyond the Vercel function already running the request that calls
- * it. A single invocation processes as many statements as fit in the time
- * budget and simply returns when nothing more is claimable — a leftover
- * backlog is picked up by the next real trigger (new mail, a saved vault) or
- * by the daily safety-net schedule, never lost.
- */
 async function enqueueStatementSync({ db, owner, env = process.env, f = fetch }) {
-    await runStatementSync({ db, owner, action: 'drain', env, f });
-    return { queued: true };
+    return runStatementSync({ db, owner, action: 'drain', env, f });
 }
 
 export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity }) {
@@ -625,13 +615,6 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
     const morePending = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || pending.docs.length > 0 || processing.docs.length > 0;
-    // lastRetryReason has been written to every retried source since the
-    // transient-failure branch above (permanentFailure() === false) existed,
-    // and nothing anywhere has ever read it back: a statement can sit in an
-    // exponential-backoff retry loop indefinitely, with the exact reason for
-    // every attempt recorded right here, completely invisible to the owner
-    // and to anyone debugging from the outside. Surfacing a bounded sample
-    // costs one more read of documents this call already fetched.
     const retrying = pending.docs
         .map(doc => doc.data())
         .filter(data => Number(data?.retryCount) > 0)
@@ -710,7 +693,12 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         }
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
     });
-    try { await enqueue({ db, owner, env, f }); return { ok: true, mapped: true, queued: true }; }
+    try {
+        const replay = await enqueue({ db, owner, env, f });
+        const filed = Math.max(0, Number(replay?.filed) || 0), review = Math.max(0, Number(replay?.review) || 0);
+        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review,
+            replayStatus: String(replay?.status || (filed ? 'filed' : 'pending')) };
+    }
     catch (_) { return { ok: true, mapped: true, queued: false }; }
 }
 

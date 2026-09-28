@@ -265,7 +265,7 @@ describe('private statement cloud frontend transport', () => {
                 expect(fetch).toHaveBeenCalledTimes(3);
                 expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ action: 'layout' });
                 expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({ action: 'layout' });
-                expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
+                expect(window.notify).toHaveBeenCalledWith('Statement layout verified. Remaining rows are continuing in the background.', 'info');
             } finally { vi.useRealTimers(); await authChanged(null); }
         });
         it('retries a raw dropped-connection failure, not just a named timeout', async () => {
@@ -286,7 +286,7 @@ describe('private statement cloud frontend transport', () => {
                 await vi.runAllTimersAsync();
                 await pending;
                 expect(fetch).toHaveBeenCalledTimes(3);
-                expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
+                expect(window.notify).toHaveBeenCalledWith('Statement layout verified. Remaining rows are continuing in the background.', 'info');
             } finally { vi.useRealTimers(); await authChanged(null); }
         });
         it('never retries a permanent rejection like an unreproduced statement', async () => {

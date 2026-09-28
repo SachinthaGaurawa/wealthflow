@@ -4,7 +4,7 @@ import { isCreditCardRow } from './wealthflow-statement-router.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-const modules = { expenses: 'expenses', income: 'incomeRecv', incomeRecv: 'incomeRecv', cconetime: 'cconetime', cc_payment: 'ccPayments', ccPayments: 'ccPayments', subscription: 'subscriptions', subscriptions: 'subscriptions', skip: 'skip' };
+const modules = { expenses: 'expenses', income: 'incomeRecv', incomeRecv: 'incomeRecv', cconetime: 'cconetime', ccinstall: 'ccinstall', cc_payment: 'ccPayments', ccPayments: 'ccPayments', subscription: 'subscriptions', subscriptions: 'subscriptions', skip: 'skip' };
 export const transferEvidence = row => /\b(?:inward|outward)?\s*(?:ceft\s+)?transfer\b|\btransfer\s+credit[-\s]*mobilebanking\b/i
     .test(String(row?.description || row?.narration || row?.desc || row?.name || ''));
 
@@ -41,6 +41,8 @@ export function validateSettlementRow(row, decision, ctx = {}) {
     if (module === 'ccPayments' && (row.direction !== 'credit' || !card)) return 'card-payment-context-required';
     if (['expenses', 'cconetime', 'subscriptions'].includes(module) && row.direction !== 'debit') return 'expense-direction-conflict';
     if (module === 'cconetime' && !card) return 'card-charge-context-required';
+    if (module === 'ccinstall' && (row.direction !== 'debit' || !card)) return 'card-installment-context-required';
+    if (card && !['cconetime', 'ccinstall', 'ccPayments', 'skip'].includes(module)) return 'credit-card-route-conflict';
     return null;
 }
 
@@ -63,7 +65,8 @@ function makeRecord(row, decision, context, id, now) {
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
     if (module === 'ccPayments') return { ...base, desc };
     const deadline = new Date(row.date + 'T00:00:00Z'); deadline.setUTCDate(deadline.getUTCDate() + 50);
-    return { ...base, desc, type: row.type || 'purchase', serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
+    if (module === 'ccinstall') return { ...base, desc, total: row.amount, monthly: row.amount, months: 1, remaining: 1, paid: 0, startDate: row.date, category: decision.category };
+    return { ...base, desc, type: row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }
 
 /** All reads precede writes; Firestore retries serialize concurrent settlement. */
@@ -90,7 +93,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         for (const ref of ledgerRefs) ledgerSnaps.push(await tx.get(ref));
         const user = structuredClone(userSnap.data() || {});
         const changes = {};
-        const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
+        const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
         const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, cursor: cursor + rows.length };
         const writes = [];
         rows.forEach((row, offset) => {
