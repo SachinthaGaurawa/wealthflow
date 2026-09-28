@@ -19,6 +19,20 @@ const say=(message,type='info')=>{if(window.notify)window.notify(message,type)};
 function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{detail:{...state}}))}
 function sdkUser(){try{return typeof window.firebase?.auth==='function'?window.firebase.auth().currentUser:null;}catch(_){return null;}}
 function currentUser(){return user||sdkUser();}
+async function refreshFinancialData(){
+ const active=currentUser(),db=window.db||window.firebase?.firestore?.();
+ if(!active?.uid||!db||typeof window._wfApplyCloudData!=='function')return false;
+ const snap=await db.collection('users').doc(active.uid).get({source:'server'});
+ if(!snap.exists)return false;
+ const applied=window._wfApplyCloudData(snap.data());
+ if(applied?.nonSessionChanged){
+  const page=document.querySelector('.page.active');
+  if(page&&typeof window.renderPage==='function')window.renderPage(page.id.replace('page-',''));
+  try{window.updateCCOTBadge?.()}catch(_){}
+  try{window.updateChequeBadge?.()}catch(_){}
+ }
+ return true;
+}
 function adoptUser(next){
  if(!next||user?.uid===next.uid)return user;
  user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;
@@ -193,6 +207,11 @@ async function mapLayout(entry) {
                 else if (result.review > 0) say(`The layout was saved, but ${result.review} transaction${result.review === 1 ? '' : 's'} still need${result.review === 1 ? 's' : ''} review before filing.`, 'warn');
                 else if (result.queued === true) say('Statement layout verified. Remaining rows are continuing in the background.', 'info');
                 else say('The layout was saved, but no transaction was filed. Check the review queue for the blocking evidence.', 'warn');
+                // Do not wait for the ordinary snapshot listener to make the
+                // imported rows visible.  Pull the authoritative user ledger
+                // immediately after the final batch and feed it through the
+                // same convergent applier used at login and cross-device sync.
+                await refreshFinancialData().catch(() => {});
                 await sync().catch(() => say('The layout is saved, but the immediate processing request failed. Its queued statement remains pending for retry.', 'warn'));
             } catch (error) {
                 say(error?.mightAlreadyBeMapped
