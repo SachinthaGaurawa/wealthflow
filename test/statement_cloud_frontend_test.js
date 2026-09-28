@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review, reviewSummary, openReview } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review, reviewSummary, retryAttemptsSummary, openReview } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
@@ -209,6 +209,37 @@ describe('private statement cloud frontend transport', () => {
         expect(summary.byReason).toEqual({ 'card-charge-context-required': 2, 'statement-layout-or-reconciliation-needs-review': 1 });
         expect(summary.wholeStatements).toEqual([{ bank: 'NTB', filename: 'ntb-aug.pdf', reason: 'statement-layout-or-reconciliation-needs-review' }]);
         expect(JSON.stringify(summary)).not.toMatch(/4250|900|KEELLS|CARGILLS/);
+        await authChanged(null);
+    });
+    it('surfaces a statement stuck in the server retry loop instead of leaving it invisible until it is quarantined', async () => {
+        // processOneStatement()'s transient-failure branch (statement-sync.js)
+        // writes lastRetryReason/retryCount to a source on every attempt and
+        // keeps it 'pending' for the next backoff window — it never reaches
+        // statementReview at all, so a statement can sit here indefinitely
+        // with the one fact that explains it recorded server-side and never
+        // read back by anything. sync()'s response is the only place that
+        // fact is available client-side.
+        await authChanged(null);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }))
+            .mockResolvedValueOnce(reply(true, {
+                ok: true, processed: 0,
+                retrying: [{ bank: 'DFCC', filename: 'dfcc-sep.pdf', retryCount: 2, lastRetryReason: 'whole-statement-review-required' }],
+            }));
+        await authChanged(active);
+        expect(retryAttemptsSummary()).toEqual([
+            { bank: 'DFCC', filename: 'dfcc-sep.pdf', retryCount: 2, lastRetryReason: 'whole-statement-review-required' },
+        ]);
+        await authChanged(null);
+    });
+    it('clears a stale retry summary once a fresh sync reports nothing left retrying', async () => {
+        await authChanged(null);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, saved: true, count: 1 }))
+            .mockResolvedValueOnce(reply(true, { ok: true, processed: 1, retrying: [{ bank: 'HNB', filename: 'h.pdf', retryCount: 1, lastRetryReason: 'PDF_UNREADABLE' }] }));
+        await authChanged(active);
+        expect(retryAttemptsSummary()).toHaveLength(1);
+        fetch.mockResolvedValueOnce(reply(true, { ok: true, processed: 1 }));
+        await sync();
+        expect(retryAttemptsSummary()).toEqual([]);
         await authChanged(null);
     });
     describe('layout confirmation survives a transient network blip', () => {

@@ -104,8 +104,13 @@ describe('the hardcoded release history is gone', () => {
         // attempt history the Diagnostics feature needs to be actionable without
         // any statement content. Not the hardcoded history this ceiling guards
         // against — that is still asserted above and below, unchanged.
+        // Raised again same day (measured 116,095): _collectDiagnostics() now
+        // also attaches statementRetrying — the lastRetryReason/retryCount
+        // pair processOneStatement() has written on every transient-failure
+        // retry since that branch existed, previously never read back by
+        // anything. Same trimming discipline as the fields above it.
         const bytes = fs.statSync(path.join(ROOT, 'wealthflow-update-system.js')).size;
-        expect(bytes).toBeLessThan(115_500);
+        expect(bytes).toBeLessThan(116_200);
     });
 });
 

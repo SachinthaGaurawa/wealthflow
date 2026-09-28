@@ -625,8 +625,20 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
     const morePending = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || pending.docs.length > 0 || processing.docs.length > 0;
+    // lastRetryReason has been written to every retried source since the
+    // transient-failure branch above (permanentFailure() === false) existed,
+    // and nothing anywhere has ever read it back: a statement can sit in an
+    // exponential-backoff retry loop indefinitely, with the exact reason for
+    // every attempt recorded right here, completely invisible to the owner
+    // and to anyone debugging from the outside. Surfacing a bounded sample
+    // costs one more read of documents this call already fetched.
+    const retrying = pending.docs
+        .map(doc => doc.data())
+        .filter(data => Number(data?.retryCount) > 0)
+        .slice(0, 20)
+        .map(data => ({ bank: data.bank || '', filename: data.filename || '', retryCount: data.retryCount || 0, lastRetryReason: data.lastRetryReason || '' }));
     return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired,
-        pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending,
+        pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
 

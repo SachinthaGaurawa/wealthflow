@@ -1,7 +1,16 @@
 /**/
-let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null;
+let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[];
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
 export const getState=()=>({...state});
+// For the Diagnostics "Copy diagnostics" button, same privacy scope as
+// reviewSummary() below (bank + filename + reason, nothing from inside the
+// statement): a statement stuck in the server's own exponential-backoff
+// retry loop (runStatementSync's transient-failure branch) never reaches
+// the review list at all — it is still 'pending', just not ready to try
+// again yet — so it was invisible to every diagnostic this app could
+// produce. retryAttemptsSummary() is what turns that silence into the one
+// fact that actually explains it.
+export const retryAttemptsSummary=()=>retrying.map(r=>({bank:r.bank||'',filename:r.filename||'',retryCount:r.retryCount||0,lastRetryReason:r.lastRetryReason||''}));
 // For the Diagnostics "Copy diagnostics" button: why statements are actually
 // stuck, in aggregate, with no date/amount/narration/description ever
 // included — only the reason code and bank name, the same two fields the
@@ -96,6 +105,7 @@ export async function sync(){
     const again=delay=>{if(!continuationTimer)continuationTimer=setTimeout(()=>{continuationTimer=null;sync().catch(()=>{})},delay)};
     syncPromise=request('/api/statement-sync','POST',{action:'sync'}).then(result=>{
         state.queued=Math.max(0,Number(result.pendingRemaining)||0)+Math.max(0,Number(result.processingRemaining)||0);
+        retrying=Array.isArray(result.retrying)?result.retrying:[];
         if(result.morePending)again(Math.max(750,Math.min(180250,Number(result.retryAfterMs)||750)))
         return result
     }).catch(e=>{state.error=e.message;if(e.message==='statement-request-timed-out')again(3000);throw e})
@@ -324,7 +334,7 @@ if (typeof window !== 'undefined') {
         const text = document.getElementById('_statement_cloud_status');
         if (text) text.textContent = state.error ? 'Background statement sync needs attention. Retry saving or syncing.' : state.syncing ? 'Processing statements in the background…' : state.saved ? `Private cloud vault saved · ${state.reviews} transactions need review.` : state.configured === false ? 'Cloud processing is not configured. Device processing is available.' : 'Save your statement passwords to enable background decryption.';
     });
-    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary };
+    window.WFStatementCloud = { authChanged, save, remove, sync, status, openReview, friendly, migrateUnlockedVault, getState, reviewSummary, retryAttemptsSummary };
     const start=()=>{
         if (authBound) return;
         if (window.firebase?.apps?.length && typeof window.firebase.auth === 'function') {

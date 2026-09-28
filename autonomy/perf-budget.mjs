@@ -237,7 +237,14 @@ export const BUDGETS = {
     // reachable when two tied date-order candidates produce identical rows
     // and dedupe to one entry, still flagged ambiguous, leaving the owner
     // looking for a button the modal never drew (measured 2,077,271).
-    htmlBytes: 2_077_400,
+    // Raised again same day: statementRetrying wiring in the Diagnostics
+    // "Copy diagnostics" payload. processOneStatement()'s transient-failure
+    // retry branch has written lastRetryReason/retryCount to a source on
+    // every attempt since that branch existed, and nothing ever read it back
+    // — a statement can sit in the server's own exponential-backoff loop
+    // indefinitely with the one fact that explains it invisible to everyone
+    // (measured 2,078,121).
+    htmlBytes: 2_078_121,
     // Raised from 1_250_000 (measured 1,230,401 / 43 modules on 2026-07-30).
     // The ratchet did its job: it caught wealthflow-income-provenance.js, the
     // module for the accepted Income Provenance proposal (#47). That growth is
@@ -464,7 +471,11 @@ export const BUDGETS = {
     // retryable allowlist could never match an unnormalized raw TypeError,
     // so the single most common real "no network" case never retried.
     // Measured 1,889,894.
-    totalJsBytes: 1_889_894,
+    // 2026-09-28: +1,472 for wealthflow-statement-cloud.js's retryAttemptsSummary()
+    // and the runStatementSync()/sync() wiring that feeds it — the same
+    // lastRetryReason surfacing the htmlBytes note above explains. Measured
+    // 1,891,366.
+    totalJsBytes: 1_891_366,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
