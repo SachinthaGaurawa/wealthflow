@@ -25,7 +25,6 @@
         fileText:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
         history:'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
         bell:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
-        volume:'<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>',
         bomb:'<circle cx="11" cy="13" r="8"/><path d="M14.35 4.65 16.3 2.7a2.41 2.41 0 0 1 3.4 0l1.6 1.6a2.4 2.4 0 0 1 0 3.4l-1.95 1.95"/><line x1="15" y1="9" x2="18" y2="6"/>',
         crystal:'<path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/>',
         globe:'<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
@@ -145,11 +144,7 @@
     // Hydrate <i data-wfi="name"> placeholders into real SVGs.
     function hydrate(root) {
         try {
-            root = root || document;
-            var found = [];
-            if (root.nodeType === 1 && root.matches && root.matches('i[data-wfi]:not([data-wfi-done])')) found.push(root);
-            if (root.querySelectorAll) found = found.concat(Array.prototype.slice.call(root.querySelectorAll('i[data-wfi]:not([data-wfi-done])')));
-            found.forEach(function (el) {
+            (root || document).querySelectorAll('i[data-wfi]:not([data-wfi-done])').forEach(function (el) {
                 var n = el.getAttribute('data-wfi');
                 if (P[n]) { el.innerHTML = svg(n); el.setAttribute('data-wfi-done', '1'); el.style.display = 'inline-flex'; el.style.alignItems = 'center'; }
             });
@@ -167,12 +162,10 @@
     // hydrate now (in case markup already parsed) + after DOM ready + on a light interval
     function boot() { hydrate(document); }
     if (document.readyState !== 'loading') boot(); else document.addEventListener('DOMContentLoaded', boot);
+    // observe DOM additions so dynamically-rendered <i data-wfi> get hydrated
     try {
         var mo = new MutationObserver(function (muts) {
-            for (var i = 0; i < muts.length; i++) {
-                var added = muts[i].addedNodes || [];
-                for (var j = 0; j < added.length; j++) if (added[j].nodeType === 1) hydrate(added[j]);
-            }
+            for (var i = 0; i < muts.length; i++) { if (muts[i].addedNodes && muts[i].addedNodes.length) { hydrate(document); break; } }
         });
         if (document.body) mo.observe(document.body, { childList: true, subtree: true });
         else document.addEventListener('DOMContentLoaded', function () { mo.observe(document.body, { childList: true, subtree: true }); });
@@ -196,14 +189,7 @@
         '🔗':'globe','📐':'ruler','🏆':'trophy','💣':'bomb','🔮':'crystal','⚙️':'settings','⛽':'coins','💸':'coins',
         '👍':'thumbsUp','👎':'thumbsDown','👁️':'eye','👁':'eye','💎':'gem','🎁':'gift','⬇️':'download','⬆️':'upload',
         '📦':'receipt','💵':'wallet','💴':'wallet','💶':'wallet','💷':'wallet','🟢':'checkCircle','🔴':'alert','🟡':'alert',
-        '↩️':'undo','↩':'undo','🏛️':'bank','🏛':'bank','📜':'fileText','📷':'scan',
-        /* Runtime-swept UI glyphs; persona faces stay distinct emoji choices. */
-        '🚪':'lock','📡':'globe','📭':'mail','📲':'devices','🖥️':'devices','🖥':'devices',
-        '💻':'devices','🐧':'devices','🌍':'globe','🌏':'globe','🌎':'globe',
-        '💚':'wallet','💧':'coins','🎭':'user','⚖️':'ruler','⚖':'ruler',
-        '🖼️':'camera','🖼':'camera','🏷️':'folder','🏷':'folder','🧹':'trash',
-        '🏗️':'bank','🏗':'bank','🖱️':'pointer','🖱':'pointer','🚫':'x',
-        '🌅':'sun','🌄':'sun','📎':'link','⏱️':'clock','⏱':'clock','⌛':'clock'
+        '↩️':'undo','↩':'undo','🏛️':'bank','🏛':'bank','📜':'fileText','📷':'scan'
     };
     // Build one regex of all emoji keys (longest first to match VS16 variants)
     var keys = Object.keys(MAP).sort(function (a, b) { return b.length - a.length; });
@@ -215,6 +201,7 @@
             root = root || document.body; if (!root) return;
             var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
                 acceptNode: function (n) {
+                    if (!n.nodeValue || !rx.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
                     var p = n.parentNode;
                     while (p && p.nodeType === 1) {
                         if (SKIP[p.tagName]) return NodeFilter.FILTER_REJECT;
@@ -222,9 +209,6 @@
                         if (p.hasAttribute && p.hasAttribute('data-noicon')) return NodeFilter.FILTER_REJECT;
                         p = p.parentNode;
                     }
-                    if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
-                    rx.lastIndex = 0;
-                    if (!rx.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
                     return NodeFilter.FILTER_ACCEPT;
                 }
             });
@@ -249,27 +233,11 @@
         } catch (_) {}
     }
     window.WFIconStripEmoji = replaceIn;
-    var _t=null,_roots=[];
-    function schedule(root) {
-        root = root || document.body;
-        if (root && root.nodeType === 3) root = root.parentNode;
-        if (root && root.nodeType === 1 && _roots.indexOf(root) < 0) _roots.push(root);
-        if (_t) return;
-        _t = setTimeout(function () {
-            _t = null;
-            var work=_roots.splice(0,_roots.length);
-            for(var i=0;i<work.length;i++) replaceIn(work[i]);
-        }, 120);
-    }
-    if (document.readyState !== 'loading') schedule(document.body);
-    else document.addEventListener('DOMContentLoaded', function () { schedule(document.body); });
+    var _t = null;
+    function schedule() { if (_t) return; _t = setTimeout(function () { _t = null; replaceIn(document.body); }, 120); }
+    if (document.readyState !== 'loading') schedule(); else document.addEventListener('DOMContentLoaded', schedule);
     try {
-        var mo = new MutationObserver(function (m) {
-            for (var i = 0; i < m.length; i++) {
-                var added = m[i].addedNodes || [];
-                for (var j = 0; j < added.length; j++) schedule(added[j]);
-            }
-        });
+        var mo = new MutationObserver(function (m) { for (var i = 0; i < m.length; i++) { if (m[i].addedNodes && m[i].addedNodes.length) { schedule(); break; } } });
         function arm() { if (document.body) mo.observe(document.body, { childList: true, subtree: true }); }
         if (document.body) arm(); else document.addEventListener('DOMContentLoaded', arm);
     } catch (_) {}

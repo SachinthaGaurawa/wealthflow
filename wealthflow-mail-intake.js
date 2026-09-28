@@ -54,32 +54,19 @@
  * ===========================================================================*/
 
 /** Why a statement or a row did not make it through. */
-import { textVerdict, VERDICT as ID_VERDICT } from './wealthflow-statement-identity.js';
-
 export const QUARANTINE = {
     CHUNKS_MISSING: 'chunks-missing',
     PASSWORD_FAILED: 'password-failed',
     NO_VAULT_KEYS: 'no-vault-keys',
-    PDF_UNREADABLE: 'pdf-unreadable',
-    HTML_UNREADABLE: 'html-unreadable',
     NO_TEXT_LAYER: 'no-text-layer',
-    UNPARSEABLE: 'unparseable',
-    /* UNPARSEABLE used to mean all three of these at once, and the three want
-     * three different things from the owner: one is a layout to teach, one is
-     * nothing at all, and one is a number to check. Collapsing them is why a
-     * statement from an unknown bank was reported the same way as a month with
-     * no spending on it — and then dropped. */
     LAYOUT_UNKNOWN: 'layout-unknown',
-    /* The document opened, its text was read, and it is not a bank statement.
-     * This is the SECOND and authoritative layer of the check planMessage makes
-     * on the filename: a bank that titles its mail badly still gets in, and an
-     * invoice from an approved supplier does not. */
     NOT_A_STATEMENT: 'not-a-statement',
-    NO_TRANSACTIONS: 'no-transactions',
     BALANCE_MISMATCH: 'balance-mismatch',
+    UNPARSEABLE: 'unparseable',
     DIRECTION_UNRESOLVED: 'direction-unresolved',
     ROUTING_CONFLICT: 'routing-conflict',
     LOW_CONFIDENCE: 'low-confidence',
+    NO_TRANSACTIONS: 'no-transactions',
 };
 
 /** Human sentences for the notification. Keyed so the UI cannot invent its own. */
@@ -87,17 +74,15 @@ export const QUARANTINE_TEXT = {
     [QUARANTINE.CHUNKS_MISSING]: 'the statement did not arrive complete',
     [QUARANTINE.PASSWORD_FAILED]: 'none of your saved vault keys opened it',
     [QUARANTINE.NO_VAULT_KEYS]: 'it is password-protected and your vault is empty',
-    [QUARANTINE.PDF_UNREADABLE]: 'the PDF could not be read; changing its password will not fix this error',
-    [QUARANTINE.HTML_UNREADABLE]: 'the HTML statement could not be read safely',
     [QUARANTINE.NO_TEXT_LAYER]: 'the pages are images, so there is no text to read',
+    [QUARANTINE.LAYOUT_UNKNOWN]: 'the bank statement layout was not recognized',
+    [QUARANTINE.NOT_A_STATEMENT]: 'it opened successfully but is not a bank statement',
+    [QUARANTINE.BALANCE_MISMATCH]: 'opening and closing balances do not add up',
     [QUARANTINE.UNPARSEABLE]: 'the layout did not yield any transaction rows',
-    [QUARANTINE.NOT_A_STATEMENT]: 'it is not a bank statement — it reads as something else',
-    [QUARANTINE.LAYOUT_UNKNOWN]: 'this bank lays its statement out in a way WealthFlow has not seen before — confirm the rows once and it will read the next one on its own',
-    [QUARANTINE.NO_TRANSACTIONS]: 'the statement is readable and has no transactions on it',
-    [QUARANTINE.BALANCE_MISMATCH]: 'the rows were read, but the opening and closing balances do not add up',
     [QUARANTINE.DIRECTION_UNRESOLVED]: 'the statement does not say whether this was money in or out',
     [QUARANTINE.ROUTING_CONFLICT]: 'the bank’s own figures and the description disagree about the direction',
     [QUARANTINE.LOW_CONFIDENCE]: 'the category could not be decided confidently',
+    [QUARANTINE.NO_TRANSACTIONS]: 'the statement contains zero readable transactions',
 };
 
 /* The parser grades its own evidence for a row's direction. Only the first is
@@ -174,15 +159,11 @@ export function assemble(manifest, parts) {
 export async function unlock(bytes, candidates, openPdf) {
     if (typeof openPdf !== 'function') throw new TypeError('unlock(): openPdf must be injected');
 
-    const passwordError = (e) => !!(e && (e.name === 'PasswordException'
-        || /password|^locked$/i.test(String(e.message || ''))));
-    const unreadable = () => ({ ok: false, reason: QUARANTINE.PDF_UNREADABLE, detail: {} });
     // An unencrypted statement needs no key at all, and must not consume one.
     try {
         const doc = await openPdf(bytes, null);
         if (doc) return { ok: true, doc, usedIndex: -1, encrypted: false };
-        return unreadable();
-    } catch (e) { if (!passwordError(e)) return unreadable(); }
+    } catch (_) { /* encrypted, or unreadable — the loop below decides which */ }
 
     const keys = arr(candidates).filter((k) => typeof k === 'string' && k.length > 0);
     if (!keys.length) return { ok: false, reason: QUARANTINE.NO_VAULT_KEYS, detail: { tried: 0 } };
@@ -191,8 +172,7 @@ export async function unlock(bytes, candidates, openPdf) {
         try {
             const doc = await openPdf(bytes, keys[i]);
             if (doc) return { ok: true, doc, usedIndex: i, encrypted: true };
-            return unreadable();
-        } catch (e) { if (!passwordError(e)) return unreadable(); }
+        } catch (_) { /* wrong key; the next one */ }
     }
     return { ok: false, reason: QUARANTINE.PASSWORD_FAILED, detail: { tried: keys.length } };
 }
@@ -295,49 +275,6 @@ const defaultYield = () => new Promise((r) => setTimeout(r, 0));
  */
 export const BATCH = 25;
 
-/** Passive HTML intake. Never invokes the attachment's scripts or password UI. */
-export async function unlockHtml(source, candidates, reader) {
-    const unreadable = () => ({ ok: false, reason: QUARANTINE.HTML_UNREADABLE });
-    if (!reader || typeof reader.isEncryptedHtmlStatement !== 'function'
-        || typeof reader.decrypt !== 'function' || typeof reader.htmlToText !== 'function') return unreadable();
-    try {
-        let html = source;
-        if (typeof source !== 'string' || source.length > 16 * 1024 * 1024) return unreadable();
-        const encrypted = reader.isEncryptedHtmlStatement(source);
-        let usedIndex = -1;
-        if (encrypted) {
-            if (typeof reader._params === 'function') {
-                const params = reader._params(source);
-                if (!Number.isInteger(params.iterations) || params.iterations < 1 || params.iterations > 100000
-                    || ![4, 6, 8].includes(params.keySize)
-                    || !/^[a-f0-9]{16,128}$/i.test(params.salt || '')
-                    || !/^[a-f0-9]{32}$/i.test(params.iv || '')) return unreadable();
-            }
-            const keys = [...new Set(arr(candidates).filter(k => typeof k === 'string' && k.length))];
-            if (!keys.length) return { ok: false, reason: QUARANTINE.NO_VAULT_KEYS };
-            html = '';
-            for (const key of keys) {
-                const candidate = await reader.decrypt(source, key);
-                if (candidate && /<(?:html|body|table|div|section|p)\b/i.test(candidate)) {
-                    html = candidate;
-                    usedIndex = arr(candidates).indexOf(key);
-                    break;
-                }
-            }
-            if (!html) return { ok: false, reason: QUARANTINE.PASSWORD_FAILED, detail: { tried: keys.length } };
-        }
-        // Remove active content before conversion even when a reader uses a
-        // non-DOM fallback. Do not call htmlToTransactionsAsync/renderInSandbox.
-        const passive = html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-            .replace(/<\/(?:tr|p|div|section|h[1-6])\s*>|<br\s*\/?>/gi, '$&\n')
-            .replace(/<\/(?:td|th)\s*>/gi, '$& ')
-            // No elements are passed to DOMParser: even inert documents can
-            // initiate image/frame requests in some browser implementations.
-            .replace(/<[^>]*>/g, ' ');
-        return { ok: true, text: String(reader.htmlToText(passive) || ''), usedIndex, encrypted };
-    } catch (_) { return unreadable(); }
-}
-
 export async function intakeStatement(item, deps = {}, ctx = {}) {
     const { openPdf, extractText, parse, route, vaultKeys } = deps;
     const yieldToUi = deps.yieldToUi || defaultYield;
@@ -364,101 +301,29 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
     let keys = [];
     try { keys = arr(await (typeof vaultKeys === 'function' ? vaultKeys() : [])); } catch (_) { keys = []; }
 
-    let text = '';
-    let opened;
-    const manifest = (item && item.manifest) || {};
-    const htmlHint = /\.html?$/i.test(String(manifest.filename || manifest.name || ''))
-        || /^text\/html\b/i.test(String(manifest.mimeType || manifest.contentType || ''));
-    let source = '';
-    try {
-        if (htmlHint) {
-            source = typeof bytes !== 'string'
-                ? new TextDecoder().decode(bytes)
-                : new TextDecoder().decode(Uint8Array.from(atob(asm.base64), c => c.charCodeAt(0)));
-        } else if (typeof bytes !== 'string') {
-            /* Sniff octet-stream HTML without decoding a whole PDF. */
-            const head = new TextDecoder().decode(bytes.subarray ? bytes.subarray(0, 512) : bytes);
-            if (/^\s*(?:<!doctype\s+html|<html\b)/i.test(head)) source = new TextDecoder().decode(bytes);
-        }
-    } catch (_) { if (htmlHint) return fail(QUARANTINE.HTML_UNREADABLE); }
-    if (htmlHint || /^\s*(?:<!doctype\s+html|<html\b)/i.test(source)) {
-        const reader = deps.htmlStatement || (typeof window !== 'undefined' && window.WFHtmlStatement);
-        opened = await unlockHtml(source, keys, reader);
-        if (!opened.ok) return fail(opened.reason, opened.detail);
-        text = opened.text;
-    } else {
-        opened = await unlock(bytes, keys, openPdf);
-        if (!opened.ok) return fail(opened.reason, opened.detail);
-        try { text = String(await extractText(opened.doc) || ''); } catch (_) { text = ''; }
-        finally {
-            // Release PDF.js workers and buffers before parsing extracted text.
-            try { if (typeof opened.doc.destroy === 'function') await opened.doc.destroy(); } catch (_) {}
-        }
-    }
-    if (text.trim().length < 40) return fail(QUARANTINE.NO_TEXT_LAYER, { chars: text.trim().length });
+    const opened = await unlock(bytes, keys, openPdf);
+    if (!opened.ok) return fail(opened.reason, opened.detail);
 
-    /* ── IS IT A BANK STATEMENT AT ALL? ──────────────────────────────────
-     *
-     * The filename veto in planMessage runs before anything is downloaded and
-     * can only judge what a document CALLS itself. This layer judges what it
-     * CONTAINS, and it is the authoritative one: a statement period, a balance
-     * that moves, an account identifier, a table of dated movements. An invoice
-     * has a total and line items and no running balance.
-     *
-     * UNSURE LETS IT THROUGH. Losing a real statement is far worse than showing
-     * one invoice, so only proof of being something else refuses — and the
-     * refusal is named and counted rather than silent, which is the owner's own
-     * standing rule about anything this pipeline cannot read.
-     *
-     * See wealthflow-statement-identity.js for why each fact is reported by
-     * name instead of collapsed into a score with a threshold. */
-    const identity = textVerdict(text);
-    if (identity.verdict === ID_VERDICT.NOT_STATEMENT) {
-        return fail(QUARANTINE.NOT_A_STATEMENT, {
-            why: identity.reason,
-            against: identity.against,
-            confidence: identity.confidence,
-        });
-    }
+    let text = '';
+    try { text = String(await extractText(opened.doc) || ''); } catch (_) { text = ''; }
+    if (text.trim().length < 40) return fail(QUARANTINE.NO_TEXT_LAYER, { chars: text.trim().length });
 
     let parsed;
     try { parsed = await parse(text); } catch (e) {
         return fail(QUARANTINE.UNPARSEABLE, { why: (e && e.message) ? String(e.message).slice(0, 120) : 'parser threw' });
     }
+    if (parsed && parsed.reason) return fail(parsed.reason, parsed.detail || {});
     const rows = arr(parsed && parsed.rows);
-    if (!rows.length) {
-        /* THE PARSER KNOWS WHY. It grades its own result — 'unreadable' for a
-         * layout it has never seen, 'empty' for a statement with nothing on it,
-         * 'no-text' for a scan. Re-deriving that here from `rows.length` is how
-         * both became "unparseable" and were treated identically.
-         *
-         * `text` rides along ONLY on the teachable case, because the screen
-         * that offers to learn the layout needs the page it failed on. It stays
-         * on the device: this module has no network and its one caller hands it
-         * to a local review screen. */
-        const verdict = parsed && parsed.verdict;
-        if (verdict === 'no-text') return fail(QUARANTINE.NO_TEXT_LAYER, { chars: text.trim().length });
-        if (verdict === 'empty') return fail(QUARANTINE.NO_TRANSACTIONS, { rows: 0 });
-        if (verdict === 'unreadable') {
-            return {
-                ...fail(QUARANTINE.LAYOUT_UNKNOWN, {
-                    rows: 0,
-                    moneyLines: num(parsed.moneyLines),
-                    candidateRows: num(parsed.candidateRows),
-                    teachable: true,
-                }),
-                text,
-            };
-        }
-        return fail(QUARANTINE.UNPARSEABLE, { rows: 0 });
-    }
+    if (!rows.length) return fail(QUARANTINE.UNPARSEABLE, { rows: 0 });
 
-    /* Readable but not trustworthy. The rows still go through — the owner
-     * reviews every imported statement — but the statement carries a warning
-     * beside them, because "opening + credits - debits does not reach closing"
-     * means at least one row on this page was misread or missed entirely, and
-     * that is not something to discover three months later. */
-    const unbalanced = parsed && parsed.verdict === 'unverified';
+    if (parsed && parsed.reconciliation && parsed.reconciliation.ok === false) {
+        return fail(QUARANTINE.BALANCE_MISMATCH, {
+            difference: parsed.reconciliation.difference,
+            expected: parsed.reconciliation.expected,
+            opening: parsed.reconciliation.opening,
+            closing: parsed.reconciliation.closing,
+        });
+    }
 
     let routedRows = [];
     try { routedRows = arr(await route(rows, ctx)); } catch (e) {
@@ -502,28 +367,7 @@ export async function intakeStatement(item, deps = {}, ctx = {}) {
         }
     }
 
-    if (unbalanced) {
-        quarantined.push({
-            scope: 'statement', reason: QUARANTINE.BALANCE_MISMATCH, bank, id,
-            detail: {
-                opening: num(parsed.reconciliation && parsed.reconciliation.opening),
-                closing: num(parsed.reconciliation && parsed.reconciliation.closing),
-                difference: num(parsed.reconciliation && parsed.reconciliation.difference),
-                rows: rows.length,
-            },
-            /* Not a dead end: the rows ARE in `applied`. This says "check the
-             * total", not "nothing was read". The one caller distinguishes them
-             * by whether applied is empty, and so does intakeAll's failed count. */
-            advisory: true,
-        });
-    }
-
-    return {
-        id, bank, applied, quarantined,
-        usedVaultIndex: opened.usedIndex, encrypted: opened.encrypted,
-        verdict: (parsed && parsed.verdict) || null,
-        learnedLayout: (parsed && parsed.learnedLayout) || null,
-    };
+    return { id, bank, applied, quarantined, usedVaultIndex: opened.usedIndex, encrypted: opened.encrypted };
 }
 
 /** Every pending statement, oldest first, each isolated from the others. */
@@ -547,7 +391,7 @@ export async function intakeAll(items, deps = {}, ctx = {}) {
             };
         }
         out.statements += 1;
-        if (!r.applied.length && r.quarantined.some((q) => q.scope === 'statement' && !q.advisory)) out.failed += 1;
+        if (!r.applied.length && r.quarantined.some((q) => q.scope === 'statement')) out.failed += 1;
         out.applied.push(...r.applied);
         out.quarantined.push(...r.quarantined);
     }
@@ -601,7 +445,7 @@ export function summarise(result) {
 
 const API = {
     QUARANTINE, QUARANTINE_TEXT, BATCH,
-    assemble, unlock, unlockHtml, crossCheck, intakeStatement, intakeAll, notificationFor, summarise,
+    assemble, unlock, crossCheck, intakeStatement, intakeAll, notificationFor, summarise,
 };
 
 if (typeof window !== 'undefined') window.WFMailIntake = API;

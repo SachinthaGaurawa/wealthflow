@@ -246,7 +246,7 @@
     function _saveLearned(o) {
         _learnedCache = o || {};
         _clsForget();          // the learned map is an input to every classification
-        try { root.localStorage.setItem(LS_LEARN, JSON.stringify(o)); } catch (_) {}
+        try { root.localStorage.setItem(LS_LEARN, JSON.stringify(o)); } catch (_) { }
     }
     /* Anything that changes the map outside _saveLearned — another tab, a cloud
      * sync, a manual edit — must be able to drop the cache. */
@@ -398,8 +398,10 @@
      * guarding it. */
     var _clsHits = 0, _clsMisses = 0;
     function _clsStats() {
-        return { hits: _clsHits, misses: _clsMisses, live: _clsCount,
-                 retired: Object.keys(_clsOld).length, max: CLS_CACHE_MAX };
+        return {
+            hits: _clsHits, misses: _clsMisses, live: _clsCount,
+            retired: Object.keys(_clsOld).length, max: CLS_CACHE_MAX
+        };
     }
     function _clsGet(k) {
         var v = _clsCache[k];
@@ -580,7 +582,7 @@
     function _validEntry(e) { return !!(e && typeof e.key === 'string' && e.key.length >= 2 && e.category && VALID_CATS[e.category]); }
     function _matchFlat(nd, gd) { for (var i = 0; i < _remote.length; i++) { var e = _remote[i]; if (hasKey(nd, gd, e.key)) return e; } return null; }
     function _loadRemoteCache() { try { var a = JSON.parse(root.localStorage.getItem(LS_REMOTE) || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; } }
-    function _saveRemoteCache(a) { try { root.localStorage.setItem(LS_REMOTE, JSON.stringify(a)); } catch (_) {} }
+    function _saveRemoteCache(a) { try { root.localStorage.setItem(LS_REMOTE, JSON.stringify(a)); } catch (_) { } }
     function _setRemote(a) {
         _remote = (a || []).slice().sort(function (x, y) { return String(y.key).length - String(x.key).length; });  // longer/more-specific keys win
         _clsForget();          // the remote list is the other input to a classification
@@ -591,13 +593,13 @@
             if (typeof fetch !== 'function') return Promise.resolve(0);
             var now = Date.now();
             if (!force) { var last = +(root.localStorage.getItem(LS_REMOTE_TS) || 0); if (now - last < REMOTE_TTL) return Promise.resolve(-1); }
-            try { root.localStorage.setItem(LS_REMOTE_TS, String(now)); } catch (_) {}
+            try { root.localStorage.setItem(LS_REMOTE_TS, String(now)); } catch (_) { }
             return fetch((url || REMOTE_URL) + '?_=' + now, { cache: 'no-store' }).then(function (r) { return r && r.ok ? r.json() : null; }).then(function (j) {
                 if (!j || !Array.isArray(j.merchants)) return 0;
                 var clean = [], seen = {};
                 j.merchants.forEach(function (e) { if (!_validEntry(e)) return; var k = norm(e.key); if (!k || seen[k]) return; seen[k] = 1; clean.push({ key: k, category: e.category, goesTo: (e.goesTo === 'subscription' || e.goesTo === 'expenses' || e.goesTo === 'income') ? e.goesTo : (SUB_CATS[e.category] ? 'subscription' : 'expenses') }); });
                 _saveRemoteCache(clean); _setRemote(clean);
-                try { root.console && root.console.log('[WFMerchants] \u2713 synced ' + clean.length + ' verified merchants (list v' + (j.version || '?') + ')'); } catch (_) {}
+                try { root.console && root.console.log('[WFMerchants] \u2713 synced ' + clean.length + ' verified merchants (list v' + (j.version || '?') + ')'); } catch (_) { }
                 return clean.length;
             }).catch(function () { return 0; });
         } catch (_) { return Promise.resolve(0); }
@@ -646,7 +648,7 @@
         // unless we matched a real recurring merchant (sub) — those must be rescued from "skip".
         if ((routed.tab === 'cheque') && c.goesTo !== 'subscription') return null;
         if (routed.tab === 'skip' && c.goesTo !== 'subscription' && c.goesTo !== 'cc_payment' && c.category !== 'Bank Charges') return null;
-        if (routed.tab === c.goesTo && (routed.category || '') === (c.category || '') ) return null; // already correct
+        if (routed.tab === c.goesTo && (routed.category || '') === (c.category || '')) return null; // already correct
         return {
             tab: c.goesTo, category: c.category || routed.category || 'Other',
             subName: c.subName || routed.subName || '', subPhone: c.subPhone || routed.subPhone || '',
@@ -711,14 +713,14 @@
             system_action: action,
             routing: { goes_to: GOES_LABEL[c.goesTo] || null, type: c.category || null },
             logical_justification: amb ? ('Ambiguous — the text also matches ' + amb.join(' / ') + '. Refusing to guess; queued for verification.')
-                                       : (c.reason || 'No signal in the text could identify this entity.'),
+                : (c.reason || 'No signal in the text could identify this entity.'),
             _internal: c
         };
     }
 
     // ── discovery queue: every merchant YOUR statements contain that nothing knows ──
     function _loadQ(k) { try { var a = JSON.parse(root.localStorage.getItem(k) || '[]'); return Array.isArray(a) ? a : []; } catch (_) { return []; } }
-    function _saveQ(k, a) { try { root.localStorage.setItem(k, JSON.stringify(a.slice(-300))); } catch (_) {} }
+    function _saveQ(k, a) { try { root.localStorage.setItem(k, JSON.stringify(a.slice(-300))); } catch (_) { } }
     function discover(desc, direction) {
         try {
             var a = analyze(desc, direction);
@@ -748,9 +750,9 @@
         'If the entity could honestly belong to more than one category, LOWER the confidence. Never invent a merchant.',
         'category must be exactly one of: ' + CATEGORIES.join(', ') + '.',
         'A bank\'s own charge is Bank Charges. Cash drawn against a card is Cash Advance; '
-            + 'cash taken from an ATM with your own money is Cash Withdrawal. '
-            + 'If none of them honestly fits, answer Other with a LOW confidence rather than '
-            + 'forcing the nearest merchant category.',
+        + 'cash taken from an ATM with your own money is Cash Withdrawal. '
+        + 'If none of them honestly fits, answer Other with a LOW confidence rather than '
+        + 'forcing the nearest merchant category.',
         'destination must be exactly "subscription" or "expenses".',
         'confidence is 0.00-1.00. Use >= 0.95 ONLY when the merchant is unmistakable. A low score is CORRECT and safe; a confident wrong answer is a system failure.',
         'Return only JSON, no prose and no markdown fences, in exactly this shape:',
@@ -838,12 +840,12 @@
                             industry: (vprev && vprev.industry) || '',
                             why: (e && e.why) || (vprev && vprev.abstain_reason) || '',
                             reason: (vprev && vprev.abstain_reason === 'search_not_configured') ? 'web search is not configured — add SERPER_API_KEY in Vercel'
-                                  : (vprev && vprev.abstain_reason === 'no_search_results') ? 'the web has no record of this merchant'
-                                  : (vprev && vprev.abstain_reason === 'no_valid_citation') ? 'the AI could not cite a real source — refused'
-                                  : !e ? 'the AI could not read this merchant'
-                                  : !agreed ? 'only one engine answered — not a consensus'
-                                  : !VALID_CATS[cat] ? 'the category was outside the taxonomy'
-                                  : 'below the ' + WRITE_GATE + ' confidence gate',
+                                : (vprev && vprev.abstain_reason === 'no_search_results') ? 'the web has no record of this merchant'
+                                    : (vprev && vprev.abstain_reason === 'no_valid_citation') ? 'the AI could not cite a real source — refused'
+                                        : !e ? 'the AI could not read this merchant'
+                                            : !agreed ? 'only one engine answered — not a consensus'
+                                                : !VALID_CATS[cat] ? 'the category was outside the taxonomy'
+                                                    : 'below the ' + WRITE_GATE + ' confidence gate',
                             at: Date.now()
                         });
                     }
@@ -851,7 +853,7 @@
                 _saveQ(LS_PENDING, holdList);
                 var keys = {}; batch.forEach(function (x) { keys[x.key] = 1; });
                 _saveQ(LS_UNKNOWN, q.filter(function (x) { return !keys[x.key]; }));
-                try { root.console && root.console.log('[WFMerchants] verified ' + stage.verified + ' by web search, ' + (resolved - stage.verified) + ' by consensus, ' + held + ' held'); } catch (_) {}
+                try { root.console && root.console.log('[WFMerchants] verified ' + stage.verified + ' by web search, ' + (resolved - stage.verified) + ' by consensus, ' + held + ' held'); } catch (_) { }
                 return { resolved: resolved, verified: stage.verified, held: held, note: 'search-first, gate ' + WRITE_GATE };
             }).catch(function () { return { resolved: 0, held: 0, note: 'verification unreachable' }; });
         } catch (_) { return Promise.resolve({ resolved: 0, held: 0, note: 'error' }); }
@@ -882,7 +884,7 @@
             var o = _loadLearned();
             o[mk] = { category: category, tab: tab || (SUB_CATS[category] ? 'subscription' : 'expenses'), n: (o[mk] && o[mk].n || 0) + 1, conf: confidence == null ? 1 : +confidence, ts: Date.now() };
             _saveLearned(o);
-        } catch (_) {}
+        } catch (_) { }
     }
 
     // ── self-verification: flag a merchant learned into conflicting categories ──
@@ -909,9 +911,9 @@
         _saveLearned(o); return n;
     }
 
-    try { _setRemote(_loadRemoteCache()); } catch (_) {}   // hydrate last verified list immediately
-    try { verify(); } catch (_) {}                          // heal any learned conflicts on load
-    try { if (typeof fetch === 'function') syncRemote(); } catch (_) {}   // refresh in the background (throttled)
+    try { _setRemote(_loadRemoteCache()); } catch (_) { }   // hydrate last verified list immediately
+    try { verify(); } catch (_) { }                          // heal any learned conflicts on load
+    try { if (typeof fetch === 'function') syncRemote(); } catch (_) { }   // refresh in the background (throttled)
     root.WFMerchants = { classify: classify, refine: refine, analyze: analyze, learn: learn, cleanName: cleanName, GLOBAL_GATE: GLOBAL_GATE, verify: verify, verifyRemote: verifyRemote, syncRemote: syncRemote, discover: discover, resolveUnknowns: resolveUnknowns, unknowns: unknowns, pending: pending, confirm: confirm, isolate: isolate, stats: stats, export: exportLearned, merge: merge, merchantKey: merchantKey, WRITE_GATE: WRITE_GATE, CATEGORIES: CATEGORIES, forgetLearned: _forgetLearned, _clsForget: _clsForget, _clsStats: _clsStats, epoch: epoch, VERSION: VERSION };
-    try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) {}
+    try { root.console && root.console.log('[WFMerchants] ✓ v' + VERSION + ' — ' + stats().seedKeywords + ' merchant signals across ' + REGISTRY.length + ' categories'); } catch (_) { }
 })(typeof window !== 'undefined' ? window : globalThis);

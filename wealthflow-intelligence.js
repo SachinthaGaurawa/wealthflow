@@ -40,38 +40,19 @@
     function _money(n) { try { return 'LKR ' + (Number(n) || 0).toLocaleString(); } catch (_) { return 'LKR ' + n; } }
 
     /* =========================================================================
-     * A. SECURITY VAULT  (AES-256-GCM, encrypted at rest, synced per account)
+     * A. SECURITY VAULT  (AES-256-GCM, device-local, encrypted at rest)
      * =========================================================================
      * Threat model (honest):
      *   ✔ Protects against the vault contents being readable in plaintext by
      *     casual inspection, in cloud backups, or by other scripts that don't
      *     hold the device key.
-     *   ✔ Keeps NIC / DOB OUT of the cloud document IN PLAINTEXT — only the
-     *     ciphertext, and the key needed to open it, ever leave the device.
-     *   ✘ Does NOT defend against an attacker with full read access to the
-     *     owner's Firestore document (they'd have both key + ciphertext, same
-     *     as anyone with full localStorage access always could) — but at that
-     *     point the account itself is the real perimeter. This is the correct,
-     *     standard tradeoff for data the module's own PDF-unlock code already
-     *     treats as semi-public (see `_pdfCandidatesFrom` below): a NIC and a
-     *     date of birth, not a bank password.
-     *
-     * ── CROSS-DEVICE SYNC (v7.71.0) ──────────────────────────────────────────
-     * This used to be genuinely device-local: `_deviceSecret()` is a random
-     * value generated the first time this device ever needed one, so two
-     * devices derived two different keys and neither could read the other's
-     * `wf_vault_enc` even if the ciphertext were copied over by hand. The
-     * owner asked for that to stop — a NIC saved on the phone should also
-     * unlock statements scanned on the laptop.
-     *
-     * The fix is to sync the KEY, not just the data: `_deviceSecret()` and the
-     * ciphertext now travel together as one pair through `window._wfVaultCloud`
-     * (the same optional `{pull, push}` seam wealthflow-vault.js uses, wired to
-     * a private Firestore doc in index.html). They must always move as a pair
-     * — decrypting with a key from one device against ciphertext from another
-     * simply fails, so `_syncVaultFromCloud()` only ever adopts both fields
-     * from whichever side (local vs cloud) carries the later plaintext
-     * `updatedAt`, never one field from each.
+     *   ✔ Keeps NIC / DOB OUT of the cloud document entirely.
+     *   ✘ Does NOT defend against an attacker with full read access to this
+     *     device's localStorage AND the ability to run code (they'd have both
+     *     key + ciphertext) — but at that point the device PIN/biometric lock
+     *     is the real perimeter. This is the correct, standard tradeoff for a
+     *     personal-finance PWA that must also work under biometric unlock
+     *     (where no typed PIN is available to derive a key from).
      */
     function _b64(bytes) { var s = ''; for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
     function _ub64(b64) { var bin = atob(b64); var u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
@@ -97,50 +78,8 @@
 
     function vaultExists() { return !!localStorage.getItem('wf_vault_enc'); }
 
-    /**
-     * Pull the key+ciphertext pair from the cloud (when `window._wfVaultCloud`
-     * is wired) and adopt it locally when it is the newer of the two — by the
-     * plaintext `updatedAt` each side carries, never by trusting whichever
-     * answered first. Both fields move together always: a key from one device
-     * paired with ciphertext from another simply fails to decrypt, so this
-     * never adopts `dk` without also adopting the `enc` it was pushed with
-     * (and vice versa).
-     *
-     * Best-effort and silent: no network, no cloud wired, or a signed-out
-     * session all leave this device working exactly as it always did.
-     */
-    async function _syncVaultFromCloud() {
-        try {
-            var cloud = window._wfVaultCloud;
-            if (!cloud || typeof cloud.pull !== 'function') return;
-            var remote = await cloud.pull();
-            var localRaw = null;
-            try { localRaw = localStorage.getItem('wf_vault_enc'); } catch (_) {}
-            var localParsed = null, localUpdatedAt = 0;
-            if (localRaw) { try { localParsed = JSON.parse(localRaw); localUpdatedAt = Number(localParsed.updatedAt) || 0; } catch (_) {} }
-
-            if (!remote) {
-                // Nothing has ever been pushed for this account. Seed the
-                // cloud from whatever is already on THIS device, if anything,
-                // so the next device to open the app finds it. One-time: this
-                // branch never runs again once a first push exists anywhere.
-                if (localParsed && typeof cloud.push === 'function') {
-                    try { await cloud.push({ dk: _deviceSecret(), enc: localParsed, updatedAt: localUpdatedAt }); } catch (_) {}
-                }
-                return;
-            }
-            var remoteUpdatedAt = Number(remote.updatedAt) || 0;
-            if (remoteUpdatedAt > localUpdatedAt) {
-                if (remote.dk) localStorage.setItem('wf_vault_dk', remote.dk);
-                if (remote.enc) localStorage.setItem('wf_vault_enc', JSON.stringify(remote.enc));
-                else localStorage.removeItem('wf_vault_enc'); // the newer state elsewhere is "cleared"
-            }
-        } catch (_) { /* offline, or no cloud wired — local state is still correct */ }
-    }
-
     async function vaultSave(obj) {
         if (!crypto || !crypto.subtle) throw new Error('Secure storage not available in this browser');
-        await _syncVaultFromCloud(); // don't overwrite a newer cloud copy with a stale local save
         // sanitise
         var clean = {
             last4: Array.isArray(obj.last4) ? obj.last4.map(function (x) { return String(x).replace(/\D/g, '').slice(-4); }).filter(Boolean) : [],
@@ -152,27 +91,11 @@
         var iv = crypto.getRandomValues(new Uint8Array(12));
         var data = new TextEncoder().encode(JSON.stringify(clean));
         var ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, data);
-        // `updatedAt` here is deliberately OUTSIDE the ciphertext (unlike the
-        // ISO one already inside `clean` above): two devices need to agree on
-        // whose copy is newer before either one can even decrypt the other's,
-        // since the device secret itself is part of what might differ.
-        var record = { v: 1, iv: _b64(iv), ct: _b64(new Uint8Array(ct)), updatedAt: Date.now() };
-        localStorage.setItem('wf_vault_enc', JSON.stringify(record));
-        try {
-            if (window._wfVaultCloud && typeof window._wfVaultCloud.push === 'function') {
-                await window._wfVaultCloud.push({ dk: _deviceSecret(), enc: record, updatedAt: record.updatedAt });
-            }
-        } catch (_) { /* saved locally regardless; syncs next time a connection exists */ }
-        try {
-            if (typeof window._wfRefreshStatementCloudPasswords === 'function') {
-                Promise.resolve(window._wfRefreshStatementCloudPasswords()).catch(function () {});
-            }
-        } catch (_) {}
+        localStorage.setItem('wf_vault_enc', JSON.stringify({ v: 1, iv: _b64(iv), ct: _b64(new Uint8Array(ct)) }));
         return true;
     }
 
     async function vaultGet() {
-        await _syncVaultFromCloud();
         var raw = localStorage.getItem('wf_vault_enc');
         if (!raw) return null;
         try {
@@ -189,57 +112,100 @@
     function vaultClear() {
         localStorage.removeItem('wf_vault_enc');
         // keep the device key so a future vault re-uses it; remove only data
-        try {
-            if (window._wfVaultCloud && typeof window._wfVaultCloud.push === 'function') {
-                window._wfVaultCloud.push({ dk: _deviceSecret(), enc: null, updatedAt: Date.now() }).catch(function () {});
-            }
-        } catch (_) {}
-        try {
-            if (typeof window._wfRefreshStatementCloudPasswords === 'function') {
-                Promise.resolve(window._wfRefreshStatementCloudPasswords({ removeIfEmpty: true })).catch(function () {});
-            }
-        } catch (_) {}
         return true;
     }
 
     /* Candidate passwords for locked bank PDFs, derived from vault contents.
-     * Sri Lankan banks variously use the NIC, the DOB in several formats, or
-     * the last 4 of the card as the statement password. We generate every
-     * sensible candidate, de-duplicated and ordered most-likely-first. */
+     * Sri Lankan & global banks variously use the NIC, the DOB in several formats,
+     * the last 4 of the card/account, or cross-combinations as the statement password.
+     * We generate every sensible permutation, de-duplicated and ordered most-likely-first. */
     function _pdfCandidatesFrom(v) {
         if (!v) return [];
         var out = [];
-        function push(x) { if (x && out.indexOf(x) === -1) out.push(x); }
+        function push(x) {
+            var s = x == null ? '' : String(x).trim();
+            if (s && out.indexOf(s) === -1) out.push(s);
+        }
 
+        var nicClean = '', nicDigits = '', nicLast4 = '', nicFirst4 = '';
         if (v.nic) {
             var nic = String(v.nic).trim().toUpperCase();
+            nicClean = nic;
+            nicDigits = nic.replace(/[VX]$/i, '');
+            nicLast4 = nic.slice(-4);
+            nicFirst4 = nic.slice(0, 4);
+
             push(nic);
             push(nic.toLowerCase());
-            push(nic.replace(/[VX]$/i, ''));   // old NIC without trailing V/X
-            push(nic.slice(-4));               // last 4 of NIC
+            push(nicDigits);                   // old NIC without trailing V/X
+            push(nicLast4);                    // last 4 of NIC
+            push(nic.slice(-6));               // last 6 of NIC
             push(nic.slice(0, 6));             // birth-encoded prefix of old NIC
-        }
-        if (v.dob) {
-            /* ── THE OWNER'S QUESTION ────────────────────────────────────────
-             *
-             *   "Why didn't you anticipate that a user's password might be a
-             *    Date of Birth with slashes (DD/MM/YYYY)?"
-             *
-             * Because this block used to build the seven forms by hand and
-             * every one of them was bare digits. A bank whose letter says "your
-             * password is your date of birth, e.g. 07/07/1993" was never going
-             * to be opened, and the failure looked like a broken parser rather
-             * than a missing candidate.
-             *
-             * The eleven written forms — separators included — now come from
-             * wealthflow-password-shapes.js, which is the SAME list the vault's
-             * format dropdown offers. Two hand-maintained copies of "how a date
-             * can be written" is how one of them ends up missing the slashes. */
-            if (window.WFPwShapes) {
-                window.WFPwShapes.expand({ password: v.dob, kind: 'birthday' }).forEach(push);
+            push(nicFirst4);                   // first 4 of NIC
+            if (nicDigits.length === 9) {
+                push('19' + nicDigits);        // 12-digit format from 9-digit
             }
         }
-        (v.last4 || []).forEach(function (c) { push(String(c).trim()); });
+
+        var dStr = '', mStr = '', yStr = '', yyStr = '';
+        if (v.dob) {
+            var m = String(v.dob).match(/(\d{4})\D?(\d{2})\D?(\d{2})/);
+            if (m) {
+                yStr = m[1]; mStr = m[2]; dStr = m[3]; yyStr = yStr.slice(2);
+                push(dStr + mStr + yStr);      // DDMMYYYY (most common SL bank format)
+                push(yStr + mStr + dStr);      // YYYYMMDD
+                push(dStr + mStr + yyStr);     // DDMMYY
+                push(yyStr + mStr + dStr);     // YYMMDD
+                push(mStr + dStr + yStr);      // MMDDYYYY
+                push(mStr + dStr + yyStr);     // MMDDYY
+                push(dStr + mStr);             // DDMM
+                push(mStr + dStr);             // MMDD
+                push(yStr);                    // YYYY
+                push(yStr + dStr + mStr);      // YYYYDDMM
+                push(dStr + '-' + mStr + '-' + yStr); // DD-MM-YYYY
+                push(dStr + '/' + mStr + '/' + yStr); // DD/MM/YYYY
+                push(yStr + '-' + mStr + '-' + dStr); // YYYY-MM-DD
+                push(yStr + '/' + mStr + '/' + dStr); // YYYY/MM/DD
+                push(dStr + '.' + mStr + '.' + yStr); // DD.MM.YYYY
+            }
+        }
+
+        var cardLast4s = [];
+        (v.last4 || []).forEach(function (c) {
+            var s = String(c).trim();
+            if (s) { push(s); if (cardLast4s.indexOf(s) === -1) cardLast4s.push(s); }
+        });
+
+        // Also gather card last-4s from memory/appData if present
+        try {
+            if (typeof window !== 'undefined' && window.appData) {
+                var allCards = (window.appData.cards || []).concat(window.appData.accounts || []);
+                allCards.forEach(function (a) {
+                    var l4 = String(a.last4 || a.card_last4 || '').trim();
+                    if (l4) { push(l4); if (cardLast4s.indexOf(l4) === -1) cardLast4s.push(l4); }
+                });
+            }
+        } catch (_) {}
+
+        // Bank-specific cross-combinations (NIC + DOB / Card + DOB)
+        if (dStr && mStr) {
+            if (nicLast4) {
+                push(nicLast4 + dStr + mStr);         // Last4NIC + DDMM
+                push(nicLast4 + dStr + mStr + yyStr); // Last4NIC + DDMMYY
+                push(nicLast4 + yStr);                // Last4NIC + YYYY
+            }
+            if (nicFirst4) {
+                push(nicFirst4 + dStr + mStr);        // First4NIC + DDMM
+            }
+            cardLast4s.forEach(function (c4) {
+                push(c4 + dStr + mStr);               // CardLast4 + DDMM
+                push(c4 + dStr + mStr + yyStr);       // CardLast4 + DDMMYY
+                push(c4 + yStr);                      // CardLast4 + YYYY
+                push(dStr + mStr + c4);               // DDMM + CardLast4
+                push(dStr + mStr + yyStr + c4);       // DDMMYY + CardLast4
+            });
+        }
+
         return out;
     }
 
@@ -343,16 +309,16 @@
             if (!match) return null;
             var amount = Number(f.amount) || 0;
             if (!amount) return null;   // no amount → let normal path handle it
-            var date = f.date ? new Date(f.date).toISOString().slice(0, 10) : window.WFWhen.today();
+            var date = f.date ? new Date(f.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
             if (match.type === 'goal') {
                 if (!allocateToGoal(match.id, amount, date, 'Auto-allocated · matched "' + match.name + '"')) return null;
-                _notify('Auto-funded goal "' + match.name + '" with ' + _money(amount), 'success');
-                return { ok: true, module: 'goal', label: match.name };
+                _notify('🎯 Auto-funded goal "' + match.name + '" with ' + _money(amount), 'success');
+                return { ok: true, module: 'goal', label: '🎯 ' + match.name };
             }
             if (!allocateToLoan(match.id, amount, date, 'Auto-detected loan payment · "' + match.name + '"')) return null;
-            _notify('Auto-recorded loan payment for "' + match.name + '" · ' + _money(amount), 'success');
-            return { ok: true, module: 'loan', label: match.name };
+            _notify('🏦 Auto-recorded loan payment for "' + match.name + '" · ' + _money(amount), 'success');
+            return { ok: true, module: 'loan', label: '🏦 ' + match.name };
         } catch (e) {
             console.warn('[' + V + '] semantic allocate error:', e && e.message);
             return null;
@@ -360,46 +326,128 @@
     }
 
     /* =========================================================================
-     * C. THE SECOND "NEEDS REVIEW" QUEUE — DELETED, NOT MOVED
-     * =========================================================================
-     *
-     * There was a whole quarantine zone here: a localStorage store
-     * (`wf_quarantine`), an adder exported as window.wfQuarantineAdd, a tile
-     * renderer, and six chips to file a held transaction to expenses, income,
-     * subscriptions, a card, a goal or a loan.
-     *
-     * NONE OF IT HAD EVER RUN.
-     *
-     *   - `qAdd` had NO CALLER anywhere in the app. The comment beside its
-     *     export said "consumed by wealthflow-autonomous.js"; that file does
-     *     not mention it. So the store was always empty.
-     *   - `renderQuarantineTile()` looked up `#quarantineTile`, and no HTML in
-     *     this repository contains that id. It returned on its first line,
-     *     every time, silently.
-     *
-     * So the owner's "Interactive Quarantine Zone" existed twice: here, dead,
-     * and in wealthflow-review.js — which is wired, visible, persisted
-     * encrypted, raises its own banner, and is fed by the queue, the SMS paste
-     * and the statement flows. The mail pipeline sends its held rows to the
-     * statement review screen for the same reason: that one writes an undoable
-     * batch and de-duplicates against the ledger.
-     *
-     * Wiring this one up would have made a THIRD path that writes financial
-     * records, with its own store and its own idea of what a filed row is.
-     * That is how two shapes of "expense" end up in one array. It is deleted
-     * rather than repaired; wealthflow-review.js is the one that answers the
-     * requirement, and test/mail_filing_test.js pins that the mail path reaches
-     * the review screen rather than inventing a second writer.
+     * C. QUARANTINE ZONE  ("Needs Review")
      * ========================================================================= */
+    function qList() { try { return JSON.parse(localStorage.getItem('wf_quarantine') || '[]'); } catch (_) { return []; } }
+    function qSave(arr) { try { localStorage.setItem('wf_quarantine', JSON.stringify(arr)); } catch (_) {} }
 
-    /* The icon system's lock, or nothing. NEVER an emoji: a system-font glyph
-     * is a fixed colour that cannot follow the theme, and this app's rule is
-     * inline SVG that inherits currentColor. Falls back to empty rather than to
-     * a character, because a missing icon is invisible and a stray glyph is
-     * the thing being removed. */
-    function _lockIcon() {
-        try { return (window.WFIcon && window.WFIcon.has && window.WFIcon.has('lock')) ? window.WFIcon('lock') : ''; }
-        catch (_) { return ''; }
+    function qAdd(brain, reason) {
+        if (!brain) return;
+        var arr = qList();
+        if (brain.hash && arr.some(function (x) { return x.brain && x.brain.hash === brain.hash; })) return; // no dupes
+        arr.unshift({ id: _uid(), brain: brain, reason: reason || 'Needs review', ts: Date.now() });
+        if (arr.length > 50) arr = arr.slice(0, 50);
+        qSave(arr);
+        try { renderQuarantineTile(); } catch (_) {}
+    }
+
+    function qRemove(id) { qSave(qList().filter(function (x) { return x.id !== id; })); try { renderQuarantineTile(); } catch (_) {} }
+
+    function qResolve(id, module) {
+        var it = qList().find(function (x) { return x.id === id; });
+        if (!it) return;
+        if (typeof window.wfApplyBrainResult !== 'function') { _notify('Automation engine not loaded', 'error'); return; }
+        window.wfApplyBrainResult(it.brain, { forceModule: module, skipDedup: true, skipIntel: true }).then(function (r) {
+            if (r && r.ok) {
+                qRemove(id);
+                _notify('✅ Filed to ' + module, 'success');
+                _refreshAll();
+            } else {
+                _notify('Could not file: ' + ((r && r.reason) || 'error'), 'error');
+            }
+        }).catch(function (e) { _notify('Error: ' + (e && e.message), 'error'); });
+    }
+
+    function qResolveGoalLoan(id, type) {
+        // Show a sub-picker of the user's goals/loans, then allocate.
+        var it = qList().find(function (x) { return x.id === id; });
+        if (!it) return;
+        var list = type === 'goal' ? _get('targets') : _get('loans');
+        if (!list.length) { _notify('No ' + (type === 'goal' ? 'savings goals' : 'loans') + ' exist yet', 'warn'); return; }
+        var f = (it.brain.routed && it.brain.routed.suggested_fields) || {};
+        var amount = Number(f.amount) || 0;
+        var date = f.date ? new Date(f.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+        var opts = list.map(function (x) { return '<option value="' + _esc(x.id) + '">' + _esc(x.name) + '</option>'; }).join('');
+        var overlay = _overlay(
+            (type === 'goal' ? '🎯 Assign to which goal?' : '🏦 Assign to which loan?'),
+            '<div style="font-size:13px;color:var(--text2);margin-bottom:10px;">' + _money(amount) + ' on ' + _esc(date) + '</div>' +
+            '<select id="_qglPick" class="fi" style="width:100%;margin-bottom:14px;">' + opts + '</select>' +
+            '<button class="btn btn-primary" style="width:100%;" id="_qglGo">Assign</button>'
+        );
+        overlay.querySelector('#_qglGo').onclick = function () {
+            var pid = overlay.querySelector('#_qglPick').value;
+            var ok = type === 'goal'
+                ? allocateToGoal(pid, amount, date, 'Filed from Needs-Review')
+                : allocateToLoan(pid, amount, date, 'Filed from Needs-Review');
+            if (ok) { qRemove(id); _notify('✅ Assigned', 'success'); _refreshAll(); }
+            else _notify('Assignment failed', 'error');
+            overlay.remove();
+        };
+    }
+
+    function qDismiss(id) { qRemove(id); _notify('Dismissed', 'info'); }
+    function qClearAll() { qSave([]); try { renderQuarantineTile(); } catch (_) {} _notify('Needs-Review cleared', 'info'); }
+
+    function _refreshAll() {
+        ['renderDash', 'renderExpenses', 'renderSubscriptions', 'renderTargets', 'renderLoans', 'renderCCOneTime', 'renderIncome'].forEach(function (fn) {
+            try { if (typeof window[fn] === 'function') window[fn](); } catch (_) {}
+        });
+    }
+
+    function renderQuarantineTile() {
+        var host = document.getElementById('quarantineTile');
+        if (!host) return;
+        var items = qList();
+        if (!items.length) { host.innerHTML = ''; host.style.display = 'none'; return; }
+        host.style.display = '';
+
+        var rows = items.map(function (it) {
+            var b = it.brain || {};
+            var f = (b.routed && b.routed.suggested_fields) || {};
+            var m = b.resolved_merchant || {};
+            var amt = Number(f.amount) || 0;
+            var when = f.date ? new Date(f.date).toLocaleDateString() : '';
+            var merchant = m.name || f.desc || f.source || f.name || 'Unknown transaction';
+            var conf = b.routed && b.routed.confidence != null ? Math.round(b.routed.confidence * 100) : null;
+            return '' +
+                '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:13px;margin-bottom:10px;">' +
+                  '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
+                    '<div style="min-width:0;flex:1;">' +
+                      '<div style="font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(merchant) + '</div>' +
+                      '<div style="font-size:12px;color:var(--text3);margin-top:2px;">' + _esc(when) + (conf != null ? ' · AI ' + conf + '% sure' : '') + '</div>' +
+                    '</div>' +
+                    '<div style="font-weight:800;font-size:15px;color:var(--accent);flex-shrink:0;">' + _money(amt) + '</div>' +
+                  '</div>' +
+                  '<div style="font-size:12px;color:var(--text2);margin:8px 0 10px;line-height:1.5;">' +
+                    '🤔 ' + _esc(it.reason) + ' — where should this go?' +
+                  '</div>' +
+                  '<div style="display:flex;flex-wrap:wrap;gap:7px;">' +
+                    _chip(it.id, 'expenses', '💸 Expense') +
+                    _chip(it.id, 'income', '💰 Income') +
+                    _chip(it.id, 'subscriptions', '🔁 Subscription') +
+                    _chip(it.id, 'cconetime', '💳 Credit Card') +
+                    _chipGL(it.id, 'goal', '🎯 Goal') +
+                    _chipGL(it.id, 'loan', '🏦 Loan') +
+                    '<button onclick="wfQ.dismiss(\'' + it.id + '\')" style="background:transparent;border:1px solid var(--border);color:var(--text3);border-radius:9px;padding:7px 11px;font-size:12px;cursor:pointer;">✕ Dismiss</button>' +
+                  '</div>' +
+                '</div>';
+        }).join('');
+
+        host.innerHTML = '' +
+            '<div style="background:linear-gradient(145deg, rgba(245,158,11,0.10), var(--card));border:1px solid rgba(245,158,11,0.45);border-radius:16px;padding:15px;">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+                '<div style="font-weight:800;font-size:15px;color:#f59e0b;">🛟 Needs Review <span style="background:#f59e0b;color:#1a1a1a;border-radius:20px;padding:1px 9px;font-size:12px;margin-left:4px;">' + items.length + '</span></div>' +
+                (items.length > 1 ? '<button onclick="wfQ.clearAll()" style="background:transparent;border:none;color:var(--text3);font-size:12px;cursor:pointer;text-decoration:underline;">Clear all</button>' : '') +
+              '</div>' +
+              rows +
+            '</div>';
+    }
+
+    function _chip(id, module, label) {
+        return '<button onclick="wfQ.resolve(\'' + id + '\',\'' + module + '\')" style="background:var(--bg);border:1px solid var(--border2);color:var(--text);border-radius:9px;padding:7px 11px;font-size:12px;cursor:pointer;font-weight:600;">' + label + '</button>';
+    }
+    function _chipGL(id, type, label) {
+        return '<button onclick="wfQ.resolveGoalLoan(\'' + id + '\',\'' + type + '\')" style="background:var(--bg);border:1px solid var(--border2);color:var(--text);border-radius:9px;padding:7px 11px;font-size:12px;cursor:pointer;font-weight:600;">' + label + '</button>';
     }
 
     /* tiny modal overlay helper (self-contained; does not depend on app modals) */
@@ -425,8 +473,7 @@
         var last4 = (v && v.last4 || []).join(', ');
         var html = '' +
             '<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:14px;">' +
-              'Stored <b>encrypted</b> (AES-256) and kept in sync with your account, so it works the ' +
-              'same on every device you sign into. Never uploaded in plaintext. ' +
+              'Stored <b>encrypted on this device only</b> (AES-256). Never uploaded in plaintext. ' +
               'Used to automatically unlock password-protected bank-statement PDFs.' +
             '</div>' +
             '<label style="font-size:12px;color:var(--text3);">Card last-4 digits (comma separated)</label>' +
@@ -435,9 +482,9 @@
             '<input id="_vNic" class="fi" style="width:100%;margin:4px 0 12px;" placeholder="200012345678 or 921234567V" value="' + _esc(v && v.nic || '') + '">' +
             '<label style="font-size:12px;color:var(--text3);">Date of birth</label>' +
             '<input id="_vDob" type="date" class="fi" style="width:100%;margin:4px 0 16px;" value="' + _esc(v && v.dob || '') + '">' +
-            '<button class="btn btn-primary" id="_vSave" style="width:100%;margin-bottom:8px;">' + _lockIcon() + ' Save securely</button>' +
+            '<button class="btn btn-primary" id="_vSave" style="width:100%;margin-bottom:8px;">🔐 Save securely</button>' +
             (vaultExists() ? '<button class="btn btn-secondary" id="_vClear" style="width:100%;background:transparent;border:1px solid var(--border);color:var(--text3);">Clear vault</button>' : '');
-        var o = _overlay(_lockIcon() + ' Security Vault', html);
+        var o = _overlay('🔐 Security Vault', html);
         o.querySelector('#_vSave').onclick = async function () {
             try {
                 await vaultSave({
@@ -445,7 +492,7 @@
                     nic: o.querySelector('#_vNic').value,
                     dob: o.querySelector('#_vDob').value
                 });
-                _notify('Vault saved, encrypted, and synced to your account', 'success');
+                _notify('🔐 Vault saved & encrypted on this device', 'success');
                 o.remove();
             } catch (e) { _notify('Save failed: ' + (e && e.message), 'error'); }
         };
@@ -457,16 +504,23 @@
     /* =========================================================================
      * EXPOSE
      * ========================================================================= */
-    window.wfVault = { save: vaultSave, get: vaultGet, exists: vaultExists, clear: vaultClear, openModal: openVaultModal, syncFromCloud: _syncVaultFromCloud };
-    window.wfVaultDerivedPdfPasswords = async function () { return _pdfCandidatesFrom(await vaultGet()); };
+    window.wfVault = { save: vaultSave, get: vaultGet, exists: vaultExists, clear: vaultClear, openModal: openVaultModal };
     window.wfVaultPdfPasswords = vaultPdfPasswords;     // consumed by wealthflow-ai-v4.js PDF loader
     window.wfTrySemanticAllocate = trySemanticAllocate;  // consumed by wealthflow-autonomous.js
     window.wfMatchGoalOrLoan = matchGoalOrLoan;
-    /* window.wfQuarantineAdd, window.wfQ and window.renderQuarantineTile are
-     * gone with the code above, along with the timer that rendered a tile into
-     * an element no page has. Nothing called any of them: the only reference in
-     * the repository was index.html's own call to renderQuarantineTile(), which
-     * has already been removed. window.wfReview is the review queue. */
+    window.wfQuarantineAdd = qAdd;                       // consumed by wealthflow-autonomous.js
+    window.wfQ = {
+        list: qList, add: qAdd, resolve: qResolve, resolveGoalLoan: qResolveGoalLoan,
+        dismiss: qDismiss, clearAll: qClearAll, render: renderQuarantineTile
+    };
+    window.renderQuarantineTile = renderQuarantineTile;
 
-    console.log('[' + V + '] Intelligence layer ready — Vault · Semantic Allocation');
+    // first render once the DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () { setTimeout(renderQuarantineTile, 1500); });
+    } else {
+        setTimeout(renderQuarantineTile, 1500);
+    }
+
+    console.log('[' + V + '] Intelligence layer ready — Vault · Semantic Allocation · Quarantine Zone');
 })();
