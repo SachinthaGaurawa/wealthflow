@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
+import { isCreditCardRow } from './wealthflow-statement-router.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -23,12 +24,17 @@ export function sourceOccurrenceId(sourcePath, absoluteIndex) {
     return hash(['statement-occurrence-v1', sourcePath, absoluteIndex]);
 }
 
-export function validateSettlementRow(row, decision, { statementType = '' } = {}) {
+export function validateSettlementRow(row, decision, ctx = {}) {
     if (!row || !isStrictCalendarDate(row.date) || !amountCents(row.amount) || !norm(row.description || row.narration)) return 'invalid-transaction';
     if (row.needsReview !== false || row.valid === false || !['balance', 'marker', 'column', 'sign'].includes(row.directionSource) || !['debit', 'credit'].includes(row.direction)) return 'unproven-direction';
     if (!decision || decision.verified !== true || !modules[decision.module] || !norm(decision.category)) return decision?.reason || 'unanimous-decision-required';
     const module = modules[decision.module];
-    const card = /credit.?card|amex|card/i.test(statementType);
+    // Same source of truth the classifier used (statement's own declared type,
+    // falling back to the owner's Settings -> Manage cards & accounts registry
+    // by last-4 + bank) — not a second, narrower statementType-only regex that
+    // silently disagreed with the classifier and quarantined correctly routed
+    // credit-card rows to review with nothing logged.
+    const card = isCreditCardRow(row, ctx);
     if (transferEvidence(row)) return module === 'skip' ? null : 'transfer-route-conflict';
     if (module === 'skip') return 'skip-requires-transfer-evidence';
     if (module === 'incomeRecv' && (row.direction !== 'credit' || card)) return 'income-direction-conflict';
@@ -61,7 +67,7 @@ function makeRecord(row, decision, context, id, now) {
 }
 
 /** All reads precede writes; Firestore retries serialize concurrent settlement. */
-export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
+export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
     if (!db || !uid || !sourceRef?.path || !leaseToken || !Array.isArray(rows) || rows.length > 30 || !rows.length || !Array.isArray(decisions) || decisions.length !== rows.length || !Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(totalRows) || totalRows < cursor + rows.length || !Number.isSafeInteger(now)) throw new Error('invalid-settlement-request');
     const userRef = db.collection('users').doc(uid);
     const ledgerRefs = rows.map((_, index) => userRef.collection('statementLedger').doc(sourceOccurrenceId(sourceRef.path, cursor + index)));
@@ -89,7 +95,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const writes = [];
         rows.forEach((row, offset) => {
             const index = cursor + offset, id = ledgerRefs[offset].id;
-            const context = { bank, last4, statementType, sourcePath: sourceRef.path, index };
+            const context = { bank, last4, card_last4: last4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
             const fingerprint = hash(rowIdentity(row, context));
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');
@@ -183,7 +189,8 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
             if (review.index < 0 || !ledgerSnap.exists || ledgerSnap.data().status !== 'review') throw new Error('whole-statement-review-requires-layout');
             const corrected = { ...review.row, ...row, description: row?.description || review.row?.description || review.row?.narration, directionSource: 'marker', needsReview: false, valid: true };
             const verified = { ...decision, verified: true };
-            const context = { bank: source.bank || review.row?.bank || '', last4: source.last4 || review.row?.card_last4 || review.row?._ccLast4 || '', statementType: source.statementType || '' , sourcePath: review.sourcePath, index: review.index };
+            const resolvedLast4 = source.last4 || review.row?.card_last4 || review.row?._ccLast4 || '';
+            const context = { bank: source.bank || review.row?.bank || '', last4: resolvedLast4, card_last4: resolvedLast4, statementType: source.statementType || '', cardRegistry: (userSnap.data() || {}).settings?.cardRegistry || {}, sourcePath: review.sourcePath, index: review.index };
             const reason = validateSettlementRow(corrected, verified, context);
             if (reason) throw new Error(reason);
             const module = modules[decision.module];

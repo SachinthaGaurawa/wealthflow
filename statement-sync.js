@@ -508,7 +508,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', cardRegistry: user.settings?.cardRegistry || {},
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             const decisions = await classifySlice(rows, allocations, { board });
-            outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType,
+            outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {},
                 mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });
         }
     } catch (error) {
