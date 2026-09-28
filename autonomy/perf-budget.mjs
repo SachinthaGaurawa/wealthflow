@@ -457,7 +457,14 @@ export const BUDGETS = {
     // ahead of the replay guard on the exact lost-response retry this
     // existed for — read as an ordinary permanent failure instead of
     // "may already be confirmed"). Measured 1,889,092.
-    totalJsBytes: 1_889_092,
+    // 2026-09-28: +802 for request()'s catch normalizing a raw fetch()
+    // network-level TypeError (a dropped connection/DNS failure — the Fetch
+    // spec's own signal for "no network") into statement-service-unavailable.
+    // Another automated-review finding on the same PR: confirmLayout()'s
+    // retryable allowlist could never match an unnormalized raw TypeError,
+    // so the single most common real "no network" case never retried.
+    // Measured 1,889,894.
+    totalJsBytes: 1_889_894,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a

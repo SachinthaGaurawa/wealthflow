@@ -46,7 +46,20 @@ export async function request(path,method='GET',body){
         if ((typeof window.firebase?.auth === 'function' && sdk?.uid !== active.uid) || (!sdk && user?.uid !== active.uid)) throw new Error('sign-in-changed');
         if (!response.ok || !result?.ok) throw new Error(result?.reason || 'statement-service-unavailable');
         return result;
-    }catch(error){if(error?.name==='AbortError')throw new Error('statement-request-timed-out');throw error}
+    }catch(error){
+        if(error?.name==='AbortError')throw new Error('statement-request-timed-out');
+        // A dropped connection or DNS failure rejects fetch() itself with a
+        // raw, browser-native TypeError ("Failed to fetch" / "NetworkError
+        // when attempting to fetch resource") per the Fetch spec — carrying
+        // no meaning to any caller matching a known reason code. Every such
+        // caller (sync()'s own continuation on 'statement-request-timed-out';
+        // confirmLayout()'s small retryable allowlist) silently treated the
+        // single most common real-world failure — no network at all — as an
+        // unrecognized, non-retryable one. Fold it into the same generic
+        // fallback an ok:false response with no reason already uses.
+        if(error instanceof TypeError)throw new Error('statement-service-unavailable');
+        throw error;
+    }
     finally{clearTimeout(timer)}
 }
 export async function status(){

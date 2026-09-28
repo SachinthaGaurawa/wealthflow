@@ -237,6 +237,27 @@ describe('private statement cloud frontend transport', () => {
                 expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
             } finally { vi.useRealTimers(); await authChanged(null); }
         });
+        it('retries a raw dropped-connection failure, not just a named timeout', async () => {
+            // Flagged by an automated (Codex) review: fetch() itself rejects a
+            // dropped connection or DNS failure with a browser-native TypeError
+            // per the Fetch spec, not an AbortError — request() used to rethrow
+            // that unchanged, so it matched neither retryable reason and the
+            // single most common real "no network" case never retried at all.
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            vi.useFakeTimers();
+            try {
+                fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+                    .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, queued: true }));
+                const pending = review({ id: 'whole-statement-id', index: -1 });
+                await vi.runAllTimersAsync();
+                await pending;
+                expect(fetch).toHaveBeenCalledTimes(3);
+                expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
+            } finally { vi.useRealTimers(); await authChanged(null); }
+        });
         it('never retries a permanent rejection like an unreproduced statement', async () => {
             window._showCCReviewModal = vi.fn();
             window._teachStatementLayout = teachWith(oneRow);
