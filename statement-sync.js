@@ -11,7 +11,7 @@ import { settleStatement, resolveReview, transferEvidence } from './statement-le
 import aiHandler from './api/ai.js';
 import { candidatesFor } from './wealthflow-vault.js';
 import { textVerdict, VERDICT } from './wealthflow-statement-identity.js';
-import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES } from './wealthflow-statement-router.js';
+import { routeRow, expenseCategoryFor, incomeCategoryFor, CLASSIFY_CATEGORIES, isCreditCardRow } from './wealthflow-statement-router.js';
 
 export const config = { maxDuration: 60 };
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -107,8 +107,11 @@ export function deterministicDecision(row, allocations = {}) {
     const routed = routeRow(row, { ...allocations, reviewThreshold: 0.7 });
     if (routed.needsReview) return { verified: false, reason: 'ai-consensus-unavailable' };
     if (routed.module === 'subscriptions' && !routed.allocation?.id) {
-        const statementType = String(allocations.statementType || '').toLowerCase().replace(/[-\s]+/g, '_');
-        return statementType === 'credit_card'
+        // Same account-type determination routeRow() itself used a few lines up
+        // (statementType when the parser read it, the owner's own card/account
+        // registry otherwise) — not a second, statementType-only check that a
+        // registry-only determination could never reach.
+        return isCreditCardRow(row, allocations)
             ? { module: 'cconetime', category: 'Card Purchase', allocationId: '', verified: true, deterministic: true }
             : { module: 'expenses', category: routed.category || expenseCategoryFor(row), allocationId: '', verified: true, deterministic: true };
     }
@@ -300,6 +303,9 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
     const userRef = db.collection('users').doc(uid);
     const cap = Math.min(50, Math.max(1, limit));
     const page = await userRef.collection('statementReview').where('reason', '==', 'ai-consensus-unavailable').limit(100).get();
+    // One read for the whole batch, only when there is a batch — same registry
+    // fallback wired into the live pipeline in processOneStatement().
+    const cardRegistry = page.docs.length ? ((await userRef.get()).data() || {}).settings?.cardRegistry || {} : {};
     let recovered = 0;
     for (const doc of page.docs) {
         if (recovered >= cap) break;
@@ -312,7 +318,7 @@ export async function recoverConsensusFailures({ db, uid, limit = 25 }) {
          * deduplication and settlement validity; requiring one particular
          * parent status here only makes valid reviews impossible to drain. */
         if (source.uid !== uid) continue;
-        const decision = deterministicDecision(review.row, { statementType: source.statementType || '' });
+        const decision = deterministicDecision(review.row, { statementType: source.statementType || '', card_last4: source.last4 || '', cardRegistry });
         if (!decision.verified) continue;
         try {
             const result = await resolveReview({ db, uid, id: doc.id, decision, row: review.row });
@@ -492,7 +498,15 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const user = (await db.collection('users').doc(uid).get()).data() || {};
             const statementType = parsed.layout?.statementType || '';
             const rows = parsed.rows.slice(cursor, cursor + 10);
-            const allocations = { statementType, subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
+            // isCreditCardRow() (wealthflow-statement-router.js) already falls back to
+            // the owner's own card/account registry — the ground truth entered in
+            // Settings -> Manage cards & accounts — whenever the parser could not
+            // determine statementType from the document itself. That fallback has
+            // always existed but was never reachable from the autonomous pipeline:
+            // this is the same Firestore user document already fetched above, so
+            // wiring it through costs no extra read.
+            const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', cardRegistry: user.settings?.cardRegistry || {},
+                subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             const decisions = await classifySlice(rows, allocations, { board });
             outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType,
                 mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });

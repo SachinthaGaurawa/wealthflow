@@ -112,7 +112,7 @@ function bestNameMatch(desc, list) {
   return best;
 }
 
-function isCreditCardRow(row, ctx) {
+export function isCreditCardRow(row, ctx) {
   const statementType = norm(ctx.statementType).replace(/\s+/g, '_');
   if (statementType === 'credit_card') return true;
   if (statementType === 'bank_account' || statementType === 'savings') return false;
