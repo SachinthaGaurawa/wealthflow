@@ -94,6 +94,11 @@ describe('statement ledger', () => {
         const args = fixture(); const result = await settleStatement(args);
         expect(result).toMatchObject({ filed: 1, status: 'filed' });
         expect(args.db.docs.get('users/u').expenses).toHaveLength(1);
+        expect(args.db.docs.get('users/u')).toMatchObject({
+            _lastModifiedBy: 'statement-worker',
+            _writeDeviceId: 'statement-worker',
+            _writeTs: 1000,
+        });
         expect(args.db.docs.get('sources/s')).toMatchObject({ encrypted: 'preserved', filed: true, cursor: 1, leaseToken: '' });
     });
     it('does not erase legitimate repeated purchases within one source', async () => {
