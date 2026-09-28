@@ -158,77 +158,6 @@ export function linkRecord(email, refreshToken, now = Date.now()) {
  * or a first few characters would turn this endpoint into a way to read back a
  * credential a few bits at a time.
  */
-/* Where the owner's statement-sender list lives.
- *
- * The SAME sealed document as the refresh token, and for the same reason it
- * cannot live on the device: the two things that consult it are the push hook
- * and the scan endpoint, and neither has a browser in front of it. A webhook
- * fired by Google has no client to ask.
- *
- * It is not a credential and it is not treated as one — but it is not nothing
- * either. It names the institutions somebody banks with, which is why it goes
- * behind the same identity boundary rather than somewhere more convenient, and
- * why gmail-link.js derives the document key from a VERIFIED email and from
- * nothing the caller sends. */
-export const SENDERS_FIELD = 'senders';
-
-/* Where refused-but-recoverable messages wait. Beside the sender list on the
- * same document, because the two are read and written together: the list is
- * what refused them and approving on the list is what releases them. */
-export const HELD_FIELD = 'held';
-
-/** At most this many. A junk mailbox must not be able to fill a database. */
-export const MAX_HELD = 200;
-
-/**
- * Merge newly held references into what is already stored.
- *
- * NEWEST FIRST, DE-DUPLICATED BY MESSAGE ID, BOUNDED. A push and a scan can see
- * the same message — redelivery is normal — and a held list that grew a row per
- * delivery would report one refused statement as fifty.
- *
- * `heldMs` is stamped HERE rather than at the call site so every entry carries
- * one, including those written by a caller that forgot.
- */
-export function mergeHeld(existing, incoming, now = Date.now()) {
-    const out = [];
-    const at = new Map();
-    const push = (h) => {
-        if (!h || typeof h !== 'object') return;
-        const key = String(h.messageId || h.key || '').trim();
-        if (!key) return;
-        const stamp = Number(h.heldMs) > 0 ? Number(h.heldMs) : now;
-        if (at.has(key)) {
-            /* SEEN BEFORE. Keep the EARLIEST stamp: what matters about a held
-             * message is when it was first refused, not when it was most
-             * recently redelivered. Overwriting it made every held statement
-             * look like it arrived today, so "held since the 3rd" — the thing
-             * that tells the owner how long they have been missing it — could
-             * never be shown. */
-            const row = out[at.get(key)];
-            row.heldMs = Math.min(row.heldMs, stamp);
-            return;
-        }
-        at.set(key, out.length);
-        out.push({ ...h, key, messageId: key, heldMs: stamp });
-    };
-    for (const h of (Array.isArray(incoming) ? incoming : [])) push(h);
-    for (const h of (Array.isArray(existing) ? existing : [])) push(h);
-    return out.slice(0, MAX_HELD);
-}
-
-/** The held list off a stored document, cleaned. */
-export function heldOf(state) {
-    return mergeHeld(state && state[HELD_FIELD], []);
-}
-
-/** The stored sender list, defaulted so a document written before it existed
- *  reads as "nothing decided yet" rather than as an error. */
-export function sendersOf(doc) {
-    const v = doc && doc[SENDERS_FIELD];
-    return Array.isArray(v) ? v : [];
-}
-
 export function statusOf(doc) {
     const d = doc || null;
     if (!d || !d.refresh_token) return { connected: false };
@@ -240,10 +169,6 @@ export function statusOf(doc) {
         // "linked" from "linked and working".
         lastPushMs: Number(d.lastPushMs) || null,
         historyId: d.historyId ? String(d.historyId) : null,
-        /* Reported so the card can say "no senders approved yet" — the state
-         * where the scanner is still guessing and the owner has a decision to
-         * make — instead of looking identical to a curated one. */
-        senderCount: sendersOf(d).filter((e) => e && e.status === 'approved').length,
     };
 }
 

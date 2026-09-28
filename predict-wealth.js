@@ -13,10 +13,6 @@
 
 export const config = { runtime: 'edge' };
 
-// Named exports for the test suite. These are pure helpers and the anomaly
-// detector; the HTTP handler remains the default export below, unchanged.
-export { monthKey, lastNMonths, detectAnomalies };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,8 +20,8 @@ function monthKey(ts) {
     const d = new Date(ts);
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
 }
-function lastNMonths(n, now) {
-    const out = []; const d = now ? new Date(now) : new Date(); d.setDate(1);
+function lastNMonths(n) {
+    const out = []; const d = new Date(); d.setDate(1);
     for (let i = 0; i < n; i++) { out.unshift(monthKey(d)); d.setMonth(d.getMonth() - 1); }
     return out;
 }
@@ -90,7 +86,7 @@ function detectRecurring(expenses, knownSubs) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Anomaly detection — category-level Z-score over the last 6 months
 // ─────────────────────────────────────────────────────────────────────────────
-function detectAnomalies(expenses, now = new Date()) {
+function detectAnomalies(expenses) {
     const byCatMonth = {};
     for (const e of expenses) {
         if (!e.date_ms || !e.amount) continue;
@@ -99,26 +95,20 @@ function detectAnomalies(expenses, now = new Date()) {
         byCatMonth[cat] = byCatMonth[cat] || {};
         byCatMonth[cat][mk] = (byCatMonth[cat][mk] || 0) + Number(e.amount);
     }
-    const recent = lastNMonths(6, now);
+    const recent = lastNMonths(6);
     const anomalies = [];
     for (const cat of Object.keys(byCatMonth)) {
-        // Keep the month attached to its value. The previous code filtered out
-        // zero-spend months BEFORE reading the last one, so when the most recent
-        // month had no spend in a category the report used an OLDER month's amount
-        // but labelled it with the CURRENT month. That made "This month's Travel is
-        // LKR 80,000" a statement about a month that was never travelled in.
-        const points = recent.map(mk => ({ mk, v: byCatMonth[cat][mk] || 0 })).filter(p => p.v > 0);
-        if (points.length < 4) continue;
-        const series = points.map(p => p.v);
+        const series = recent.map(mk => byCatMonth[cat][mk] || 0).filter(v => v > 0);
+        if (series.length < 4) continue;
         const m = mean(series), sd = stdev(series);
         if (sd < 0.01) continue;
-        const latestPt = points[points.length - 1];
-        const z = (latestPt.v - m) / sd;
+        const latest = series[series.length - 1];
+        const z = (latest - m) / sd;
         if (Math.abs(z) > 2) {
             anomalies.push({
                 category: cat,
-                month: latestPt.mk,
-                amount: Math.round(latestPt.v),
+                month: recent[recent.length - 1],
+                amount: Math.round(latest),
                 baseline_avg: Math.round(m),
                 z_score: Number(z.toFixed(2)),
                 direction: z > 0 ? 'spike' : 'drop',

@@ -135,56 +135,37 @@
         var qualities = [0.85, 0.75, 0.65, 0.55];
         var page = await pdf.getPage(pageNum);
 
-        // Same defect the image path above was hardened against: a rejected
-        // canvas at scale 2.0 (up to 2200x2200 RGBA ≈ 19 MB backing store)
-        // fell out of scope without being released, so WebKit kept every
-        // rung's backing store alive until an actual GC pass — several of
-        // those per page, times every page of every PDF scanned this
-        // session, is exactly how the web content process gets starved and
-        // the app crash-loops. Every rung now zeroes its canvas before the
-        // next attempt or return, and the page's own caches are released via
-        // cleanup() once we are done with it, win or lose.
-        try {
-            for (var si = 0; si < scales.length; si++) {
-                var scale = scales[si];
-                var viewport = page.getViewport({ scale: scale });
-                // Cap absolute dimensions — some PDFs are huge (A3 etc.)
-                var maxDim = 2200;
-                if (viewport.width > maxDim || viewport.height > maxDim) {
-                    var newScale = scale * Math.min(maxDim / viewport.width, maxDim / viewport.height);
-                    viewport = page.getViewport({ scale: newScale });
-                }
-                var canvas = document.createElement('canvas');
-                try { window.WFStability && window.WFStability.resourceInc('pdfCanvas'); } catch (_) {}
-                canvas.width = Math.floor(viewport.width);
-                canvas.height = Math.floor(viewport.height);
-                var ctx = canvas.getContext('2d', { willReadFrequently: false });
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-
-                var found = null;
-                for (var qi = 0; qi < qualities.length; qi++) {
-                    var dataUrl = canvas.toDataURL('image/jpeg', qualities[qi]);
-                    var base64 = dataUrl.split(',')[1];
-                    var size = approxBase64Bytes(base64);
-                    if (size <= maxBytes) {
-                        console.log('[' + V + '] pdf p' + pageNum + ' rendered ' +
-                            canvas.width + 'x' + canvas.height + ' @' + scale + 'x q=' + qualities[qi] +
-                            ' → ' + fmtBytes(size));
-                        found = { base64: base64, width: canvas.width, height: canvas.height, bytes: size };
-                        break;
-                    }
-                }
-                canvas.width = canvas.height = 0;   // release this rung's backing store now
-                try { window.WFStability && window.WFStability.resourceDec('pdfCanvas'); } catch (_) {}
-                if (found) return found;
+        for (var si = 0; si < scales.length; si++) {
+            var scale = scales[si];
+            var viewport = page.getViewport({ scale: scale });
+            // Cap absolute dimensions — some PDFs are huge (A3 etc.)
+            var maxDim = 2200;
+            if (viewport.width > maxDim || viewport.height > maxDim) {
+                var newScale = scale * Math.min(maxDim / viewport.width, maxDim / viewport.height);
+                viewport = page.getViewport({ scale: newScale });
             }
-            // Last resort — return the smallest we could make
-            throw new Error('PDF page ' + pageNum + ' too large even at minimum quality');
-        } finally {
-            try { page.cleanup && page.cleanup(); } catch (_) {}
+            var canvas = document.createElement('canvas');
+            canvas.width = Math.floor(viewport.width);
+            canvas.height = Math.floor(viewport.height);
+            var ctx = canvas.getContext('2d', { willReadFrequently: false });
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+            for (var qi = 0; qi < qualities.length; qi++) {
+                var dataUrl = canvas.toDataURL('image/jpeg', qualities[qi]);
+                var base64 = dataUrl.split(',')[1];
+                var size = approxBase64Bytes(base64);
+                if (size <= maxBytes) {
+                    console.log('[' + V + '] pdf p' + pageNum + ' rendered ' +
+                        canvas.width + 'x' + canvas.height + ' @' + scale + 'x q=' + qualities[qi] +
+                        ' → ' + fmtBytes(size));
+                    return { base64: base64, width: canvas.width, height: canvas.height, bytes: size };
+                }
+            }
         }
+        // Last resort — return the smallest we could make
+        throw new Error('PDF page ' + pageNum + ' too large even at minimum quality');
     }
 
     /* =========================================================================
@@ -198,7 +179,6 @@
         if (!file) throw new Error('No file provided');
         var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
         var isImage = (file.type || '').startsWith('image/') || /\.(jpg|jpeg|png|webp|heic|heif)$/i.test(file.name || '');
-        try { window.WFStability && window.WFStability.crumb('scan: ' + (isPdf ? 'pdf' : 'image') + ' ' + (file.name || '?') + ' (' + Math.round((file.size || 0) / 1024) + 'KB)'); } catch (_) {}
 
         // ---- IMAGE: compress to fit under maxBytes (memory-safe for iOS) ----
         if (!isPdf) {
@@ -341,25 +321,14 @@
                 var cands = [];
                 try { cands = await window.wfVaultPdfPasswords(); } catch (_) {}
                 var opened = null;
-                // Same defect as mail-sync's unlock cascade (see wealthflow-
-                // pdf-unlock.js openPdfOnce): every WRONG candidate still
-                // creates a real PDF.js loading task, and a rejected promise
-                // does not release it on its own — it has to be destroyed
-                // explicitly. A vault with several saved passwords meant every
-                // locked receipt/statement scanned through AI Scan left one
-                // undestroyed task per wrong guess, compounding across scans
-                // in a session exactly like the mail-sync bug did.
                 for (var ci = 0; ci < cands.length; ci++) {
-                    var _vTask = window.pdfjsLib.getDocument({ data: u8.slice(), password: cands[ci] });
                     try {
-                        opened = await _vTask.promise;
+                        opened = await window.pdfjsLib.getDocument({ data: u8.slice(), password: cands[ci] }).promise;
                         if (opened) {
                             if (typeof window.notify === 'function') window.notify('🔓 Locked PDF opened automatically with your Vault keys', 'success');
                             break;
                         }
-                    } catch (pe) {
-                        try { if (typeof _vTask.destroy === 'function') await _vTask.destroy(); } catch (_) {}
-                    }
+                    } catch (pe) { /* wrong password — try the next candidate */ }
                 }
                 if (opened) { pdf = opened; }
                 else if (cands.length) {
@@ -375,27 +344,16 @@
         if (pages === 0) throw new Error('PDF has no pages');
         var images = [];
         var dims = [];
-        try {
-            for (var i = 1; i <= pages; i++) {
-                try {
-                    var rendered = await renderPdfPageAdaptive(pdf, i, maxBytes);
-                    images.push(rendered.base64);
-                    dims.push({ w: rendered.width, h: rendered.height, bytes: rendered.bytes });
-                } catch (e) {
-                    console.warn('[' + V + '] PDF page ' + i + ' render failed:', e.message);
-                    if (images.length === 0 && i === 1) throw e; // first page must succeed
-                    break;
-                }
+        for (var i = 1; i <= pages; i++) {
+            try {
+                var rendered = await renderPdfPageAdaptive(pdf, i, maxBytes);
+                images.push(rendered.base64);
+                dims.push({ w: rendered.width, h: rendered.height, bytes: rendered.bytes });
+            } catch (e) {
+                console.warn('[' + V + '] PDF page ' + i + ' render failed:', e.message);
+                if (images.length === 0 && i === 1) throw e; // first page must succeed
+                break;
             }
-        } finally {
-            // Every page is already captured as a base64 JPEG at this point, so
-            // the PDF.js document itself — fonts, XRef table, every page object
-            // fetched above — has no reason to stay resident. Never destroying
-            // it (the bug this closes) meant every PDF scanned this session
-            // (AI chat attachments, CRIB reports up to 6 pages, vision OCR)
-            // permanently grew the web content process's memory until iOS
-            // killed it — repeatedly, indistinguishable from a crash loop.
-            try { if (pdf && typeof pdf.destroy === 'function') await pdf.destroy(); } catch (_) {}
         }
         if (images.length === 0) throw new Error('No PDF pages could be rendered');
         return { images: images, isPdf: true, pageCount: images.length, dimensions: dims };
@@ -516,18 +474,8 @@
     }
 
     // Returns an enhanced data-URL (JPEG). On any failure returns the original.
-    //
-    // The canvas release used to sit on ONE success-path line at the bottom of
-    // the try block. Three other exits — the getImageData catch, the missing-
-    // context early return, and the outer catch below — all returned without
-    // ever reaching it, so a canvas up to 3000x3000 (MAX, desktop) stayed
-    // resident on every error path. Same defect class as the PDF-render
-    // canvas leak this file already had fixed elsewhere; `c` is now released
-    // in a finally so every exit path — success, thrown, or early-returned —
-    // clears it exactly once.
     async function _enhanceImageForOCR(dataUrl, opts) {
         opts = opts || {};
-        var c = null;
         try {
             if (!dataUrl || typeof document === 'undefined') return dataUrl;
             var img = await _loadImg(dataUrl);
@@ -543,7 +491,7 @@
             if (longest * scale > MAX) scale = MAX / longest;
             var nw = Math.max(1, Math.round(w * scale)), nh = Math.max(1, Math.round(h * scale));
 
-            c = document.createElement('canvas');
+            var c = document.createElement('canvas');
             c.width = nw; c.height = nh;
             var ctx = c.getContext('2d', { willReadFrequently: true });
             if (!ctx) return dataUrl;
@@ -592,13 +540,12 @@
             for (i = 0; i < total; i++) { var p = sharp[i]; var j = i << 2; d[j] = d[j + 1] = d[j + 2] = p; d[j + 3] = 255; }
             ctx.putImageData(imgData, 0, 0);
             var out = c.toDataURL('image/jpeg', 0.92);
-            imgData = null; d = null; lum = null; stretched = null; sharp = null;
+            // free
+            c.width = c.height = 0; imgData = null; d = null; lum = null; stretched = null; sharp = null;
             return out || dataUrl;
         } catch (e) {
             console.warn('[' + V + '] image enhance skipped:', e && e.message);
             return dataUrl;
-        } finally {
-            if (c) { try { c.width = c.height = 0; } catch (_) {} }
         }
     }
 
@@ -637,7 +584,7 @@
      * 7. RECEIPT PROMPT BUILDER (used for fallback path)
      * ========================================================================= */
     function buildReceiptPrompt(hints) {
-        var today = (hints && hints.today) || window.WFWhen.today();
+        var today = (hints && hints.today) || new Date().toISOString().split('T')[0];
         var currency = (hints && hints.currency) || 'LKR';
         return 'You are a world-class receipt OCR. Read this image with surgical precision and return ONLY a single valid JSON object — no markdown, no commentary:\n\n' +
             '{"vendor":"","amount":0,"date":"YYYY-MM-DD","category":"","items":[],"currency":"' + currency + '","tax":null,"payment_method":null,"receipt_number":null,"time":null,"raw_text":""}\n\n' +
@@ -657,7 +604,7 @@
      *   everything into a single descriptor.
      * ========================================================================= */
     function buildCCStatementPrompt(bank) {
-        var today = window.WFWhen.today();
+        var today = new Date().toISOString().split('T')[0];
         var thisYear = today.substring(0, 4);
         var bankLine = bank ? ('This statement is from: ' + bank + '\n') : '';
         return 'You are an expert credit-card-statement parser specialised in Sri Lankan banks ' +
@@ -737,7 +684,7 @@
      *   Handles DD/MM/YYYY, DD-MM-YYYY, DD MMM, "May 22", etc.
      * ========================================================================= */
     function normaliseCCOTDate(s) {
-        if (!s) return window.WFWhen.today();
+        if (!s) return new Date().toISOString().split('T')[0];
         var str = String(s).trim();
         // Already ISO?
         if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.substring(0, 10);
@@ -763,13 +710,9 @@
         // Last resort — Date.parse
         try {
             var d3 = new Date(str);
-            /* WFWhen.ymd, not toISOString(). `new Date('02 July 2026')` parses to
-             * LOCAL midnight, and toISOString() then reads it back in UTC — which
-             * in Colombo is 18:30 on the FIRST of July. A date printed on the
-             * statement came out one day earlier than the statement says. */
-            if (!isNaN(d3)) return window.WFWhen.ymd(d3);
+            if (!isNaN(d3)) return d3.toISOString().split('T')[0];
         } catch (_) {}
-        return window.WFWhen.today();
+        return new Date().toISOString().split('T')[0];
     }
 
 
@@ -1421,7 +1364,7 @@
                         if (hasVS) {
                             var ccotHints = {
                                 currency: (window.WF_SCAN_SETTINGS && window.WF_SCAN_SETTINGS.currency) || 'LKR',
-                                today: window.WFWhen.today(), tz: window.WFWhen.zone(),
+                                today: new Date().toISOString().split('T')[0],
                                 locale: navigator.language || 'en-LK',
                                 docType: 'cc_statement_multi_row',
                                 bank: ccotBank,
@@ -1624,7 +1567,7 @@
             var settings = window.WF_SCAN_SETTINGS || {};
             var hints = {
                 currency: settings.currency || 'LKR',
-                today: window.WFWhen.today(), tz: window.WFWhen.zone(),
+                today: new Date().toISOString().split('T')[0],
                 locale: navigator.language || 'en-LK',
                 docType: isSubscription ? 'subscription_bill' : (isCCOT ? 'cc_statement' : 'receipt'),
                 bank: isCCOT ? ccotBank : null
@@ -1872,7 +1815,7 @@
         if (typeof window.notify === 'function') window.notify('🔍 Deep scanning…', 'info');
 
         try {
-            var hints = { currency: 'LKR', today: window.WFWhen.today() };
+            var hints = { currency: 'LKR', today: new Date().toISOString().split('T')[0] };
             var hasVisionScan = await isEndpointAvailable('/vision-scan');
             var scanData = null;
             if (hasVisionScan) {
@@ -2953,38 +2896,18 @@
      *     handle attached files via the multi-engine vision pipeline
      * ========================================================================= */
     var _originalSendAIMessage = null;
-    /* `msgOverride` is not optional decoration — it is how every follow-up
-     * pill and suggested question in this app sends its text.
-     *
-     * The host declares `sendAIMessage(msgOverride)` and seven call sites pass
-     * one. This function replaced it at load taking NO parameters, so the
-     * argument was dropped, the empty chat input was read instead, and the
-     * `!msg && !hasFiles` guard below returned silently. Clicking a follow-up
-     * pill did nothing at all — verified in a browser before this change:
-     * window.sendAIMessage.length was 0 and the call added no message.
-     *
-     * A JavaScript arity mismatch between an overridden function and its
-     * override is invisible; nothing warns. test/no_emoji_test.js derives the
-     * override map for its own purposes and test/ai_chat_send_test.js now
-     * checks the signatures agree.
-     *
-     * Typed rather than truthy: a call site that ever hands this an Event —
-     * `onclick="sendAIMessage(event)"` — must fall back to the input box, not
-     * stringify an object into the chat. */
-    async function sendAIMessageV5(msgOverride) {
+    async function sendAIMessageV5() {
         var inputEl = document.getElementById('aiChatInput');
         if (!inputEl) return;
-        var override = (typeof msgOverride === 'string') ? msgOverride.trim() : '';
-        var msg = override || inputEl.value.trim();
+        var msg = inputEl.value.trim();
         var hasFiles = _aiChatAttachments.length > 0;
 
         if (!msg && !hasFiles) return;
 
-        // No files attached → defer to original handler, carrying the override
-        // with it. Passing nothing here is what made the pills dead.
+        // No files attached → defer to original handler
         if (!hasFiles) {
             if (typeof _originalSendAIMessage === 'function') {
-                return _originalSendAIMessage(override || undefined);
+                return _originalSendAIMessage();
             }
             return;
         }
@@ -3240,7 +3163,7 @@
                         image: images[0].base64,
                         mode: preferFrontier ? 'frontier' : 'ultra',
                         hints: {
-                            today: window.WFWhen.today(), tz: window.WFWhen.zone(),
+                            today: new Date().toISOString().split('T')[0],
                             currency: 'LKR',
                             taskType: 'universal_vision',
                             customPrompt: prompt
@@ -3280,7 +3203,7 @@
                 body: JSON.stringify({
                     image: img.base64,
                     mode: 'deep',
-                    hints: { today: window.WFWhen.today(), tz: window.WFWhen.zone(), taskType: 'universal_vision' }
+                    hints: { today: new Date().toISOString().split('T')[0], taskType: 'universal_vision' }
                 })
             }).then(function (r) { return r.ok ? r.json() : null; })
               .catch(function () { return null; });

@@ -8,13 +8,19 @@
 //   ocr               — pure OCR text extraction
 //
 // Env vars:
-//   EDENAI_API_KEY (required)
+//   EDENAI_API_KEY (required; embedded fallback for development convenience)
+//
+// SECURITY: the embedded fallback below is a known-exposed key. ROTATE in Eden AI
+// dashboard and set EDENAI_API_KEY env var to override.
 // =====================================================================================
 
 export const config = {
     maxDuration: 30,
     api: { bodyParser: { sizeLimit: '4mb' } }
 };
+
+// SECURITY: This was provided in chat history → assume compromised. Use env var to override.
+const EMBEDDED_KEY_FALLBACK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiNWQxZDFlYjctODJmOS00OGZiLTkzMDUtYzIyMjc0MzllODA5IiwidHlwZSI6ImFwaV90b2tlbiIsIm5hbWUiOiJFREVOQUlfQVBJX0tFWSIsImlzX2N1c3RvbSI6dHJ1ZX0.R426tOr_IhAFb1OOyEoAPul1lXNK5LT3lZY4GVceR44';
 
 async function fetchWithTimeout(url, options, timeoutMs = 25000) {
     const controller = new AbortController();
@@ -145,7 +151,7 @@ export default async function handler(req, res) {
     if (req.method === 'OPTIONS') return res.status(200).end();
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const key = process.env.EDENAI_API_KEY;
+    const key = process.env.EDENAI_API_KEY || EMBEDDED_KEY_FALLBACK;
     if (!key) return res.status(503).json({ error: 'EDENAI_API_KEY not configured' });
 
     const { feature, image, text, providers } = req.body || {};

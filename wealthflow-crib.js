@@ -190,25 +190,15 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             var r = new FileReader();
             r.onload = function () {
                 var img = new Image();
-                // Guarded so a throw here (tainted canvas, OOM on toDataURL)
-                // still releases the canvas and settles the promise, instead
-                // of hanging and leaking both at once.
                 img.onload = function () {
-                    var c = null;
-                    try {
-                        var maxDim = 2000, w = img.naturalWidth, h = img.naturalHeight;
-                        if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
-                        else if (h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
-                        c = document.createElement('canvas'); c.width = w; c.height = h;
-                        var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
-                        var b64 = c.toDataURL('image/jpeg', 0.85).split(',')[1];
-                        resolve([b64]);
-                    } catch (e) {
-                        reject(e);
-                    } finally {
-                        if (c) { try { c.width = c.height = 0; } catch (_) {} }
-                        img.src = '';
-                    }
+                    var maxDim = 2000, w = img.naturalWidth, h = img.naturalHeight;
+                    if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+                    else if (h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+                    var c = document.createElement('canvas'); c.width = w; c.height = h;
+                    var cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
+                    var b64 = c.toDataURL('image/jpeg', 0.85).split(',')[1];
+                    c.width = c.height = 0; img.src = '';
+                    resolve([b64]);
                 };
                 img.onerror = function () { reject(new Error('decode failed')); };
                 img.src = r.result;
@@ -608,7 +598,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
             return _analyse(fields, res.rawText).then(function (a) {
                 var rep = {
                     id: _uid(), ts: _now(),
-                    dateLabel: fields.reportDate || window.WFWhen.today(),
+                    dateLabel: fields.reportDate || new Date().toISOString().slice(0, 10),
                     fingerprint: fp, textFp: tfp,
                     score: (fields.score != null ? fields.score : null),
                     scoreMax: fields.scoreMax || 900,

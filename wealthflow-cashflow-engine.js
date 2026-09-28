@@ -58,11 +58,6 @@
 // can live outside index.html.
 // =============================================================================
 
-/* The cadence rule, shared with the verification queue. One answer to "does
- * this source pay in this month", used by the projection and by the screen that
- * asks the owner to confirm the payout — they must not be able to disagree. */
-import { paysInMonth } from './wealthflow-verify-matrix.js';
-
 /* ── date helpers, all UTC-normalised to a day boundary ───────────────────── */
 
 const DAY_MS = 86400000;
@@ -264,24 +259,6 @@ export function commitments(appData, from, to) {
     // ── investment income on its nominal pay day ───────────────────────────
     // 'expected', not 'committed': `day` is a nominal pay day, and a payout can
     // land a day or two either side. The amount is known; the date is soft.
-    //
-    // AND THE CADENCE IS READ, WHICH IT WAS NOT. `income` records carry `freq`
-    // — monthly, quarterly or annual — and saveIncome puts the PER-PAYOUT
-    // figure in a field called `monthly` for all three:
-    //
-    //     monthly:   amount * rate / 100 / 12
-    //     quarterly: amount * rate / 100 / 4
-    //     annual:    amount * rate / 100
-    //
-    // This loop read that field and pushed it in EVERY month, so an annual
-    // payout was projected twelve times — the whole year's interest counted
-    // once a month, every month. On a projection whose entire purpose is
-    // "which day do I run out of money", that overstates income by 12x on any
-    // annual holding and 4x on a quarterly one.
-    //
-    // paysInMonth is imported rather than reimplemented: the verification queue
-    // asks the same question about the same records, and two answers to "does
-    // this pay in September" is how a screen and a projection disagree.
     for (const i of arr(A.income)) {
         if (!i) continue;
         const monthly = num(i.monthly);
@@ -295,7 +272,6 @@ export function commitments(appData, from, to) {
             if (d < from) continue;
             if (begins && d < begins) continue;
             if (ends && d > ends) continue;
-            if (!paysInMonth(i, from.getUTCFullYear(), from.getUTCMonth() + k)) continue;
             push(d, 'in', monthly, (i.name || 'Investment income'), 'income', 'expected', i.id);
         }
     }
@@ -391,75 +367,6 @@ export function variableDailySpend(appData, asOf, months = 3) {
  *                              order. Applied on `extraDay` of each month.
  * @param opts.extraDay         day-of-month for that outflow (default: asOf's).
  */
-/**
- * Rewrite ledger commitments for a what-if question. Pure; returns new objects.
- *
- * An override is `{ match, drop | shiftDays | factor }`. Every field present in
- * `match` must match the item — `id`, `source`, `kind`, and `labelIncludes`
- * (a case-insensitive substring). The FIRST override that matches an item wins;
- * an item no override matches is returned untouched.
- *
- * AN EMPTY MATCH MATCHES NOTHING. `{ drop: true }` with no `match` would
- * otherwise delete every obligation the user has and report a gloriously
- * healthy projection. A scenario that names nothing changes nothing.
- *
- * Anything a shift moves outside the window — past the horizon, or back before
- * `asOf`, where it would be money that has already gone — is dropped and
- * reported in `dropped`, on the same channel as the commitments the engine
- * could not read. Silently vanishing an obligation is the one outcome a
- * what-if engine must never produce.
- */
-export function applyOverrides(items, overrides, asOf, to) {
-    const list = Array.isArray(overrides) ? overrides.filter(Boolean) : [];
-    if (!list.length) return { items, dropped: [] };
-
-    const matches = (o, it) => {
-        const m = o && o.match;
-        if (!m || typeof m !== 'object') return false;
-        const keys = ['id', 'source', 'kind', 'labelIncludes'].filter((k) => m[k] != null && m[k] !== '');
-        if (!keys.length) return false;
-        if (m.id != null && String(m.id) !== String(it.id)) return false;
-        if (m.source && String(m.source) !== it.source) return false;
-        if (m.kind && String(m.kind) !== it.kind) return false;
-        if (m.labelIncludes
-            && !String(it.label || '').toLowerCase().includes(String(m.labelIncludes).toLowerCase())) return false;
-        return true;
-    };
-
-    const out = [];
-    const dropped = [];
-    for (const it of items) {
-        const o = list.find((x) => matches(x, it));
-        if (!o) { out.push(it); continue; }
-        if (o.drop) {
-            dropped.push({ source: it.source, id: it.id, why: 'removed by scenario: ' + (o.label || 'cancelled') });
-            continue;
-        }
-        let amount = it.amount;
-        if (o.factor != null) amount = num(o.factor) * it.amount;
-        if (!(amount > 0)) {
-            dropped.push({ source: it.source, id: it.id, why: 'removed by scenario: scaled to zero' });
-            continue;
-        }
-        let date = it.date;
-        if (o.shiftDays) {
-            const d = addDays(parseDay(it.date), Math.trunc(num(o.shiftDays)));
-            if (!d || d < asOf || d > to) {
-                dropped.push({
-                    source: it.source,
-                    id: it.id,
-                    why: 'moved outside the projection window by scenario (' + o.shiftDays + ' days)',
-                });
-                continue;
-            }
-            date = isoDay(d);
-        }
-        out.push({ ...it, date, amount, certainty: 'proposed' });
-    }
-    out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.amount - a.amount));
-    return { items: out, dropped };
-}
-
 export function project(appData, opts = {}) {
     // asOf is REQUIRED, with no fallback to the clock.
     //
@@ -479,37 +386,9 @@ export function project(appData, opts = {}) {
     const includeVariable = opts.includeVariable !== false;
     const to = addDays(asOf, horizon);
 
-    const { items: ledger, ignored } = commitments(appData, asOf, to);
+    const { items, ignored } = commitments(appData, asOf, to);
     const variable = variableDailySpend(appData, asOf, opts.lookbackMonths || 3);
-
-    /* ── the two scenario hooks ────────────────────────────────────────────
-     *
-     * WHAT-IF QUESTIONS ARE NOT ADDITIONS. `extraCommitments` and
-     * `extraMonthly` below can only ADD money movements, so every question the
-     * engine could answer was of the form "what if I also pay X". The questions
-     * that actually decide something are subtractive: what if this client pays
-     * two weeks late, what if I clear this loan early, what if I cut
-     * discretionary spending by a fifth. None of those could be asked.
-     *
-     * `overrides` rewrites the LEDGER — the commitments derived from appData —
-     * before the day-by-day walk. Deliberately not the caller-supplied extras:
-     * those are the scenario's own additions, and letting an override cancel
-     * one would let a scenario silently undo itself, which is unreadable from
-     * the outside.
-     *
-     * `variableFactor` scales the discretionary slice. It is a multiplier and
-     * not a replacement amount, because the honest input the user has is "a
-     * fifth less than I actually spend", not a number they can name.
-     *
-     * Both are no-ops when absent, and both are asserted to be no-ops by
-     * test/whatif_test.js — a scenario layer that quietly changes the baseline
-     * would make every comparison it draws meaningless.
-     */
-    const { items, dropped } = applyOverrides(ledger, opts.overrides, asOf, to);
-    for (const d of dropped) ignored.push(d);
-
-    const variableFactor = opts.variableFactor == null ? 1 : Math.max(0, num(opts.variableFactor));
-    const perDayVariable = includeVariable ? variable.perDay * variableFactor : 0;
+    const perDayVariable = includeVariable ? variable.perDay : 0;
 
     const byDate = new Map();
     for (const it of items) {
@@ -868,7 +747,7 @@ export function summarise(appData, opts = {}) {
 
 const API = {
     isoDay, parseDay, addDays, dayInMonth, monthsBetween,
-    openingBalance, commitments, variableDailySpend, applyOverrides,
+    openingBalance, commitments, variableDailySpend,
     project, safeToSpend, sustainableMonthly, simulate, summarise,
 };
 

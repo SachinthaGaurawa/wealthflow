@@ -49,14 +49,9 @@
  *      GOOGLE_OAUTH_CLIENT_SECRET, FIREBASE_SERVICE_ACCOUNT
  * ===========================================================================*/
 
-import {
-    planMessage, planWrite, planHold, repairManifest, MAX_HELD, isWorthTelling, REJECT_TEXT, worthSighting,
-} from './wealthflow-mail-ingest.mjs';
-import { normalizeList, policyFrom, recordSighting, approvedClauses } from './wealthflow-mail-senders.mjs';
-import { sendersOf, SENDERS_FIELD, HELD_FIELD, mergeHeld } from './gmail-link.mjs';
+import { planMessage, planWrite, isWorthTelling, REJECT_TEXT } from './wealthflow-mail-ingest.mjs';
 import { getInboxDb } from './inbox-store.mjs';
 import { accessTokenFrom, authed } from './google-oauth.mjs';
-import { createHash } from 'node:crypto';
 
 const TOKENINFO = 'https://oauth2.googleapis.com/tokeninfo?id_token=';
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -146,91 +141,23 @@ export function decodeEnvelope(body) {
 export async function messagesSince(token, startHistoryId, f) {
     const url = `${GMAIL}/history?startHistoryId=${encodeURIComponent(startHistoryId)}`
         + '&historyTypes=messageAdded&maxResults=200';
+    const r = await f(url, { headers: authed(token) });
+    if (r.status === 404) return { ok: false, reason: 'history-too-old' };
+    if (!r.ok) return { ok: false, reason: 'history-unavailable', status: r.status };
+    const out = await r.json();
     const ids = new Set();
-    const pages = new Set();
-    let pageToken = '', historyId = startHistoryId;
-    for (let page = 0; page < 100; page += 1) {
-        let r, out;
-        try {
-            r = await f(url + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
-            if (r.status === 404) return { ok: false, reason: 'history-too-old' };
-            if (!r.ok) return { ok: false, reason: 'history-unavailable', status: r.status };
-            out = await r.json();
-            if (!out || !Array.isArray(out.history || [])) throw new Error('invalid history');
-            for (const h of out.history || []) {
-                for (const a of h.messagesAdded || []) if (a.message && a.message.id) ids.add(a.message.id);
-            }
-        } catch (_) { return { ok: false, reason: 'history-unavailable' }; }
-        // A cursor is safe to commit only after every page has been collected.
-        historyId = out.historyId || historyId;
-        pageToken = out.nextPageToken;
-        if (!pageToken) return { ok: true, ids: [...ids], historyId };
-        if (typeof pageToken !== 'string' || pages.has(pageToken)) break;
-        pages.add(pageToken);
+    for (const h of out.history || []) {
+        for (const a of h.messagesAdded || []) if (a.message && a.message.id) ids.add(a.message.id);
     }
-    return { ok: false, reason: 'history-pagination-incomplete' };
+    return { ok: true, ids: [...ids], historyId: out.historyId || startHistoryId };
 }
 
 /** The fallback when history is too old: the most recent messages, bounded. */
-export async function recentMessages(token, f, max = 25, clauses = null) {
-    if (Array.isArray(clauses) && !clauses.length) return { ok: true, ids: [] };
-    const query = 'has:attachment' + (clauses ? ' {' + clauses.join(' ') + '}' : '');
-    const base = `${GMAIL}/messages?maxResults=${Math.max(1, Math.min(50, max))}&q=${encodeURIComponent(query)}`;
-    const ids = new Set(), seen = new Set();
-    let pageToken = '';
-    for (let page = 0; page < 100; page += 1) {
-        let out;
-        try {
-            const r = await f(base + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
-            if (!r.ok) return { ok: false, reason: 'list-unavailable', status: r.status };
-            out = await r.json();
-            for (const m of out.messages || []) if (m.id) ids.add(m.id);
-        } catch (_) { return { ok: false, reason: 'list-unavailable' }; }
-        pageToken = out.nextPageToken;
-        if (!pageToken) return { ok: true, ids: [...ids] };
-        if (typeof pageToken !== 'string' || seen.has(pageToken)) break;
-        seen.add(pageToken);
-    }
-    return { ok: false, reason: 'list-pagination-incomplete' };
-}
-
-/**
- * A small rolling reconciliation over the owner's exact approved addresses.
- *
- * Gmail history is an efficient cursor, not an inventory proof: a watch lapse,
- * an earlier buggy cursor advance, or an acknowledged push whose worker died
- * can leave one message behind the bookmark forever. Re-reading a bounded
- * overlap is safe because manifests have stable message+attachment identities.
- */
-export const RECONCILE_DAYS = 14;
-export const RECONCILE_MAX_PAGES = 4;
-export const RECONCILE_MIN_GAP_MS = 6 * 60 * 60 * 1000;
-export async function reconcileRecentMessages(token, f, clauses, {
-    days = RECONCILE_DAYS, maxPages = RECONCILE_MAX_PAGES,
-} = {}) {
-    if (!Array.isArray(clauses) || !clauses.length) return { ok: true, ids: [] };
-    const safeDays = Math.max(1, Math.min(31, Math.floor(Number(days)) || RECONCILE_DAYS));
-    const safePages = Math.max(1, Math.min(RECONCILE_MAX_PAGES, Math.floor(Number(maxPages)) || RECONCILE_MAX_PAGES));
-    const query = `newer_than:${safeDays}d has:attachment {${clauses.join(' ')}}`;
-    const base = `${GMAIL}/messages?maxResults=50&q=${encodeURIComponent(query)}`;
-    const ids = new Set(), seen = new Set();
-    let pageToken = '';
-    for (let page = 0; page < safePages; page += 1) {
-        let out;
-        try {
-            const r = await f(base + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''), { headers: authed(token) });
-            if (!r.ok) return { ok: false, reason: 'recent-reconciliation-unavailable', status: r.status };
-            out = await r.json();
-            for (const m of out.messages || []) if (m && m.id) ids.add(m.id);
-        } catch (_) { return { ok: false, reason: 'recent-reconciliation-unavailable' }; }
-        pageToken = out.nextPageToken;
-        if (!pageToken) return { ok: true, ids: [...ids], complete: true };
-        if (typeof pageToken !== 'string' || seen.has(pageToken)) break;
-        seen.add(pageToken);
-    }
-    // Do not pretend a capped inventory is complete. The collected ids are
-    // still useful and the next minute repeats the overlap idempotently.
-    return { ok: true, ids: [...ids], complete: false };
+export async function recentMessages(token, f, max = 25) {
+    const r = await f(`${GMAIL}/messages?maxResults=${max}&q=has:attachment`, { headers: authed(token) });
+    if (!r.ok) return { ok: false, reason: 'list-unavailable', status: r.status };
+    const out = await r.json();
+    return { ok: true, ids: (out.messages || []).map((m) => m.id) };
 }
 
 /* ── 4. the handler ───────────────────────────────────────────────────────── */
@@ -265,35 +192,6 @@ export default async function handler(req, res) {
     const { db, reason } = await getInboxDb();
     if (!db) return j(res, 500, { ok: false, error: String(reason || 'database unavailable').slice(0, 300) });
 
-    /* A Pub/Sub delivery is acknowledged only after its staged Gmail id list
-     * has been consumed. ingestMailbox deliberately handles ten messages per
-     * pass so one serverless request stays bounded; a 2xx here used to tell
-     * Pub/Sub the job was finished after only the first pass. No browser exists
-     * to follow `collectionPending` on this path, so ask Pub/Sub to redeliver.
-     * Stable message/attachment ids and the durable cursor make that retry
-     * idempotent. Authenticated browser calls use syncMailbox() below and keep
-     * the 200 response so their own continuation timer can advance the batch. */
-    const result = await syncMailbox(db, note, { env, f });
-    return j(res, pushDeliveryStatus(result), result?.body || { ok: false, error: 'mailbox sync failed' });
-}
-
-export function pushDeliveryStatus(result) {
-    const status = Number(result?.status) || 500;
-    return status >= 200 && status < 300 && result?.body?.collectionPending === true ? 503 : status;
-}
-
-/** Shared collection path for verified push, authenticated login, and scheduled catch-up. */
-export async function syncMailbox(db, note, { env = process.env, f = fetch } = {}) {
-    let result;
-    const response = { status(code) { this.code = code; return this; }, json(body) { result = { status: this.code, body }; return result; } };
-    await ingestMailbox(db, note, env, f, response);
-    return result;
-}
-
-async function ingestMailbox(db, note, env, f, res) {
-    const transport = f;
-    f = (url, options = {}) => transport(url, { ...options, signal: options.signal || AbortSignal.timeout(8000) });
-
     const userKey = note.emailAddress.replace(/[^a-z0-9]/g, '_');
     const stateRef = db.collection(MAIL_ROOT).doc(userKey);
 
@@ -304,22 +202,10 @@ async function ingestMailbox(db, note, env, f, res) {
     } catch (_) {
         return j(res, 500, { ok: false, error: 'state unreadable' });
     }
-    if (!state || !state.refresh_token || (state.email && state.email !== note.emailAddress)) {
+    if (!state || !state.refresh_token) {
         // Nothing this endpoint can do, and retrying will not change it.
         return j(res, 204, { ok: true, skipped: 'mailbox-not-connected' });
     }
-
-    /* The owner's statement-sender list, from the sealed document — the same
-     * source and the same shape gmail-scan.js reads. A push has no client to
-     * ask, which is the reason this list lives on the server at all. */
-    const senderList = normalizeList(sendersOf(state));
-    /* References to messages refused for a sender reason. Written once, after
-     * the loop, for the same reason the sender list is: one write, not one per
-     * message. */
-    const held = [];
-    const policy = policyFrom(senderList);
-    let seen = senderList;
-    const sightings = [];
 
     let token;
     try {
@@ -328,130 +214,48 @@ async function ingestMailbox(db, note, env, f, res) {
         return j(res, 500, { ok: false, error: 'could not mint an access token' });
     }
 
-    let pending = state.pendingCollection;
-    if (!pending || !Array.isArray(pending.ids) || !Number.isSafeInteger(pending.cursor)) {
-        const senderClauses = approvedClauses(senderList).sort();
-        // History only contains newly arriving messages. An address approved
-        // today may already have years of statements in this mailbox.
-        const senderCatchup = JSON.stringify(state.collectedSenderClauses || null) !== JSON.stringify(senderClauses);
-        let listed = state.historyId && !senderCatchup
-            ? await messagesSince(token, state.historyId, f)
-            : await recentMessages(token, f, 50, senderClauses);
-        if (!listed.ok && listed.reason === 'history-too-old') listed = await recentMessages(token, f, 50, approvedClauses(senderList));
-        if (!listed.ok) return j(res, 500, { ok: false, error: listed.reason });
-        // Cursor collection and rolling inventory are independent evidence.
-        // Union them before staging so a statement missed behind a valid-looking
-        // history bookmark is recovered without weakening the sender allowlist.
-        const shouldReconcile = state.historyId && !senderCatchup
-            && Date.now() - (Number(state.lastReconcileMs) || 0) >= RECONCILE_MIN_GAP_MS;
-        if (shouldReconcile) {
-            const overlap = await reconcileRecentMessages(token, f, senderClauses);
-            if (!overlap.ok) return j(res, 503, { ok: false, error: overlap.reason });
-            listed.ids = [...new Set([...(listed.ids || []), ...(overlap.ids || [])])];
-        }
-        // Stage the complete collection before downloading. A slow historical
-        // mailbox resumes in bounded batches without prematurely moving history.
-        const candidate = { id: globalThis.crypto.randomUUID(), ids: listed.ids,
-            cursor: 0, senderClauses, reconciled: Boolean(shouldReconcile),
-            target: String(listed.historyId || note.historyId || '') };
-        try {
-            pending = await db.runTransaction(async tx => {
-                const current = await tx.get(stateRef);
-                const existing = current.data()?.pendingCollection;
-                if (existing && Array.isArray(existing.ids)) return existing;
-                tx.set(stateRef, { pendingCollection: candidate }, { merge: true });
-                return candidate;
-            });
-        } catch (_) { return j(res, 503, { ok: false, error: 'collection staging failed' }); }
-    }
-    const batchEnd = Math.min(pending.ids.length, pending.cursor + 10);
+    let listed = await messagesSince(token, state.historyId || note.historyId, f);
+    if (!listed.ok && listed.reason === 'history-too-old') listed = await recentMessages(token, f);
+    if (!listed.ok) return j(res, 500, { ok: false, error: listed.reason });
 
     const stored = [];
     const notable = [];
-    for (const id of pending.ids.slice(pending.cursor, batchEnd)) {
+    for (const id of listed.ids) {
         let msg;
         try {
             const r = await f(`${GMAIL}/messages/${encodeURIComponent(id)}?format=full`, { headers: authed(token) });
-            if (r.status === 404) continue; // Deleted mail no longer exists.
-            if (!r.ok) return j(res, 503, { ok: false, error: 'message fetch failed' });
+            if (!r.ok) continue;                       // one unreadable message is not a failed push
             msg = await r.json();
-        } catch (_) { return j(res, 503, { ok: false, error: 'message fetch failed' }); }
+        } catch (_) { continue; }
 
-        const plan = planMessage(msg, policy);
-
-        /* Recorded only when this message could ever become a statement —
-         * see worthSighting() in wealthflow-mail-ingest.mjs for why: the
-         * Pub/Sub history this loop walks has no query, so before this gate
-         * every message the mailbox ever received, statement-shaped or not,
-         * added a row to the owner's senders list. gmail-scan.js's routine
-         * path applies the identical gate for the identical reason. */
-        if (worthSighting(plan)) {
-            const sighting = { from: plan.from, subject: plan.subject, now: Date.now() };
-            sightings.push(sighting);
-            seen = recordSighting(seen, sighting);
-        }
-
+        const plan = planMessage(msg);
         if (!plan.ok) {
             if (isWorthTelling(plan)) {
                 notable.push({ bank: plan.bank || null, reason: plan.reason, text: REJECT_TEXT[plan.reason] });
             }
-            /* HELD, NOT DROPPED. A refusal about WHO SENT IT is one tap from
-             * being wrong, and this used to `continue` — the sighting was
-             * recorded so the sender appeared in the pending list, but the
-             * statement itself was gone, and approving the sender afterwards
-             * brought back nothing. A reference only: no attachment is fetched
-             * on the strength of a refusal. */
-            const hold = planHold(plan, msg);
-            if (hold) { held.push(hold); }
             continue;
         }
 
         for (const item of plan.items) {
             const ref = db.collection(MAIL_ROOT).doc(userKey).collection('items').doc(item.key);
             try {
-                // Repair current or legacy duplicates without downloading again.
+                // Redelivery is normal; a document already here is already done.
                 const existing = await ref.get();
-                if (existing.exists) {
-                    const patch = repairManifest(existing.data(), item, { uid: state.uid || '' });
-                    if (Object.keys(patch).length) await ref.set(patch, { merge: true });
-                    stored.push({ key: item.key, duplicate: true });
-                    continue;
-                }
-                if (item.legacyKey && item.legacyKey !== item.key) {
-                    const oldRef = db.collection(MAIL_ROOT).doc(userKey).collection('items').doc(item.legacyKey);
-                    const old = await oldRef.get();
-                    if (old.exists) {
-                        const patch = repairManifest(old.data(), item, { uid: state.uid || '' });
-                        if (Object.keys(patch).length) await oldRef.set(patch, { merge: true });
-                        stored.push({ key: item.legacyKey, duplicate: true });
-                        continue;
-                    }
-                }
+                if (existing.exists) { stored.push({ key: item.key, duplicate: true }); continue; }
 
-                let att;
-                if (item.inlineData) {
-                    att = { data: item.inlineData };
-                } else {
-                    const ar = await f(
-                        `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
-                        + `/attachments/${encodeURIComponent(item.attachmentId)}`,
-                        { headers: authed(token) },
-                    );
-                    if (!ar.ok) return j(res, 503, { ok: false, error: 'attachment fetch failed' });
-                    att = await ar.json();
-                }
+                const ar = await f(
+                    `${GMAIL}/messages/${encodeURIComponent(item.messageId)}`
+                    + `/attachments/${encodeURIComponent(item.attachmentId)}`,
+                    { headers: authed(token) },
+                );
+                if (!ar.ok) continue;
+                const att = await ar.json();
                 // Gmail returns base64url; the store and the device both want base64.
                 const b64 = String(att.data || '').replace(/-/g, '+').replace(/_/g, '/');
 
                 const write = planWrite(b64, {
                     bank: item.bank, filename: item.filename, messageId: item.messageId,
-                    attachmentId: item.attachmentId || '', size: item.size,
                     subject: item.subject, receivedMs: item.receivedMs, storedMs: Date.now(),
-                    contentSha256: createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex'),
-                    /* See gmail-scan.js: computed since the beginning, stored
-                     * by nothing until now. */
-                    known: item.known !== false,
-                    from: item.from || '',
                 });
                 if (!write.ok) {
                     notable.push({ bank: item.bank, reason: write.reason, text: REJECT_TEXT[write.reason] });
@@ -466,18 +270,8 @@ async function ingestMailbox(db, note, env, f, res) {
                 for (const p of write.parts) {
                     await ref.collection('parts').doc(String(p.i)).set({ i: p.i, d: p.d });
                 }
-                const created = await db.runTransaction(async tx => {
-                    const existing = await tx.get(ref);
-                    const currentState = await tx.get(stateRef);
-                    if (existing.exists) return false;
-                    // Settings revocation during a download must not publish a
-                    // new manifest. A later approval triggers historical replay.
-                    if (!planMessage(msg, policyFrom(normalizeList(sendersOf(currentState.data() || {})))).ok) return false;
-                    tx.set(ref, { ...write.manifest, status: 'pending', filed: false,
-                        ...(currentState.data()?.uid ? { uid: currentState.data().uid } : {}) });
-                    return true;
-                });
-                stored.push({ key: item.key, bank: item.bank, chunked: write.chunked, duplicate: !created });
+                await ref.set(write.manifest);
+                stored.push({ key: item.key, bank: item.bank, chunked: write.chunked });
             } catch (_) {
                 // A failure on ONE attachment is retryable; the manifest was not
                 // written, so the device will never see a partial statement.
@@ -487,49 +281,12 @@ async function ingestMailbox(db, note, env, f, res) {
     }
 
     try {
-        const updates = {
+        await stateRef.set({
+            historyId: listed.historyId || note.historyId,
             lastPushMs: Date.now(),
             ...(notable.length ? { notable: notable.slice(0, 10) } : {}),
-            /* Folded into the write that was already happening rather than
-             * costing a second one. Only when something actually changed, so a
-             * quiet push does not rewrite the list for nothing. */
-            ...(seen !== senderList ? { [SENDERS_FIELD]: seen } : {}),
-            /* Merged with what is already held, newest first, bounded. Folded
-             * into the write that was already happening rather than costing a
-             * second one. */
-            ...(held.length ? { [HELD_FIELD]: mergeHeld(state && state[HELD_FIELD], held) } : {}),
-        };
-        await db.runTransaction(async tx => {
-            const current = await tx.get(stateRef);
-            const previous = current.exists && current.data().historyId;
-            const active = current.data()?.pendingCollection;
-            if (active?.id !== pending.id) return;
-            // A concurrent Settings approval/revocation must survive collection.
-            if (sightings.length) {
-                let latest = normalizeList(sendersOf(current.data() || {}));
-                for (const sighting of sightings) latest = recordSighting(latest, sighting);
-                updates[SENDERS_FIELD] = latest;
-            }
-            if (held.length) updates[HELD_FIELD] = mergeHeld(current.data()?.[HELD_FIELD], held);
-            const complete = batchEnd === pending.ids.length;
-            const next = complete ? pending.target : '';
-            updates.pendingCollection = complete ? null : { ...pending, cursor: Math.max(active.cursor || 0, batchEnd) };
-            if (complete && Array.isArray(pending.senderClauses)) updates.collectedSenderClauses = pending.senderClauses;
-            if (complete && pending.reconciled === true) updates.lastReconcileMs = Date.now();
-            // Concurrent redeliveries cannot move a durable cursor backwards.
-            if (/^\d+$/.test(next) && (!/^\d+$/.test(String(previous || '')) || BigInt(next) > BigInt(previous))) updates.historyId = next;
-            tx.set(stateRef, updates, { merge: true });
-        });
-    } catch (_) { return j(res, 503, { ok: false, error: 'cursor persistence failed' }); }
+        }, { merge: true });
+    } catch (_) { /* the statements landed; the bookmark can catch up next push */ }
 
-    let queued = false;
-    if (state.autonomous && state.uid === env.WEALTHFLOW_OWNER_UID && stored.some(item => !item.duplicate)) {
-        try {
-            const { runStatementSync } = await import('./statement-sync.js');
-            await runStatementSync({ db, owner: { uid: state.uid, email: state.email }, action: 'drain', env, f, budgetMs: 20000 });
-            queued = true;
-        } catch (_) { /* Durable manifests remain pending; scheduled catch-up retries them. */ }
-    }
-    return j(res, 200, { ok: true, stored: stored.length, notable: notable.length, held: held.length, queued,
-        collectionPending: batchEnd < pending.ids.length });
+    return j(res, 200, { ok: true, stored: stored.length, notable: notable.length });
 }
