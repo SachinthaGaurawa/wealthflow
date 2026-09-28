@@ -124,6 +124,43 @@ async function download(entry) {
         const link = document.createElement('a'); link.href = url; link.rel = 'noopener'; link.download = item.manifest?.filename || 'statement.pdf'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { say('The original statement is unavailable for download. The review remains pending.', 'error'); }
 }
+// Every reason mapReviewLayout()/inspectReviewSource() can explicitly return
+// for action:'layout' names a real, permanent fact about the statement or
+// its evidence — retrying changes nothing. Anything else reaching here can
+// only be a raw network failure, a timeout, or a generic 5xx (request()'s
+// own fallback 'statement-service-unavailable'): exactly the kind of blip a
+// mobile connection causes and a few seconds later recovers from. Forcing
+// the owner back through the whole teach modal (re-fetch the source,
+// re-propose a reading, re-tap through every date) just to retry the one
+// POST that actually confirms it is real friction for a failure that costs
+// nothing to retry automatically instead.
+const LAYOUT_CONFIRM_PERMANENT_REASONS = new Set([
+    'PASSWORD_FAILED', 'NO_VAULT_KEYS', 'statement-message-missing', 'statement-message-deleted',
+    'statement-sender-no-longer-approved', 'statement-attachment-identity-mismatch',
+    'statement-attachment-content-mismatch', 'statement-attachment-invalid', 'statement-attachment-size',
+    'gmail-fetch-unavailable', 'review-source-text-unavailable', 'review-source-is-not-statement',
+    'review-source-owner-mismatch', 'whole-statement-review-required',
+    'layout-confirmation-does-not-reproduce-statement', 'layout-not-mapped',
+]);
+const LAYOUT_CONFIRM_RETRIES = 2;
+async function confirmLayout(entry, rows) {
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            const result = await request('/api/statement-sync', 'POST', { action: 'layout', id: entry.id, rows });
+            if (result.mapped !== true) throw new Error('layout-not-mapped');
+            return result;
+        } catch (error) {
+            // A previous attempt — this call's own earlier try, or an even
+            // earlier session — may already have gone through: mapReviewLayout's
+            // replay guard is what reports that, and it is a result to surface
+            // accurately, never a fresh failure to retry into (retrying it again
+            // would just repeat the exact same, correct rejection forever).
+            if (error?.message === 'layout-replay-would-overlap-settled-data') { error.mightAlreadyBeMapped = true; throw error; }
+            if (attempt >= LAYOUT_CONFIRM_RETRIES || LAYOUT_CONFIRM_PERMANENT_REASONS.has(error?.message)) throw error;
+            await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+        }
+    }
+}
 async function mapLayout(entry) {
     if (typeof window._teachStatementLayout !== 'function') return say('The statement layout mapper is not loaded yet.', 'warn');
     try {
@@ -133,11 +170,14 @@ async function mapLayout(entry) {
         window._teachStatementLayout([{ key: entry.id, text: source.text, bank: source.bank || 'Bank', fileName: source.filename || 'Statement', index: 0, last4: source.last4 || '' }], async learned => {
             if (!learned?.[0]?.rows?.length) { say('No complete layout was confirmed. The statement remains in Needs Review.', 'warn'); openReview(); return; }
             try {
-                const result = await request('/api/statement-sync', 'POST', { action: 'layout', id: entry.id, rows: learned[0].rows });
-                if (result.mapped !== true) throw new Error('layout-not-mapped');
+                const result = await confirmLayout(entry, learned[0].rows);
                 say(result.queued === true ? 'Statement layout verified, saved and queued for background processing.' : 'Statement layout is saved. Scheduling is still pending; background catch-up will retry.', result.queued === true ? 'success' : 'warn');
                 await sync().catch(() => say('The layout is saved, but the immediate processing request failed. Its queued statement remains pending for retry.', 'warn'));
-            } catch { say('Cloud layout saving was not completed. The original statement remains pending.', 'error'); }
+            } catch (error) {
+                say(error?.mightAlreadyBeMapped
+                    ? 'This may already be confirmed from an earlier attempt — check Open reviews for its current status before mapping it again.'
+                    : 'Cloud layout saving was not completed. The original statement remains pending.', error?.mightAlreadyBeMapped ? 'warn' : 'error');
+            }
             openReview();
         });
     } catch (error) {

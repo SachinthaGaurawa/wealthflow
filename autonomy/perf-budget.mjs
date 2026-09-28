@@ -445,7 +445,11 @@ export const BUDGETS = {
     // wealthflow-layout-memory.js and wealthflow-statement-cloud.js's new
     // reviewSummary() (both feed the Diagnostics "Copy diagnostics" payload
     // in wealthflow-update-system.js). Measured 1,886,095; still 71 modules.
-    totalJsBytes: 1_886_095,
+    // 2026-09-28: +2,581 for wealthflow-statement-cloud.js's confirmLayout() —
+    // retries the one POST that actually confirms a taught layout on a
+    // transient network/timeout failure, instead of forcing the owner back
+    // through the whole teach modal to retry it. Measured 1,888,676.
+    totalJsBytes: 1_888_676,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
