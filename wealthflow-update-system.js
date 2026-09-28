@@ -1156,6 +1156,15 @@
                 d.statementReview = window.WFStatementCloud.reviewSummary();
             }
         } catch (_) {}
+        // A statement stuck in runStatementSync's own exponential-backoff retry
+        // loop (processOneStatement threw something classified transient) never
+        // reaches statementReview at all — it is still 'pending', just not due
+        // to try again yet. Same privacy scope: bank, filename, a reason code.
+        try {
+            if (window.WFStatementCloud && typeof window.WFStatementCloud.retryAttemptsSummary === 'function') {
+                d.statementRetrying = window.WFStatementCloud.retryAttemptsSummary();
+            }
+        } catch (_) {}
         try {
             if (Array.isArray(window._wfLayoutAttempts) && window._wfLayoutAttempts.length) {
                 d.layoutTeachAttempts = window._wfLayoutAttempts.slice(0, 10);
@@ -1169,6 +1178,7 @@
                 delete d.health;
                 d.errors = (d.errors || []).slice(0, 3);
                 if (d.statementReview && d.statementReview.wholeStatements) d.statementReview.wholeStatements = d.statementReview.wholeStatements.slice(0, 5);
+                d.statementRetrying = (d.statementRetrying || []).slice(0, 5);
                 d.layoutTeachAttempts = (d.layoutTeachAttempts || []).slice(0, 5);
                 d._trimmed = true;
             }

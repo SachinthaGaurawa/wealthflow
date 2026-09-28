@@ -9010,6 +9010,15 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                 // what's wrong because I can't see any of my financial data."
                 let _stReview = null;
                 try { _stReview = (window.WFStatementCloud && window.WFStatementCloud.reviewSummary) ? window.WFStatementCloud.reviewSummary() : null; } catch (_) { _stReview = null; }
+                // A statement stuck in runStatementSync's own exponential-backoff
+                // retry loop (a transient-classified processOneStatement failure)
+                // never reaches statementReview at all — it is still 'pending',
+                // just not due to try again yet. lastRetryReason has been written
+                // to it on every attempt since that retry branch existed; nothing
+                // ever read it back until now. Same privacy scope as
+                // reviewSummary(): bank, filename, a reason code, a count.
+                let _stRetrying = [];
+                try { _stRetrying = (window.WFStatementCloud && window.WFStatementCloud.retryAttemptsSummary) ? window.WFStatementCloud.retryAttemptsSummary() : []; } catch (_) { _stRetrying = []; }
                 const _layoutAttempts = Array.isArray(window._wfLayoutAttempts) ? window._wfLayoutAttempts.slice(0, 10) : [];
                 payload = JSON.stringify({
                     build: _WF_BUILD,
@@ -9025,6 +9034,7 @@ window._wfLocalWriteOk = () => !_wfLocalWriteBlocked;
                     summary: _summary,
                     health: _health,
                     statementReview: _stReview,
+                    statementRetrying: _stRetrying,
                     layoutTeachAttempts: _layoutAttempts,
                     errors: log
                 }, null, 2);
