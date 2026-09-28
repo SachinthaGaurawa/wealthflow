@@ -126,7 +126,11 @@ export default async function handler(req, res) {
     // ---------- ENGINE 1: GEMINI (Primary, supports vision) ----------
     async function fetchGemini() {
         if (!geminiKey) throw new Error('Gemini key not configured');
-        const model = isVision ? 'gemini-2.5-flash' : 'gemini-2.0-flash';
+        // gemini-2.0-flash / gemini-2.5-flash were retired by Google (confirmed live:
+        // "This model models/gemini-2.0-flash is no longer available... use
+        // models/gemini-3.8-flash"). 3.8 Flash is multimodal, so one model serves
+        // both the text and vision paths.
+        const model = 'gemini-3.8-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
         const parts = [{ text: prompt }];
@@ -212,7 +216,10 @@ export default async function handler(req, res) {
             };
         } else {
             payload = {
-                model: 'llama-3.3-70b-versatile',
+                // llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16
+                // (confirmed live: 404). gpt-oss-120b is Groq's own recommended
+                // replacement for that migration.
+                model: 'openai/gpt-oss-120b',
                 messages: [{ role: 'user', content: prompt }],
                 temperature: temp,
                 max_tokens: tokens
@@ -229,7 +236,7 @@ export default async function handler(req, res) {
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content;
         if (!text) throw new Error('Groq returned empty');
-        return { reply: text, provider: image ? 'groq:llama-4-scout' : 'groq:llama-3.3' };
+        return { reply: text, provider: image ? 'groq:llama-4-scout' : 'groq:gpt-oss-120b' };
     }
 
     // ---------- ENGINE 4: OLLAMA CLOUD (vision + text, hosted) ----------
@@ -272,21 +279,26 @@ export default async function handler(req, res) {
     }
 
     // ---------- ENGINE 5: HuggingFace Inference (optional, last resort) ----------
+    // The old per-model REST endpoint (api-inference.huggingface.co/models/<id>,
+    // {inputs, parameters}) is retired — confirmed live: fetch failed, that host no
+    // longer resolves for this traffic. Current: router.huggingface.co/v1, a single
+    // OpenAI-chat-compatible endpoint that picks the fastest live provider for the
+    // requested model.
     async function fetchHuggingFace() {
         if (!hfKey) throw new Error('HuggingFace key not configured');
         if (image) throw new Error('HF skipped (text-only here)');
-        const model = 'meta-llama/Meta-Llama-3-70B-Instruct';
-        const response = await fetchWithTimeout(`https://api-inference.huggingface.co/models/${model}`, {
+        const model = 'meta-llama/Llama-3.3-70B-Instruct';
+        const response = await fetchWithTimeout('https://router.huggingface.co/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hfKey}` },
             body: JSON.stringify({
-                inputs: prompt,
-                parameters: { temperature: temp, max_new_tokens: Math.min(tokens, 1024), return_full_text: false }
+                model, messages: [{ role: 'user', content: prompt }],
+                temperature: temp, max_tokens: Math.min(tokens, 1024)
             })
         });
-        if (!response.ok) throw new Error(`HF status ${response.status}`);
+        if (!response.ok) { const t = await response.text().catch(() => ''); throw new Error(`HF status ${response.status}: ${t.substring(0, 160)}`); }
         const data = await response.json();
-        const text = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
+        const text = data.choices?.[0]?.message?.content;
         if (!text) throw new Error('HF returned empty');
         return { reply: text, provider: 'huggingface' };
     }
@@ -330,17 +342,30 @@ export default async function handler(req, res) {
     }
 
     const fetchXAI = makeOAI({ name: 'xAI', provider: 'xai:grok', key: xaiKey, url: 'https://api.x.ai/v1/chat/completions', textModel: 'grok-2-latest', visionModel: 'grok-2-vision-latest', jsonMode: true });
-    const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', textModel: 'mistral-large-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
+    // mistral-large-latest is paid-tier only (confirmed live: 403 "not available in
+    // your subscription tier"); mistral-small-latest is served on the free plan.
+    const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', textModel: 'mistral-small-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
     const fetchTogether = makeOAI({ name: 'Together', provider: 'together', key: togetherKey, url: 'https://api.together.xyz/v1/chat/completions', textModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', visionModel: 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo' });
     const fetchFireworks = makeOAI({ name: 'Fireworks', provider: 'fireworks', key: fireworksKey, url: 'https://api.fireworks.ai/inference/v1/chat/completions', textModel: 'accounts/fireworks/models/llama-v3p3-70b-instruct', visionModel: 'accounts/fireworks/models/llama-v3p2-90b-vision-instruct' });
     const openRouterHeaders = { 'HTTP-Referer': 'https://wealthflow-personal.vercel.app', 'X-Title': 'WealthFlow' };
     const fetchOpenRouterFinance = makeOAI({ name: 'OpenRouterFinance', provider: 'openrouter:ling-fin-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'inclusionai/ling-3.0-flash-fin:free', visionModel: null, extraHeaders: openRouterHeaders });
     const fetchOpenRouterQwen = makeOAI({ name: 'OpenRouterQwen', provider: 'openrouter:qwen-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'qwen/qwen3.8-27b:free', visionModel: 'qwen/qwen3.8-27b:free', jsonMode: true, extraHeaders: openRouterHeaders });
     const fetchOpenRouterNemotron = makeOAI({ name: 'OpenRouterNemotron', provider: 'openrouter:nemotron-free', key: openrouterKey, url: 'https://openrouter.ai/api/v1/chat/completions', textModel: 'nvidia/nemotron-3-ultra-550b-a55b:free', visionModel: null, extraHeaders: openRouterHeaders });
-    const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', textModel: 'llama-3.3-70b', visionModel: null });
+    // llama-3.3-70b is a real Cerebras model name but returned 404 "does not exist
+    // or you do not have access to it" live -- an access/tier gap, not a spelling
+    // one. llama3.1-8b is the smaller model Cerebras documents alongside it as
+    // generally available.
+    const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', textModel: 'llama3.1-8b', visionModel: null });
     const fetchSambaNova = makeOAI({ name: 'SambaNova', provider: 'sambanova', key: sambanovaKey, url: 'https://api.sambanova.ai/v1/chat/completions', textModel: 'Meta-Llama-3.3-70B-Instruct', visionModel: 'Llama-3.2-90B-Vision-Instruct' });
-    const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', textModel: 'meta/llama-3.3-70b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
-    const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.inference.ai.azure.com/chat/completions', textModel: 'Llama-3.3-70B-Instruct', visionModel: 'gpt-4o', jsonMode: true });
+    // meta/llama-3.3-70b-instruct reached end of life 2026-08-26 (confirmed live:
+    // 410 Gone). meta/llama-3.1-8b-instruct is NVIDIA's smaller, currently-documented
+    // sibling model in the same family.
+    const fetchNvidia = makeOAI({ name: 'NVIDIA', provider: 'nvidia', key: nvidiaKey, url: 'https://integrate.api.nvidia.com/v1/chat/completions', textModel: 'meta/llama-3.1-8b-instruct', visionModel: 'meta/llama-3.2-90b-vision-instruct' });
+    // The old Azure-fronted endpoint and bare model names (models.inference.ai.azure.com,
+    // "Llama-3.3-70B-Instruct") are retired (confirmed live: fetch failed — the host no
+    // longer resolves for this traffic). Current: models.github.ai/inference, with every
+    // model namespaced "<publisher>/<model>".
+    const fetchGitHub = makeOAI({ name: 'GitHubModels', provider: 'github-models', key: githubKey, url: 'https://models.github.ai/inference/chat/completions', textModel: 'openai/gpt-4o-mini', visionModel: 'openai/gpt-4o', jsonMode: true });
     const fetchCloudflare = makeOAI({
         name: 'CloudflareAI',
         provider: 'cloudflare:llama-4-scout',
