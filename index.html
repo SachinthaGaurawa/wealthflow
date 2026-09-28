@@ -26550,11 +26550,22 @@ table.amort tbody tr { page-break-inside: avoid; }
                 }
                 if (r.ambiguous) {
                     /* The honest warning. Both readings reconcile; only the
-                     * owner can tell 2 July from 7 February. */
+                     * owner can tell 2 July from 7 February.
+                     * readings.length can still be 1 here: two tied candidates
+                     * (different date orders) can produce the SAME rows —
+                     * genuinely undecidable dates that read the same either
+                     * way — and uniq() then dedupes them to one entry that is
+                     * still marked ambiguous. Pointing at "Read it differently"
+                     * in that case sent the owner looking for a button that was
+                     * never drawn, a dead end with no way to actually resolve
+                     * the ambiguity from this screen. */
                     body.appendChild(el('div', 'font-size:13px;line-height:1.5;padding:10px 12px;border-radius:10px;'
                         + 'background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.35);margin-bottom:12px;',
-                        'These dates read equally well the other way round. Check one date against the statement '
-                        + 'before confirming, or use "Read it differently".'));
+                        readings.length > 1
+                            ? 'These dates read equally well the other way round. Check one date against the statement '
+                                + 'before confirming, or use "Read it differently".'
+                            : 'These dates read equally well as day-first or month-first — the statement\'s own arithmetic '
+                                + 'could not tell them apart. Check one date against the statement before confirming.'));
                 }
 
                 const scroll = el('div', 'overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid rgba(255,255,255,.08);border-radius:12px;');

@@ -174,6 +174,21 @@ describe('the teach flow closes the loop', () => {
         expect(modal).toContain('min-height:44px');
         expect(modal).toMatch(/e\.key === 'Escape'/);
     });
+
+    it('never points the ambiguous warning at "Read it differently" when that button is not drawn', () => {
+        // The button only renders when readings.length > 1 (see the foot
+        // section below). readings.length can still be 1 while r.ambiguous is
+        // true — two tied date-order candidates can produce identical rows and
+        // dedupe to one entry (layout_memory_test.js proves this is reachable)
+        // — so the warning text shown in that case must not send the owner
+        // looking for a control that was never drawn.
+        const footAt = modal.indexOf('if (readings.length > 1) foot.appendChild(other)');
+        expect(footAt).toBeGreaterThan(-1);
+        const warnAt = modal.indexOf('Read it differently');
+        expect(warnAt).toBeGreaterThan(-1);
+        expect(warnAt).toBeLessThan(footAt);
+        expect(modal.slice(0, warnAt)).toMatch(/readings\.length > 1\s*\n\s*\?\s*'[\s\S]{0,300}$/);
+    });
 });
 
 describe('the intake names which of the three emptinesses happened', () => {
