@@ -125,7 +125,8 @@ export function isCreditCardRow(row, ctx) {
   // bank are known, require them to agree before trusting the match; a last-4
   // hit against the wrong bank is exactly the collision this guards against.
   if (entry.bank && ctx.bank && norm(entry.bank) !== norm(ctx.bank)) return false;
-  return entry.type === 'credit_card';
+  return entry.type === 'credit_card' || entry.type === 'credit';
+
 }
 
 // ── the core router for ONE row ─────────────────────────────────────────────
@@ -178,7 +179,7 @@ export function routeRow(row, ctx = {}) {
   // direction it had to assume (a statement printing no running balance) or read
   // from wording; the router's own confidence is about the CATEGORY and knows
   // nothing of that, so without this an unverified row could route with 0.9.
-  const upstreamDoubt = (row.needsReview === true && !(ctx.reconciliationBypassed && row.directionSource === 'assumed')) || (row.direction !== undefined && !row.direction);
+  const upstreamDoubt = (row.needsReview === true && !(ctx.reconciliationBypassed && ['assumed', 'keyword', 'balance-mismatch', 'marker'].includes(row.directionSource))) || (row.direction !== undefined && !row.direction);
   return {
     module, tabLabel, subtype, allocation, category,
     confidence: Math.round(confidence * 100) / 100,

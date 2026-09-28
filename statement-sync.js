@@ -511,11 +511,11 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             const cardRegistry = user.settings?.cardRegistry || {};
             let documentClass = null;
             const textToMatch = text || '';
-            for (const card of Object.values(cardRegistry)) {
-                if (card.last4 && textToMatch.includes(card.last4)) {
+            for (const [key, card] of Object.entries(cardRegistry)) {
+                if (key && key.length === 4 && textToMatch.includes(key)) {
                     documentClass = card.type === 'credit' || card.type === 'credit_card' ? 'credit_card_statement' : (card.type === 'debit' ? 'debit_card_statement' : 'bank_statement');
                     parsed.layout = parsed.layout || {};
-                    parsed.layout.accountLast4 = card.last4;
+                    parsed.layout.accountLast4 = key;
                     break;
                 }
                 if (card.number && textToMatch.includes(card.number)) {

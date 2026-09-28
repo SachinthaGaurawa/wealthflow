@@ -26,7 +26,7 @@ export function sourceOccurrenceId(sourcePath, absoluteIndex) {
 
 export function validateSettlementRow(row, decision, ctx = {}) {
     if (!row || !isStrictCalendarDate(row.date) || !amountCents(row.amount) || !norm(row.description || row.narration)) return 'invalid-transaction';
-    const directionProven = ['balance', 'marker', 'column', 'sign'].includes(row.directionSource) || (ctx.reconciliationBypassed && row.directionSource === 'assumed');
+    const directionProven = ['balance', 'marker', 'column', 'sign'].includes(row.directionSource) || ctx.reconciliationBypassed;
     if ((row.needsReview !== false && !ctx.reconciliationBypassed) || row.valid === false || !directionProven || !['debit', 'credit'].includes(row.direction)) return 'unproven-direction';
     if (!decision || decision.verified !== true || !modules[decision.module] || !norm(decision.category)) return decision?.reason || 'unanimous-decision-required';
     const module = modules[decision.module];
