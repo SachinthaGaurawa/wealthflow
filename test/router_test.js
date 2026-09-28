@@ -148,7 +148,7 @@ describe('routeRow: business rules (the original misrouting bug)', () => {
 
   it('a credit-card subscription stays in the card one-time tab', () => {
     const r = routeRow({ description: 'NETFLIX.COM MONTHLY', amount: 1490, drcr: 'DR' }, { statementType: 'credit_card' });
-    expect(r).toMatchObject({ module: 'cconetime', subtype: 'subscription', category: 'Subscription' });
+    expect(r).toMatchObject({ module: 'cconetime', subtype: 'subscription', category: 'Subscriptions' });
   });
 
   it('a fuel charge on a credit card is tagged as fuel subtype', () => {
