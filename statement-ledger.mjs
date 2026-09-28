@@ -167,7 +167,19 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         });
         const hasReview = source.hasReview === true || outcome.review > 0;
         const final = outcome.cursor === totalRows;
-        if (Object.keys(changes).length) tx.set(userRef, { ...changes, _lastModified: new Date(now) }, { merge: true });
+        /* The browser's convergent listener suppresses snapshots stamped with
+         * its own device id/write time as stale echoes.  A server-side
+         * statement write used to leave those two fields untouched, so the
+         * snapshot still looked like the browser's previous write and the
+         * newly filed rows stayed invisible until a hard reload.  Stamp the
+         * real writer on every ledger mutation. */
+        if (Object.keys(changes).length) tx.set(userRef, {
+            ...changes,
+            _lastModified: new Date(now),
+            _lastModifiedBy: 'statement-worker',
+            _writeDeviceId: 'statement-worker',
+            _writeTs: now,
+        }, { merge: true });
         for (const [ref, data] of writes) tx.set(ref, data);
         tx.set(sourceRef, { cursor: outcome.cursor, totalRows, hasReview, bank, last4, statementType, filed: final && !hasReview, status: final ? (hasReview ? 'needs_review' : 'filed') : 'pending', leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
         return { ...outcome, status: final ? (hasReview ? 'needs_review' : 'filed') : 'pending' };
@@ -220,7 +232,13 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
         }
         const unresolved = siblings.docs.some(doc => doc.id !== id && doc.data().status === 'pending');
         const complete = Number.isSafeInteger(source.totalRows) && source.cursor === source.totalRows;
-        if (Object.keys(changes).length) tx.set(userRef, { ...changes, _lastModified: new Date(now) }, { merge: true });
+        if (Object.keys(changes).length) tx.set(userRef, {
+            ...changes,
+            _lastModified: new Date(now),
+            _lastModifiedBy: 'statement-worker',
+            _writeDeviceId: 'statement-worker',
+            _writeTs: now,
+        }, { merge: true });
         tx.set(reviewRef, { status: dismissed ? 'dismissed' : 'resolved', reason: '', resolvedAt: now, resolvedBy: uid }, { merge: true });
         if (ledgerSnap.exists) tx.set(ledgerRef, { status: dismissed ? 'dismissed' : 'filed', resolvedAt: now, resolvedBy: uid }, { merge: true });
         if (complete && !unresolved) tx.set(sourceRef, { status: 'filed', filed: true, hasReview: false, updatedAt: now }, { merge: true });
