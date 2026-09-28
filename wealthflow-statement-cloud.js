@@ -46,7 +46,20 @@ export async function request(path,method='GET',body){
         if ((typeof window.firebase?.auth === 'function' && sdk?.uid !== active.uid) || (!sdk && user?.uid !== active.uid)) throw new Error('sign-in-changed');
         if (!response.ok || !result?.ok) throw new Error(result?.reason || 'statement-service-unavailable');
         return result;
-    }catch(error){if(error?.name==='AbortError')throw new Error('statement-request-timed-out');throw error}
+    }catch(error){
+        if(error?.name==='AbortError')throw new Error('statement-request-timed-out');
+        // A dropped connection or DNS failure rejects fetch() itself with a
+        // raw, browser-native TypeError ("Failed to fetch" / "NetworkError
+        // when attempting to fetch resource") per the Fetch spec — carrying
+        // no meaning to any caller matching a known reason code. Every such
+        // caller (sync()'s own continuation on 'statement-request-timed-out';
+        // confirmLayout()'s small retryable allowlist) silently treated the
+        // single most common real-world failure — no network at all — as an
+        // unrecognized, non-retryable one. Fold it into the same generic
+        // fallback an ok:false response with no reason already uses.
+        if(error instanceof TypeError)throw new Error('statement-service-unavailable');
+        throw error;
+    }
     finally{clearTimeout(timer)}
 }
 export async function status(){
@@ -124,6 +137,49 @@ async function download(entry) {
         const link = document.createElement('a'); link.href = url; link.rel = 'noopener'; link.download = item.manifest?.filename || 'statement.pdf'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { say('The original statement is unavailable for download. The review remains pending.', 'error'); }
 }
+// An ALLOWLIST, not a denylist: every reason mapReviewLayout()/
+// inspectReviewSource() can explicitly name (statement-sync.js's own
+// PUBLIC_REVIEW_SOURCE_REASONS, e.g. PDF_UNREADABLE, a bad password, the
+// statement not reproducing) means the server successfully diagnosed and
+// reported something specific — never a blip retrying fixes, so it is never
+// worth enumerating here just to keep it out. Only these two — a client-side
+// timeout, and request()'s own generic fallback for a non-ok response that
+// named no specific reason at all — are actual raw network/5xx conditions,
+// exactly the kind of thing a mobile connection causes and a few seconds
+// later recovers from. Forcing the owner back through the whole teach modal
+// (re-fetch the source, re-propose a reading, re-tap through every date)
+// just to retry the one POST that actually confirms it is real friction for
+// a failure that costs nothing to retry automatically instead.
+const LAYOUT_CONFIRM_RETRYABLE_REASONS = new Set(['statement-request-timed-out', 'statement-service-unavailable']);
+const LAYOUT_CONFIRM_RETRIES = 2;
+async function confirmLayout(entry, rows) {
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            const result = await request('/api/statement-sync', 'POST', { action: 'layout', id: entry.id, rows });
+            if (result.mapped !== true) throw new Error('layout-not-mapped');
+            return result;
+        } catch (error) {
+            // Either mapReviewLayout's own replay guard, or — when an EARLIER
+            // attempt actually committed but its response was lost — the
+            // ordinary "not pending any more" check inside the inspect() call
+            // that guard sits behind (mapReviewLayout re-runs inspect() on
+            // every attempt, and inspect() itself throws this first if the
+            // review is no longer pending). Both mean the same thing here:
+            // this exact review is no longer pending, and this flow only
+            // ever reaches it by successfully reading it moments ago — so
+            // the far more likely explanation than someone else's write is
+            // this call's own earlier, unacknowledged success. Either way it
+            // is a result to surface accurately, never a fresh failure to
+            // retry into (retrying it again would just repeat the exact
+            // same, correct rejection forever).
+            if (error?.message === 'layout-replay-would-overlap-settled-data' || error?.message === 'whole-statement-review-required') {
+                error.mightAlreadyBeMapped = true; throw error;
+            }
+            if (attempt >= LAYOUT_CONFIRM_RETRIES || !LAYOUT_CONFIRM_RETRYABLE_REASONS.has(error?.message)) throw error;
+            await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+        }
+    }
+}
 async function mapLayout(entry) {
     if (typeof window._teachStatementLayout !== 'function') return say('The statement layout mapper is not loaded yet.', 'warn');
     try {
@@ -133,11 +189,14 @@ async function mapLayout(entry) {
         window._teachStatementLayout([{ key: entry.id, text: source.text, bank: source.bank || 'Bank', fileName: source.filename || 'Statement', index: 0, last4: source.last4 || '' }], async learned => {
             if (!learned?.[0]?.rows?.length) { say('No complete layout was confirmed. The statement remains in Needs Review.', 'warn'); openReview(); return; }
             try {
-                const result = await request('/api/statement-sync', 'POST', { action: 'layout', id: entry.id, rows: learned[0].rows });
-                if (result.mapped !== true) throw new Error('layout-not-mapped');
+                const result = await confirmLayout(entry, learned[0].rows);
                 say(result.queued === true ? 'Statement layout verified, saved and queued for background processing.' : 'Statement layout is saved. Scheduling is still pending; background catch-up will retry.', result.queued === true ? 'success' : 'warn');
                 await sync().catch(() => say('The layout is saved, but the immediate processing request failed. Its queued statement remains pending for retry.', 'warn'));
-            } catch { say('Cloud layout saving was not completed. The original statement remains pending.', 'error'); }
+            } catch (error) {
+                say(error?.mightAlreadyBeMapped
+                    ? 'This may already be confirmed from an earlier attempt — check Open reviews for its current status before mapping it again.'
+                    : 'Cloud layout saving was not completed. The original statement remains pending.', error?.mightAlreadyBeMapped ? 'warn' : 'error');
+            }
             openReview();
         });
     } catch (error) {

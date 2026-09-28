@@ -211,4 +211,136 @@ describe('private statement cloud frontend transport', () => {
         expect(JSON.stringify(summary)).not.toMatch(/4250|900|KEELLS|CARGILLS/);
         await authChanged(null);
     });
+    describe('layout confirmation survives a transient network blip', () => {
+        // "Yes, read it this way" already did the real work: re-fetching the
+        // source, re-proposing a reading, the owner tapping through every date.
+        // The ONE call left — confirming it — must not force all of that to be
+        // redone just because a mobile connection blipped for a few seconds.
+        const teachWith = rows => vi.fn((items, cb) => cb([{ rows }]));
+        const oneRow = [{ date: '2026-01-01', amount: 100, direction: 'debit' }];
+
+        it('retries a timed-out confirmation and succeeds without re-teaching the layout', async () => {
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            vi.useFakeTimers();
+            try {
+                fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                    .mockResolvedValueOnce(reply(false, { ok: false, reason: 'statement-request-timed-out' }))
+                    .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, queued: true }));
+                const pending = review({ id: 'whole-statement-id', index: -1 });
+                await vi.runAllTimersAsync();
+                await pending;
+                expect(fetch).toHaveBeenCalledTimes(3);
+                expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ action: 'layout' });
+                expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({ action: 'layout' });
+                expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
+            } finally { vi.useRealTimers(); await authChanged(null); }
+        });
+        it('retries a raw dropped-connection failure, not just a named timeout', async () => {
+            // Flagged by an automated (Codex) review: fetch() itself rejects a
+            // dropped connection or DNS failure with a browser-native TypeError
+            // per the Fetch spec, not an AbortError — request() used to rethrow
+            // that unchanged, so it matched neither retryable reason and the
+            // single most common real "no network" case never retried at all.
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            vi.useFakeTimers();
+            try {
+                fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+                    .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, queued: true }));
+                const pending = review({ id: 'whole-statement-id', index: -1 });
+                await vi.runAllTimersAsync();
+                await pending;
+                expect(fetch).toHaveBeenCalledTimes(3);
+                expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
+            } finally { vi.useRealTimers(); await authChanged(null); }
+        });
+        it('never retries a permanent rejection like an unreproduced statement', async () => {
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'layout-confirmation-does-not-reproduce-statement' }));
+            // mapLayout() does not await _teachStatementLayout()'s callback (the
+            // owner's dialog interaction is not something the outer call can
+            // block on), so review() itself resolves before the callback's own
+            // async work — including this rejection — has run. Poll for it,
+            // the same way this file already does for the fastest/collective race.
+            review({ id: 'whole-statement-id', index: -1 });
+            await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(window.notify).toHaveBeenCalledWith('Cloud layout saving was not completed. The original statement remains pending.', 'error');
+            await authChanged(null);
+        });
+        it('reports a possibly-already-mapped statement distinctly instead of a false hard failure', async () => {
+            // The exact scenario a retry can create: attempt 1 succeeds server-side
+            // but its response never reaches the client (pure network drop); a
+            // retry then hits mapReviewLayout's own replay guard. That must read
+            // as "check the real state", never as "nothing happened" — the
+            // statement genuinely may already be filed.
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'layout-replay-would-overlap-settled-data' }));
+            review({ id: 'whole-statement-id', index: -1 });
+            await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('may already be confirmed'), 'warn');
+            await authChanged(null);
+        });
+        it('reports whole-statement-review-required the same way — inspect() throws it FIRST, before the replay guard, for this exact lost-response case', async () => {
+            // Flagged by an automated (Codex) review on this exact PR: when
+            // attempt 1 commits but its response is lost, mapReviewLayout's own
+            // replay guard is never reached on the retry — inspect() (which it
+            // calls first, every attempt) rejects with this reason as soon as it
+            // sees the review is no longer 'pending'. Treating it as an ordinary
+            // permanent failure would tell the owner nothing happened when the
+            // statement may already be filed.
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'whole-statement-review-required' }));
+            review({ id: 'whole-statement-id', index: -1 });
+            await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('may already be confirmed'), 'warn');
+            await authChanged(null);
+        });
+        it('never retries a deterministically unreadable PDF', async () => {
+            // Flagged by an automated (Codex) review: PDF_UNREADABLE is a real,
+            // permanent server reason (PUBLIC_REVIEW_SOURCE_REASONS) — retrying
+            // downloads and re-parses the same broken PDF up to two more times
+            // for no possible benefit.
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                .mockResolvedValueOnce(reply(false, { ok: false, reason: 'PDF_UNREADABLE' }));
+            review({ id: 'whole-statement-id', index: -1 });
+            await vi.waitFor(() => expect(window.notify).toHaveBeenCalled());
+            expect(fetch).toHaveBeenCalledTimes(2);
+            expect(window.notify).toHaveBeenCalledWith('Cloud layout saving was not completed. The original statement remains pending.', 'error');
+            await authChanged(null);
+        });
+        it('gives up after a bounded number of retries rather than retrying forever', async () => {
+            window._showCCReviewModal = vi.fn();
+            window._teachStatementLayout = teachWith(oneRow);
+            window.notify = vi.fn();
+            vi.useFakeTimers();
+            try {
+                fetch.mockResolvedValueOnce(reply(true, { ok: true, text: 'STATEMENT TEXT', bank: 'HNB', filename: 's.pdf' }))
+                    .mockResolvedValue(reply(false, { ok: false, reason: 'statement-service-unavailable' }));
+                const pending = review({ id: 'whole-statement-id', index: -1 });
+                await vi.runAllTimersAsync();
+                await pending;
+                expect(fetch).toHaveBeenCalledTimes(4); // review-source + 3 layout attempts (1 initial + 2 retries)
+                expect(window.notify).toHaveBeenCalledWith('Cloud layout saving was not completed. The original statement remains pending.', 'error');
+            } finally { vi.useRealTimers(); await authChanged(null); }
+        });
+    });
 });
