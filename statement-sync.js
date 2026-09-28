@@ -507,7 +507,28 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         const { parsed, text } = result;
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '' };
+            const user = (await db.collection('users').doc(uid).get()).data() || {};
+            const cardRegistry = user.settings?.cardRegistry || {};
+            let documentClass = null;
+            const textToMatch = text || '';
+            for (const [key, entry] of Object.entries(cardRegistry)) {
+                if (key && textToMatch.includes(key)) {
+                    if (entry.type === 'credit_card') documentClass = 'credit_card_statement';
+                    else documentClass = key.length === 4 ? 'debit_card_statement' : 'bank_statement';
+                    break;
+                }
+            }
+            if (documentClass) {
+                parsed.layout = parsed.layout || {};
+                parsed.layout.statementType = documentClass;
+            }
+            
             const identity = textVerdict(text || '');
+            if (documentClass) {
+                identity.verdict = VERDICT.STATEMENT;
+                identity.reason = '100% deterministic match via owner registry';
+            }
+
             // readStatement() only sets this when EVERY row's own date and
             // running balance checked out AND the template used is the exact
             // one the owner confirmed for this exact source moments ago — see
@@ -528,7 +549,6 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
             const cursor = claimed.cursor || 0;
             if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
-            const user = (await db.collection('users').doc(uid).get()).data() || {};
             const statementType = parsed.layout?.statementType || '';
             const rows = parsed.rows.slice(cursor, cursor + 10);
             // isCreditCardRow() (wealthflow-statement-router.js) already falls back to
