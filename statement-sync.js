@@ -468,7 +468,12 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         if (!currentMail || currentMail.uid !== uid || currentMail.autonomous !== true) throw new Error('autonomous-mailbox-disabled-during-processing');
         const attachment = await attachmentBytes(claimed, sourceRef, token, sendersOf(currentMail), f);
         const layoutDocs = await db.collection('users').doc(uid).collection('statementLayouts').limit(100).get();
-        const layouts = layoutDocs.docs.map(doc => doc.data());
+        // mapReviewLayout() (below) keys each saved template by a hash of
+        // [bank, template.id] — NOT by template.id itself — and stamps that
+        // same hash onto the source as learnedTemplate. readStatement() needs
+        // the hash, not the bare structural id, to recognise "this is the
+        // template the owner just confirmed"; _docId carries it across.
+        const layouts = layoutDocs.docs.map(doc => ({ ...doc.data(), _docId: doc.id }));
         const passwordOffset = Math.max(0, Number(claimed.passwordOffset) || 0);
         const passwordBatch = passwords.slice(passwordOffset, passwordOffset + PASSWORD_BATCH);
         let result;

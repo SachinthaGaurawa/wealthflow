@@ -289,12 +289,23 @@ export async function readStatement({ bytes, filename = '', passwords = [], bank
     for (const saved of layouts.slice(0, 6)) {
         let template;
         try { template = validateCloudTemplate(saved, bank); } catch { continue; }
+        // mapReviewLayout() stores each confirmed template under a hash of
+        // [bank, template.id] (statement-sync.js), never under template.id
+        // alone, and stamps that same hash onto the source as
+        // learnedTemplate/confirmedTemplateId. Comparing against the bare
+        // structural id here made the confirmed-bypass below unreachable in
+        // production: the id it was ever compared to was already a
+        // different, hashed value. _docId carries the real key when the
+        // caller has it (the only production caller, processOneStatement,
+        // always does); tests that pass a bare template with no _docId fall
+        // back to template.id so the non-bypass assertions keep working.
+        const savedId = typeof saved?._docId === 'string' && saved._docId ? saved._docId : template.id;
         const translated = await normalizeCloudLayout(result.text, template, bank);
         if (translated === result.text) continue;
         const candidate = await parse(translated);
         if (candidate.parsed.rows.length && candidate.parsed.verdict === 'parsed') {
             candidate.parsed.layout ||= {};
-            candidate.parsed.layout.learnedTemplate = template.id;
+            candidate.parsed.layout.learnedTemplate = savedId;
             return { ...candidate, text: result.text };
         }
         // The owner explicitly confirmed THIS exact reading for THIS exact
@@ -313,10 +324,10 @@ export async function readStatement({ bytes, filename = '', passwords = [], bank
         // anything by itself. An UNRELATED template (the six tried above,
         // opportunistically reused on some other statement from the same
         // bank) still requires the strict verdict.
-        if (template.id === confirmedTemplateId && candidate.parsed.rows.length
+        if (savedId === confirmedTemplateId && candidate.parsed.rows.length
             && !candidate.parsed.invalidDates && !candidate.parsed.balanceMismatches) {
             candidate.parsed.layout ||= {};
-            candidate.parsed.layout.learnedTemplate = template.id;
+            candidate.parsed.layout.learnedTemplate = savedId;
             candidate.parsed.layout.reconciliationBypassed = true;
             return { ...candidate, text: result.text };
         }
