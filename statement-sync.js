@@ -507,35 +507,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         }
         const { parsed, text } = result;
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '' };
-            const user = (await db.collection('users').doc(uid).get()).data() || {};
-            const cardRegistry = user.settings?.cardRegistry || {};
-            let documentClass = null;
-            const textToMatch = text || '';
-            for (const [key, card] of Object.entries(cardRegistry)) {
-                if (key && key.length === 4 && textToMatch.includes(key)) {
-                    documentClass = card.type === 'credit' || card.type === 'credit_card' ? 'credit_card_statement' : (card.type === 'debit' ? 'debit_card_statement' : 'bank_statement');
-                    parsed.layout = parsed.layout || {};
-                    parsed.layout.accountLast4 = key;
-                    break;
-                }
-                if (card.number && textToMatch.includes(card.number)) {
-                    documentClass = 'bank_statement';
-                    parsed.layout = parsed.layout || {};
-                    parsed.layout.accountLast4 = card.number.slice(-4);
-                    break;
-                }
-            }
-            if (documentClass) {
-                parsed.layout = parsed.layout || {};
-                parsed.layout.statementType = documentClass;
-            }
-            
             const identity = textVerdict(text || '');
-            if (documentClass) {
-                identity.verdict = VERDICT.STATEMENT;
-                identity.reason = '100% deterministic match via owner registry';
-            }
-
             // readStatement() only sets this when EVERY row's own date and
             // running balance checked out AND the template used is the exact
             // one the owner confirmed for this exact source moments ago — see
@@ -556,6 +528,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
             const cursor = claimed.cursor || 0;
             if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');
+            const user = (await db.collection('users').doc(uid).get()).data() || {};
             const statementType = parsed.layout?.statementType || '';
             const rows = parsed.rows.slice(cursor, cursor + 10);
             // isCreditCardRow() (wealthflow-statement-router.js) already falls back to
@@ -566,11 +539,10 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // this is the same Firestore user document already fetched above, so
             // wiring it through costs no extra read.
             const allocations = { statementType, card_last4: parsed.layout?.accountLast4 || '', bank: claimed.bank || '', cardRegistry: user.settings?.cardRegistry || {},
-                reconciliationBypassed: confirmedBypass,
                 subscriptions: (user.subscriptions || []).map(sub => ({ id: sub.id, name: sub.name, category: sub.category })), loans: (user.loans || []).map(loan => ({ id: loan.id, name: loan.name })) };
             const decisions = await classifySlice(rows, allocations, { board });
             outcome = await settle({ db, uid, sourceRef, leaseToken: claimed.leaseToken, rows, decisions, now: Date.now(), cursor, totalRows: parsed.rows.length, bank: claimed.bank || '', last4: parsed.layout?.accountLast4 || '', statementType, cardRegistry: user.settings?.cardRegistry || {},
-                mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists, reconciliationBypassed: confirmedBypass });
+                mailRef, vaultRef, vaultSavedAt, vaultExpected: vaultSnap.exists });
         }
     } catch (error) {
         if (!permanentFailure(error)) {
