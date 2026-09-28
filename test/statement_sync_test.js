@@ -167,7 +167,7 @@ describe('private source inspection and durable layout replay', () => {
         const learn = vi.fn(async () => ({ ok: true, template: { id: 't1', bank: 'HNB', v: 1 }, rows: [row] }));
         expect(await mapReviewLayout({ ...args, rows: [row], inspect, learn, enqueue })).toMatchObject({ mapped: true, queued: false, filed: 1, review: 0, replayStatus: 'filed' });
         expect(args.data.get(args.sourcePath)).toMatchObject({ status: 'pending', totalRows: 1, cursor: 0, filed: false });
-        expect(args.data.get('users/u/statementReview/' + args.id).status).toBe('mapped');
+        expect(args.data.get('users/u/statementReview/' + args.id)).toMatchObject({ status: 'resolved', replayStatus: 'filed' });
         expect([...args.data.keys()].some(path => path.startsWith('users/u/statementLayouts/'))).toBe(true);
         expect(enqueue).toHaveBeenCalledTimes(1);
         expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath, maxSteps: 1 }));
@@ -180,6 +180,16 @@ describe('private source inspection and durable layout replay', () => {
         await expect(continueMappedLayout({ ...args, enqueue })).resolves.toMatchObject({ filed: 10, queued: true, replayStatus: 'pending' });
         expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath, maxSteps: 1 }));
         expect(enqueue.mock.calls[0][0].sourcePath).not.toContain('other');
+    });
+    it('evicts the whole-statement mapper after the last confirmed batch', async () => {
+        const args = setup(), reviewPath = 'users/u/statementReview/' + args.id;
+        args.data.set(reviewPath, { ...args.data.get(reviewPath), status: 'mapped' });
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), status: 'pending', learnedTemplate: 'template' });
+        const enqueue = vi.fn(async () => ({ filed: 7, review: 1, status: 'needs_review' }));
+        await expect(continueMappedLayout({ ...args, enqueue })).resolves.toMatchObject({
+            filed: 7, review: 1, queued: false, replayStatus: 'needs_review',
+        });
+        expect(args.data.get(reviewPath)).toMatchObject({ status: 'resolved', replayStatus: 'needs_review' });
     });
     it('reopens and safely maps a legacy pending review even when its source status is stale', async () => {
         const args = setup();
