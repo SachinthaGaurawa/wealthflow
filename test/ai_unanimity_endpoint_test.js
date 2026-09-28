@@ -71,16 +71,16 @@ describe('parallel unanimous endpoint', () => {
         expect(res.code).toBe(422); expect(res.body.reply).toBeNull(); expect(res.body.minimumProviders).toBe(5);
     });
     it('fans one OpenRouter key out to three fixed free model families while preserving the five-answer floor', async () => {
-        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY']) vi.stubEnv(key, 'test');
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => ({ ok: true, json: async () => url.includes('googleapis')
             ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
             : { choices: [{ message: { content: '{"approved":true}' } }] } })));
         const res = response();
         await handler({ method: 'POST', body: { prompt: 'Return JSON with a decision', mode: 'fastest' } }, res);
-        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(12);
+        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(10);
         expect(res.body.unanimous).toBe(true); expect(res.body.financialDecision).toBe(true);
         expect(res.body.expected).toEqual(expect.arrayContaining(['Gemini', 'DeepSeek', 'OpenRouterFinance', 'OpenRouterQwen', 'OpenRouterNemotron']));
-        expect(fetch).toHaveBeenCalledTimes(12);
+        expect(fetch).toHaveBeenCalledTimes(10);
     });
     it('uses the configured OpenRouter multimodal model on vision requests without the removed legacy function', async () => {
         vi.stubEnv('OPENROUTER_API_KEY', 'test');
@@ -102,14 +102,6 @@ describe('parallel unanimous endpoint', () => {
         expect(res.body.answered).toEqual(['CloudflareAI']);
         expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/accounts/account/ai/v1/chat/completions'), expect.any(Object));
     });
-    it('includes Eden AI once in the text board and accepts its nested gateway response', async () => {
-        vi.stubEnv('EDENAI_API_KEY', 'test');
-        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ openai: { status: 'success', generated_text: '{"approved":true}' } }) })));
-        const res = response(); await handler(request, res);
-        expect(res.code).toBe(422);
-        expect(res.body.answered).toEqual(['EdenAI']);
-        expect(fetch).toHaveBeenCalledTimes(1);
-    });
     it('does not call failing prose engines a second time after quorum exhaustion', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'test'); vi.stubEnv('GROQ_API_KEY', 'test');
         vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
@@ -117,30 +109,30 @@ describe('parallel unanimous endpoint', () => {
         expect(res.code).toBe(503); expect(fetch).toHaveBeenCalledTimes(2);
     });
     it('lets the free OpenRouter reserve models replace a failed configured member', async () => {
-        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY']) vi.stubEnv(key, 'test');
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => {
-            if (url.includes('sambanova')) throw new Error('offline');
+            if (url.includes('cerebras')) throw new Error('offline');
             return { ok: true, json: async () => url.includes('googleapis')
                 ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
                 : { choices: [{ message: { content: '{"approved":true}' } }] } };
         }));
         const res = response(); await handler(request, res);
-        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(12);
-        expect(res.body.failed).toEqual(['SambaNova']); expect(res.body.unanimous).toBe(true);
-        expect(res.body.answered).toHaveLength(11); expect(res.body.trustworthy).toBe(true);
+        expect(res.code).toBe(200); expect(res.body.expected).toHaveLength(10);
+        expect(res.body.failed).toEqual(['Cerebras']); expect(res.body.unanimous).toBe(true);
+        expect(res.body.answered).toHaveLength(9); expect(res.body.trustworthy).toBe(true);
     });
     it('replaces one unavailable engine with an agreeing spare instead of failing the financial decision', async () => {
-        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'XAI_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'SAMBANOVA_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
+        for (const key of ['GEMINI_API_KEY', 'GROQ_API_KEY', 'DEEPSEEK_API_KEY', 'MISTRAL_API_KEY', 'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'NVIDIA_API_KEY']) vi.stubEnv(key, 'test');
         vi.stubGlobal('fetch', vi.fn(async url => {
-            if (url.includes('sambanova')) throw new Error('offline');
+            if (url.includes('cerebras')) throw new Error('offline');
             return { ok: true, json: async () => url.includes('googleapis')
                 ? { candidates: [{ content: { parts: [{ text: '{"approved":true}' }] } }] }
                 : { choices: [{ message: { content: '{"approved":true}' } }] } };
         }));
         const res = response(); await handler(request, res);
         expect(res.code).toBe(200); expect(res.body.unanimous).toBe(true);
-        expect(res.body.failed).toEqual(['SambaNova']);
-        expect(res.body.answered).toHaveLength(12);
-        expect(res.body.corroboration).toMatchObject({ agreed: 12, of: 13 });
+        expect(res.body.failed).toEqual(['Cerebras']);
+        expect(res.body.answered).toHaveLength(10);
+        expect(res.body.corroboration).toMatchObject({ agreed: 10, of: 11 });
     });
 });
