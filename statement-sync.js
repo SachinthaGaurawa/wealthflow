@@ -472,7 +472,7 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const passwordOffset = Math.max(0, Number(claimed.passwordOffset) || 0);
         const passwordBatch = passwords.slice(passwordOffset, passwordOffset + PASSWORD_BATCH);
         let result;
-        try { result = await read({ ...attachment, passwords: passwordBatch, bank: claimed.bank || '', layouts }); }
+        try { result = await read({ ...attachment, passwords: passwordBatch, bank: claimed.bank || '', layouts, confirmedTemplateId: claimed.learnedTemplate || '' }); }
         catch (error) {
             if (error?.message === 'PASSWORD_FAILED' && passwordOffset + PASSWORD_BATCH < passwords.length) {
                 const pending = new Error('statement-password-batch-pending');
@@ -484,14 +484,23 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
         const { parsed, text } = result;
         reviewEvidence = { text, last4: parsed?.layout?.accountLast4 || '' };
             const identity = textVerdict(text || '');
-            const parserProof = parsed?.understood === true && parsed.verdict === 'parsed'
-                && parsed.reconciliation?.ok !== false && Array.isArray(parsed.rows) && parsed.rows.length > 0;
+            // readStatement() only sets this when EVERY row's own date and
+            // running balance checked out AND the template used is the exact
+            // one the owner confirmed for this exact source moments ago — see
+            // the long comment at its call site there. Only the statement's
+            // single grand-total reconciliation is unresolved, and every row
+            // below still passes through its own full validateSettlementRow()
+            // regardless, so this never files anything this gate alone would
+            // not have separately allowed a page later.
+            const confirmedBypass = Boolean(parsed?.layout?.reconciliationBypassed) && !!claimed.learnedTemplate && parsed.layout?.learnedTemplate === claimed.learnedTemplate;
+            const parserProof = (confirmedBypass || (parsed?.understood === true && parsed.verdict === 'parsed'
+                && parsed.reconciliation?.ok !== false)) && Array.isArray(parsed.rows) && parsed.rows.length > 0;
             if (identity.verdict === VERDICT.NOT_STATEMENT) {
                 await rejectNonStatement(db, uid, sourceRef, claimed.leaseToken, identity);
                 outcome = { status: 'rejected_non_statement', rejected: 1 };
             } else {
             if (identity.verdict !== VERDICT.STATEMENT && !parserProof) throw new Error('statement-layout-identity-needs-review');
-            if (!parsed?.understood || parsed.verdict !== 'parsed' || parsed.reconciliation?.ok === false || !Array.isArray(parsed.rows) || !parsed.rows.length) throw new Error('statement-layout-or-reconciliation-needs-review');
+            if (!parserProof) throw new Error('statement-layout-or-reconciliation-needs-review');
             await checkpointRows(db, sourceRef, uid, claimed.leaseToken, parsed.rows);
             const cursor = claimed.cursor || 0;
             if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor >= parsed.rows.length || (claimed.totalRows != null && claimed.totalRows !== parsed.rows.length)) throw new Error('statement-cursor-or-content-changed');

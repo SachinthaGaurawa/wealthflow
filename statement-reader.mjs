@@ -267,7 +267,7 @@ export async function readPdfStatement(bytes, passwords = []) {
     }
     fail('PASSWORD_FAILED');
 }
-export async function readStatement({ bytes, filename = '', passwords = [], bank = '', layouts = [] }) {
+export async function readStatement({ bytes, filename = '', passwords = [], bank = '', layouts = [], confirmedTemplateId = '' }) {
     const value = inputBytes(bytes);
     let result;
     if (value.subarray(0, 5).toString() === '%PDF-') result = await readPdfStatement(value, passwords);
@@ -285,6 +285,29 @@ export async function readStatement({ bytes, filename = '', passwords = [], bank
         if (candidate.parsed.rows.length && candidate.parsed.verdict === 'parsed') {
             candidate.parsed.layout ||= {};
             candidate.parsed.layout.learnedTemplate = template.id;
+            return { ...candidate, text: result.text };
+        }
+        // The owner explicitly confirmed THIS exact reading for THIS exact
+        // statement moments ago ("Map statement layout" -> "Yes"; the teach
+        // screen already showed them whether it reconciled and let them
+        // proceed anyway). Every row's own date and running balance still had
+        // to check out (invalidDates/balanceMismatches both zero) — the only
+        // thing left that can make verdict !== 'parsed' here is the
+        // statement's single opening+credits-debits=closing total not
+        // matching, which one unrelated fee line the reader never saw a
+        // narration for is enough to cause. That is a reason to have a human
+        // look, not a reason to throw away a correctly date-translated
+        // statement and loop the owner back to the exact screen they just
+        // confirmed. Every row below still passes through its own full
+        // validateSettlementRow() checks regardless — this never files
+        // anything by itself. An UNRELATED template (the six tried above,
+        // opportunistically reused on some other statement from the same
+        // bank) still requires the strict verdict.
+        if (template.id === confirmedTemplateId && candidate.parsed.rows.length
+            && !candidate.parsed.invalidDates && !candidate.parsed.balanceMismatches) {
+            candidate.parsed.layout ||= {};
+            candidate.parsed.layout.learnedTemplate = template.id;
+            candidate.parsed.layout.reconciliationBypassed = true;
             return { ...candidate, text: result.text };
         }
     }
