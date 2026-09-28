@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createCipheriv, pbkdf2Sync } from 'node:crypto';
 import { readStatement, pdfLinesFromItems, STATEMENT_LIMITS } from '../statement-reader.mjs';
+import { learnCloudLayout } from '../statement-layout.mjs';
 
 const password = '01021990';
 const plain = '<html><body><h1>American Express Card Statement</h1><p>Card No: 376657XXXXX0276</p><table><tr><th>Date</th><th>Description</th><th>Amount</th></tr><tr><td>14/09/2026</td><td>KEELLS STORE</td><td>123.45 DR</td></tr><tr><td>15/09/2026</td><td>PAYMENT THANK YOU</td><td>50.00 CR</td></tr></table><script>globalThis.stolen="01021990"; throw Error("must not execute")</script></body></html>';
@@ -108,6 +109,56 @@ describe('server statement reader', () => {
         expect(result.parsed.rows).toHaveLength(1);
         expect(result.parsed.rows[0].amount).toBe(123.45);
         expect(result.parsed.reason).toMatch(/embedded transaction data/i);
+    });
+    it('trusts a date reading the owner just confirmed even when the statement\'s own total does not reconcile', async () => {
+        // Reproduces the live bug reported after "Map statement layout" -> "Yes":
+        // the client's own teach screen already offers (and lets the owner
+        // confirm) a reading whose reconciliation note says the totals do not
+        // add up — that is disclosed, not blocked. The server used to require
+        // strict reconciliation regardless, silently re-quarantining the
+        // freshly-confirmed statement with the exact same generic reason,
+        // forever, no matter how many times the owner confirmed it.
+        const dotted = [
+            'ACCOUNT STATEMENT', 'OPENING BALANCE 100,000.00',
+            '02.07.2026 KEELLS SUPER COLOMBO 4,250.00 95,750.00',
+            '03.07.2026 SALARY JULY 250,000.00 345,750.00',
+            '05.07.2026 CEB ELECTRICITY 8,430.50 337,319.50',
+            'CLOSING BALANCE 999,999.99', // wrong on purpose: real close is 337,319.50
+        ].join('\n');
+        const html = Buffer.from(`<html><body>${dotted}</body></html>`);
+
+        // Unlearned: genuinely unreadable, exactly like production before teaching.
+        const cold = await readStatement({ bytes: html, filename: 'statement.html' });
+        expect(cold.parsed.rows).toHaveLength(0);
+
+        // The owner confirms these exact three rows (mirrors what the teach
+        // modal sends as action:'layout' rows).
+        const learned = await learnCloudLayout(cold.text, [
+            { date: '2026-07-02', amount: 4250, direction: 'debit' },
+            { date: '2026-07-03', amount: 250000, direction: 'credit' },
+            { date: '2026-07-05', amount: 8430.5, direction: 'debit' },
+        ], { bank: 'Sampath Bank' });
+        expect(learned.ok).toBe(true);
+
+        // Reprocessing with the owner's own just-confirmed template: rows come
+        // back despite the reconciliation mismatch, explicitly flagged as such.
+        const confirmed = await readStatement({ bytes: html, filename: 'statement.html', bank: 'Sampath Bank',
+            layouts: [learned.template], confirmedTemplateId: learned.template.id });
+        expect(confirmed.parsed.rows).toHaveLength(3);
+        expect(confirmed.parsed.verdict).toBe('unverified');
+        expect(confirmed.parsed.reconciliation.ok).toBe(false);
+        expect(confirmed.parsed.layout.reconciliationBypassed).toBe(true);
+        expect(confirmed.parsed.layout.learnedTemplate).toBe(learned.template.id);
+
+        // The exact same template, opportunistically tried on some OTHER
+        // statement the owner never confirmed (confirmedTemplateId unset, or
+        // naming a different template) — the strict requirement still holds.
+        const unconfirmed = await readStatement({ bytes: html, filename: 'statement.html', bank: 'Sampath Bank',
+            layouts: [learned.template] });
+        expect(unconfirmed.parsed.rows).toHaveLength(0);
+        const wrongId = await readStatement({ bytes: html, filename: 'statement.html', bank: 'Sampath Bank',
+            layouts: [learned.template], confirmedTemplateId: 'some-other-template-id' });
+        expect(wrongId.parsed.rows).toHaveLength(0);
     });
     it('bounds attachments and returns sanitized malformed-PDF errors', async () => {
         await expect(readStatement({ bytes: Buffer.alloc(STATEMENT_LIMITS.bytes + 1), filename: 's.html' })).rejects.toMatchObject({ code: 'ATTACHMENT_SIZE_LIMIT' });
