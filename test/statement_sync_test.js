@@ -71,7 +71,7 @@ describe('statement worker authorization and board', () => {
         const samples = [
             ['POS TRANSACTION KEELLS SUPER KURUNEGALA', 'Groceries'],
             ['CEFT CHARGES TRANSPORT', 'Bank Charges'],
-            ['POS TRANSACTION DIALOG AXIATA PLC', 'Telecom'],
+            ['POS TRANSACTION DIALOG AXIATA PLC', 'Mobile/Telecom payment'],
             ['ATM WITHDRAWAL KURUNEGALA CRM', 'Cash Withdrawal'],
             ['POS TRANSACTION OISHII BURGER', 'Dining'],
         ];
