@@ -144,6 +144,18 @@ async function confirmLayout(entry, rows) {
         try {
             const result = await request('/api/statement-sync', 'POST', { action: 'layout', id: entry.id, rows });
             if (result.mapped !== true) throw new Error('layout-not-mapped');
+            let filed=Math.max(0,Number(result.filed)||0),review=Math.max(0,Number(result.review)||0),current=result;
+            // A statement can contain many 10-row AI batches. Continue each in
+            // its own bounded request, always through the server-side mapping
+            // from this review id to the exact confirmed source. This avoids a
+            // browser timeout without allowing historical backlog to steal the
+            // continuation.
+            for(let batch=0;current.replayStatus==='pending'&&batch<100;batch+=1){
+                current=await request('/api/statement-sync','POST',{action:'layout-continue',id:entry.id});
+                filed+=Math.max(0,Number(current.filed)||0);review+=Math.max(0,Number(current.review)||0);
+            }
+            if(current.replayStatus==='pending')throw new Error('statement-continuation-limit');
+            result.filed=filed;result.review=review;result.queued=current.queued===true;result.replayStatus=current.replayStatus;
             return result;
         } catch (error) {
             // Either mapReviewLayout's own replay guard, or — when an EARLIER

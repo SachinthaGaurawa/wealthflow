@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser, publicReviewSourceReason } from '../statement-sync.js';
+import { validScheduleSecret, invokeBoard, classifySlice, deterministicDecision, claimSource, attachmentBytes, inspectReviewSource, mapReviewLayout, continueMappedLayout, recoverPasswordFailures, recoverWholeStatementFailures, repairReviewMetadata, repairCategoriesInUser, publicReviewSourceReason } from '../statement-sync.js';
 import { planMessage } from '../wealthflow-mail-ingest.mjs';
 import { policyFrom } from '../wealthflow-mail-senders.mjs';
 import { textVerdict, VERDICT } from '../wealthflow-statement-identity.js';
@@ -170,7 +170,16 @@ describe('private source inspection and durable layout replay', () => {
         expect(args.data.get('users/u/statementReview/' + args.id).status).toBe('mapped');
         expect([...args.data.keys()].some(path => path.startsWith('users/u/statementLayouts/'))).toBe(true);
         expect(enqueue).toHaveBeenCalledTimes(1);
-        expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath }));
+        expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath, maxSteps: 1 }));
+    });
+    it('continues every confirmed layout batch on the same source only', async () => {
+        const args = setup();
+        args.data.set('users/u/statementReview/' + args.id, { ...args.data.get('users/u/statementReview/' + args.id), status: 'mapped' });
+        args.data.set(args.sourcePath, { ...args.data.get(args.sourcePath), status: 'pending', learnedTemplate: 'template' });
+        const enqueue = vi.fn(async () => ({ filed: 10, review: 0, status: 'pending' }));
+        await expect(continueMappedLayout({ ...args, enqueue })).resolves.toMatchObject({ filed: 10, queued: true, replayStatus: 'pending' });
+        expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath, maxSteps: 1 }));
+        expect(enqueue.mock.calls[0][0].sourcePath).not.toContain('other');
     });
     it('reopens and safely maps a legacy pending review even when its source status is stale', async () => {
         const args = setup();

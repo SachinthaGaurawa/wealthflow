@@ -569,8 +569,8 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     return outcome;
 }
 
-async function enqueueStatementSync({ db, owner, env = process.env, f = fetch, sourcePath = '' }) {
-    return runStatementSync({ db, owner, action: 'drain', env, f, preferredSourcePath: sourcePath });
+async function enqueueStatementSync({ db, owner, env = process.env, f = fetch, sourcePath = '', maxSteps = Infinity }) {
+    return runStatementSync({ db, owner, action: 'drain', env, f, preferredSourcePath: sourcePath, maxSteps });
 }
 
 export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '' }) {
@@ -712,12 +712,30 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
     });
     try {
-        const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path });
+        // One AI-reviewed batch per HTTP request keeps the response inside the
+        // browser's 55-second deadline. The authenticated continuation below
+        // remains pinned to this same source until its final batch settles.
+        const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
         const filed = Math.max(0, Number(replay?.filed) || 0), review = Math.max(0, Number(replay?.review) || 0);
         return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review,
             replayStatus: String(replay?.status || (filed ? 'filed' : 'pending')) };
     }
     catch (_) { return { ok: true, mapped: true, queued: false }; }
+}
+
+export async function continueMappedLayout({ db, owner, id, env = process.env, f = fetch, enqueue = enqueueStatementSync }) {
+    if (!/^[a-f\d]{64}$/.test(id || '') || !owner?.uid) throw new Error('invalid-review-request');
+    const reviewRef = db.collection('users').doc(owner.uid).collection('statementReview').doc(id);
+    const reviewSnap = await reviewRef.get(), review = reviewSnap.data();
+    if (!reviewSnap.exists || review.uid !== owner.uid || review.status !== 'mapped' || !review.sourcePath) throw new Error('whole-statement-review-required');
+    const sourceRef = db.doc(review.sourcePath), sourceSnap = await sourceRef.get(), source = sourceSnap.data();
+    if (!sourceSnap.exists || source.uid !== owner.uid || !source.learnedTemplate) throw new Error('review-source-owner-mismatch');
+    if (source.status === 'filed' || source.filed === true) return { ok: true, filed: 0, review: 0, queued: false, replayStatus: 'filed' };
+    if (source.status === 'needs_review') return { ok: true, filed: 0, review: 1, queued: false, replayStatus: 'needs_review' };
+    const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
+    const filed = Math.max(0, Number(replay?.filed) || 0), needsReview = Math.max(0, Number(replay?.review) || 0);
+    const replayStatus = String(replay?.status || 'pending');
+    return { ok: true, filed, review: needsReview, queued: replayStatus === 'pending', replayStatus };
 }
 
 export default async function handler(req, res) {
@@ -729,17 +747,19 @@ export default async function handler(req, res) {
     const scheduled = validScheduleSecret(req);
     let body;
     try { body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {}); } catch (_) { return json(res, 400, { ok: false, reason: 'invalid-body' }); }
-    if (scheduled && ['review', 'review-source', 'layout'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
+    if (scheduled && ['review', 'review-source', 'layout', 'layout-continue'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
     if (!scheduled) {
         const who = await identify(req, { verifyIdToken: token => admin.auth().verifyIdToken(token, true) });
         if (!who.ok) return json(res, who.status || 401, { ok: false, reason: who.reason });
         if (who.uid !== settings.ownerUid) return json(res, 403, { ok: false, reason: 'owner-required' });
-        if (['review-source', 'layout'].includes(body.action)) {
+        if (['review-source', 'layout', 'layout-continue'].includes(body.action)) {
             if (req.method !== 'POST') return json(res, 405, { ok: false, reason: 'post-required' });
             try {
                 const owner = await admin.auth().getUser(who.uid);
                 if (owner.disabled || !owner.emailVerified) return json(res, 403, { ok: false, reason: 'verified-owner-required' });
-                const result = body.action === 'review-source' ? await inspectReviewSource({ db, owner, id: body.id }) : await mapReviewLayout({ db, owner, id: body.id, rows: body.rows });
+                const result = body.action === 'review-source' ? await inspectReviewSource({ db, owner, id: body.id })
+                    : body.action === 'layout-continue' ? await continueMappedLayout({ db, owner, id: body.id })
+                    : await mapReviewLayout({ db, owner, id: body.id, rows: body.rows });
                 return json(res, 200, result);
             } catch (error) {
                 const reason = publicReviewSourceReason(error);
