@@ -60,6 +60,12 @@ describe('statement ledger', () => {
         const ctx = { statementType: '', card_last4: '9911', bank: 'DFCC', cardRegistry: { '9911': { type: 'credit_card', bank: 'DFCC' } } };
         expect(validateSettlementRow(cardRow, { module: 'cconetime', category: 'Shopping', verified: true }, ctx)).toBe(null);
     });
+    it('only allows proven card debits into card tabs, including installments', () => {
+        const ctx = { statementType: 'credit_card' };
+        expect(validateSettlementRow(row, { module: 'ccinstall', category: 'Installment', verified: true }, ctx)).toBe(null);
+        expect(validateSettlementRow(row, { module: 'expenses', category: 'Food', verified: true }, ctx)).toBe('credit-card-route-conflict');
+        expect(validateSettlementRow(row, { module: 'subscriptions', category: 'Streaming', verified: true }, ctx)).toBe('credit-card-route-conflict');
+    });
     it('still refuses a card charge with no statement or registry proof of a credit-card account', () => {
         const cardRow = { ...row, direction: 'debit' };
         expect(validateSettlementRow(cardRow, { module: 'cconetime', category: 'Shopping', verified: true }, {})).toBe('card-charge-context-required');
@@ -174,6 +180,14 @@ describe('statement ledger', () => {
         args.decisions = [{ module: 'cconetime', category: 'Shopping', verified: true }];
         expect(await settleStatement(args)).toMatchObject({ filed: 1, status: 'filed' });
         expect(args.db.docs.get('users/u').cconetime).toHaveLength(1);
+    });
+    it('settles a credit-card installment into the installment tab', async () => {
+        const args = fixture();
+        args.statementType = 'credit_card';
+        args.decisions = [{ module: 'ccinstall', category: 'Installment', verified: true }];
+        expect(await settleStatement(args)).toMatchObject({ filed: 1, status: 'filed' });
+        expect(args.db.docs.get('users/u').ccinstall).toHaveLength(1);
+        expect(args.db.docs.get('users/u').ccinstall[0]).toMatchObject({ total: 42.1, monthly: 42.1, remaining: 1 });
     });
     it('resolves a per-row credit-card review using the owner card registry when the source never read statementType', async () => {
         const args = fixture({ settings: { cardRegistry: { '9911': { type: 'credit_card', bank: 'DFCC' } } } });
