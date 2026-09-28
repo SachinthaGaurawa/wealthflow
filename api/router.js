@@ -47,8 +47,6 @@ export const config = { maxDuration: 60 }; // Hobby max; covers deep multi-engin
 // Static import map → Vercel bundles each handler; lazy so only the matched
 // module's top-level code runs per request (one bad module can't break others).
 const HANDLERS = {
-    'statement-vault': () => import('../statement-vault.js'),
-    'statement-sync': () => import('../statement-sync.js'),
     'adobe-pdf-share': () => import('../adobe-pdf-share.js'),
     // ai.js and vision-scan.js live in THIS directory, not at the repo root, so
     // '../' pointed at nothing. Both are served by their own real files before a
@@ -102,14 +100,6 @@ const HANDLERS = {
     // nothing. A watch also expires after seven days, so this is called again on
     // a six-day margin rather than once.
     'gmail-watch': () => import('../gmail-watch.js'),
-    // The same renewal, on a schedule. The page renews when it is opened, which
-    // covers every week the app is opened — and covers nothing at all in the
-    // week it is not. Then the watch lapses, Gmail publishes nothing, and the
-    // card still says "Connected", because the mailbox is. Statements stop
-    // without anything looking broken, which is the exact silence this pipeline
-    // keeps producing. Guarded by CRON_SECRET, not by a user token: there is no
-    // user in front of a scheduled run.
-    'gmail-renew': () => import('../gmail-renew.js'),
     // The deep scan: the statements ALREADY in the mailbox. A watch subscribes
     // to the future and history.list reads forward from a bookmark, so neither
     // can reach a statement that arrived before the pipeline was switched on —
@@ -398,3 +388,4 @@ export default async function handler(req, res) {
         }
     }
 }
+
