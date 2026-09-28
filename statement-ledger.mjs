@@ -95,6 +95,9 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
         const writes = [];
         rows.forEach((row, offset) => {
             const index = cursor + offset, id = ledgerRefs[offset].id;
+            // card_last4 here is only isCreditCardRow()'s expected input key (below);
+            // it is never persisted under that name — makeRecord()'s stored
+            // card_last4 field still reads from context.last4, unchanged.
             const context = { bank, last4, card_last4: last4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
             const fingerprint = hash(rowIdentity(row, context));
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
@@ -190,6 +193,9 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
             const corrected = { ...review.row, ...row, description: row?.description || review.row?.description || review.row?.narration, directionSource: 'marker', needsReview: false, valid: true };
             const verified = { ...decision, verified: true };
             const resolvedLast4 = source.last4 || review.row?.card_last4 || review.row?._ccLast4 || '';
+            // Same non-persisted context.card_last4 as settleStatement() above — it
+            // only feeds isCreditCardRow(); makeRecord() still stores card_last4
+            // from context.last4.
             const context = { bank: source.bank || review.row?.bank || '', last4: resolvedLast4, card_last4: resolvedLast4, statementType: source.statementType || '', cardRegistry: (userSnap.data() || {}).settings?.cardRegistry || {}, sourcePath: review.sourcePath, index: review.index };
             const reason = validateSettlementRow(corrected, verified, context);
             if (reason) throw new Error(reason);
