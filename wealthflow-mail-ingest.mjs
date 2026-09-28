@@ -61,67 +61,60 @@
  * satisfies `amex.com`, but only downward — `amex.com.attacker.net` does not,
  * because the match is anchored to a label boundary at the end.
  */
-export const BANKS = [
-    // Sri Lanka Licensed Commercial & Specialized Banks
-    { domain: 'hnb.lk', name: 'HNB' },
-    { domain: 'dfcc.lk', name: 'DFCC' },
-    { domain: 'nationstrust.com', name: 'Nations Trust' },
-    { domain: 'ntb.lk', name: 'Nations Trust' },
-    { domain: 'combank.net', name: 'Commercial Bank' },
-    { domain: 'combank.lk', name: 'Commercial Bank' },
-    { domain: 'commercialbank.lk', name: 'Commercial Bank' },
-    { domain: 'sampath.lk', name: 'Sampath Bank' },
-    { domain: 'boc.lk', name: 'Bank of Ceylon' },
-    { domain: 'seylan.lk', name: 'Seylan Bank' },
-    { domain: 'sc.com', name: 'Standard Chartered' },
-    { domain: 'standardchartered.com', name: 'Standard Chartered' },
-    { domain: 'hsbc.lk', name: 'HSBC' },
-    { domain: 'hsbc.com', name: 'HSBC' },
-    { domain: 'ndbbank.com', name: 'NDB Bank' },
-    { domain: 'pabcbank.com', name: 'Pan Asia Bank' },
-    { domain: 'unionb.com', name: 'Union Bank' },
-    { domain: 'cargillsbank.com', name: 'Cargills Bank' },
-    { domain: 'amanabank.lk', name: 'Amana Bank' },
-    { domain: 'sdb.lk', name: 'SDB Bank' },
-    { domain: 'nsb.lk', name: 'NSB' },
-    { domain: 'rdb.lk', name: 'RDB' },
-    { domain: 'peoplesbank.lk', name: "People's Bank" },
-    // Sri Lanka Major Financial Institutions & Cards
-    { domain: 'lolc.com', name: 'LOLC Finance' },
-    { domain: 'singerfinance.com', name: 'Singer Finance' },
-    { domain: 'cdb.lk', name: 'CDB' },
-    { domain: 'lbfinance.com', name: 'LB Finance' },
-    { domain: 'vallibelfinance.com', name: 'Vallibel Finance' },
-    { domain: 'centralfinance.com', name: 'Central Finance' },
-    // Global Banks, Cards & Fintechs
-    { domain: 'americanexpress.com', name: 'American Express' },
-    { domain: 'amex.com', name: 'American Express' },
-    { domain: 'wise.com', name: 'Wise' },
-    { domain: 'transferwise.com', name: 'Wise' },
-    { domain: 'revolut.com', name: 'Revolut' },
-    { domain: 'payoneer.com', name: 'Payoneer' },
-    { domain: 'paypal.com', name: 'PayPal' },
-    { domain: 'chase.com', name: 'Chase' },
-    { domain: 'citi.com', name: 'Citi' },
-    { domain: 'citibank.com', name: 'Citibank' },
-    { domain: 'barclays.co.uk', name: 'Barclays' },
-    { domain: 'barclays.com', name: 'Barclays' },
-    { domain: 'capitalone.com', name: 'Capital One' },
-    { domain: 'wellsfargo.com', name: 'Wells Fargo' },
-    { domain: 'bankofamerica.com', name: 'Bank of America' },
-    { domain: 'bofa.com', name: 'Bank of America' },
-    { domain: 'emiratesnbd.com', name: 'Emirates NBD' },
-    { domain: 'mashreq.com', name: 'Mashreq' },
-    { domain: 'dbs.com', name: 'DBS' },
-    { domain: 'ocbc.com', name: 'OCBC' },
-    { domain: 'uobgroup.com', name: 'UOB' },
-];
+import { BANK_DOMAINS } from './wealthflow-institutions.js';
+import { nameVerdict, VERDICT as ID_VERDICT } from './wealthflow-statement-identity.js';
+import { STATEMENT_TERMS } from './wealthflow-backfill.js';
 
-export const FINANCIAL_KEYWORD_RE = /\b(e[-_ ]?statement|statement|e[-_ ]?advice|advice|bill|invoice|account|credit[-_ ]?card|creditcard|transaction|card[-_ ]?statement|epassbook|finacle|e[-_ ]?slip|banking)\b/i;
-export const BANK_DOMAIN_RE = /(^|\.)(bank|finance|financial|credit|wealth|fund|fintech|epassbook)($|\.)/i;
+/* DERIVED, NOT DECLARED. This used to be a hand-written list of four
+ * institutions while index.html's picker offered fourteen, and nothing compared
+ * them — so an owner banking with Sampath or Seylan or BOC had accounts this
+ * pipeline had never heard of, and the only symptom was statements that never
+ * arrived. Both now come from wealthflow-institutions.js, which is the single
+ * place a bank is described. Two copies of a classifier is one more than can be
+ * kept in step, and this file is where that cost was paid. */
+export const BANKS = BANK_DOMAINS.map((b) => ({ domain: b.domain, name: b.name }));
+
+/* Mailboxes people own, rather than institutions that send statements.
+ *
+ * Anyone with a Gmail account gets a valid DKIM signature for gmail.com, so
+ * "signed by the domain it claims" is not evidence of anything here — it is
+ * the default. A statement does not arrive from a personal mailbox, and
+ * letting these through would put every friend's PDF invoice in the review
+ * queue and hand a stranger a way to put one there too. */
+export const CONSUMER_MAIL = new Set([
+    'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'ymail.com',
+    'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+    'icloud.com', 'me.com', 'mac.com',
+    'proton.me', 'protonmail.com', 'pm.me',
+    'aol.com', 'zoho.com', 'gmx.com', 'mail.com', 'yandex.com',
+]);
 
 export const REJECT = {
     NOT_A_BANK: 'sender-not-on-allowlist',
+    /* The owner said no to this sender by name. Distinct from every other
+     * refusal here because it is the only one that is not a judgement: it is an
+     * instruction, and it is obeyed before anything else is considered. */
+    SENDER_BLOCKED: 'you-blocked-this-sender',
+    /* The owner has curated a list and this sender is not on it. Kept apart
+     * from NOT_A_STATEMENT so the review screen can say which of the two
+     * happened: "you have not decided about this one yet" is an invitation,
+     * "nothing about it says statement" is a verdict. */
+    NOT_ON_YOUR_LIST: 'sender-not-on-your-list',
+    /* A NEW ADDRESS AT A BANK THEY ALREADY APPROVED. Distinct from
+     * NOT_ON_YOUR_LIST because it is a different question to put to the owner:
+     * "is this Sampath too?" rather than "who is this?". It is still a refusal
+     * — approving one address is not approving a domain — but the mail is HELD
+     * rather than dropped, so one tap releases it. */
+    SENDER_SIBLING: 'a-new-address-at-a-bank-you-approved',
+    NOT_A_STATEMENT: 'unrecognised-sender-and-nothing-says-statement',
+    /* THE DOCUMENT ANNOUNCED ITSELF AS SOMETHING ELSE — an invoice, a receipt,
+     * a payslip — whoever sent it. Kept apart from NOT_A_STATEMENT above, which
+     * is the weaker "nobody vouches for this sender AND nothing says statement";
+     * this one holds even for a bank the owner approved by name, because
+     * approving a sender means they MAY send statements, not that everything
+     * they send is one. That conflation is the bug the owner reported four
+     * times. See wealthflow-statement-identity.js. */
+    NOT_A_STATEMENT_DOC: 'the-attachment-is-not-a-bank-statement',
     DKIM_FAILED: 'dkim-did-not-pass',
     DKIM_DOMAIN_MISMATCH: 'signed-by-a-different-domain',
     NO_ATTACHMENT: 'no-pdf-attachment',
@@ -145,11 +138,42 @@ const lower = (s) => String(s == null ? '' : s).toLowerCase().trim();
 
 /* ── 1. who sent it ───────────────────────────────────────────────────────── */
 
+/**
+ * The address out of a From header, whatever shape the display name takes.
+ *
+ * A DISPLAY NAME IS NOT AN ADDRESS, AND IT CAN BE MADE TO LOOK LIKE ONE. The
+ * header is `display-name <addr-spec>`, and the display name may be a quoted
+ * string carrying anything at all — including angle brackets around something
+ * shaped exactly like an address:
+ *
+ *     From: "Statements <statements@hnb.lk>" <someone@elsewhere.example>
+ *
+ * Every reader here took the FIRST angled group, which is the one inside the
+ * quotes: the sender's own text decided who the message was from. Downstream
+ * that was a signature check against the wrong domain — so a real statement was
+ * refused — and, on the mailbox card, a row attributed to a sender that never
+ * sent it, which is a row the owner could approve or sweep by mistake.
+ *
+ * Quoted strings are removed first, then the LAST angled group is taken, which
+ * is the addr-spec in every shape a mail client produces.
+ */
+export function addressOf(from) {
+    const s = lower(from);
+    /* Backslash escapes honoured, so a quoted string containing \" does not end
+     * where it appears to. An unterminated quote matches nothing and leaves the
+     * header exactly as it was — the angle brackets below still decide. */
+    const bare = s.replace(/"(?:[^"\\]|\\.)*"/g, ' ');
+    let addr = '';
+    const re = /<([^<>]*)>/g;
+    let m;
+    while ((m = re.exec(bare)) !== null) addr = m[1];
+    if (!addr) addr = bare;
+    return addr.replace(/^mailto:/, '').replace(/[<>\s,;]+$/, '').trim();
+}
+
 /** The domain out of a From header, whatever shape the display name takes. */
 export function domainOf(from) {
-    const s = lower(from);
-    const angled = /<([^>]*)>/.exec(s);
-    const addr = angled ? angled[1] : s;
+    const addr = addressOf(from);
     const at = addr.lastIndexOf('@');
     if (at < 0) return '';
     return addr.slice(at + 1).replace(/[>\s,;]+$/, '').trim();
@@ -190,51 +214,109 @@ export function dkimPassedFor(authResults) {
     return out;
 }
 
-/** Derive clean bank name from From display name or domain */
-export function deriveBankName(fromHeader, domain) {
-    const raw = String(fromHeader || '').trim();
-    const match = /^["']?([^<"@]+?)["']?\s*<.+@.+>$/.exec(raw);
-    if (match && match[1] && match[1].trim().length > 1) {
-        const clean = match[1].replace(/e[-_ ]?statement|statement|notifications?|alerts?|no[-_ ]?reply/gi, '').trim();
-        if (clean.length > 1) return clean;
-    }
-    const parts = (domain || '').split('.').filter(p => !['com', 'lk', 'net', 'org', 'co', 'gov', 'edu', 'io', 'app'].includes(p));
-    const main = parts[parts.length - 1] || parts[0] || domain || 'Bank';
-    return main.charAt(0).toUpperCase() + main.slice(1) + (main.toLowerCase().includes('bank') ? '' : ' Bank');
-}
-
 /**
  * Which bank sent this, if any — and only if Google says the signature holds.
  *
  * @param headers  { from, 'authentication-results' } (case-insensitive keys)
  * @returns {{ok:true, bank:string, domain:string} | {ok:false, reason:string, detail:object}}
  */
-export function identifyBank(headers) {
+/**
+ * A display name for a bank nobody listed. `sampathbank.lk` -> `Sampathbank`.
+ * Deliberately dumb: this label is shown beside the message in the review
+ * queue, where the owner can see the real domain and correct it. Guessing
+ * harder than this would only produce confident nonsense.
+ */
+export function nameFromDomain(domain) {
+    const first = String(domain || '').split('.')[0] || '';
+    return first ? first.charAt(0).toUpperCase() + first.slice(1) : '';
+}
+
+/**
+ * Which bank sent this, if any — and only if Google says the signature holds.
+ *
+ * WHY THIS NO LONGER REQUIRES THE ALLOWLIST.
+ *
+ * It used to reject anything not in BANKS, which names four institutions. The
+ * owner banks with more than ten, and index.html's own dropdown lists fifteen,
+ * so eleven banks' statements were dropped here with `sender-not-on-allowlist`
+ * even on the rare occasion the old query fetched one at all.
+ *
+ * The allowlist was doing two different jobs and only one of them was security.
+ * Naming the bank is useful. GATING on it was never the control — the control
+ * is the DKIM check below, and that works for any domain in the world: the
+ * message must carry a passing signature from the domain it claims to be from.
+ * An unlisted sender that clears it is not less verified than HNB; it is
+ * exactly as verified, and merely unrecognised.
+ *
+ * So an unlisted sender is now returned with `known: false`, which routes it to
+ * the review queue rather than into the ledger. Nothing is auto-filed on the
+ * strength of a domain nobody has confirmed, and nothing is silently dropped.
+ *
+ * Three things are still refused outright, because for these a signature
+ * proves nothing:
+ *   - no From domain at all;
+ *   - a personal mailbox (see CONSUMER_MAIL) — anyone can sign as gmail.com;
+ *   - a LOOKALIKE of a listed bank, such as hnb.lk.attacker.net, which is a
+ *     deliberate attempt to be mistaken for one and must not reach a queue
+ *     where it is displayed next to the real thing.
+ *
+ * @param headers  { from, 'authentication-results' } (case-insensitive keys)
+ * @returns {{ok:true, bank:string, domain:string, known:boolean}
+ *          | {ok:false, reason:string, detail:object}}
+ */
+export function identifyBank(headers, policy = {}) {
     const h = {};
     for (const [k, v] of Object.entries(headers || {})) h[lower(k)] = v;
 
     const from = domainOf(h.from);
     if (!from) return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from: '(none)' } };
 
-    let hit = BANKS.find((b) => isUnder(from, b.domain));
+    /* THE OWNER'S OWN ANSWER, ASKED FIRST.
+     *
+     * `policy.decide` is injected rather than imported so this module keeps no
+     * dependency on the one that stores the list — they would otherwise import
+     * each other. Absent, it answers `new` for everything, which is exactly the
+     * behaviour this function had before the list existed, so every existing
+     * caller and test is unaffected.
+     *
+     * A BLOCK IS OBEYED BEFORE ANYTHING ELSE IS CONSIDERED. It is the one
+     * decision here that cannot be wrong in a dangerous direction: refusing
+     * more mail than strictly necessary loses a statement the owner can fetch
+     * by hand, while accepting mail they told us to refuse is the complaint
+     * that produced this file. */
+    const decide = typeof policy.decide === 'function' ? policy.decide : null;
+    const said = decide ? (decide(h.from) || {}) : {};
+    if (said.verdict === 'blocked') {
+        return { ok: false, reason: REJECT.SENDER_BLOCKED, detail: { from } };
+    }
+
+    const hit = BANKS.find((b) => isUnder(from, b.domain));
+
     if (!hit) {
-        const subject = lower(h.subject || '');
-        const fromRaw = lower(h.from || '');
-        const isFinancialMail = FINANCIAL_KEYWORD_RE.test(subject) || FINANCIAL_KEYWORD_RE.test(fromRaw) || BANK_DOMAIN_RE.test(from);
-        if (isFinancialMail) {
-            const derivedName = deriveBankName(h.from, from);
-            hit = { domain: from, name: derivedName, dynamic: true };
+        /* `hnb.lk.attacker.net` contains a listed domain without being under
+         * it. That is not an unrecognised bank, it is an impersonation.
+         *
+         * The owner's approved domains are checked HERE as well as the built-in
+         * list, and they matter more: a domain someone has explicitly approved
+         * is a domain worth impersonating, and it is the one they will read
+         * least carefully in a list of their own banks. */
+        const guarded = [...BANKS.map((b) => b.domain), ...(Array.isArray(policy.domains) ? policy.domains : [])];
+        const lookalike = guarded.find((d) => d && from !== lower(d) && from.includes(lower(d)) && !isUnder(from, lower(d)));
+        if (lookalike) {
+            return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from, lookalikeOf: lower(lookalike) } };
+        }
+        if (CONSUMER_MAIL.has(from)) {
+            return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from, personalMailbox: true } };
         }
     }
-    if (!hit) return { ok: false, reason: REJECT.NOT_A_BANK, detail: { from: from || '(none)' } };
 
     const passed = dkimPassedFor(h['authentication-results']);
     if (!passed.size) {
-        return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: hit.name } };
+        return { ok: false, reason: REJECT.DKIM_FAILED, detail: { from, claimed: hit ? hit.name : from } };
     }
     /* The signing domain must cover the domain the message claims to be from.
      * A valid signature by some other domain is the attack, not a pass. */
-    const signedByClaimed = [...passed].some((d) => isUnder(from, d) || isUnder(d, hit.domain) || isUnder(d, from));
+    const signedByClaimed = [...passed].some((d) => isUnder(from, d) || (hit && isUnder(d, hit.domain)));
     if (!signedByClaimed) {
         return {
             ok: false,
@@ -242,22 +324,135 @@ export function identifyBank(headers) {
             detail: { from, signedBy: [...passed].slice(0, 4) },
         };
     }
-    return { ok: true, bank: hit.name, domain: hit.domain };
+
+    /* APPROVED BY THE OWNER — after the signature check, never instead of it.
+     * "This is one of mine" is not "trust this": the message still had to carry
+     * a passing signature from the domain it claims, and it did, above. What
+     * approval buys is that the statement is FILED rather than held, and that
+     * it is labelled with the name the owner gave it rather than one guessed
+     * from the domain. */
+    if (said.verdict === 'approved') {
+        return {
+            ok: true,
+            bank: (said.entry && said.entry.name) || (hit && hit.name) || nameFromDomain(from),
+            domain: from,
+            known: true,
+            approved: true,
+            builtIn: !!hit,
+        };
+    }
+
+    /* ── A BUILT-IN NAME IS A GUESS ABOUT WHO, NOT A GRANT OF TRUST ──────────
+     *
+     * THE BUG: this used to return `known: true` for a hit, unconditionally.
+     * `known: true` skipped BOTH the content check AND — until the owner had
+     * curated anything — the sender-approval gate too, because that gate used
+     * to be keyed off `policy.curated`, which nothing not yet approved could
+     * set. So mail from these five domains was filed sight-unseen from the
+     * moment the mailbox was linked, whether or not the owner had put that
+     * address anywhere in their own senders list — the exact "senders you
+     * never approved keep syncing anyway" report this rewrite exists to
+     * close. planMessage now holds anything not explicitly approved
+     * unconditionally, curated or not, so this is no longer the only place
+     * that mattered — but `known` still has to tell the truth on its own,
+     * because the mailbox card reads it directly.
+     *
+     * A hit still buys the nicer NAME below (`hit.name` instead of a guess
+     * from the domain) — that was never the security question. `builtIn`
+     * carries that recognition forward for planMessage's "this IS one of
+     * your banks, you just have not said so" hint on a hold, which needs the
+     * fact a domain matched without it granting anything. Trust is
+     * `known: true`, and the only thing that may grant it is the owner's own
+     * decision, three lines up. */
+    if (hit) return { ok: true, bank: hit.name, domain: hit.domain, known: false, builtIn: true };
+    return { ok: true, bank: nameFromDomain(from), domain: from, known: false, builtIn: false };
+}
+
+/* ── 1b. what to HOLD ─────────────────────────────────────────────────────── */
+
+/** Refusals that are about WHO SENT IT, and are therefore one tap from being wrong. */
+export const HOLDABLE = new Set([REJECT.NOT_ON_YOUR_LIST, REJECT.SENDER_SIBLING]);
+
+/** At most this many held references. A junk mailbox must not fill a database. */
+export const MAX_HELD = 200;
+
+/**
+ * A refused message, kept as a REFERENCE so approving the sender releases it.
+ *
+ * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+ *
+ * A refused message was dropped. `if (!plan.ok) { … continue; }`, in both the
+ * push hook and the scan endpoint. The sighting was recorded, so the sender
+ * appeared in the pending list — but the STATEMENT was gone. Approving the
+ * sender afterwards did not bring it back; only a backfill scan reaching that
+ * month would, and only if the owner thought to run one.
+ *
+ * That is the second half of the report: "I added the address and yesterday's
+ * statement still did not sync." Even once the sender is right, the message
+ * that arrived while it was wrong is not recoverable by any tap.
+ *
+ * ── WHY A REFERENCE AND NOT THE ATTACHMENT ──────────────────────────────────
+ *
+ * Storing the PDF would undo the rule that mail from an unapproved sender is
+ * refused before an attachment is fetched — the rule that stopped a review
+ * queue filling with receipts. So this keeps only what Gmail already told us in
+ * the headers: which message, from whom, when, and why it was refused. The
+ * bytes are fetched if and when the owner approves the sender, from the message
+ * id kept here. Nothing is downloaded on the strength of a refusal, and nothing
+ * is lost by one.
+ */
+export function planHold(plan, message) {
+    if (!plan || plan.ok !== false || !HOLDABLE.has(plan.reason)) return null;
+    const id = String((message && message.id) || '').trim();
+    if (!id) return null;
+    const received = Number(message && message.internalDate);
+    return {
+        key: id,
+        messageId: id,
+        from: String(plan.from || '').slice(0, 160),
+        subject: String(plan.subject || '').slice(0, 160),
+        bank: plan.bank || null,
+        reason: plan.reason,
+        /* The detail the screen needs to ask the right question: which address
+         * they already approved, and which one wrote this time. */
+        detail: plan.detail || null,
+        receivedMs: Number.isFinite(received) && received > 0 ? received : null,
+        heldMs: null,
+    };
+}
+
+/**
+ * Does approving this sender release this held message?
+ *
+ * The comparison is the same matchSender the live path uses, handed in rather
+ * than imported — wealthflow-mail-senders.mjs already imports this file, and
+ * the pair importing each other is how a module graph stops loading at all.
+ */
+export function releasedBy(held, decide) {
+    if (!held || typeof decide !== 'function') return false;
+    const verdict = decide(held.from) || {};
+    return verdict.verdict === 'approved';
 }
 
 /* ── 2. what to take ──────────────────────────────────────────────────────── */
 
-const isPdf = (part) => {
+const isStatementAttachment = (part) => {
     const mime = lower(part && part.mimeType);
     const name = lower(part && part.filename);
-    return mime === 'application/pdf' || (mime === 'application/octet-stream' && name.endsWith('.pdf'));
+    return mime === 'application/pdf'
+        || (mime === 'application/octet-stream' && name.endsWith('.pdf'))
+        || ((mime === 'text/html' || mime === 'application/octet-stream') && /\.html?$/.test(name));
 };
 
 /** Walk the MIME tree; Gmail nests parts arbitrarily deep under multipart/*. */
 function walk(part, out) {
     if (!part) return out;
     if (Array.isArray(part.parts)) for (const p of part.parts) walk(p, out);
-    if (part.filename && part.body && part.body.attachmentId) out.push(part);
+    // Gmail may inline a small MIME part in body.data.
+    // Unnamed PDFs are real attachments; unnamed HTML is the mail body.
+    const namedOrPdf = !!part.filename || lower(part.mimeType) === 'application/pdf';
+    if (namedOrPdf && part.body
+        && (part.body.attachmentId || typeof part.body.data === 'string')) out.push(part);
     return out;
 }
 
@@ -271,7 +466,7 @@ function walk(part, out) {
  */
 export function selectAttachments(payload) {
     const all = walk(payload, []);
-    const pdfs = all.filter(isPdf);
+    const pdfs = all.filter(isStatementAttachment);
     if (!pdfs.length) return { ok: false, reason: REJECT.NO_ATTACHMENT, detail: { attachments: all.length } };
     if (pdfs.length > MAX_ATTACHMENTS) {
         return { ok: false, reason: REJECT.TOO_MANY, detail: { pdfs: pdfs.length, max: MAX_ATTACHMENTS } };
@@ -286,7 +481,12 @@ export function selectAttachments(payload) {
             skipped.push({ filename: p.filename, reason: REJECT.TOO_LARGE, bytes: Number(p.body.size) || 0 });
             continue;
         }
-        take.push({ attachmentId: p.body.attachmentId, filename: p.filename, size: Number(p.body.size) || 0 });
+        take.push({
+            attachmentId: p.body.attachmentId || '',
+            inlineData: typeof p.body.data === 'string' ? p.body.data : '',
+            filename: p.filename || '',
+            size: Number(p.body.size) || 0,
+        });
     }
     if (!take.length) return { ok: false, reason: REJECT.TOO_LARGE, detail: { skipped } };
     return { ok: true, take, skipped };
@@ -303,6 +503,48 @@ export function selectAttachments(payload) {
  * another, so the length is preserved and the two ids are joined with a
  * separator the alphabet excludes.
  */
+/**
+ * The document name for one attachment — stable across refetches.
+ *
+ * THE BUG THIS REPLACES. itemKey() below keys on Gmail's `attachmentId`, and
+ * gmail-scan.js's own header states the assumption out loud: "A rescan is
+ * free. The item key is (messageId, attachmentId), so a message re-read in a
+ * later window writes the same document."
+ *
+ * That holds only while the attachment id holds. It is an opaque token Gmail
+ * mints for `messages.attachments.get`, not a content identifier, and it is
+ * not contracted to survive between `messages.get` calls. When it changes, the
+ * key changes; the `existing.exists` check in gmail-hook.js and gmail-scan.js
+ * finds nothing; the attachment is downloaded again and written to a SECOND
+ * document. The owner reports exactly that: press check a few times, or
+ * reload, and the same statements appear again beside themselves.
+ *
+ * `messageId` is stable, and within one message an attachment's FILENAME and
+ * SIZE are properties of the MIME part rather than tokens minted per request.
+ * Two different attachments on one message differ in at least one of them; the
+ * same attachment fetched twice differs in neither.
+ *
+ * Not a hash of the bytes, which would be the strongest key and is what the
+ * dedup ought to use one day — but the key has to be computable BEFORE the
+ * download, because deciding "do we already have this?" without spending the
+ * bytes is the whole point of checking it first.
+ */
+export function stableItemKey(messageId, part) {
+    const safe = (v, n) => String(v == null ? '' : v).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, n);
+    const m = safe(messageId, 128);
+    if (!m) return null;
+    const name = safe((part && part.filename) || '', 80);
+    const size = Number((part && part.size) || 0) || 0;
+    /* No filename is a real case — some banks attach an unnamed part. Falling
+     * back to the attachment id keeps SOME key rather than dropping the
+     * statement, and it is no worse than what this replaces. */
+    if (!name) {
+        const a = safe((part && part.attachmentId) || '', 64);
+        return a ? `${m}.${a}` : null;
+    }
+    return `${m}.${name}.${size}`;
+}
+
 export function itemKey(messageId, attachmentId) {
     const safe = (s) => String(s == null ? '' : s).replace(/[^A-Za-z0-9_-]/g, '_');
     const m = safe(messageId);
@@ -335,6 +577,30 @@ export function planWrite(base64, meta = {}) {
     return { ok: true, parts, manifest: { ...meta, parts: n }, chunked: true };
 }
 
+/** Fill absent legacy fields from mail that passed current DKIM/policy. */
+export function repairManifest(manifest, item, { uid = '' } = {}) {
+    const old = manifest && typeof manifest === 'object' ? manifest : {};
+    const patch = {};
+    const missing = key => old[key] == null || old[key] === '';
+    const fill = (key, value) => {
+        if (missing(key) && value !== undefined && value !== null && value !== '') patch[key] = value;
+    };
+    fill('from', item && item.from);
+    fill('bank', item && item.bank);
+    fill('messageId', item && item.messageId);
+    fill('attachmentId', item && item.attachmentId);
+    fill('filename', item && item.filename);
+    fill('subject', item && item.subject);
+    fill('receivedMs', item && item.receivedMs);
+    if (missing('size') && Number.isFinite(Number(item && item.size))) patch.size = Number(item.size);
+    fill('uid', uid);
+    if (old.filed !== true && missing('status') && uid) {
+        patch.status = 'pending';
+        if (missing('cursor')) patch.cursor = 0;
+    }
+    return patch;
+}
+
 /* ── 4. the whole decision ────────────────────────────────────────────────── */
 
 /**
@@ -345,35 +611,232 @@ export function planWrite(base64, meta = {}) {
  * attachment is considered, so a message from an unrecognised sender never
  * reaches the code that would download from it.
  */
-export function planMessage(message) {
+/**
+ * Does anything about this message call it a statement?
+ *
+ * Subject and attachment filenames, against the same vocabulary the Gmail
+ * query searches with — one list, so what is fetched and what is accepted
+ * cannot drift apart.
+ */
+export function looksLikeStatement({ subject = '', filenames = [] } = {}, terms = STATEMENT_TERMS) {
+    const hay = lower([subject, ...(Array.isArray(filenames) ? filenames : [])].join(' \n '));
+    if (!hay.trim()) return false;
+    return (Array.isArray(terms) ? terms : []).some((t) => hay.includes(lower(t)));
+}
+
+/**
+ * One entry per statement, from a list that may hold the same one several times.
+ *
+ * WHY THIS IS NEEDED ON TOP OF THE KEY FIX. stableItemKey stops NEW duplicates
+ * being written. It removes none of the ones already stored — and those are
+ * what the owner actually sees, because the mailbox card lists what is in the
+ * store rather than fetching anything. A fix that only changes future writes
+ * leaves the screen exactly as it was, which is what happened.
+ *
+ * Two documents are the same statement when they came from the same message
+ * and carry the same attachment: same messageId, same filename, same size. The
+ * old key put Gmail's remintable attachmentId in the document NAME, so the same
+ * statement could be stored under many names — but never with a different
+ * messageId or filename.
+ *
+ * COLLAPSED, NOT DELETED. This decides what to show; it removes nothing. A
+ * reader that hides a row is reversible by reloading, a delete is not, and the
+ * owner's statements are not something to gamble on a grouping rule. The
+ * survivor is the most complete copy — most parts, then earliest stored, so
+ * the answer does not move around between calls.
+ */
+export function dedupeStored(items) {
+    const seen = new Map();
+    for (const it of Array.isArray(items) ? items : []) {
+        if (!it) continue;
+        const m = it.manifest || {};
+        const id = [
+            m.messageId == null ? '' : String(m.messageId),
+            m.filename == null ? '' : String(m.filename),
+            m.size == null ? '' : String(m.size),
+        ].join('\u0000');
+        /* A record with no messageId AND no filename cannot be grouped without
+         * guessing, so it is kept as itself rather than merged into a bucket it
+         * may not belong to. */
+        const key = (m.messageId || m.filename) ? id : `@unique:${it.id}`;
+        const prev = seen.get(key);
+        if (!prev) { seen.set(key, it); continue; }
+        seen.set(key, betterCopy(prev, it));
+    }
+    return [...seen.values()];
+}
+
+/** Of two copies of one statement, the one worth showing. */
+export function betterCopy(a, b) {
+    const parts = (x) => (Array.isArray(x && x.parts) ? x.parts.length : 0);
+    if (parts(b) !== parts(a)) return parts(b) > parts(a) ? b : a;
+    const at = (x) => Number((x && x.manifest && x.manifest.storedMs) || 0) || 0;
+    if (at(a) && at(b) && at(a) !== at(b)) return at(a) < at(b) ? a : b;
+    /* Nothing separates them; keep the first so repeated calls agree. */
+    return a;
+}
+
+export function planMessage(message, policy = {}) {
     const headers = {};
     for (const h of (message && message.payload && message.payload.headers) || []) {
         if (h && h.name) headers[lower(h.name)] = h.value;
     }
 
-    const who = identifyBank(headers);
-    if (!who.ok) return { ok: false, ...who };
+    /* Carried out on every plan, refused or not, so the caller can offer the
+     * owner the senders it saw. The gathering the owner asked for depends on
+     * this being reported for mail that did NOT get in — a sender nobody has
+     * approved yet is exactly the one worth showing them. */
+    const seenFrom = String(headers.from || '');
+
+    const who = identifyBank(headers, policy);
+    if (!who.ok) return { ok: false, ...who, from: seenFrom, subject: headers.subject || '' };
 
     const what = selectAttachments(message && message.payload);
-    if (!what.ok) return { ok: false, ...what, bank: who.bank };
+    if (!what.ok) return { ok: false, ...what, bank: who.bank, from: seenFrom, subject: headers.subject || '' };
 
+    /* ── THE OWNER'S LIST IS THE ONLY AUTHORITY, CURATED OR NOT ───────────
+     *
+     * THE BUG, IN TWO LAYERS. First: this used to read `if (who.known ===
+     * false)`, so the rule below applied only to senders the built-in BANKS
+     * list did not recognise — a message from hnb.lk, dfcc.lk,
+     * nationstrust.com, americanexpress.com or amex.com was `known: true` and
+     * skipped it entirely, filed on the strength of a hardcoded domain list
+     * the owner never saw, let alone approved. That is fixed above: `known`
+     * now requires the owner's own approval, so a built-in hit buys nothing
+     * here.
+     *
+     * Second, and the one that survived fixing the first: this was gated on
+     * `policy.curated`, true only once the owner has approved something.
+     * Before that first approval, EVERY sender — built-in or not — fell
+     * through to a keyword guess a few lines below (`looksLikeStatement`),
+     * which downloaded and filed anything whose subject or filename merely
+     * sounded like a statement, from any address at all. That is not a
+     * curation gap, it is the owner's own senders list having no power over
+     * the mailbox until they had already used it once — exactly what "add
+     * the emails I trust and use ONLY those" promises the list will never do,
+     * and precisely what the report was: mail from addresses never added
+     * kept arriving regardless.
+     *
+     * So the gate is unconditional now. Not approved is not filed — full
+     * stop, curated or not — and NOTHING is lost by that: a refusal here is
+     * HOLDABLE (see HOLDABLE below), so the sender still surfaces for a
+     * one-tap approval and the next scan brings its statements in. That is
+     * the same discovery path a first sender always needed; it no longer
+     * runs through downloading and filing content nobody approved first. */
+    const ownerApproved = who.approved === true;
+    if (!ownerApproved) {
+        const rel = typeof policy.related === 'function' ? policy.related(seenFrom) : null;
+        return {
+            ok: false,
+            reason: rel ? REJECT.SENDER_SIBLING : REJECT.NOT_ON_YOUR_LIST,
+            bank: (rel && rel.name) || who.bank,
+            detail: rel
+                ? { from: who.domain, approvedAddress: rel.approvedAddress, sawAddress: rel.address }
+                : { from: who.domain, knownBank: who.builtIn === true },
+            from: seenFrom,
+            subject: headers.subject || '',
+        };
+    }
+
+    /* ── APPROVING A SENDER IS NOT APPROVING EVERYTHING THEY SEND ─────────
+     *
+     * THE BUG THE OWNER REPORTED FOUR TIMES. The only check on WHAT a document
+     * is used to live inside `if (who.known === false)` just below — so it ran
+     * for unrecognised senders and for nobody else. Approve a sender and every
+     * PDF that sender ever mails was filed unread.
+     *
+     * That is not a corner case, it is the normal case: approvedClauses widens
+     * the FETCH to the whole domain on purpose, so a bank's second address can
+     * be discovered. An approved domain that also invoices you then sends its
+     * invoices straight into a screen meant for bank statements. Their
+     * screenshot is exactly that — Invoice-NCQIAKMS-0008.pdf,
+     * Receipt-2402-5154-7274.pdf, invoice-113674.pdf, beside one real DFCC
+     * statement.
+     *
+     * So the veto is UNIVERSAL now, and it runs before a byte is downloaded.
+     *
+     * PLACED BELOW THE SENDER RULE ON PURPOSE. Both refusals are true of a bill
+     * from a stranger, and the sender one is the ACTIONABLE one: "you have not
+     * decided about this sender yet" offers a tap that fixes it, while "this is
+     * an invoice" ends the conversation. Above this line the question is WHO;
+     * from here down it is WHAT, and what is left here is every sender the
+     * owner has already accepted — which is exactly the population the old
+     * code never checked.
+     *
+     * IT VETOES ONLY ON POSITIVE EVIDENCE OF BEING SOMETHING ELSE. Silence is
+     * not evidence: a real statement in that same screenshot is called
+     * `5996631318_455.pdf` and parsed two transactions correctly. A rule that
+     * required the name to SAY "statement" would have deleted it. See
+     * wealthflow-statement-identity.js. */
+    const byName = nameVerdict({
+        subject: headers.subject || '',
+        filenames: what.take.map((a) => a && a.filename).filter(Boolean),
+    });
+    if (byName.verdict === ID_VERDICT.NOT_STATEMENT) {
+        return {
+            ok: false,
+            reason: REJECT.NOT_A_STATEMENT_DOC,
+            bank: who.bank,
+            detail: { from: who.domain, why: byName.reason, hits: byName.hits.slice(0, 4) },
+            from: seenFrom,
+            subject: headers.subject || '',
+        };
+    }
+
+    /* THE KEYWORD GUESS THAT USED TO LIVE HERE IS GONE.
+     *
+     * It ran for a sender not yet approved, on the reasoning that someone who
+     * had approved nothing needed SOME way to discover what to approve. But a
+     * guess that a message "looks like" a statement is not the owner's
+     * consent, and downloading and filing content on the strength of a guess
+     * is exactly what the unconditional gate above now refuses to do,
+     * whatever `policy.curated` says. Discovery still works: the refusal a
+     * few lines up is HOLDABLE, so the sender surfaces for a one-tap approval
+     * with nothing of its content ever fetched first. `looksLikeStatement`
+     * stays exported and tested — nothing else in this file calls it, but
+     * removing a working, well-tested classifier because its one caller went
+     * away is a separate decision from removing the caller. */
     const items = [];
     for (const a of what.take) {
-        const key = itemKey(message.id, a.attachmentId);
+        const key = stableItemKey(message.id, a);
         if (!key) continue;
         items.push({
             key,
+            /* What this attachment WOULD have been called before the key
+             * changed. The write path checks it too, so the first run after
+             * this change recognises everything already stored instead of
+             * writing a second copy of all of it — which would have made the
+             * duplicate bug worse exactly once, on the way to fixing it. */
+            legacyKey: itemKey(message.id, a.attachmentId),
             attachmentId: a.attachmentId,
+            inlineData: a.inlineData,
             filename: a.filename,
             size: a.size,
             bank: who.bank,
+            /* False for a sender no one has confirmed.
+             *
+             * THIS FIELD WAS COMPUTED AND READ BY NOTHING. The comment that
+             * used to sit here said the write path held these for review. It
+             * did not: planWrite's manifest had no place for the flag, so
+             * neither gmail-hook.js nor gmail-scan.js could act on it, and a
+             * verified-but-unrecognised sender was filed exactly like a
+             * confirmed bank. Both call sites now put it in the manifest, and
+             * the mailbox card reads it back. */
+            known: who.known !== false,
+            approved: who.approved === true,
+            from: seenFrom,
             messageId: message.id,
             receivedMs: Number(message.internalDate) || null,
             subject: headers.subject || '',
         });
     }
-    if (!items.length) return { ok: false, reason: REJECT.NO_ATTACHMENT, bank: who.bank, detail: {} };
-    return { ok: true, bank: who.bank, domain: who.domain, items, skipped: what.skipped };
+    if (!items.length) {
+        return { ok: false, reason: REJECT.NO_ATTACHMENT, bank: who.bank, detail: {}, from: seenFrom, subject: headers.subject || '' };
+    }
+    return {
+        ok: true, bank: who.bank, domain: who.domain, items, skipped: what.skipped,
+        from: seenFrom, subject: headers.subject || '', known: who.known !== false,
+    };
 }
 
 /* ── 5. what the user hears about ─────────────────────────────────────────── */
@@ -386,16 +849,58 @@ export function planMessage(message) {
  * is worth knowing about — a statement too large to store, or one whose
  * signature did not hold, is a statement that will silently never appear.
  */
+/**
+ * Could this message EVER become a statement? If not, recording its sender as
+ * a "sighting" teaches the owner nothing but one more domain to go block.
+ *
+ * THE THIRD ROUND OF THE SAME REPORT. gmail-hook.js used to call
+ * recordSighting() for every message the push received, unconditionally —
+ * the Pub/Sub history feed it walks has no query, so that meant every
+ * message added to the mailbox, statement-shaped or not. A job alert, a
+ * welcome email, a receipt with no attachment: none of these can ever become
+ * a filed statement, since planMessage() already refuses them below — but
+ * every one still added a row to the owner's senders list, because nothing
+ * gated the recording on what planMessage decided. "I added the emails I
+ * want, why can't it be ONLY those" is that gap, from the owner's side.
+ *
+ * True for anything actually taken (`plan.ok`), and for anything held for a
+ * reason a single tap fixes — HOLDABLE, which by construction only fires for
+ * a DKIM-verified sender that attached something worth reviewing. False for
+ * everything else: no attachment, a failed signature, a blocked sender, a
+ * personal mailbox, a lookalike of a bank someone already trusts — none of
+ * which can ever become a statement, however many times the owner approves
+ * the sender.
+ *
+ * The explicit "find my banks" hunt (wealthflow-sender-discovery.js) is a
+ * SEPARATE, opt-in feature with its own scoring and its own screen, and does
+ * not call this — an owner who asks WealthFlow to comb the mailbox for
+ * candidates should still see every candidate. This gate is only for the
+ * passive path that runs on every message that simply arrives.
+ */
+export function worthSighting(plan) {
+    return !!(plan && (plan.ok === true || HOLDABLE.has(plan.reason)));
+}
+
 export function isWorthTelling(plan) {
     if (!plan || plan.ok) return false;
     return plan.reason === REJECT.TOO_LARGE
         || plan.reason === REJECT.TOO_MANY
         || plan.reason === REJECT.DKIM_FAILED
-        || plan.reason === REJECT.DKIM_DOMAIN_MISMATCH;
+        || plan.reason === REJECT.DKIM_DOMAIN_MISMATCH
+        /* Counted and named. The owner's standing instruction is that nothing
+         * is dropped in silence: an invoice correctly refused and a statement
+         * wrongly refused have to be told apart by looking at the report, and
+         * that needs the refusal to appear in it. */
+        || plan.reason === REJECT.NOT_A_STATEMENT_DOC;
 }
 
 export const REJECT_TEXT = {
     [REJECT.NOT_A_BANK]: 'the sender is not one of your banks',
+    [REJECT.SENDER_BLOCKED]: 'you blocked this sender',
+    [REJECT.NOT_ON_YOUR_LIST]: 'the sender is not on your statement-sender list',
+    [REJECT.SENDER_SIBLING]: 'a bank you approved wrote from a different address',
+    [REJECT.NOT_A_STATEMENT]: 'the sender is not a bank you have confirmed, and nothing about the mail says statement',
+    [REJECT.NOT_A_STATEMENT_DOC]: 'the attachment says it is an invoice, a receipt or a payslip — not a bank statement',
     [REJECT.DKIM_FAILED]: 'it claims to be from your bank but carries no valid signature',
     [REJECT.DKIM_DOMAIN_MISMATCH]: 'it is signed by a domain other than the one it claims to be from',
     [REJECT.NO_ATTACHMENT]: 'there is no PDF attached',
@@ -404,10 +909,11 @@ export const REJECT_TEXT = {
 };
 
 const API = {
-    BANKS, REJECT, REJECT_TEXT, FINANCIAL_KEYWORD_RE, BANK_DOMAIN_RE, deriveBankName,
+    BANKS, REJECT, REJECT_TEXT,
     SINGLE_MAX, CHUNK_SIZE, MAX_PARTS, MAX_BASE64, MAX_ATTACHMENTS,
-    domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
-    itemKey, planWrite, planMessage, isWorthTelling,
+    addressOf, domainOf, isUnder, dkimPassedFor, identifyBank, selectAttachments,
+    itemKey, stableItemKey, planWrite, planMessage, isWorthTelling, worthSighting, looksLikeStatement, nameFromDomain,
+    dedupeStored, betterCopy,
 };
 
 export default API;

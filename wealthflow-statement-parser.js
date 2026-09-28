@@ -55,7 +55,7 @@
  *
  *  window.WFStatementParser = {
  *      parseStatementText,   // (text) -> rows[]            (unchanged contract)
- *      parseStatement,       // (text) -> { rows, layout, reconciliation }
+ *      parseStatement,       // (text, opts?) -> { rows, layout, reconciliation, verdict }
  *      hasTextLayer, normDate, detectDateOrder
  *  }
  */
@@ -110,6 +110,13 @@
     function _y4(y) { y = String(y); return y.length === 2 ? ('20' + y) : y; }
     function _r2(n) { return Math.round(n * 100) / 100; }
     function _eq(a, b) { return Math.abs(a - b) < EPS; }
+    function calendarDate(y, m, d) {
+        y = +y; m = +m; d = +d;
+        if (y < 1900 || y > 2199 || m < 1 || m > 12 || d < 1 || d > 31) return '';
+        var date = new Date(Date.UTC(y, m - 1, d));
+        return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
+            ? y + '-' + _p2(m) + '-' + _p2(d) : '';
+    }
 
     // ── dates ────────────────────────────────────────────────────────────────
     // Which way round a numeric date is written, decided from the whole document.
@@ -128,19 +135,19 @@
     function normDate(s, order) {
         s = String(s || '').trim();
         var m;
-        if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/))) return m[1] + '-' + _p2(m[2]) + '-' + _p2(m[3]);
+        if ((m = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/))) return calendarDate(m[1], m[2], m[3]);
         if ((m = s.match(/^(\d{1,2})[\/\-.\s]+([A-Za-z]{3,})[\/\-.\s]+(\d{2,4})$/))) {
             var mo = MONTHS[m[2].toLowerCase().slice(0, 3)];
-            if (mo) return _y4(m[3]) + '-' + mo + '-' + _p2(m[1]);
+            if (mo) return calendarDate(_y4(m[3]), mo, m[1]);
         }
         if ((m = s.match(/^(\d{1,2})[\/\-.\s]+(\d{1,2})[\/\-.\s]+(\d{2,4})$/))) {
             var d = m[1], mth = m[2];
             // An out-of-range field settles it regardless of the document-wide guess.
             if (+mth > 12 && +d <= 12) { var t = d; d = mth; mth = t; }
             else if (order === 'mdy' && +d <= 12) { var t2 = d; d = mth; mth = t2; }
-            return _y4(m[3]) + '-' + _p2(mth) + '-' + _p2(d);
+            return calendarDate(_y4(m[3]), mth, d);
         }
-        return s;
+        return '';
     }
 
     // The row's own date: the first date token starting within LEAD_SLACK
@@ -279,22 +286,58 @@
     }
 
     // ── the parser ───────────────────────────────────────────────────────────
-    function parseStatement(text) {
+    /**
+     * @param {string} text            the extracted text layer
+     * @param {object} [opts]
+     * @param {string} [opts.bank]     which bank sent it, so a layout learned for
+     *                                 that bank is tried before anyone else's
+     * @param {boolean} [opts.__learned]  set on the recursive call that runs a
+     *                                 learned rewrite. It is the recursion guard,
+     *                                 and it is the reason a bad template cannot
+     *                                 loop: the second pass never re-enters the
+     *                                 layout memory.
+     */
+    function parseStatement(text, opts) {
+        opts = opts || {};
         var src = String(text || '');
         var order = detectDateOrder(src);
         var lines = src.split(/\r?\n/);
         var cands = [];
+        var invalidDates = 0, balanceMismatches = 0;
 
         // pass 1 — tokenise candidate rows
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i].trim();
             if (!line) continue;
-            var d = dateAt(line);
-            if (!d) continue;
 
+            // Opening/closing balance lines carry no date, so they must be
+            // recognised BEFORE the date gate. Dropping them (the old code read the
+            // date first and skipped any line without one) left `reconciliation.opening`
+            // permanently null, so the whole-statement cross-check
+            // "opening + credits − debits = closing" — the only check that can notice
+            // a row that was silently skipped — could never run. It also left the
+            // first real row without a previous balance, so its direction had to be
+            // inferred from a CR/DR marker instead of verified by the running total.
             var isOpening = OPENING_RE.test(line);
             var isClosing = CLOSING_RE.test(line);
-            if (!isOpening && !isClosing && NOISE_RE.test(line)) continue;
+            if (isOpening || isClosing) {
+                var balTokens = moneyTokens(line);
+                if (balTokens.length) {
+                    cands.push({
+                        line: line,
+                        date: '',
+                        rest: line,
+                        block: trailingBlock(balTokens, line),
+                        opening: isOpening,
+                        closing: isClosing
+                    });
+                }
+                continue;
+            }
+
+            var d = dateAt(line);
+            if (!d) continue;
+            if (NOISE_RE.test(line)) continue;
 
             // Drop the post date and an immediately following value/effective date.
             var rest = line.slice(d.end);
@@ -303,10 +346,12 @@
 
             var tokens = moneyTokens(rest);
             if (!tokens.length) continue;
+            var normalizedDate = normDate(d.text, order);
+            if (!normalizedDate) { invalidDates++; continue; }
 
             cands.push({
                 line: line,
-                date: normDate(d.text, order),
+                date: normalizedDate,
                 rest: rest,
                 block: trailingBlock(tokens, rest),
                 opening: isOpening,
@@ -369,7 +414,7 @@
                     direction = delta > 0 ? 'credit' : 'debit';
                     source = 'balance';
                     if (_eq(Math.abs(delta), amount)) balanceVerified = true;
-                    else { amount = Math.abs(delta); balanceVerified = true; } // the bank's own running total wins
+                    else { source = 'balance-mismatch'; balanceMismatches++; }
                 }
             }
             if (!direction) {
@@ -387,7 +432,7 @@
             }
 
             // A zero amount is never a usable transaction.
-            if (amount === 0 && delta !== null && Math.abs(delta) >= EPS) amount = Math.abs(delta);
+            if (amount === 0 && !amountToks.length && delta !== null && Math.abs(delta) >= EPS) amount = Math.abs(delta);
             var amountKnown = amount > 0;
 
             rows.push({
@@ -404,7 +449,7 @@
                 valid: amountKnown && !!direction,
                 balanceVerified: balanceVerified,
                 directionSource: source,       // balance | marker | column | sign | keyword | assumed | ''
-                needsReview: !amountKnown || !direction || source === 'keyword' || source === 'assumed'
+                needsReview: !amountKnown || !direction || source === 'keyword' || source === 'assumed' || source === 'balance-mismatch'
             });
 
             if (direction === 'credit') credits += amount;
@@ -427,8 +472,119 @@
             reconciliation.ok = Math.abs(reconciliation.difference) < EPS;
         }
 
-        return { rows: rows, layout: layout, reconciliation: reconciliation, dateOrder: order };
+        /* ── DID WE ACTUALLY UNDERSTAND THIS? ────────────────────────────
+         *
+         * THE DEFECT: an unreadable layout returned `rows: []`, and so did a
+         * statement that genuinely had no transactions. To every caller those
+         * are the same value, so a PDF from a bank whose layout this parser has
+         * never seen was indistinguishable from an empty month — and was
+         * therefore dropped, silently, with a green tick.
+         *
+         * The owner asked for the opposite in as many words: "if it catches a
+         * completely new bank PDF and cannot understand the layout, DO NOT
+         * SILENTLY DROP IT. Send it to the Needs Review widget."
+         *
+         * You cannot route what you cannot name, so the parser now says which
+         * of the two happened, and why, in terms a screen can show:
+         *
+         *   'parsed'      rows were read and the arithmetic checks out
+         *   'unverified'  rows were read but opening + credits - debits does
+         *                 not reach closing — readable, not trustworthy
+         *   'empty'       the document IS a statement and has no transactions
+         *   'unreadable'  money and dates are present but no row could be
+         *                 assembled — an unknown layout, the case that matters
+         *   'no-text'     an image-only PDF; OCR's problem, not the parser's
+         *
+         * `understood` is the single boolean a caller needs to decide between
+         * filing and quarantining, so no caller has to re-derive the rule and
+         * two callers cannot derive it differently. */
+        var moneyLines = 0;
+        for (var mi = 0; mi < lines.length; mi++) if (moneyTokens(lines[mi]).length) moneyLines++;
+
+        /* hasTextLayer() is NOT the test for "is there a text layer" — it
+         * requires three or more DATES, which is a test for "does this look
+         * like a statement page". Using it here made every fixture come back
+         * 'no-text', including one that parsed two rows perfectly. It is the
+         * kind of mistake that only announces itself if you look at the answer
+         * rather than at whether the code ran.
+         *
+         * A text layer is text. Anything else is a judgement about content. */
+        var hasText = String(text || '').replace(/\s+/g, ' ').trim().length > 40;
+
+        var verdict;
+        if (!hasText) verdict = 'no-text';
+        else if (invalidDates || balanceMismatches || (rows.length && reconciliation.ok === false)) verdict = 'unverified';
+        else if (rows.length) verdict = 'parsed';
+        /* MONEY ON THE PAGE AND NOT ONE ROW ASSEMBLED. That is the signature of
+         * a layout nobody taught this parser, whether it failed on the dates or
+         * on the columns. A statement with genuinely no transactions carries
+         * only its opening and closing balance, so the threshold separates
+         * them — and it errs toward 'unreadable', because asking the owner
+         * about a statement that turns out to be empty costs one tap, and
+         * dropping one that was not costs a month of their ledger. */
+        else if (moneyLines >= 3) verdict = 'unreadable';
+        else verdict = 'empty';
+
+        /* ── THE LAYOUT THE OWNER ALREADY TAUGHT US ──────────────────────
+         *
+         * 'unreadable' means money and dates are on the page and not one row
+         * could be assembled — a format this parser has never been shown. If
+         * the owner has confirmed a reading of this bank before,
+         * wealthflow-layout-memory.js holds the date shape that unlocked it.
+         * Applying it rewrites the dates into a form the code above already
+         * matches, and the SAME parser reads the statement — no second row
+         * reader, no second set of direction rules, nothing that can drift.
+         *
+         * `__learned` stops the recursion at one level, so a template that
+         * happens to produce another unreadable page cannot spin. */
+        if (verdict === 'unreadable' && !opts.__learned) {
+            var W = (typeof window !== 'undefined') ? window : null;
+            var mem = W && W.WFLayoutMemory;
+            if (mem && typeof mem.recall === 'function' && typeof mem.normalise === 'function') {
+                var taught = [];
+                try { taught = mem.recall(opts.bank) || []; } catch (_) { taught = []; }
+                for (var ti = 0; ti < taught.length; ti++) {
+                    var again = null;
+                    try {
+                        again = parseStatement(mem.normalise(src, taught[ti]), { __learned: true, bank: opts.bank });
+                    } catch (_) { again = null; }
+                    if (again && again.rows.length) {
+                        again.learnedLayout = taught[ti].id || true;
+                        again.layout = again.layout || {};
+                        again.layout.learned = taught[ti].id || true;
+                        return again;
+                    }
+                }
+            }
+        }
+
+        return {
+            rows: rows, layout: layout, reconciliation: reconciliation, dateOrder: order,
+            verdict: verdict,
+            /* True only when the result can be filed without a person looking.
+             * 'unverified' is deliberately NOT understood: arithmetic that does
+             * not close is exactly the case where a wrong number is worse than
+             * no number. */
+            understood: verdict === 'parsed',
+            /* What the screen shows when it is not. */
+            reason: VERDICT_TEXT[verdict] || '',
+            moneyLines: moneyLines,
+            candidateRows: cands.length,
+            invalidDates: invalidDates,
+            balanceMismatches: balanceMismatches,
+        };
     }
+
+
+    /* Sentences, not codes. Every one of these is shown to the owner on the
+     * review screen, so it has to say what to DO, not what went wrong. */
+    var VERDICT_TEXT = {
+        parsed: '',
+        unverified: 'The rows were read, but the opening and closing balances do not add up. Check it before it is filed.',
+        empty: 'This statement has no transactions on it.',
+        unreadable: 'This bank lays its statement out in a way WealthFlow has not seen before. Confirm the rows once and it will read the next one on its own.',
+        'no-text': 'This PDF is a scan with no text layer, so there is nothing to read. It needs the image scanner instead.'
+    };
 
     // Unchanged contract for existing callers.
     function parseStatementText(text) { return parseStatement(text).rows; }
@@ -438,7 +594,9 @@
         parseStatement: parseStatement,
         hasTextLayer: hasTextLayer,
         normDate: normDate,
-        detectDateOrder: detectDateOrder
+        detectDateOrder: detectDateOrder,
+        moneyTokens: moneyTokens,
+        VERDICT_TEXT: VERDICT_TEXT
     };
     try { console.log('[WFStatementParser] ✓ text-layer statement parser ready'); } catch (_) {}
 })();

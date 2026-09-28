@@ -35,13 +35,41 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
 
     var _open = false;
 
+    /* { ok, data, reason }. `data: null, ok: true` is a CONFIRMED empty state —
+     * the read succeeded and there is genuinely nothing pending. `ok: false` is
+     * "could not check" (no Firestore handle, a timeout, a thrown error) and
+     * used to collapse into the exact same null the panel then rendered as "No
+     * pending release" — indistinguishable from the confirmed case, so a
+     * connectivity blip looked identical to "nothing to review" and the owner
+     * had no reason to retry. */
     async function _getPending() {
+        var db = _dbRef();
+        if (!db) return { ok: false, reason: 'Firestore is not available on this page yet.', data: null };
+        var TIMEOUT = {};
         try {
-            var db = _dbRef(); if (!db) return null;
-            var doc = await _withTimeout(db.collection('system').doc('pendingRelease').get(), 3500, null);
-            if (doc && doc.exists) return doc.data();
-        } catch (_) {}
-        return null;
+            var doc = await _withTimeout(db.collection('system').doc('pendingRelease').get(), 3500, TIMEOUT);
+            if (doc === TIMEOUT) return { ok: false, reason: 'Timed out reaching Firestore.', data: null };
+            return { ok: true, data: (doc && doc.exists) ? doc.data() : null };
+        } catch (e) {
+            return { ok: false, reason: (e && e.message) || 'Could not read the pending release.', data: null };
+        }
+    }
+
+    /* Whether approving will trigger a real rebuild, or only announce the
+     * version — the exact distinction the owner used to learn only AFTER
+     * tapping Approve, from _onDecision()'s post-hoc message below. Known
+     * before the panel even renders the proposal, so the "Approve & Deploy"
+     * button never promises more than it will do. No auth required: whether
+     * the hook is configured is not sensitive, only its value would be, and
+     * this endpoint never returns that. A failed check degrades to "unknown"
+     * rather than a guess in either direction. */
+    async function _getDeployStatus() {
+        try {
+            var r = await _wfFetchT('/api/approve-release', { method: 'GET' }, 5000);
+            if (!r.ok) return { known: false };
+            var body = await r.json();
+            return { known: typeof body.deployHookConfigured === 'boolean', configured: !!body.deployHookConfigured };
+        } catch (_) { return { known: false }; }
     }
 
     async function _idToken() {
@@ -93,8 +121,30 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         }
     }
 
-    function _render(p) {
+    /* One line, shown BEFORE the tap, so "Approve & Deploy" never promises
+     * more than the server will actually do. `deploy.known === false` means
+     * the status check itself failed (offline, endpoint down) — say that
+     * plainly rather than guessing either "will deploy" or "won't". */
+    function _deployBanner(deploy) {
+        if (!deploy || deploy.known !== true) {
+            return '<div style="font-size:11.5px;color:var(--text3,#8b95a8);background:var(--bg2,#0a0e1a);border:1px solid var(--border,#1f2638);border-radius:8px;padding:8px 10px;margin-bottom:12px;">Could not check whether a deploy hook is configured — the result of tapping Approve will say so explicitly.</div>';
+        }
+        return deploy.configured
+            ? '<div style="font-size:11.5px;color:#34d399;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.25);border-radius:8px;padding:8px 10px;margin-bottom:12px;">A deploy hook is configured — approving triggers an immediate rebuild.</div>'
+            : '<div style="font-size:11.5px;color:#fbbf24;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);border-radius:8px;padding:8px 10px;margin-bottom:12px;">No deploy hook configured — approving only announces this version to clients now. The code itself ships on the next scheduled release, or whenever it is otherwise pushed.</div>';
+    }
+
+    function _render(result, deploy) {
         var body = document.getElementById('wfRaBody'); if (!body) return;
+        var p = result && result.data;
+        if (!result || !result.ok) {
+            body.innerHTML = '<div style="text-align:center;color:#fbbf24;font-size:13px;padding:24px;">Could not check for a pending release'
+                + (result && result.reason ? ' (' + _esc(result.reason) + ')' : '') + '. This is not the same as "nothing pending" — try again.'
+                + '<div style="margin-top:12px;"><button id="wfRaRetry" style="padding:8px 14px;border-radius:9px;border:1px solid var(--border,#1f2638);background:transparent;color:var(--text2,#c7cdd9);font-weight:700;cursor:pointer;">Retry</button></div></div>';
+            var retry = document.getElementById('wfRaRetry');
+            if (retry) retry.onclick = function () { _load(); };
+            return;
+        }
         if (!p || !p.suggestedVersion) {
             body.innerHTML = '<div style="text-align:center;color:var(--text3,#8b95a8);font-size:13px;padding:24px;">No pending release. The system proposes one automatically when user feedback warrants it.</div>';
             return;
@@ -108,6 +158,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         }).join('');
         var head = (p.notes && p.notes.headline) ? _esc(p.notes.headline) : 'Proposed release';
         body.innerHTML =
+            _deployBanner(deploy) +
             '<div style="margin-bottom:12px;">' +
                 '<div style="font-size:16px;font-weight:800;color:var(--text,#fff);">' + head + '</div>' +
                 '<div style="font-size:12px;color:var(--text3,#8b95a8);margin-top:2px;">Version ' + _esc(p.suggestedVersion) + ' · from ' + _esc(p.basedOn || '?') + (p.urgent ? ' · <span style="color:#ef4444;font-weight:700;">URGENT</span>' : '') + '</div>' +
@@ -143,8 +194,15 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         document.getElementById('wfRaApprove').onclick = function () { _onDecision('approve'); };
         document.getElementById('wfRaReject').onclick = function () { _onDecision('reject'); };
 
-        var p = await _getPending();
-        _render(p);
+        await _load();
+    }
+
+    // Both checks are independent reads with their own failure modes (Firestore
+    // vs. the API route), so one failing must not block the other from showing
+    // what it found. Neither write, so re-running on Retry is always safe.
+    async function _load() {
+        var results = await Promise.all([_getPending(), _getDeployStatus()]);
+        _render(results[0], results[1]);
     }
 
     function _close() {
@@ -215,6 +273,9 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         if (document.body) _obs.observe(document.body, { childList: true, subtree: true });
     } catch (_) {}
 
-    window.wfReleaseApprove = { showPanel: showPanel, _close: _close, _act: _act, _getPending: _getPending, _inject: _inject };
+    window.wfReleaseApprove = {
+        showPanel: showPanel, _close: _close, _act: _act, _getPending: _getPending,
+        _getDeployStatus: _getDeployStatus, _render: _render, _inject: _inject,
+    };
     console.log('[wfReleaseApprove] ✓ Release approval panel loaded — autonomous proposal, one-tap owner approval');
 })();

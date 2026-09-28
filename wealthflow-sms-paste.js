@@ -899,12 +899,33 @@
         }
         delete _imgBlocks[blockId];
         const tile = document.querySelector('#wfsmsThumbs [data-block="' + blockId + '"]');
-        if (tile) tile.remove();
+        if (tile) {
+            // Each thumbnail's <img> holds a blob: URL from URL.createObjectURL
+            // (see the paste/attach handler above), which keeps that image's
+            // bytes resident until explicitly revoked — the browser has no
+            // other signal that the thumbnail is gone. Removing the tile from
+            // the DOM does not do this on its own.
+            _revokeThumbUrl(tile);
+            tile.remove();
+        }
+    }
+
+    function _revokeThumbUrl(tile) {
+        try {
+            const img = tile.querySelector('img');
+            if (img && img.src && img.src.indexOf('blob:') === 0) URL.revokeObjectURL(img.src);
+        } catch (_) {}
     }
 
     function closeModal() {
         const ov = document.getElementById('wfsmsOverlay');
-        if (ov) ov.remove();
+        if (ov) {
+            // The owner can close the modal without tapping x on every pasted
+            // image first — revoke whatever thumbnails are still outstanding,
+            // not just the ones removed one at a time above.
+            try { ov.querySelectorAll('#wfsmsThumbs [data-block]').forEach(_revokeThumbUrl); } catch (_) {}
+            ov.remove();
+        }
         _state = { rows: [], editing: null };
     }
 

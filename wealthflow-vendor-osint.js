@@ -75,6 +75,7 @@ export const OSINT = {
     UNKNOWN_CATEGORY: 'category-not-recognised',
     NO_ANSWER: 'no-answer',
     UNAVAILABLE: 'lookup-unavailable',
+    LOW_CONFIDENCE: 'low-confidence',
 };
 
 /** Said in the owner's language, for the review card. */
@@ -212,6 +213,7 @@ export function eligible(quarantined) {
  * of a shop name; it is enough to file a row that was only ever held up for
  * lacking a category, and it is not enough to claim the row is settled. */
 export const MAX_LIFT = 0.9;
+export const MIN_LIFT = 0.75;
 
 /**
  * Ask the endpoint about one vendor. Returns a finding or null.
@@ -238,7 +240,7 @@ export async function ask(key, deps = {}, ctx = {}) {
             module: moduleForCategory(category),
             description: s(d.description) || null,
             provider: s(d.provider) || 'unknown',
-            confidence: Math.min(MAX_LIFT, num(d.confidence) || 0.82),
+            confidence: Math.min(MAX_LIFT, Math.max(0, num(d.confidence))),
         };
     } catch (_) {
         /* Unreachable, refused, timed out, or answered with something that is
@@ -266,6 +268,9 @@ export function applyFinding(routed, finding, row) {
     if (!f.module) {
         return { ok: false, reason: OSINT.UNKNOWN_CATEGORY, detail: { category: f.category } };
     }
+    if (num(f.confidence) < MIN_LIFT) {
+        return { ok: false, reason: OSINT.LOW_CONFIDENCE, detail: { confidence: num(f.confidence) } };
+    }
 
     const implied = MODULE_DIRECTION[f.module];
     if (implied && dir && implied !== dir) {
@@ -288,7 +293,8 @@ export function applyFinding(routed, finding, row) {
         ok: true,
         routed: {
             ...r,
-            module: f.module,
+            // Merchant knowledge cannot change the account or financial product.
+            module: ['cconetime', 'ccinstall', 'loans', 'goal_alloc'].includes(r.module) ? r.module : f.module,
             category: f.category,
             confidence: Math.min(MAX_LIFT, Math.max(num(r.confidence), num(f.confidence))),
             needsReview: false,

@@ -312,7 +312,7 @@ window._wfFetchT = window._wfFetchT || function (url, init, ms) {
         const card = opts.card_last4 ? (' card ' + opts.card_last4) : '';
         const items = (rows || []).filter(r => r && (r.amount || r.description)).map(r => {
             const verb = (r.type === 'credit' || r.type === 'income') ? 'credited with' : 'debited with';
-            const date = r.date || new Date().toISOString().slice(0, 10);
+            const date = r.date || window.WFWhen.today();
             const desc = r.description || r.desc || 'Transaction';
             // synthesise: "A/C 5187 debited with LKR2498.74 on 2026-05-29 ref: <DESC>"
             // (card placed BEFORE ref so the merchant capture stops cleanly at end-of-string)

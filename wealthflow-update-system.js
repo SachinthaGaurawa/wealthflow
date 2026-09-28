@@ -1,60 +1,25 @@
-/* =============================================================================
-   WealthFlow Update System  v1.0  —  window.wfUpdate
-   ---------------------------------------------------------------------------
-   An iOS/Android-style in-app update experience, built HONESTLY for a static
-   PWA (no fake server daemon, no imaginary sandbox — see notes below).
-
-   FLOW
-   ────
-   1. Detect a newer version two ways:
-        (a) a version manifest the developer ships  (version.json / wfVersionManifest)
-        (b) the service worker finding new files     (sw 'updatefound')
-   2. Show a subtle glowing "Update available" pill on the Dashboard.
-   3. Tap it → jump to Settings → Software Update section.
-   4. Show a scrollable "What's New" changelog (iOS-style).
-   5. Show an auto-generated, version-specific Legal Agreement (EULA) the user
-      must scroll to the bottom of before "I Agree" unlocks.
-   6. Require the user's PIN (reuses window._verifyPinPrompt) to authorise.
-   7. Run a real backup first (window.backupNow), then apply the update:
-        - tell the waiting service worker to skipWaiting + activate
-        - the app reloads onto the new files
-      A genuine progress bar + countdown reflects these real steps.
-   8. After reload, a centered "Welcome to vX" popup shows what changed, with a
-      Close / Return to Dashboard button. New installs are marked current and
-      skip the popup.
-
-   PER-USER, like phones: each browser tracks its own "installed version" in
-   localStorage, so updates are NOT forced on everyone at once. New users start
-   on the latest version silently.
-
-   MANDATORY (security) updates: if the manifest marks a version mandatory, the
-   update screen cannot be dismissed until applied.
-
-   HONEST SCOPE
-   ────────────
-   • This cannot continue an update "on the server while the phone is off" — a
-     static site has no server process. What it DOES guarantee: the new files
-     are atomically activated by the service worker, and if the device dies
-     mid-way nothing is half-written (the old version simply stays until the
-     SW successfully activates). That is the real, safe equivalent.
-   • No 100k-agent sandbox / self-rewriting AI — those aren't real features.
-   ============================================================================ */
+/* WealthFlow Software Update: deployed-manifest discovery, explicit installation,
+ * backup/download verification and next-boot claim settlement. Background worker
+ * activation never reloads an active session. Opted-in urgent security installs
+ * wait for an idle session without focused editors or open dialogs. */
 (function () {
     'use strict';
     if (window.WF_UPDATE_SYSTEM) return;
     window.WF_UPDATE_SYSTEM = '1.0';
 
     // ── The version this build represents. Bump on every release. ────────────
-    const CURRENT_VERSION = '7.69.24';
+    const CURRENT_VERSION = '7.69.33';
     const LS_INSTALLED = 'wf_installed_version';
     const LS_SEEN_POPUP = 'wf_update_popup_seen';
     const LS_PENDING = 'wf_update_pending';   // set just before reload-to-update
     const LS_CLAIM = 'wf_update_claimed';     // a CLAIM to have updated, settled against reality on the next boot
     const LS_ANOMALY = 'wf_version_anomaly';  // stored version was ahead of the running code — kept as evidence
     const LS_AUTOSEC = 'wf_auto_security';    // user opted in to auto-install security updates
-    const LS_FAILED_TARGET = 'wf_update_failed_target';
-    const FAILED_TARGET_COOLDOWN_MS = 6 * 60 * 60 * 1000;  // 6 hours
-
+    const LS_FAILED_TARGET = 'wf_update_failed_target';  // a target that just demonstrably failed to land
+    // An announced version can outrun its own code by a whole deploy cycle —
+    // that gap used to retry the same doomed target every boot. 6h breaks the
+    // loop, short enough to retry once the real deploy lands.
+    const FAILED_TARGET_COOLDOWN_MS = 6 * 60 * 60 * 1000;
     function _recentlyFailedTarget(v) {
         try {
             const f = JSON.parse(localStorage.getItem(LS_FAILED_TARGET) || 'null');
@@ -142,6 +107,7 @@
     // — one history from its two legitimate writers. See _mergeManifests.)
 
     let _manifest = null;     // the RESOLVED view: version.json ∪ system/manifest
+    let _deployedManifest = null; // version.json: code actually on the origin
     // Why the feedback-status poll came back empty, when it was not simply
     // "nothing finished yet". Held so the reason is inspectable rather than
     // swallowed — see _checkFeedbackCompletions().
@@ -203,6 +169,12 @@
         };
     }
 
+    function _deploymentAllows(version, deployed) {
+        const target = _validVersion(version), live = _validVersion(deployed && deployed.latest);
+        return !!(target && live && _cmp(live, target) >= 0);
+    }
+    function _isDeployedVersion(version) { return _deploymentAllows(version, _deployedManifest); }
+
     async function _loadLocalManifest() {
         try {
             const r = await fetch('version.json?_=' + Date.now(), { cache: 'no-store' });
@@ -227,12 +199,12 @@
     }
 
     async function _loadManifest() {
-        // An explicit developer override, honoured as-is. Nothing here sets
-        // it; redefining its meaning is not this fix's business.
-        if (window.wfVersionManifest) { _manifest = window.wfVersionManifest; return _manifest; }
-
-        // Parallel: neither a slow nor a failing source may stop the other.
-        const both = await Promise.all([_loadLocalManifest(), _loadRemoteManifest()]);
+        // Always fetch version.json: announcements do not prove deployment.
+        const announced = window.wfVersionManifest
+            ? Promise.resolve(window.wfVersionManifest)
+            : _loadRemoteManifest();
+        const both = await Promise.all([_loadLocalManifest(), announced]);
+        _deployedManifest = both[0];
         _manifest = _mergeManifests(both[0], both[1]);
         return _manifest;
     }
@@ -339,11 +311,8 @@
 
         // The claim did not come true. Say so, and do NOT write the target into
         // LS_INSTALLED — that write is precisely what made the failure permanent.
-        try {
-            localStorage.setItem(LS_FAILED_TARGET, JSON.stringify({
-                target: c.target, at: Date.now()
-            }));
-        } catch (_) {}
+        // Record which target failed, so it is not auto-retried next boot.
+        try { localStorage.setItem(LS_FAILED_TARGET, JSON.stringify({ target: c.target, at: Date.now() })); } catch (_) {}
         try {
             console.error('[WFUpdate] ✗ update to ' + c.target + ' did NOT land — still running '
                 + CURRENT_VERSION + ' (' + c.fetched + '/' + c.total + ' files fetched)');
@@ -449,15 +418,12 @@
                 });
             });
             // proactively check for a new SW
-            try { reg.update(); } catch (_) {}
+            try { Promise.resolve(reg.update()).catch(() => {}); } catch (_) {}
         }).catch(() => {});
-        // when the new SW takes control after we asked it to, reload once
-        let _reloaded = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-            if (_reloaded) return; _reloaded = true;
-            // only auto-reload if we initiated an update
-            try { if (localStorage.getItem(LS_PENDING)) location.reload(); } catch (_) { location.reload(); }
-        });
+        // Controller changes also happen during ordinary background refreshes.
+        // Persisted LS_PENDING is recovery metadata, not permission to reload.
+        // Only the completed, current _runProgress flow owns navigation.
+
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -605,18 +571,33 @@
         try { localStorage.setItem(LS_AUTOSEC, on ? '1' : '0'); } catch (_) {}
         const tg = document.getElementById('wfAutoSec'); if (tg) tg.classList.toggle('on', !!on);
         _notify(on ? 'Auto-install for urgent security updates is ON.' : 'Auto-install for security updates is OFF.', on ? 'success' : 'info');
-        if (on && _updateAvailable() && _isMandatory(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
+        if (on && _updateAvailable() && _isMandatory(_latestVersion())) {
             setTimeout(() => _autoApplyIfSecurity(), 600);
         }
     }
 
     // If the user opted in, silently apply an URGENT (mandatory security) update
     // — still backup-first and rollback-safe. Non-security updates never auto-apply.
+    let _lastInteraction = Date.now();
+    function _noteInteraction() { _lastInteraction = Date.now(); }
+    try {
+        ['pointerdown', 'keydown', 'input', 'focusin'].forEach(type =>
+            document.addEventListener(type, _noteInteraction, { capture: true, passive: true }));
+        window.addEventListener('focus', _noteInteraction);
+    } catch (_) {}
+    function _safeToAutoInstall() {
+        if (document.visibilityState === 'hidden' || Date.now() - _lastInteraction < 60000) return false;
+        const el = document.activeElement;
+        if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return false;
+        return !document.querySelector('[role="dialog"], .mo.open, .modal-overlay.active, .modal.show, #authScreen.show, #wfProgress, #wfEula');
+    }
     async function _autoApplyIfSecurity() {
         if (!_autoSecurityOn()) return false;
+        if (!_safeToAutoInstall() || _progressTask) return false;
         const v = _latestVersion();
-        if (_recentlyFailedTarget(v)) return false;
         if (!_updateAvailable()) return false;
+        if (!_isDeployedVersion(v)) return false; // announcement is not deployment
+        if (_recentlyFailedTarget(v)) return false;
         if (!(_isMandatory(v) && _updateType(v) === 'security')) return false;
         _notify('Installing urgent security update v' + v + '…', 'warn');
         await _runProgress(v);   // backup → swap → reload, no prompts
@@ -696,7 +677,7 @@
     }
 
     function _generateEula(version) {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = window.WFWhen.today();
         return (
 'WEALTHFLOW ELITE — SOFTWARE UPDATE & END-USER LICENSE AGREEMENT\n' +
 'Version ' + version + ' · Effective ' + today + '\n' +
@@ -736,7 +717,15 @@
     }
 
     // Real progress: each step does actual work, then advances the bar.
-    async function _runProgress(version) {
+    let _progressTask = null;
+    let _updateReloaded = false;
+    function _runProgress(version) {
+        if (_progressTask) return _progressTask;
+        _progressTask = Promise.resolve().then(() => _executeProgress(version))
+            .finally(() => { _progressTask = null; });
+        return _progressTask;
+    }
+    async function _executeProgress(version) {
         _closeOverlay('wfProgress');
         const ov = document.createElement('div');
         ov.id = 'wfProgress';
@@ -817,7 +806,7 @@
             }},
             { pct: 88, eta: 2, label: 'Swapping core files…', run: async () => {
                 try { localStorage.setItem(LS_PENDING, version); } catch (_) {}
-                // tell the waiting SW to take over (triggers controllerchange→reload)
+                // Activate the worker; reload only after the installation claim is recorded.
                 try {
                     const reg = await navigator.serviceWorker.getRegistration();
                     const w = (reg && reg.waiting) || _swWaiting;
@@ -867,11 +856,13 @@
         setBar(100); setEta(0);
         setStep('Update complete. Restarting…');
 
-        // If a SW actually took control, controllerchange already reloaded.
-        // Otherwise (no SW / already controlling) reload ourselves so new files load.
+        // One owner, after backup/download/claim: no competing controller reload.
         await _sleep(700);
         try { localStorage.removeItem(LS_PENDING); } catch (_) {}
-        location.reload();
+        if (!_updateReloaded) {
+            _updateReloaded = true;
+            location.reload();
+        }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -1082,6 +1073,7 @@
                         cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
                         cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
                         _fbImageData = cv.toDataURL('image/jpeg', 0.7);
+                        cv.width = cv.height = 0;
                         if (prev) { prev.style.display = 'block'; prev.innerHTML = '<img src="' + _fbImageData + '" style="max-width:100%;border-radius:8px;border:1px solid var(--border,#1f2638);"/><button type="button" onclick="this.parentNode.style.display=\'none\';this.parentNode.innerHTML=\'\';window.wfUpdate&&(window.wfUpdate._clearFbImg&&window.wfUpdate._clearFbImg());" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;">×</button>'; }
                         if (imgBtn) imgBtn.textContent = '📎 Screenshot attached — tap to change';
                     };
@@ -1150,6 +1142,34 @@
                 d.detectedIssues = issues.slice(0, 12);
             }
         } catch (_) {}
+        // Statement processing: why entries in "Statements needing review" are
+        // actually stuck, in aggregate (reason codes + bank names only — no
+        // date, amount, narration or description; the same two fields the
+        // review list already shows on screen), plus the last several layout
+        // "teach" attempts with propose()'s structural breakdown (how many
+        // date-shaped candidates were found, how many produced rows, how many
+        // reconciled). Nothing here is a guess about the cause — it is the
+        // exact counts the classifier and the layout reader already computed,
+        // so a pasted report can be acted on without asking for the statement.
+        try {
+            if (window.WFStatementCloud && typeof window.WFStatementCloud.reviewSummary === 'function') {
+                d.statementReview = window.WFStatementCloud.reviewSummary();
+            }
+        } catch (_) {}
+        // A statement stuck in runStatementSync's own exponential-backoff retry
+        // loop (processOneStatement threw something classified transient) never
+        // reaches statementReview at all — it is still 'pending', just not due
+        // to try again yet. Same privacy scope: bank, filename, a reason code.
+        try {
+            if (window.WFStatementCloud && typeof window.WFStatementCloud.retryAttemptsSummary === 'function') {
+                d.statementRetrying = window.WFStatementCloud.retryAttemptsSummary();
+            }
+        } catch (_) {}
+        try {
+            if (Array.isArray(window._wfLayoutAttempts) && window._wfLayoutAttempts.length) {
+                d.layoutTeachAttempts = window._wfLayoutAttempts.slice(0, 10);
+            }
+        } catch (_) {}
         // hard size cap: an oversized payload is silently dropped by the endpoint,
         // which would look to the user like their report vanished again
         try {
@@ -1157,6 +1177,9 @@
             if (s.length > 24000) {
                 delete d.health;
                 d.errors = (d.errors || []).slice(0, 3);
+                if (d.statementReview && d.statementReview.wholeStatements) d.statementReview.wholeStatements = d.statementReview.wholeStatements.slice(0, 5);
+                d.statementRetrying = (d.statementRetrying || []).slice(0, 5);
+                d.layoutTeachAttempts = (d.layoutTeachAttempts || []).slice(0, 5);
                 d._trimmed = true;
             }
         } catch (_) {}
@@ -1697,9 +1720,10 @@
         // Firestore/network call must never stall card injection.
         _loadManifest().then(() => {
             try { _refreshDashboardPill(); _renderSettingsCard(); } catch (_) {}
-            // mandatory-update handling, after we know the real latest version
+            // mandatory-update handling, after we know the real latest version.
+            // Skipped for a target that just failed to settle (see below).
             try {
-                if (_updateAvailable() && _isMandatory(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
+                if (_updateAvailable() && _isMandatory(_latestVersion()) && _isDeployedVersion(_latestVersion()) && !_recentlyFailedTarget(_latestVersion())) {
                     if (_autoSecurityOn() && _updateType(_latestVersion()) === 'security') setTimeout(() => { _autoApplyIfSecurity(); }, 2000);
                     else setTimeout(() => { _notify('A required security update is available.', 'warn'); openUpdateSection(); }, 1800);
                 }
@@ -1780,6 +1804,7 @@
                 const ph = document.getElementById('wfUpdateCard');
                 if (ph && !ph.querySelector('.settings-title')) _renderSettingsCard();
                 if (!document.getElementById('wfUpdatePill')) _refreshDashboardPill();
+                if (_autoSecurityOn()) _autoApplyIfSecurity().catch(() => {});
             } catch (_) {}
         }, 5000);
 
@@ -1804,7 +1829,7 @@
             latest: v,
             mandatory: [],
             notes: { [v]: {
-                date: new Date().toISOString().slice(0, 10),
+                date: window.WFWhen.today(),
                 type: 'full',
                 headline: 'Test update ' + v,
                 sections: [
@@ -1849,8 +1874,7 @@
         // never verified is the defect these exist to remove, so a test has to be
         // able to drive both halves: write a claim, then settle it against the
         // version actually running.
-        _claimUpdate, _settleClaim,
-        _recentlyFailedTarget, _autoApplyIfSecurity,
+        _claimUpdate, _settleClaim, _recentlyFailedTarget, _autoApplyIfSecurity,
         // Exposed so the test harness can prove which words a given server
         // response produces. The bug these replace was invisible to every test
         // that only read the source, because the logic was inline in an async
