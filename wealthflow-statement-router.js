@@ -16,8 +16,8 @@ const EXPENSE_CATEGORY_RULES = [
   ['Cash Withdrawal', /\b(atm\s+(?:withdrawal|wtd|cash)|cash\s+(?:withdrawal|withdraw|wd))\b/i],
   ['Groceries', /\b(keells?|cargills|food\s*city|arpico|glomark|laugfs\s+super|sathosa|spar|super\s*market|supermarket|grocery|mini\s*mart|provision)\b/i],
   ['Dining', /\b(restaurant|cafe|coffee|bakery|pizza|burger|kfc|mcdonald|dominos|dinemore|barista|spicy\s+food|food\s+court|canteen|grill|ice\s+cream)\b/i],
-  ['Mobile/Telecom payment', /\b(dialog(?:\s+axiata)?|mobitel|slt(?:\s+mobitel)?|hutch|airtel|lanka\s*bell|reload|recharge|airtime|phone\s+bill)\b/i],
-  ['Utility bill', /\b(ceb|leco|ceylon\s+electricity|electricity|water\s+board|nwsdb|water\s+bill|litro|laugfs\s+gas|gas\s+bill)\b/i],
+  ['Telecom', /\b(dialog(?:\s+axiata)?|mobitel|slt(?:\s+mobitel)?|hutch|airtel|lanka\s*bell|reload|recharge|airtime|phone\s+bill)\b/i],
+  ['Utilities', /\b(ceb|leco|ceylon\s+electricity|electricity|water\s+board|nwsdb|water\s+bill|litro|laugfs\s+gas|gas\s+bill)\b/i],
   ['Fuel', /\b(fuel|petrol|diesel|filling\s+station|ceypetco|lanka\s+ioc|sinopec|petroleum)\b/i],
   ['Transport', /\b(uber|pick\s*me|taxi|railway|parking|toll|expressway|interchange|\brda\b|highway|car\s+wash|vehicle\s+service|transport)\b/i],
   ['Health', /\b(pharmacy|hospital|medical|clinic|channelling|doc990|nawaloka|asiri|hemas|durdans|healthguard|dental|laboratory)\b/i],
@@ -25,7 +25,7 @@ const EXPENSE_CATEGORY_RULES = [
   ['Insurance', /\b(insurance|assurance|takaful|policy\s+premium|aia|ceylinco|allianz|janashakthi|fairfirst)\b/i],
   ['Government', /\b(inland\s+revenue|motor\s+traffic|immigration|passport|municipal\s+council|government|license\s+fee)\b/i],
   ['Shopping', /\b(daraz|amazon|aliexpress|odel|nolimit|fashion|clothing|textiles?|tex|singer|abans|softlogic|damro|electronics|furniture|hardware|gift\s+shop)\b/i],
-  ['Subscription', /\b(github|openai|chatgpt|adobe|microsoft\s*365|office\s*365|notion|canva|dropbox|vercel|cloudflare)\b/i],
+  ['Subscriptions', /\b(github|openai|chatgpt|adobe|microsoft\s*365|office\s*365|notion|canva|dropbox|vercel|cloudflare)\b/i],
   ['Entertainment', /\b(cinema|movie|netflix|spotify|youtube\s+premium|playstation|xbox|concert|bowling)\b/i],
 ];
 
@@ -114,8 +114,8 @@ function bestNameMatch(desc, list) {
 
 export function isCreditCardRow(row, ctx) {
   const statementType = norm(ctx.statementType).replace(/\s+/g, '_');
-  if (statementType === 'credit_card' || statementType === 'credit_card_statement') return true;
-  if (statementType === 'bank_account' || statementType === 'savings' || statementType === 'bank_statement' || statementType === 'debit_card_statement') return false;
+  if (statementType === 'credit_card') return true;
+  if (statementType === 'bank_account' || statementType === 'savings') return false;
   const last4 = row.card_last4 || ctx.card_last4;
   const entry = last4 && ctx.cardRegistry ? ctx.cardRegistry[last4] : null;
   if (!entry) return false;
@@ -125,8 +125,7 @@ export function isCreditCardRow(row, ctx) {
   // bank are known, require them to agree before trusting the match; a last-4
   // hit against the wrong bank is exactly the collision this guards against.
   if (entry.bank && ctx.bank && norm(entry.bank) !== norm(ctx.bank)) return false;
-  return entry.type === 'credit_card' || entry.type === 'credit';
-
+  return entry.type === 'credit_card';
 }
 
 // ── the core router for ONE row ─────────────────────────────────────────────
@@ -160,7 +159,7 @@ export function routeRow(row, ctx = {}) {
     else if (loanHit)   { module = 'loans'; tabLabel = 'Loan Repayment'; confidence = 0.6 + 0.35 * loanHit.score; allocation = loanHit; }
     else if (onCard) {
       if (RE.installment.test(desc))      { module = 'ccinstall'; tabLabel = 'CC Installments'; confidence = 0.85; }
-      else if (RE.subscription.test(desc)){ module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'subscription'; confidence = 0.9; category = 'Subscription'; }
+      else if (RE.subscription.test(desc)){ module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'subscription'; confidence = 0.9; category = 'Subscriptions'; }
       else if (RE.cashAdvance.test(desc)) { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'cash_advance'; confidence = 0.85; }
       else if (RE.fuel.test(desc))        { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fuel'; confidence = 0.85; }
       else if (RE.fee.test(desc))         { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fee'; confidence = 0.8; }
@@ -179,7 +178,7 @@ export function routeRow(row, ctx = {}) {
   // direction it had to assume (a statement printing no running balance) or read
   // from wording; the router's own confidence is about the CATEGORY and knows
   // nothing of that, so without this an unverified row could route with 0.9.
-  const upstreamDoubt = (row.needsReview === true && !(ctx.reconciliationBypassed && ['assumed', 'keyword', 'balance-mismatch', 'marker'].includes(row.directionSource))) || (row.direction !== undefined && !row.direction);
+  const upstreamDoubt = row.needsReview === true || (row.direction !== undefined && !row.direction);
   return {
     module, tabLabel, subtype, allocation, category,
     confidence: Math.round(confidence * 100) / 100,
