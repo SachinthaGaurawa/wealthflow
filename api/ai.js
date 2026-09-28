@@ -103,18 +103,14 @@ export default async function handler(req, res) {
     const ollamaKey   = process.env.OLLAMA_API_KEY;
     const hfKey       = process.env.HUGGINGFACE_API_KEY || process.env.HF_API_KEY || process.env.HF_TOKEN;
     // v7.24 — every additional provider the owner has configured in Vercel.
-    const anthropicKey  = process.env.ANTHROPIC_API_KEY;
-    const xaiKey        = process.env.XAI_API_KEY;
     const mistralKey    = process.env.MISTRAL_API_KEY;
     const togetherKey   = process.env.TOGETHER_API_KEY;
     const fireworksKey  = process.env.FIREWORKS_API_KEY;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
     const cerebrasKey   = process.env.CEREBRAS_API_KEY;
-    const sambanovaKey  = process.env.SAMBANOVA_API_KEY;
     const nvidiaKey     = process.env.NVIDIA_API_KEY;
     const githubKey     = process.env.GITHUB_MODELS_TOKEN;
     const cohereKey     = process.env.COHERE_API_KEY;
-    const edenKey       = process.env.EDENAI_API_KEY;
     const cloudflareToken = process.env.CLOUDFLARE_AI_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN;
     const cloudflareAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
 
@@ -305,8 +301,8 @@ export default async function handler(req, res) {
 
     // ---------- ENGINES 6-16: every other provider configured in Vercel ----------
     // Most are OpenAI-compatible (/chat/completions + Bearer). One factory builds
-    // them all; Anthropic and Cohere use their own shapes below. Each fires in
-    // parallel with the rest and contributes to fastest/consensus selection.
+    // them all; Cohere uses its own shape below. Each fires in parallel with
+    // the rest and contributes to fastest/consensus selection.
     function makeOAI(opts) {
         return async function () {
             if (!opts.key) throw new Error(opts.name + ' key not configured');
@@ -341,7 +337,6 @@ export default async function handler(req, res) {
         };
     }
 
-    const fetchXAI = makeOAI({ name: 'xAI', provider: 'xai:grok', key: xaiKey, url: 'https://api.x.ai/v1/chat/completions', textModel: 'grok-2-latest', visionModel: 'grok-2-vision-latest', jsonMode: true });
     // mistral-large-latest is paid-tier only (confirmed live: 403 "not available in
     // your subscription tier"); mistral-small-latest is served on the free plan.
     const fetchMistral = makeOAI({ name: 'Mistral', provider: 'mistral', key: mistralKey, url: 'https://api.mistral.ai/v1/chat/completions', textModel: 'mistral-small-latest', visionModel: 'pixtral-12b-2409', jsonMode: true });
@@ -356,7 +351,6 @@ export default async function handler(req, res) {
     // one. llama3.1-8b is the smaller model Cerebras documents alongside it as
     // generally available.
     const fetchCerebras = makeOAI({ name: 'Cerebras', provider: 'cerebras', key: cerebrasKey, url: 'https://api.cerebras.ai/v1/chat/completions', textModel: 'llama3.1-8b', visionModel: null });
-    const fetchSambaNova = makeOAI({ name: 'SambaNova', provider: 'sambanova', key: sambanovaKey, url: 'https://api.sambanova.ai/v1/chat/completions', textModel: 'Meta-Llama-3.3-70B-Instruct', visionModel: 'Llama-3.2-90B-Vision-Instruct' });
     // meta/llama-3.3-70b-instruct reached end of life 2026-08-26 (confirmed live:
     // 410 Gone). meta/llama-3.1-8b-instruct is NVIDIA's smaller, currently-documented
     // sibling model in the same family.
@@ -376,24 +370,6 @@ export default async function handler(req, res) {
         jsonMode: true
     });
 
-    // ---------- ENGINE: ANTHROPIC CLAUDE (native Messages API, vision) ----------
-    async function fetchAnthropic() {
-        if (!anthropicKey) throw new Error('Anthropic key not configured');
-        const content = image
-            ? [{ type: 'text', text: prompt }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } }]
-            : prompt;
-        const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model: 'claude-3-5-sonnet-20241022', max_tokens: Math.min(tokens, 4096), temperature: temp, messages: [{ role: 'user', content }] })
-        });
-        if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`Anthropic status ${r.status}: ${t.substring(0, 160)}`); }
-        const data = await r.json();
-        const text = Array.isArray(data.content) ? data.content.map(b => b.text || '').join('') : '';
-        if (!text.trim()) throw new Error('Anthropic returned empty');
-        return { reply: text, provider: 'anthropic:claude-3.5-sonnet' };
-    }
-
     // ---------- ENGINE: COHERE (native v2 chat, text-only) ----------
     async function fetchCohere() {
         if (image) throw new Error('Cohere skipped (text-only)');
@@ -408,32 +384,6 @@ export default async function handler(req, res) {
         const text = Array.isArray(data.message?.content) ? data.message.content.map(c => c.text || '').join('') : '';
         if (!text.trim()) throw new Error('Cohere returned empty');
         return { reply: text, provider: 'cohere:command-r-plus' };
-    }
-
-    // ---------- ENGINE: EDEN AI (aggregated text route) ----------
-    // Eden is intentionally one board member even though it is a gateway: the
-    // downstream model must not be counted multiple times as independent votes.
-    async function fetchEdenAI() {
-        if (image) throw new Error('EdenAI skipped (text-only here)');
-        if (!edenKey) throw new Error('EdenAI key not configured');
-        const r = await fetchWithTimeout('https://api.edenai.run/v2/text/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${edenKey}` },
-            body: JSON.stringify({ providers: 'openai/gpt-4o-mini', text: prompt, temperature: temp, max_tokens: Math.min(tokens, 2048) })
-        });
-        if (!r.ok) { const t = await r.text().catch(() => ''); throw new Error(`EdenAI status ${r.status}: ${t.substring(0, 160)}`); }
-        const data = await r.json();
-        const queue = [data];
-        let text = '';
-        while (queue.length && !text) {
-            const value = queue.shift();
-            if (!value || typeof value !== 'object') continue;
-            const candidate = value.generated_text || value.message?.content || value.content || value.text;
-            if (typeof candidate === 'string' && candidate.trim()) text = candidate;
-            else Object.values(value).forEach(child => { if (child && typeof child === 'object') queue.push(child); });
-        }
-        if (!text) throw new Error('EdenAI returned empty');
-        return { reply: text, provider: 'edenai:openai-gpt-4o-mini' };
     }
 
     // ---------- PARALLEL MULTI-ENGINE EXECUTION ----------
@@ -455,14 +405,11 @@ export default async function handler(req, res) {
             { name: 'Gemini',       fn: fetchGemini },
             { name: 'Groq',         fn: fetchGroq },
             { name: 'Ollama',       fn: fetchOllama },
-            { name: 'Anthropic',    fn: fetchAnthropic },
             { name: 'GitHubModels', fn: fetchGitHub },
-            { name: 'xAI',          fn: fetchXAI },
             { name: 'Together',     fn: fetchTogether },
             { name: 'Fireworks',    fn: fetchFireworks },
             { name: 'NVIDIA',       fn: fetchNvidia },
             { name: 'Mistral',      fn: fetchMistral },
-            { name: 'SambaNova',    fn: fetchSambaNova },
             { name: 'OpenRouterQwen', fn: fetchOpenRouterQwen },
             { name: 'CloudflareAI', fn: fetchCloudflare }
         ];
@@ -472,8 +419,6 @@ export default async function handler(req, res) {
             { name: 'DeepSeek',     fn: fetchDeepSeek },
             { name: 'Groq',         fn: fetchGroq },
             { name: 'Ollama',       fn: fetchOllama },
-            { name: 'Anthropic',    fn: fetchAnthropic },
-            { name: 'xAI',          fn: fetchXAI },
             { name: 'Mistral',      fn: fetchMistral },
             { name: 'Together',     fn: fetchTogether },
             { name: 'Fireworks',    fn: fetchFireworks },
@@ -481,12 +426,10 @@ export default async function handler(req, res) {
             { name: 'OpenRouterQwen', fn: fetchOpenRouterQwen },
             { name: 'OpenRouterNemotron', fn: fetchOpenRouterNemotron },
             { name: 'Cerebras',     fn: fetchCerebras },
-            { name: 'SambaNova',    fn: fetchSambaNova },
             { name: 'NVIDIA',       fn: fetchNvidia },
             { name: 'GitHubModels', fn: fetchGitHub },
             { name: 'Cohere',       fn: fetchCohere },
             { name: 'HF',           fn: fetchHuggingFace },
-            { name: 'EdenAI',       fn: fetchEdenAI },
             { name: 'CloudflareAI', fn: fetchCloudflare }
         ];
     }
@@ -494,11 +437,15 @@ export default async function handler(req, res) {
     // A missing credential is not a configured board member. Runtime failures
     // remain visible in the audit roster, but spare configured engines can
     // replace them once ten valid independent answers still agree exactly.
+    // Anthropic, xAI, SambaNova and EdenAI were removed from the roster
+    // entirely (2026-09-28): their Vercel accounts are out of credit/payment
+    // method, so every call was a guaranteed, wasted failure that only ate
+    // into the deadline budget without ever being able to vote.
     const configured = { Gemini: geminiKey, DeepSeek: deepseekKey, Groq: groqKey, Ollama: ollamaKey,
-        Anthropic: anthropicKey, xAI: xaiKey, Mistral: mistralKey, Together: togetherKey,
+        Mistral: mistralKey, Together: togetherKey,
         Fireworks: fireworksKey, OpenRouterFinance: openrouterKey, OpenRouterQwen: openrouterKey, OpenRouterNemotron: openrouterKey, Cerebras: cerebrasKey,
-        SambaNova: sambanovaKey, NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
-        EdenAI: edenKey, CloudflareAI: cloudflareToken && cloudflareAccount };
+        NVIDIA: nvidiaKey, GitHubModels: githubKey, Cohere: cohereKey, HF: hfKey,
+        CloudflareAI: cloudflareToken && cloudflareAccount };
     engines = engines.filter(engine => Boolean(configured[engine.name]) && providerAvailable(engine.name));
     // The required roster must match the task capability. A configured
     // text-only provider is not a missing vision voter; every eligible provider

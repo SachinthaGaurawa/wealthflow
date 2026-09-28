@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createCipheriv, pbkdf2Sync } from 'node:crypto';
+import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto';
 import { readStatement, pdfLinesFromItems, STATEMENT_LIMITS } from '../statement-reader.mjs';
 import { learnCloudLayout } from '../statement-layout.mjs';
 
@@ -158,24 +158,34 @@ describe('server statement reader', () => {
         ], { bank: 'Sampath Bank' });
         expect(learned.ok).toBe(true);
 
+        // mapReviewLayout() (statement-sync.js) never stores or confirms a
+        // template under its own template.id — it hashes [bank, template.id]
+        // into a Firestore document id and stamps THAT hash onto the source
+        // as learnedTemplate. An earlier version of this test passed
+        // learned.template.id directly as confirmedTemplateId, which matched
+        // only because the test skipped that hashing step entirely — it
+        // could never have caught the bypass being unreachable in production.
+        // Reproducing the real key here is the whole point of the assertion.
+        const docId = createHash('sha256').update(JSON.stringify(['Sampath Bank', learned.template.id])).digest('hex');
+
         // Reprocessing with the owner's own just-confirmed template: rows come
         // back despite the reconciliation mismatch, explicitly flagged as such.
         const confirmed = await readStatement({ bytes: html, filename: 'statement.html', bank: 'Sampath Bank',
-            layouts: [learned.template], confirmedTemplateId: learned.template.id });
+            layouts: [{ template: learned.template, _docId: docId }], confirmedTemplateId: docId });
         expect(confirmed.parsed.rows).toHaveLength(3);
         expect(confirmed.parsed.verdict).toBe('unverified');
         expect(confirmed.parsed.reconciliation.ok).toBe(false);
         expect(confirmed.parsed.layout.reconciliationBypassed).toBe(true);
-        expect(confirmed.parsed.layout.learnedTemplate).toBe(learned.template.id);
+        expect(confirmed.parsed.layout.learnedTemplate).toBe(docId);
 
         // The exact same template, opportunistically tried on some OTHER
         // statement the owner never confirmed (confirmedTemplateId unset, or
         // naming a different template) — the strict requirement still holds.
         const unconfirmed = await readStatement({ bytes: html, filename: 'statement.html', bank: 'Sampath Bank',
-            layouts: [learned.template] });
+            layouts: [{ template: learned.template, _docId: docId }] });
         expect(unconfirmed.parsed.rows).toHaveLength(0);
         const wrongId = await readStatement({ bytes: html, filename: 'statement.html', bank: 'Sampath Bank',
-            layouts: [learned.template], confirmedTemplateId: 'some-other-template-id' });
+            layouts: [{ template: learned.template, _docId: docId }], confirmedTemplateId: 'some-other-template-id' });
         expect(wrongId.parsed.rows).toHaveLength(0);
     });
     it('bounds attachments and returns sanitized malformed-PDF errors', async () => {
