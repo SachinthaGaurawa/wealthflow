@@ -717,8 +717,11 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         // remains pinned to this same source until its final batch settles.
         const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
         const filed = Math.max(0, Number(replay?.filed) || 0), review = Math.max(0, Number(replay?.review) || 0);
-        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review,
-            replayStatus: String(replay?.status || (filed ? 'filed' : 'pending')) };
+        const replayStatus = String(replay?.status || (filed ? 'filed' : 'pending'));
+        if (replayStatus === 'filed' || replayStatus === 'needs_review') {
+            await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus }, { merge: true });
+        }
+        return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review, replayStatus };
     }
     catch (_) { return { ok: true, mapped: true, queued: false }; }
 }
@@ -730,11 +733,20 @@ export async function continueMappedLayout({ db, owner, id, env = process.env, f
     if (!reviewSnap.exists || review.uid !== owner.uid || review.status !== 'mapped' || !review.sourcePath) throw new Error('whole-statement-review-required');
     const sourceRef = db.doc(review.sourcePath), sourceSnap = await sourceRef.get(), source = sourceSnap.data();
     if (!sourceSnap.exists || source.uid !== owner.uid || !source.learnedTemplate) throw new Error('review-source-owner-mismatch');
-    if (source.status === 'filed' || source.filed === true) return { ok: true, filed: 0, review: 0, queued: false, replayStatus: 'filed' };
-    if (source.status === 'needs_review') return { ok: true, filed: 0, review: 1, queued: false, replayStatus: 'needs_review' };
+    if (source.status === 'filed' || source.filed === true) {
+        await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus: 'filed' }, { merge: true });
+        return { ok: true, filed: 0, review: 0, queued: false, replayStatus: 'filed' };
+    }
+    if (source.status === 'needs_review') {
+        await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus: 'needs_review' }, { merge: true });
+        return { ok: true, filed: 0, review: 1, queued: false, replayStatus: 'needs_review' };
+    }
     const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path, maxSteps: 1 });
     const filed = Math.max(0, Number(replay?.filed) || 0), needsReview = Math.max(0, Number(replay?.review) || 0);
     const replayStatus = String(replay?.status || 'pending');
+    if (replayStatus === 'filed' || replayStatus === 'needs_review') {
+        await reviewRef.set({ status: 'resolved', resolvedAt: Date.now(), replayStatus }, { merge: true });
+    }
     return { ok: true, filed, review: needsReview, queued: replayStatus === 'pending', replayStatus };
 }
 
