@@ -170,6 +170,7 @@ describe('private source inspection and durable layout replay', () => {
         expect(args.data.get('users/u/statementReview/' + args.id).status).toBe('mapped');
         expect([...args.data.keys()].some(path => path.startsWith('users/u/statementLayouts/'))).toBe(true);
         expect(enqueue).toHaveBeenCalledTimes(1);
+        expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: args.sourcePath }));
     });
     it('reopens and safely maps a legacy pending review even when its source status is stale', async () => {
         const args = setup();

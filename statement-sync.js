@@ -425,15 +425,33 @@ export async function recoverRevokedSenderReviews({ db, uid, limit = 25 }) {
  * not caught here — it is meant to stop the caller's loop and propagate, the
  * same as it always has.
  */
-async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board }) {
-    const page = await mailRef.collection('items').where('status', '==', 'pending').limit(200).get();
+async function processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath = '' }) {
+    /* A layout the owner has just confirmed must be replayed before unrelated
+     * historical backlog.  Previously mapReviewLayout reset the right source
+     * to pending, then the generic worker claimed whichever document happened
+     * to be returned first.  On a large mailbox the interactive request spent
+     * its entire budget on other statements, leaving the confirmed statement
+     * in the same review loop. */
     let claimed = null, sourceRef;
-    for (const doc of page.docs) {
+    if (preferredSourcePath) {
+        const prefix = `${mailRef.path}/items/`;
+        if (!preferredSourcePath.startsWith(prefix) || preferredSourcePath.split('/').length !== 4) throw new Error('review-source-owner-mismatch');
+        const preferredRef = db.doc(preferredSourcePath);
+        if (!await retireUnapprovedSource(db, uid, mailRef, preferredRef)) {
+            const source = await claimSource(db, preferredRef, uid);
+            if (source) { claimed = source; sourceRef = preferredRef; }
+        }
+        // A targeted replay never consumes some other source. If this source
+        // cannot be claimed it is either complete, leased, or awaiting retry.
+        if (!claimed) return null;
+    }
+    const page = await mailRef.collection('items').where('status', '==', 'pending').limit(200).get();
+    for (const doc of claimed ? [] : page.docs) {
         if (await retireUnapprovedSource(db, uid, mailRef, doc.ref)) continue;
         const source = await claimSource(db, doc.ref, uid);
         if (source) { claimed = source; sourceRef = doc.ref; break; }
     }
-    if (!claimed) {
+    if (!claimed && !preferredSourcePath) {
         /* Combining status == processing with leaseUntil <= now requires a
          * manually provisioned Firestore composite index.  That made a clean
          * production project fail every Check now request before it could
@@ -551,11 +569,11 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
     return outcome;
 }
 
-async function enqueueStatementSync({ db, owner, env = process.env, f = fetch }) {
-    return runStatementSync({ db, owner, action: 'drain', env, f });
+async function enqueueStatementSync({ db, owner, env = process.env, f = fetch, sourcePath = '' }) {
+    return runStatementSync({ db, owner, action: 'drain', env, f, preferredSourcePath: sourcePath });
 }
 
-export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity }) {
+export async function runStatementSync({ db, owner, action = 'collect', env = process.env, f = fetch, read = readStatement, open = openCloud, intake = syncMailbox, settle = settleStatement, board = invokeBoard, budgetMs = 45000, maxSteps = Infinity, preferredSourcePath = '' }) {
     const start = Date.now();
     const uid = owner.uid, email = String(owner.email || '').toLowerCase();
     const mailRef = db.collection('wf-mail').doc(userKeyFor(email));
@@ -592,7 +610,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     let processed = 0, attempted = 0, last = null;
     for (;;) {
         if (attempted >= maxSteps || Date.now() - start > budgetMs) break;
-        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board });
+        const step = await processOneStatement({ db, uid, mailRef, token, env, f, read, open, settle, board, preferredSourcePath });
         if (!step) break;
         attempted += 1;
         if (step.status !== 'retry_pending') processed += 1;
@@ -694,7 +712,7 @@ export async function mapReviewLayout({ db, owner, id, rows, env = process.env, 
         tx.set(sourceRef, { status: 'pending', cursor: 0, rowSetHash: '', totalRows: result.rows.length, hasReview: false, filed: false, leaseToken: '', leaseUntil: 0, learnedTemplate: templateId, updatedAt: Date.now() }, { merge: true });
     });
     try {
-        const replay = await enqueue({ db, owner, env, f });
+        const replay = await enqueue({ db, owner, env, f, sourcePath: sourceRef.path });
         const filed = Math.max(0, Number(replay?.filed) || 0), review = Math.max(0, Number(replay?.review) || 0);
         return { ok: true, mapped: true, queued: replay?.morePending === true, filed, review,
             replayStatus: String(replay?.status || (filed ? 'filed' : 'pending')) };
