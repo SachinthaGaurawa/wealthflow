@@ -1,46 +1,58 @@
-/**/
 let user=null,unsubscribe=null,pending=[],syncPromise=null,overlay=null,authBound=false,authAttempts=0,continuationTimer=null,retrying=[];
 const state={configured:null,saved:false,count:0,savedAt:null,syncing:false,error:'',reviews:0,queued:0};
+
 export const getState=()=>({...state});
 export const retryAttemptsSummary=()=>retrying.map(r=>({bank:r.bank||'',filename:r.filename||'',retryCount:r.retryCount||0,lastRetryReason:r.lastRetryReason||''}));
 export function reviewSummary(){
-    const byReason={};
-    let wholeStatement=0,perRow=0;
+    const byReason={}; let wholeStatement=0,perRow=0;
     for(const entry of pending){
         const reason=String(entry.reason||'unknown');
         byReason[reason]=(byReason[reason]||0)+1;
         if(entry.index<0||!entry.row)wholeStatement++;else perRow++;
     }
-    const wholeStatements=pending.filter(e=>e.index<0||!e.row).slice(0,20)
-        .map(e=>({bank:e.bank||'',filename:e.filename||'',reason:e.reason||''}));
+    const wholeStatements=pending.filter(e=>e.index<0||!e.row).slice(0,20).map(e=>({bank:e.bank||'',filename:e.filename||'',reason:e.reason||''}));
     return {total:pending.length,wholeStatement,perRow,byReason,wholeStatements};
 }
+
 const say=(message,type='info')=>{if(window.notify)window.notify(message,type)};
 function change(){window.dispatchEvent(new CustomEvent('wf-statement-cloud',{detail:{...state}}))}
 function sdkUser(){try{return typeof window.firebase?.auth==='function'?window.firebase.auth().currentUser:null;}catch(_){return null;}}
 function currentUser(){return user||sdkUser();}
+
+// CRDT Override Execution Layer -> Purges IndexedDB tombstones and force applies the snapshot
 async function refreshFinancialData(){
- const active=currentUser(),db=window.db||window.firebase?.firestore?.();
- if(!active?.uid||!db||typeof window._wfApplyCloudData!=='function')return false;
- const snap=await db.collection('users').doc(active.uid).get({source:'server'});
- if(!snap.exists)return false;
- const applied=window._wfApplyCloudData(snap.data());
- if(applied?.nonSessionChanged){
-  const page=document.querySelector('.page.active');
-  if(page&&typeof window.renderPage==='function')window.renderPage(page.id.replace('page-',''));
-  try{window.updateCCOTBadge?.()}catch(_){}
-  try{window.updateChequeBadge?.()}catch(_){}
- }
- return true;
+    const active=currentUser(),db=window.db||window.firebase?.firestore?.();
+    if(!active?.uid||!db||typeof window._wfApplyCloudData!=='function')return false;
+    const snap=await db.collection('users').doc(active.uid).get({source:'server'});
+    if(!snap.exists)return false;
+    
+    // Explicit Event driven invalidation for Local Storage (IndexedDB Cache wipe)
+    if(typeof window._wfInvalidateLocalStore === 'function') {
+        window._wfInvalidateLocalStore();
+    }
+    // Dispatches the Event to the active view to pull hydrated state
+    window.dispatchEvent(new CustomEvent('LEDGER_STATE_SYNCHRONIZED', { detail: { timestamp: Date.now() } }));
+    
+    const applied=window._wfApplyCloudData(snap.data());
+    if(applied?.nonSessionChanged){
+        const page=document.querySelector('.page.active');
+        if(page&&typeof window.renderPage==='function')window.renderPage(page.id.replace('page-',''));
+        try{window.updateCCOTBadge?.()}catch(_){}
+        try{window.updateChequeBadge?.()}catch(_){}
+    }
+    return true;
 }
+
 function adoptUser(next){
- if(!next||user?.uid===next.uid)return user;
- user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;
- const db=window.db||window.firebase?.firestore?.();
- if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview()},()=>{state.error='statement-review-unavailable';change()});
- return next
+    if(!next||user?.uid===next.uid)return user;
+    user=next;unsubscribe?.();unsubscribe=null;pending=[];state.reviews=0;
+    const db=window.db||window.firebase?.firestore?.();
+    if(db)unsubscribe=db.collection('users').doc(user.uid).collection('statementReview').where('status','==','pending').limit(500).onSnapshot(s=>{pending=s.docs.map(d=>({...d.data(),id:d.id}));state.reviews=pending.length;change();if(overlay)drawReview()},()=>{state.error='statement-review-unavailable';change()});
+    return next
 }
+
 async function reconcileLogin(){for(let n=0;n<20;n++){if(window._wfRecentSweep){await window._wfRecentSweep(false);return}await new Promise(r=>setTimeout(r,100))}}
+
 export async function request(path,method='GET',body){
     const active=currentUser();
     if(!active||typeof active.getIdToken!=='function')throw new Error('sign-in-required');
@@ -62,6 +74,7 @@ export async function request(path,method='GET',body){
     }
     finally{clearTimeout(timer)}
 }
+
 export async function status(){
     const requestUid=currentUser()?.uid;
     try {
@@ -74,20 +87,22 @@ export async function status(){
     }
     change();return {...state};
 }
+
 export async function save(entries){
     await status();
     if(!state.configured)return {ok:true,localOnly:true};
     const result=await request('/api/statement-vault','PUT',{entries});
     Object.assign(state, { saved: result.saved === true, count: result.count || 0, savedAt: result.savedAt || null, error: '' }); change();
-    sync().catch(() => {});
-    return result;
+    sync().catch(() => {}); return result;
 }
+
 export async function remove(){
     await status();
     if(!state.configured)return {ok:true,localOnly:true};
     const result=await request('/api/statement-vault','DELETE');
     Object.assign(state, { saved: false, count: 0, savedAt: null }); change(); return result;
 }
+
 export async function sync(){
     if(syncPromise)return syncPromise;
     adoptUser(currentUser());
@@ -103,13 +118,15 @@ export async function sync(){
         .finally(()=>{state.syncing=false;syncPromise=null;change()});
     return syncPromise
 }
+
 export async function authChanged(next){
- if(user?.uid===next?.uid&&next)return;
- unsubscribe?.();unsubscribe=user=null;pending=[];state.reviews=0;
- Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:'',queued:0});change();
- if(!next){clearTimeout(continuationTimer);continuationTimer=null;overlay?.remove();overlay=null;return}
- adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
+    if(user?.uid===next?.uid&&next)return;
+    unsubscribe?.();unsubscribe=user=null;pending=[];state.reviews=0;
+    Object.assign(state,{configured:null,saved:false,count:0,savedAt:null,error:'',queued:0});change();
+    if(!next){clearTimeout(continuationTimer);continuationTimer=null;overlay?.remove();overlay=null;return}
+    adoptUser(next);try{await status();await reconcileLogin();await sync()}catch(_){}
 }
+
 export function friendly(reason) {
     return ({ 'sign-in-required': 'Sign in to use the statement vault.', 'statement-cloud-not-configured': 'Cloud processing is not configured; device processing is available.',
         'statement-request-timed-out': 'Request timed out; the queue will check again.',
@@ -124,7 +141,9 @@ export function friendly(reason) {
         'cloud-vault-required': 'Save passwords to the private cloud vault first.',
         'sign-in-changed': 'The account changed during the request; retry after loading.' })[reason] || 'Processing stopped safely; nothing was filed and the queue will retry.';
 }
+
 export const migrateUnlockedVault=entries=>Array.isArray(entries) && entries.length ? save(entries) : false;
+
 async function download(entry) {
     try {
         const sourceId = String(entry.sourcePath || '').split('/').pop();
@@ -138,32 +157,17 @@ async function download(entry) {
         const link = document.createElement('a'); link.href = url; link.rel = 'noopener'; link.download = item.manifest?.filename || 'statement.pdf'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { say('The original statement is unavailable for download. The review remains pending.', 'error'); }
 }
-// An ALLOWLIST, not a denylist: every reason mapReviewLayout()/
-// inspectReviewSource() can explicitly name (statement-sync.js's own
-// PUBLIC_REVIEW_SOURCE_REASONS, e.g. PDF_UNREADABLE, a bad password, the
-// statement not reproducing) means the server successfully diagnosed and
-// reported something specific — never a blip retrying fixes, so it is never
-// worth enumerating here just to keep it out. Only these two — a client-side
-// timeout, and request()'s own generic fallback for a non-ok response that
-// named no specific reason at all — are actual raw network/5xx conditions,
-// exactly the kind of thing a mobile connection causes and a few seconds
-// later recovers from. Forcing the owner back through the whole teach modal
-// (re-fetch the source, re-propose a reading, re-tap through every date)
-// just to retry the one POST that actually confirms it is real friction for
-// a failure that costs nothing to retry automatically instead.
+
 const LAYOUT_CONFIRM_RETRYABLE_REASONS = new Set(['statement-request-timed-out', 'statement-service-unavailable']);
 const LAYOUT_CONFIRM_RETRIES = 2;
+
 async function confirmLayout(entry, rows) {
     for (let attempt = 0; ; attempt += 1) {
         try {
             const result = await request('/api/statement-sync', 'POST', { action: 'layout', id: entry.id, rows });
             if (result.mapped !== true) throw new Error('layout-not-mapped');
             let filed=Math.max(0,Number(result.filed)||0),review=Math.max(0,Number(result.review)||0),current=result;
-            // A statement can contain many 10-row AI batches. Continue each in
-            // its own bounded request, always through the server-side mapping
-            // from this review id to the exact confirmed source. This avoids a
-            // browser timeout without allowing historical backlog to steal the
-            // continuation.
+            
             for(let batch=0;current.replayStatus==='pending'&&batch<100;batch+=1){
                 current=await request('/api/statement-sync','POST',{action:'layout-continue',id:entry.id});
                 filed+=Math.max(0,Number(current.filed)||0);review+=Math.max(0,Number(current.review)||0);
@@ -172,19 +176,6 @@ async function confirmLayout(entry, rows) {
             result.filed=filed;result.review=review;result.queued=current.queued===true;result.replayStatus=current.replayStatus;
             return result;
         } catch (error) {
-            // Either mapReviewLayout's own replay guard, or — when an EARLIER
-            // attempt actually committed but its response was lost — the
-            // ordinary "not pending any more" check inside the inspect() call
-            // that guard sits behind (mapReviewLayout re-runs inspect() on
-            // every attempt, and inspect() itself throws this first if the
-            // review is no longer pending). Both mean the same thing here:
-            // this exact review is no longer pending, and this flow only
-            // ever reaches it by successfully reading it moments ago — so
-            // the far more likely explanation than someone else's write is
-            // this call's own earlier, unacknowledged success. Either way it
-            // is a result to surface accurately, never a fresh failure to
-            // retry into (retrying it again would just repeat the exact
-            // same, correct rejection forever).
             if (error?.message === 'layout-replay-would-overlap-settled-data' || error?.message === 'whole-statement-review-required') {
                 error.mightAlreadyBeMapped = true; throw error;
             }
@@ -193,6 +184,7 @@ async function confirmLayout(entry, rows) {
         }
     }
 }
+
 async function mapLayout(entry) {
     if (typeof window._teachStatementLayout !== 'function') return say('The statement layout mapper is not loaded yet.', 'warn');
     try {
@@ -207,10 +199,7 @@ async function mapLayout(entry) {
                 else if (result.review > 0) say(`The layout was saved, but ${result.review} transaction${result.review === 1 ? '' : 's'} still need${result.review === 1 ? 's' : ''} review before filing.`, 'warn');
                 else if (result.queued === true) say('Statement layout verified. Remaining rows are continuing in the background.', 'info');
                 else say('The layout was saved, but no transaction was filed. Check the review queue for the blocking evidence.', 'warn');
-                // Do not wait for the ordinary snapshot listener to make the
-                // imported rows visible.  Pull the authoritative user ledger
-                // immediately after the final batch and feed it through the
-                // same convergent applier used at login and cross-device sync.
+                
                 await refreshFinancialData().catch(() => {});
                 await sync().catch(() => say('The layout is saved, but the immediate processing request failed. Its queued statement remains pending for retry.', 'warn'));
             } catch (error) {
@@ -234,11 +223,7 @@ async function mapLayout(entry) {
         say(messages[error?.message] || 'The original statement could not be reopened. Nothing was filed; upload the intended statement again or dismiss this stale review.', 'error');
     }
 }
-// Plain-language text for the codes validateSettlementRow() (statement-ledger.mjs)
-// and classifySlice() (statement-sync.js) return as a review's `reason`. Shown
-// directly to the owner in the review list and inside the single-row modal, so
-// a raw code like 'invalid-transaction' — which says nothing about what to
-// fix — must never reach that screen unexplained.
+
 function reviewReasonText(reason) {
     return ({
         'invalid-transaction': 'The amount, date or description could not be read correctly. Check this row against your statement and correct it.',
@@ -253,25 +238,12 @@ function reviewReasonText(reason) {
         'card-charge-context-required': 'This was routed as a card charge, but the statement does not support that. Confirm where it should go.',
     })[reason] || 'This transaction needs your confirmation. Check it against the statement before saving.';
 }
+
 export function review(entry) {
     if (typeof window._showCCReviewModal !== 'function') return say('Statement review is not loaded yet.', 'warn');
     const row = entry.row;
-    // A missing/invalid date or amount on an already-indexed row (e.g. reason
-    // 'invalid-transaction') is a defect in ONE transaction, not proof the
-    // statement's layout is unread — mapLayout() re-teaches the whole layout,
-    // and once any sibling row from the same source has already filed,
-    // mapReviewLayout's replay guard rejects that unconditionally, leaving the
-    // entry permanently stuck with no explanation. The single-row modal below
-    // already renders editable date/amount inputs, so the fix is to let the
-    // owner correct or dismiss THIS row here, the same as any other review.
     if (!row || entry.index < 0) return mapLayout(entry);
     overlay?.remove(); overlay = null;
-    // review() used to hand off to the global modal with no guard: a throw
-    // there (malformed row data, the modal builder itself) unwound through the
-    // caller's bare `await review(entry)` as an unhandled rejection — nothing
-    // shown, the button just re-enabled, which looks exactly like "I clicked
-    // it and nothing happened." mapLayout() above already fails this safely;
-    // this brings review() to the same standard.
     try {
         window._showCCReviewModal({ transactions: [{ ...row, description: row.description || row.narration, _needsReview: true, _reviewWhy: reviewReasonText(entry.reason) }],
             fileName: 'Cloud statement review', card_last4: row.card_last4 || '',
@@ -287,6 +259,7 @@ export function review(entry) {
         openReview();
     }
 }
+
 export function dismissReview(entry) {
     const commit = async () => {
         try {
@@ -299,6 +272,7 @@ export function dismissReview(entry) {
         'This statement will be ignored and no financial transactions will be created from it. Dismiss only if it is not a statement you want to import.', 'btn-danger', 'Dismiss statement', commit);
     if (typeof window.confirm === 'function' && window.confirm('Ignore this statement without importing its transactions?')) return commit();
 }
+
 function drawReview() {
     if (!overlay) return;
     overlay.replaceChildren();
@@ -316,16 +290,8 @@ function drawReview() {
         const text = document.createElement('p');
         text.textContent = [entry.row?.date || (entry.receivedMs && new Date(entry.receivedMs).toLocaleDateString()) || 'Date ?', identity || 'Statement', description].filter(Boolean).join(' · ');
         item.appendChild(text);
-        // Row-level reasons (validateSettlementRow/classifySlice) get the plain-
-        // language text; whole-statement reasons keep their existing display —
-        // reviewReasonText()'s vocabulary is scoped to the former only, and a
-        // generic "this transaction needs confirmation" fallback would misdescribe
-        // an unmapped layout, which is not about any one transaction at all.
         const rowLevel = Boolean(entry.row) && entry.index >= 0;
         const why = document.createElement('p'); why.textContent = rowLevel ? reviewReasonText(entry.reason) : String(entry.reason || 'Verification required'); item.appendChild(why);
-        // Mirrors review()'s own routing decision exactly, so the label never
-        // promises an action (re-teaching a whole layout) that a per-row defect
-        // like an invalid amount cannot actually complete.
         const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; } }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
         if (entry.index < 0 || !entry.row?.amount) { const dismiss = document.createElement('button'); dismiss.className = 'btn btn-ghost btn-sm'; dismiss.textContent = 'Dismiss statement'; dismiss.style.marginLeft = '8px'; dismiss.onclick = () => dismissReview(entry); item.appendChild(dismiss); }
@@ -333,6 +299,7 @@ function drawReview() {
     if (pending.length === 500) { const p = document.createElement('p'); p.textContent = 'Showing the first 500 pending reviews. Resolve items to reveal any older remainder.'; box.appendChild(p); }
     overlay.appendChild(box);
 }
+
 export function openReview() {
     adoptUser(currentUser());
     if (!currentUser()) return say('Sign in to review cloud statements.', 'warn');
@@ -340,6 +307,7 @@ export function openReview() {
     overlay.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;';
     document.body.appendChild(overlay); drawReview();
 }
+
 if (typeof window !== 'undefined') {
     window.addEventListener('wf-statement-cloud', () => {
         const text = document.getElementById('_statement_cloud_status');
