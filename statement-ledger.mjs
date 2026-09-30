@@ -16,6 +16,10 @@ export function amountCents(value) {
     return Number.isSafeInteger(cents) && Math.abs(value * 100 - cents) < 0.000001 ? cents : null;
 }
 
+// Exactly zero and otherwise a real row: a misread amount is NaN, negative or missing, never a clean 0.
+export const isZeroAmountLine = row => !!row && typeof row.amount === 'number' && row.amount === 0
+    && isStrictCalendarDate(row.date) && !!norm(row.description || row.narration);
+
 export function rowIdentity(row, { bank = '', last4 = '' } = {}) {
     return [row.date, amountCents(row.amount), norm(row.description || row.narration || row.desc || row.name),
         norm(canonicalBank(row.bank || row._bank || bank)), String(row.card_last4 || row._ccLast4 || last4),
@@ -106,6 +110,12 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
                 if (ledgerSnaps[offset].data()?.fingerprint !== fingerprint) throw new Error('statement-cursor-or-content-changed');
                 outcome.duplicates++; return;
+            }
+            // A line that moves no money ("Int.Pd 0.00") is not a transaction to file
+            // or to ask the owner about: it is recorded as skipped and nothing else.
+            if (isZeroAmountLine(row)) {
+                writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'skipped', module: '', reason: 'zero-amount', fingerprint, settledAt: now }]);
+                outcome.skipped++; return;
             }
             let reason = validateSettlementRow(row, decisions[offset], context);
             const decision = decisions[offset] || {};

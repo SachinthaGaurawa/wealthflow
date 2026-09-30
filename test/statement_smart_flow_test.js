@@ -3,7 +3,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { createFirestore } from './helpers/fake-firestore.js';
 import { smart, rows, consolidated, savings, current } from './helpers/smart-statements.js';
-import { submitRenderedStatement, inspectRenderSource, continueMappedLayout, runStatementSync } from '../statement-sync.js';
+import { submitRenderedStatement, inspectRenderSource, continueMappedLayout, runStatementSync, dismissZeroAmountReviews } from '../statement-sync.js';
 import { readStatement } from '../statement-reader.mjs';
 import { settleStatement } from '../statement-ledger.mjs';
 
@@ -69,7 +69,7 @@ describe('an emailed Smart Statement reaches the ledger', () => {
         const result = await submitRenderedStatement({ db: s.db, owner, id: s.reviewId, htmlGz: gz(smart({ rows })), env: {}, f: s.f, enqueue: s.enqueue });
         expect(result).toMatchObject({ replayStatus: 'filed' });
         expect(s.data.get('users/u').cconetime).toHaveLength(3);
-        expect(s.data.get(s.sourcePath)).toMatchObject({ renderedVersion: 2, status: 'filed' });
+        expect(s.data.get(s.sourcePath)).toMatchObject({ renderedVersion: 3, status: 'filed' });
     });
     it('ignores stored text from an older reader when reprocessing', async () => {
         const s = setup({ bank: 'AMEX', filename: 'eStatement_0276.html',
@@ -83,7 +83,51 @@ describe('an emailed Smart Statement reaches the ledger', () => {
         const result = await submitRenderedStatement({ db: s.db, owner, id: s.reviewId, htmlGz: gz(smart({ rows, closing: '4,701.00' })), env: {}, f: s.f, enqueue: s.enqueue });
         expect(result).toMatchObject({ mapped: true, filed: 0, needsLayout: true });
         expect(s.data.get('users/u').cconetime).toEqual([]);
-        expect(s.data.get(`users/u/statementReview/${s.reviewId}`)).toMatchObject({ status: 'pending', renderedRead: 2 });
+        expect(s.data.get(`users/u/statementReview/${s.reviewId}`)).toMatchObject({ status: 'pending', renderedRead: 3 });
+    });
+    it('closes a month whose own balances prove nothing moved, instead of leaving it in review', async () => {
+        const s = setup({ bank: 'AMEX', filename: 'eStatement_0276.html' });
+        const result = await submitRenderedStatement({ db: s.db, owner, id: s.reviewId, htmlGz: gz(smart({ rows: [], opening: '4,700.00', closing: '4,700.00' })), env: {}, f: s.f, enqueue: s.enqueue });
+        expect(result).toMatchObject({ mapped: true, filed: 0, review: 0, replayStatus: 'filed', needsLayout: false, why: { noMovement: true, rows: 0 } });
+        expect(s.data.get(s.sourcePath)).toMatchObject({ status: 'filed', filed: true, emptyStatement: true, hasReview: false });
+        expect(s.data.get(`users/u/statementReview/${s.reviewId}`).status).toBe('resolved');
+        expect(s.data.get('users/u').cconetime).toEqual([]);
+    });
+    it('does not close an empty-looking statement whose balances moved, or that printed none', async () => {
+        for (const html of [smart({ rows: [], opening: '4,700.00', closing: '5,000.00' }),
+            '<html><body><div>Nations Trust Bank American Express</div><div>Statement Period: 11-Jul-2026 to 10-Aug-2026</div></body></html>']) {
+            const s = setup({ bank: 'AMEX', filename: 'eStatement_0276.html' });
+            await expect(submitRenderedStatement({ db: s.db, owner, id: s.reviewId, htmlGz: gz(html), env: {}, f: s.f, enqueue: s.enqueue })).rejects.toThrow(/rendered-statement-has-no-rows|reconcil/);
+            expect(s.data.get(s.sourcePath).status).toBe('needs_review');
+            expect(s.data.get(`users/u/statementReview/${s.reviewId}`).status).toBe('pending');
+        }
+    });
+    it('files a consolidated NTB statement whose ledgers carry zero-amount memo lines', async () => {
+        const s = setup({ bank: 'NTB', filename: 'Consolidated_eStatement_2026MAR.html' });
+        const withMemo = { ...savings, rows: [...savings.rows, ['31-Jan', 'WTax.Pd', 'S9', '0.00', '', '5,710.00'], ['31-Jan', 'Int.Pd', 'S10', '', '0.00', '5,710.00']] };
+        const result = await submitRenderedStatement({ db: s.db, owner, id: s.reviewId, htmlGz: gz(consolidated([withMemo, current])), env: {}, f: s.f, enqueue: s.enqueue });
+        expect(result).toMatchObject({ mapped: true, filed: 4, review: 0, replayStatus: 'filed' });
+        expect(s.data.get('users/u').expenses.map(r => r.amount)).toEqual([300, 500]);
+    });
+    it('says, in counts only, what the reading made of a statement it could not file', async () => {
+        const s = setup({ bank: 'AMEX', filename: 'eStatement_0276.html' });
+        const result = await submitRenderedStatement({ db: s.db, owner, id: s.reviewId, htmlGz: gz(smart({ rows, closing: '4,701.00' })), env: {}, f: s.f, enqueue: s.enqueue });
+        expect(result.needsLayout).toBe(true);
+        expect(result.why).toMatchObject({ verdict: 'unverified', rows: 4, reconciled: false, noMovement: false });
+        expect(JSON.stringify(result.why)).not.toMatch(/FOREIGN|Cash advance|0276/);
+    });
+    it('clears, by itself, the old per-row reviews raised for lines that moved no money', async () => {
+        const s = setup({ bank: 'NTB', filename: 'Consolidated_eStatement_2026MAR.html', extraSource: { status: 'needs_review', totalRows: 2, cursor: 2, hasReview: true } });
+        const mk = (index, amount) => {
+            const id = sha(`ledger-${index}`);
+            s.data.set(`users/u/statementReview/${id}`, { uid: 'u', sourcePath: s.sourcePath, index, status: 'pending', reason: 'invalid-transaction', row: { date: '2026-03-31', amount, description: index ? 'Odd' : 'WTax.Pd', direction: 'debit' } });
+            s.data.set(`users/u/statementLedger/${id}`, { uid: 'u', sourcePath: s.sourcePath, index, status: 'review' });
+            return id;
+        };
+        const zero = mk(0, 0), misread = mk(1, NaN);
+        expect(await dismissZeroAmountReviews({ db: s.db, uid: 'u' })).toBe(1);
+        expect(s.data.get(`users/u/statementReview/${zero}`)).toMatchObject({ status: 'dismissed', dismissedBy: 'zero-amount-line' });
+        expect(s.data.get(`users/u/statementReview/${misread}`).status).toBe('pending');
     });
     it('does not keep asking about a source that can make no more progress', async () => {
         const s = setup({ bank: 'AMEX', filename: 'eStatement_0276.html' });

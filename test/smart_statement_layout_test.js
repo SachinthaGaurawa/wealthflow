@@ -87,3 +87,46 @@ describe('a consolidated bank statement, read from what the device rendered', ()
         expect(result.parsed.reconciliation).toMatchObject({ opening: 1000, closing: 5710, ok: true });
     });
 });
+
+describe('memo lines, idle accounts and empty months', () => {
+    const withRows = extra => consolidated([{ ...savings, rows: [...savings.rows, ...extra] }]);
+    it('leaves out a zero-amount memo line rather than refusing the whole statement', async () => {
+        const result = await readRenderedHtml(withRows([['31-Jan', 'WTax.Pd', 'S9', '0.00', '', '5,710.00'], ['31-Jan', 'Int.Pd', 'S10', '', '0.00', '5,710.00'], ['31-Jan', 'Fee', 'S11', '', '', '5,710.00']]));
+        expect(result.parsed.rows).toHaveLength(3);
+        expect(result.parsed).toMatchObject({ verdict: 'parsed', understood: true });
+        expect(result.parsed.htmlIncompleteRows).toBeUndefined();
+        expect(result.parsed.htmlReadNotes).toEqual({ zeroAmountSkipped: 3 });
+    });
+    it('still stops at a zero beside a balance that moved — a figure went missing', async () => {
+        const result = await readRenderedHtml(withRows([['31-Jan', 'Mystery', 'S9', '0.00', '', '5,000.00']]));
+        expect(result.parsed.verdict).toBe('unverified');
+        expect(result.parsed.htmlIncompleteKinds).toMatchObject({ 'zero-amount-balance-moved': 1 });
+    });
+    it('names what it refused, by kind and count, and nothing else', async () => {
+        const result = await readRenderedHtml(withRows([['31-Jan', 'Odd', 'S9', 'abc', '', '5,710.00']]));
+        expect(result.parsed.htmlIncompleteKinds).toEqual({ 'amount-unreadable': 1 });
+        expect(JSON.stringify(result.parsed.htmlIncompleteKinds)).not.toMatch(/Odd|S9|5,710/);
+    });
+    it('reads an overdrawn running balance through its own sign', async () => {
+        const overdrawn = { number: '300123456789', opening: '-2,000.00', totals: ['500.00', '0.00', '-2,500.00'], rows: [['03-Jan', 'CEFTS/6719', 'S4', '500.00', '', '(2,500.00)']] };
+        const result = await readRenderedHtml(consolidated([overdrawn]));
+        expect(result.parsed.rows).toHaveLength(1);
+        expect(result.parsed.htmlIncompleteRows).toBeUndefined();
+    });
+    it('proves a month empty only from the statement\'s own agreeing balances', async () => {
+        const idle = await readRenderedHtml(smart({ rows: [], opening: '4,700.00', closing: '4,700.00' }));
+        expect(idle.zeroActivity).toBe(true);
+        expect((await readRenderedHtml(smart({ rows: [], opening: '4,700.00', closing: '5,000.00' }))).zeroActivity).toBe(false);
+        expect((await readRenderedHtml('<html><body><div>American Express</div><div>Statement Period: 11-Jul-2026 to 10-Aug-2026</div></body></html>')).zeroActivity).toBe(false);
+        expect((await readRenderedHtml(smart({ rows }))).zeroActivity).not.toBe(true);
+    });
+    it('proves an idle consolidated statement, and not one whose Total line disagrees', async () => {
+        const idle = { ...savings, rows: [], totals: ['0.00', '0.00', '1,000.00'] };
+        expect((await readRenderedHtml(consolidated([idle]))).zeroActivity).toBe(true);
+        expect((await readRenderedHtml(consolidated([{ ...idle, totals: ['0.00', '50.00', '1,000.00'] }]))).zeroActivity).toBe(false);
+    });
+    it('a statement with unreadable rows is never idle', async () => {
+        const result = await readRenderedHtml(withRows([['31-Jan', 'Odd', 'S9', 'abc', '', '5,710.00']]));
+        expect(result.zeroActivity).not.toBe(true);
+    });
+});

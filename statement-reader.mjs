@@ -72,7 +72,11 @@ export function pdfLinesFromItems(items, tolerance = 2) {
 // balance, and the statement is only "parsed" when every one of them is.
 async function parse(text, htmlForData = '') {
     const lines = String(text).split('\n');
-    if (!lines.includes(SECTION_MARK)) return parseWhole(text, htmlForData);
+    if (!lines.includes(SECTION_MARK)) {
+        const whole = await parseWhole(text, htmlForData);
+        whole.zeroActivity = movedNothing(whole.parsed);
+        return whole;
+    }
     // A statement with a ledger table is read from its ledger table(s) only: an
     // Overview line that happens to carry a date and an amount ("...Int.Pd to
     // 31-01-2026  0.69") is not a transaction.
@@ -96,8 +100,20 @@ async function parse(text, htmlForData = '') {
         parts.push(await parseWhole([...context, ...(own ? [] : summary), ...chunk].join('\n')));
     }
     const active = parts.filter(part => part.parsed.rows.length);
-    if (!active.length) return { ...parts[0], text };
-    if (active.length === 1) return { parsed: active[0].parsed, text };
+    // An account with no rows that nevertheless opened and closed on different
+    // balances has lost money somewhere the reader did not see. Leaving it out of
+    // the reconciliation would file the others and say nothing about it.
+    const lost = parts.some(part => !part.parsed.rows.length && part.parsed.reconciliation?.ok === false);
+    if (!active.length) {
+        const idle = { ...parts[0], text, zeroActivity: parts.every(part => movedNothing(part.parsed)) };
+        if (lost) { idle.parsed.verdict = 'unverified'; idle.parsed.understood = false; }
+        return idle;
+    }
+    const withLost = result => {
+        if (lost) { result.parsed.verdict = 'unverified'; result.parsed.understood = false; result.parsed.reason = 'An account on this statement changed balance but shows no transactions.'; }
+        return result;
+    };
+    if (active.length === 1) return withLost({ parsed: active[0].parsed, text });
     const total = pick => active.reduce((sum, part) => sum + (Number(pick(part.parsed)) || 0), 0);
     const round = value => Math.round(value * 100) / 100;
     const recs = active.map(part => part.parsed.reconciliation || {});
@@ -120,7 +136,16 @@ async function parse(text, htmlForData = '') {
     parsed.understood = allParsed;
     parsed.reason = allParsed ? '' : (active.find(part => part.parsed.verdict !== 'parsed')?.parsed.reason || '');
     parsed.layout = { ...(parsed.layout || {}), accounts: active.length };
-    return { parsed, text };
+    return withLost({ parsed, text });
+}
+// A statement whose own balances prove nothing moved: no transaction rows, no
+// unreadable dates, and an opening balance equal to the closing one. Only such a
+// statement may be closed as "no transactions this month" — a document the reader
+// merely failed to read carries no balances to agree with each other.
+function movedNothing(parsed) {
+    const r = parsed?.reconciliation;
+    return !!parsed && !parsed.rows.length && !parsed.invalidDates && !parsed.balanceMismatches
+        && r?.ok === true && Number.isFinite(r.opening) && Number.isFinite(r.closing) && r.opening === r.closing;
 }
 async function parseWhole(text, htmlForData = '') {
     const { context } = await tools();
@@ -223,6 +248,10 @@ async function htmlText(html) {
     // Preserve column meaning before flattening the inert document. A running
     // balance or numeric reference must never become the transaction amount.
     let invalidRows = 0;
+    // WHY rows were refused, by kind — counts only, so a statement that will not
+    // file can say what it tripped on without ever quoting an amount or a name.
+    const kinds = {};
+    const bad = kind => { invalidRows++; kinds[kind] = (kinds[kind] || 0) + 1; };
     for (const table of doc.querySelectorAll('table')) {
         const rows = Array.from(table.querySelectorAll('tr')).filter(r => r.closest('table') === table);
         const cellTexts = row => Array.from(row.children).filter(n => /^(TD|TH)$/.test(n.tagName)).map(n => n.textContent.replace(/\s+/g, ' ').trim());
@@ -245,6 +274,13 @@ async function htmlText(html) {
             if (!s || /^[-–—]$/.test(s)) return 0;
             if (!/^(?:(?:LKR|Rs\.?)\s*)?\d+(?:,\d{3})*(?:\.\d{1,2})?\s*(?:DR|CR)?$/i.test(s)) return NaN;
             return Number(s.replace(/(?:LKR|Rs\.?|DR|CR)|[,\s]/gi, ''));
+        };
+        // A running balance may be overdrawn: "-2,500.00" or "(2,500.00)". An
+        // amount never is — a negative amount is not a direction anyone printed.
+        const balanceOf = raw => {
+            const s = String(raw || '').trim(), paren = /^\((.*)\)$/.exec(s), neg = paren || /^[-−–]\s*\d/.test(s);
+            const v = money(paren ? paren[1] : s.replace(/^[-−–]\s*/, ''));
+            return neg && Number.isFinite(v) ? -v : v;
         };
         for (const [rowIndex, row] of rows.entries()) {
             const cells = cellTexts(row);
@@ -275,16 +311,16 @@ async function htmlText(html) {
             // transaction — but it is the one place the bank states what the
             // rows above must add up to, so it is checked, not merely skipped.
             if (/^(?:total|sub\s*total|grand\s*total)\b/i.test(dateCell)) {
-                const figures = cells.slice(1).map(money).filter(Number.isFinite);
+                const figures = cells.slice(1).map(balanceOf).filter(Number.isFinite);
                 if (figures.length === 3 && c.debit >= 0 && c.credit > c.debit && c.balance > c.credit
                     && (Math.abs(sumDebit - figures[0]) > 0.011 || Math.abs(sumCredit - figures[1]) > 0.011
-                        || (previousBalance !== null && Math.abs(previousBalance - figures[2]) > 0.011))) invalidRows++;
+                        || (previousBalance !== null && Math.abs(previousBalance - figures[2]) > 0.011))) bad('total-row-disagrees');
                 continue;
             }
             if (!dateCell) {
                 // "B/F  24,058.89": the balance brought forward is the opening balance.
                 if (c.balance >= 0 && /^(?:b\/?f|bal(?:ance)?\s*b\/?f|brought forward|opening balance)\.?$/i.test(cells[c.description] || '')) {
-                    const opening = money(cells[c.balance]);
+                    const opening = balanceOf(cells[c.balance]);
                     if (Number.isFinite(opening)) { lines.push(`Opening Balance ${opening.toFixed(2)}`); previousBalance = opening; continue; }
                 }
                 lines.push(cells.join(' ')); continue;
@@ -301,21 +337,34 @@ async function htmlText(html) {
                     value = debitValue || creditValue; direction = debitValue > 0 ? 'DR' : 'CR';
                 }
             }
+            // A memo line that moves no money ("WTax.Pd 0.00", "Int.Pd 0.00") is
+            // not a transaction, and a ledger cannot be wrong by leaving it out:
+            // it adds nothing to either side. It is skipped ONLY while the running
+            // balance agrees that nothing moved — a zero beside a changed balance
+            // is a figure that went missing, and that still needs the owner.
+            const zero = c.amount >= 0 ? value === 0
+                : Number.isFinite(money(cells[c.debit])) && Number.isFinite(money(cells[c.credit])) && !money(cells[c.debit]) && !money(cells[c.credit]);
+            if (zero) {
+                const held = balanceOf(cells[c.balance]);
+                if (c.balance >= 0 && cells[c.balance] && previousBalance !== null && Number.isFinite(held) && Math.abs(held - previousBalance) > 0.011) bad('zero-amount-balance-moved');
+                else kinds.zeroAmountSkipped = (kinds.zeroAmountSkipped || 0) + 1;
+                continue;
+            }
             if (!Number.isFinite(value) || value <= 0 || !direction) {
                 // Preserve the candidate and force review instead of silently
                 // dropping a row or interpreting a conflicting column.
-                invalidRows++;
+                bad(!Number.isFinite(value) ? 'amount-unreadable' : value <= 0 ? 'amount-not-positive' : 'direction-unclear');
                 lines.push(cells.join(' '));
                 continue;
             }
             if (c.balance >= 0 && cells[c.balance]) {
-                const balance = money(cells[c.balance]);
-                if (!Number.isFinite(balance)) invalidRows++;
+                const balance = balanceOf(cells[c.balance]);
+                if (!Number.isFinite(balance)) bad('balance-unreadable');
                 else {
                     // No B/F row: what the first row's own balance implies the
                     // opening was. Every later row is chained to the one before.
                     if (previousBalance === null) lines.push(`Opening Balance ${(direction === 'CR' ? balance - value : balance + value).toFixed(2)}`);
-                    else if (Math.abs(balance - previousBalance - (direction === 'CR' ? value : -value)) > 0.011) invalidRows++;
+                    else if (Math.abs(balance - previousBalance - (direction === 'CR' ? value : -value)) > 0.011) bad('balance-chain-broken');
                     previousBalance = balance;
                 }
             }
@@ -349,7 +398,7 @@ async function htmlText(html) {
             }
         }
     }
-    return { text: joined.join('\n'), invalidRows };
+    return { text: joined.join('\n'), invalidRows, kinds };
 }
 /** Decrypts (when needed) and returns the statement's HTML document itself. */
 export async function openHtmlStatement(bytes, passwords = []) {
@@ -389,12 +438,15 @@ export async function openHtmlStatement(bytes, passwords = []) {
 async function parseHtmlDocument(html) {
     const extracted = await htmlText(html);
     const result = await parse(extracted.text, html);
-    if (extracted.invalidRows) markIncompleteHtml(result, extracted.invalidRows);
+    if (extracted.invalidRows) markIncompleteHtml(result, extracted.invalidRows, extracted.kinds);
+    else if (Object.keys(extracted.kinds).length) result.parsed.htmlReadNotes = extracted.kinds;
     return result;
 }
-function markIncompleteHtml(result, invalidRows) {
+function markIncompleteHtml(result, invalidRows, kinds) {
     result.parsed.verdict = 'unverified'; result.parsed.understood = false;
+    result.zeroActivity = false;
     result.parsed.htmlIncompleteRows = invalidRows;
+    if (kinds) result.parsed.htmlIncompleteKinds = kinds;
     result.parsed.reason = 'HTML transaction columns contain conflicting or incomplete evidence.';
 }
 export async function readHtmlStatement(bytes, passwords = []) {

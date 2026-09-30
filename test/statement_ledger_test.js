@@ -26,6 +26,23 @@ function fixture(user = {}) {
 }
 
 describe('statement ledger', () => {
+    it('skips a line that moves no money instead of asking the owner about it', async () => {
+        const f = fixture();
+        const zero = { ...row, amount: 0, description: 'WTax.Pd' };
+        const out = await settleStatement({ ...f, rows: [row, zero], decisions: [decision, decision], totalRows: 2 });
+        expect(out).toMatchObject({ filed: 1, skipped: 1, review: 0, status: 'filed' });
+        expect(f.db.docs.get('users/u').expenses).toHaveLength(1);
+        const skipped = [...f.db.docs.entries()].filter(([path]) => path.includes('/statementLedger/')).map(([, data]) => data).find(data => data.status === 'skipped');
+        expect(skipped).toMatchObject({ reason: 'zero-amount', index: 1 });
+        expect([...f.db.docs.keys()].some(path => path.includes('/statementReview/'))).toBe(false);
+    });
+    it('still queries a misread amount — only a clean zero is a line with no money', async () => {
+        for (const amount of [NaN, -5, '0.00', undefined, null]) {
+            const f = fixture();
+            const out = await settleStatement({ ...f, rows: [{ ...row, amount }], decisions: [decision], totalRows: 1 });
+            expect(out, String(amount)).toMatchObject({ skipped: 0, review: 1 });
+        }
+    });
     it('rejects rounded, invalid or unsafe monetary values', () => {
         expect(amountCents(42.10)).toBe(4210);
         for (const amount of [NaN, Infinity, -1, 0, 1.001, '1', Number.MAX_SAFE_INTEGER]) expect(amountCents(amount)).toBe(null);
