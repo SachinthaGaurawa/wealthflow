@@ -408,7 +408,7 @@
     // ── layer 1: tables ───────────────────────────────────────────────────────
     function _fromTables(doc) {
         var out = [];
-        _slice(doc.querySelectorAll('table')).forEach(function (table) {
+        _slice(doc.querySelectorAll('table')).forEach(function (table, tableIndex) {
             _slice(table.querySelectorAll('tr')).forEach(function (tr) {
                 var cells = _cellsOf(tr);
                 if (cells.length < 2) return;
@@ -453,7 +453,7 @@
                 // Merged cells ("02-Aug-2026 ODEL COLOMBO" | "5,000.00 Dr") do not
                 // decompose by column; the line parser handles them.
                 if (!row) row = _fromLine(cells.join(' '));
-                if (row) out.push(row);
+                if (row) { row._t = tableIndex; out.push(row); }
             });
         });
         return out;
@@ -622,12 +622,24 @@
         return out;
     }
 
+    /* Removes a row that repeats a row already read — but never a repeat WITHIN
+     * one table. Two identical printed lines in the same table are two real
+     * transactions (an AmEx statement carried two "ANTHROPIC 1,769.93" lines and
+     * two "FUEL SURCHARGE 70.00" lines; dropping either made the statement's own
+     * totals impossible to reach). What this exists for is the same table drawn
+     * twice (a desktop and a mobile copy), so the Nth identical row of a table is
+     * matched against the Nth identical row of an earlier one. Rows from the
+     * script and text layers carry no table and keep the exact old behaviour. */
     function _dedupe(rows) {
-        var seen = {}, out = [];
+        var seen = {}, within = {}, out = [];
         rows.forEach(function (t) {
             var key = t.date + '|' + t.narration.toLowerCase() + '|' + t.amount + '|' + t.direction;
-            if (seen[key]) return;
-            seen[key] = 1; out.push(t);
+            var nth = 1;
+            if (t._t !== undefined) { var at = t._t + '|' + key; within[at] = (within[at] || 0) + 1; nth = within[at]; }
+            delete t._t;
+            var slot = key + '#' + nth;
+            if (seen[slot]) return;
+            seen[slot] = 1; out.push(t);
         });
         return out;
     }

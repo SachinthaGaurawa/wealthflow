@@ -170,6 +170,24 @@ describe('the TABLE layer handles table shapes on its own', () => {
         expect(rows[0]).toEqual(KEELLS);
     });
 
+    /* An AmEx statement printed "ANTHROPIC 1,769.93" twice and "FUEL SURCHARGE
+     * 70.00" twice — four real charges. The reader dropped one of each, so the
+     * statement's own opening + charges - payments = closing could never be
+     * reached and 1,839.93 vanished without a word. */
+    const ROW = '<tr><td>03-Aug-2026</td><td>KEELLS SUPER COLOMBO</td><td>4,250.00 Dr</td></tr>';
+    it('keeps two identical transactions printed in the SAME table', () => {
+        const rows = W._layerTables(`<table>${ROW}${ROW}</table>`);
+        expect(rows).toHaveLength(2);
+        expect(rows.every(r => Object.keys(r).sort().join() === Object.keys(KEELLS).sort().join())).toBe(true);
+        expect(W.htmlToTransactions(`<table>${ROW}${ROW}</table>`)).toHaveLength(2);
+    });
+    it('still drops a whole table that is drawn a second time (desktop and mobile copies)', () => {
+        const table = `<table>${ROW}${ROW}</table>`;
+        expect(W._layerTables(table + table)).toHaveLength(2);
+        expect(W.htmlToTransactions(`<div class="desktop">${table}</div><div class="mobile">${table}</div>`)).toHaveLength(2);
+        expect(W._layerTables(`<table>${ROW}</table><table>${ROW}${ROW}</table>`)).toHaveLength(2);
+    });
+
     it('the layer really is the table layer (guards the guard)', () => {
         // It must find nothing in a script-only document — otherwise the two
         // assertions above could be passing through some other path.

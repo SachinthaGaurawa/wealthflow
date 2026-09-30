@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gzipSync, gunzipSync } from 'node:zlib';
-import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review, reviewSummary, retryAttemptsSummary, openReview } from '../wealthflow-statement-cloud.js';
+import { request, save, remove, sync, dismissReview, authChanged, getState, migrateUnlockedVault, friendly, review, reviewSummary, retryAttemptsSummary, openReview, autoRenderPending } from '../wealthflow-statement-cloud.js';
 
 const active = { uid: 'owner', getIdToken: vi.fn(async () => 'verified-token') };
 const reply = (ok, body) => ({ ok, json: async () => body });
@@ -297,6 +297,80 @@ describe('private statement cloud frontend transport', () => {
             expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['review-source']);
             expect(window.WFHtmlStatement.htmlToTransactionsAsync).not.toHaveBeenCalled();
             await authChanged(null);
+        });
+        describe('autonomously, with nobody tapping anything', () => {
+            const html = (id, name, extra = {}) => ({ id, data: () => ({ reason: 'statement-layout-or-reconciliation-needs-review', index: -1, bank: 'AMEX', filename: name, ...extra }) });
+            const store = new Map();
+            let docs;
+            const load = async entries => {
+                vi.useFakeTimers();
+                docs = entries;
+                window.localStorage = { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+                window.db = { collection: () => ({ doc: () => ({ collection: () => ({ where: () => ({ limit: () => ({ onSnapshot: ok => { ok({ docs }); return () => {}; } }) }) }) }) }) };
+                await openReview();
+            };
+            afterEach(() => { vi.useRealTimers(); store.clear(); });
+            const filedReply = () => reply(true, { ok: true, mapped: true, filed: 5, review: 0, replayStatus: 'filed' });
+
+            it('reads every pending HTML statement itself and skips PDFs and already-read ones', async () => {
+                window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<table>x</table>', transactions: [{ date: '2026-07-13' }] })) };
+                await load([html('a'.repeat(64), 'amex-jul.html'), html('b'.repeat(64), 'ntb-aug.htm'), html('c'.repeat(64), 'hnb.pdf'), html('d'.repeat(64), 'amex-jun.html', { renderedRead: true })]);
+                fetch.mockImplementation(async (_, options) => {
+                    const body = JSON.parse(options.body);
+                    return body.action === 'render-source' ? reply(true, { ok: true, htmlGz: gz(shell) }) : filedReply();
+                });
+                const done = await autoRenderPending();
+                expect(done).toEqual({ statements: 2, filed: 10, needLayout: 0 });
+                expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered', 'render-source', 'rendered']);
+                expect(window.notify).toHaveBeenCalledWith('10 statement transactions read on your device and filed automatically.', 'success');
+                await authChanged(null);
+            });
+            it('does not retry, for a day, a statement the device could not read — but does retry one that only hit the network', async () => {
+                window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: false, renderedHtml: '', transactions: [] })) };
+                await load([html('a'.repeat(64), 'amex-jul.html')]);
+                fetch.mockResolvedValue(reply(true, { ok: true, htmlGz: gz(shell) }));
+                await autoRenderPending();
+                expect(fetch).toHaveBeenCalledTimes(1);
+                await autoRenderPending();
+                expect(fetch).toHaveBeenCalledTimes(1);
+                store.clear(); fetch.mockClear();
+                fetch.mockResolvedValue(reply(false, { ok: false, reason: 'statement-service-unavailable' }));
+                await autoRenderPending();
+                await autoRenderPending();
+                expect(fetch).toHaveBeenCalledTimes(2);
+                await authChanged(null);
+            });
+            it('does not hammer a statement the server keeps refusing', async () => {
+                window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-07-13' }] })) };
+                await load([html('a'.repeat(64), 'amex-jul.html')]);
+                fetch.mockImplementation(async (_, options) => JSON.parse(options.body).action === 'render-source'
+                    ? reply(true, { ok: true, htmlGz: gz(shell) }) : reply(false, { ok: false, reason: 'review-source-owner-mismatch' }));
+                await autoRenderPending();
+                const first = fetch.mock.calls.length;
+                await autoRenderPending();
+                expect(fetch.mock.calls.length).toBe(first);
+                await authChanged(null);
+            });
+            it('tells the owner once when statements were read but still need their confirmation', async () => {
+                window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-07-13' }] })) };
+                await load([html('a'.repeat(64), 'amex-jul.html'), html('b'.repeat(64), 'amex-aug.html')]);
+                fetch.mockImplementation(async (_, options) => JSON.parse(options.body).action === 'render-source'
+                    ? reply(true, { ok: true, htmlGz: gz(shell) }) : reply(true, { ok: true, mapped: true, filed: 0, review: 1, replayStatus: 'needs_review', needsLayout: true }));
+                const done = await autoRenderPending();
+                expect(done).toEqual({ statements: 0, filed: 0, needLayout: 2 });
+                expect(window.notify).toHaveBeenCalledWith('2 statements were read on your device but need your confirmation. Open the review to confirm.', 'warn');
+                await authChanged(null);
+            });
+            it('starts on its own shortly after the pending statements arrive', async () => {
+                window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-07-13' }] })) };
+                fetch.mockImplementation(async (_, options) => JSON.parse(options.body).action === 'render-source' ? reply(true, { ok: true, htmlGz: gz(shell) }) : filedReply());
+                await load([html('a'.repeat(64), 'amex-jul.html')]);
+                expect(fetch).not.toHaveBeenCalled();
+                await vi.advanceTimersByTimeAsync(4000);
+                await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+                expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered']);
+                await authChanged(null);
+            });
         });
         it('falls back to the text layout teacher when the device draws no rows', async () => {
             window._teachStatementLayout = vi.fn();

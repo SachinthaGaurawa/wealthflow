@@ -120,31 +120,73 @@ async function parse(text, htmlForData = '') {
         return { parsed, text };
     } finally { delete context.inputText; delete context.inputHtml; }
 }
+const MONTH_INDEX = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+// "Statement Period: 11-Jul-2026 to 10-Aug-2026" — the only place a table that
+// prints "13 JUL" (no year) says which year it means.
+function statementPeriodEnd(text) {
+    const m = String(text || '').replace(/\s+/g, ' ').match(/statement period\s*:?\s*\d{1,2}[-/ ][A-Za-z]{3}[A-Za-z]*[-/ ]\d{4}\s*(?:to|-|–|—)\s*(\d{1,2})[-/ ]([A-Za-z]{3})[A-Za-z]*[-/ ](\d{4})/i);
+    const month = m && MONTH_INDEX[m[2].toLowerCase()];
+    return m && month !== undefined ? Date.UTC(Number(m[3]), month, Number(m[1])) : null;
+}
+// A yearless "13 JUL" becomes "13 Jul 2026": the latest such date that is not
+// after the period's end, so a December row on a Dec–Jan statement stays in
+// December of the earlier year. Anything else is returned untouched.
+function withYear(cell, periodEnd) {
+    const m = /^(\d{1,2})[\s-]+([A-Za-z]{3})[A-Za-z]*\.?$/.exec(String(cell || '').trim());
+    const month = m && MONTH_INDEX[m[2].toLowerCase()];
+    if (periodEnd === null || !m || month === undefined) return cell;
+    const endYear = new Date(periodEnd).getUTCFullYear();
+    for (const year of [endYear, endYear - 1]) {
+        const at = Date.UTC(year, month, Number(m[1]));
+        if (new Date(at).getUTCMonth() === month && at <= periodEnd + 7 * 86400000) return `${m[1]} ${m[2].slice(0, 3)} ${year}`;
+    }
+    return cell;
+}
+const SUMMARY_LABEL = /^(?:opening balance|closing balance|previous balance|balance b\/f|balance c\/f|brought forward|carried forward)$/i;
+const MONEY_ONLY = /^-?\(?\d[\d,]*(?:\.\d{1,2})?\)?(?:\s*(?:DR|CR))?$/i;
 async function htmlText(html) {
     const { DOMParser } = await tools();
     const doc = new DOMParser().parseFromString(html, 'text/html');
     if (doc.querySelectorAll('tr').length > STATEMENT_LIMITS.rows + 100) fail('STATEMENT_ROW_LIMIT');
     doc.querySelectorAll('script,style,noscript,iframe,object,embed,template,svg,canvas').forEach(n => n.remove());
+    const periodEnd = statementPeriodEnd((doc.body || doc.documentElement)?.textContent);
     // Preserve column meaning before flattening the inert document. A running
     // balance or numeric reference must never become the transaction amount.
     let invalidRows = 0;
     for (const table of doc.querySelectorAll('table')) {
         const rows = Array.from(table.querySelectorAll('tr')).filter(r => r.closest('table') === table);
+        const cellTexts = row => Array.from(row.children).filter(n => /^(TD|TH)$/.test(n.tagName)).map(n => n.textContent.replace(/\s+/g, ' ').trim());
+        // A direction column whose header is blank (a bare "Dr"/"Cr" after the
+        // amount): recognised by what it holds, never by position.
+        const inferMarker = from => {
+            const body = rows.slice(from).map(cellTexts);
+            const width = Math.max(0, ...body.map(cells => cells.length));
+            for (let col = 0; col < width; col++) {
+                const values = body.map(cells => cells[col]).filter(Boolean);
+                if (values.length && values.every(v => /^(?:dr|cr|debit|credit)\.?$/i.test(v))) return col;
+            }
+            return -1;
+        };
         let columns = null;
         let previousBalance = null;
         const lines = [];
-        for (const row of rows) {
-            const cells = Array.from(row.children).filter(n => /^(TD|TH)$/.test(n.tagName)).map(n => n.textContent.replace(/\s+/g, ' ').trim());
+        for (const [rowIndex, row] of rows.entries()) {
+            const cells = cellTexts(row);
             const names = cells.map(s => s.toLowerCase().replace(/[^a-z]/g, ''));
             const index = pattern => names.findIndex(s => pattern.test(s));
-            const date = index(/^(?:transactiondate|postingdate|posteddate|date)$/);
+            // The FIRST date column, so a "Post Date | Transaction Date" pair reads
+            // the same date the device's upload reader does.
+            const date = index(/^(?:transactiondate|txndate|postingdate|posteddate|postdate|date)$/);
             const description = index(/^(?:description|transactiondescription|particulars|narration|merchant|details)$/);
-            const amount = index(/^(?:amount|transactionamount)$/);
+            // "Amount" is the local-currency figure; "Transaction Amount" beside a
+            // currency column is the foreign one (USD 5.00 -> LKR 1,769.93).
+            const exactAmount = index(/^amount(?:lkr|rs)?$/);
+            const amount = exactAmount >= 0 ? exactAmount : index(/^transactionamount$/);
             const debit = index(/^(?:debit|debits|withdrawal|withdrawals|debitamount)$/);
             const credit = index(/^(?:credit|credits|deposit|deposits|creditamount)$/);
             if (date >= 0 && description >= 0 && (amount >= 0 || (debit >= 0 && credit >= 0))) {
                 columns = { date, description, amount, debit, credit,
-                    marker: index(/^(?:drcr|crdr|direction|type)$/),
+                    marker: index(/^(?:drcr|crdr|direction|type)$/) >= 0 ? index(/^(?:drcr|crdr|direction|type)$/) : inferMarker(rowIndex + 1),
                     reference: index(/^(?:reference|referenceno|ref|refno|transactionreference)$/),
                     balance: index(/^(?:balance|runningbalance)$/) };
                 continue;
@@ -187,7 +229,7 @@ async function htmlText(html) {
             }
             const narration = cells[c.description].replace(/\b(?:DR|CR)\b/gi, '').trim();
             const ref = c.reference >= 0 && cells[c.reference] ? ` REF:${cells[c.reference]}` : '';
-            lines.push(`${cells[c.date]} ${narration}${ref} ${value.toFixed(2)} ${direction}`);
+            lines.push(`${withYear(cells[c.date], periodEnd)} ${narration}${ref} ${value.toFixed(2)} ${direction}`);
         }
         if (columns) table.textContent = `\n${lines.join('\n')}\n`;
     }
@@ -197,7 +239,15 @@ async function htmlText(html) {
         let out = Array.from(node.childNodes || [], visit).join(node.tagName === 'TR' ? ' ' : '');
         return blocks.has(node.tagName) ? `\n${out}\n` : out;
     };
-    return { text: visit(doc.documentElement || doc).split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n'), invalidRows };
+    const flat = visit(doc.documentElement || doc).split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    // A summary printed as label and figure in two blocks ("Opening Balance" /
+    // "177,324.65") is one line to the parser's balance check.
+    const joined = [];
+    for (let i = 0; i < flat.length; i++) {
+        if (SUMMARY_LABEL.test(flat[i]) && MONEY_ONLY.test(flat[i + 1] || '')) joined.push(`${flat[i]} ${flat[++i]}`);
+        else joined.push(flat[i]);
+    }
+    return { text: joined.join('\n'), invalidRows };
 }
 /** Decrypts (when needed) and returns the statement's HTML document itself. */
 export async function openHtmlStatement(bytes, passwords = []) {

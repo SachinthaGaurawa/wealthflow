@@ -100,6 +100,21 @@
     // fallback when the statement gives no arithmetic and no CR/DR marker.
     var INBOUND_RE = /\b(refund|reversal|reversed|chargeback|charge back|cash ?back|credit adjustment|payment (?:received|thank ?you)|thank you for your payment|deposit|salary|payroll|wages|dividend|interest credit)\b/i;
 
+    /* A balance line is a label and a figure, not a sentence that happens to
+     * contain the label. The last "closing" line wins below, so one paragraph of
+     * a bank's marketing text ("...carried forward outstanding balance is revised
+     * ... 2.33%") used to become the statement's closing balance and make the
+     * whole-statement check fail on a statement whose every row was right. What
+     * is left of the line once the label, currency words, dates and numbers are
+     * taken away must be next to nothing. */
+    function looksLikeBalanceLine(line, labelRe) {
+        var residual = String(line).replace(labelRe, ' ')
+            .replace(/\b(?:LKR|LK|RS|USD|CR|DR|CREDIT|DEBIT|BALANCE|BAL|AS|AT|ON)\b\.?/gi, ' ')
+            .replace(/[\d\s,.:()\/\-\u2013\u2014*]/g, '');
+        return residual.length <= 14;
+    }
+
+    var CARD_WORDS_RE = /\b(credit limit|available credit|minimum payment|payment due date|card no|card number|cardmember|credit card)\b/i;
     var MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
 
     var EPS = 0.02;              // cents-level tolerance for money comparisons
@@ -318,8 +333,8 @@
             // a row that was silently skipped — could never run. It also left the
             // first real row without a previous balance, so its direction had to be
             // inferred from a CR/DR marker instead of verified by the running total.
-            var isOpening = OPENING_RE.test(line);
-            var isClosing = CLOSING_RE.test(line);
+            var isOpening = OPENING_RE.test(line) && looksLikeBalanceLine(line, OPENING_RE);
+            var isClosing = CLOSING_RE.test(line) && looksLikeBalanceLine(line, CLOSING_RE);
             if (isOpening || isClosing) {
                 var balTokens = moneyTokens(line);
                 if (balTokens.length) {
@@ -470,6 +485,21 @@
             reconciliation.expected = _r2(opening + credits - debits);
             reconciliation.difference = _r2(closing - reconciliation.expected);
             reconciliation.ok = Math.abs(reconciliation.difference) < EPS;
+            /* A CREDIT CARD statement prints what is OWED, so a purchase raises
+             * the balance and a payment lowers it — the opposite of an account
+             * whose credits raise it. The account formula can never balance a
+             * card, whatever the rows say. Accepted only when the card formula
+             * balances to the cent AND the page carries card wording, so an
+             * account statement that happens to be wrong is not rescued by it. */
+            if (!reconciliation.ok && CARD_WORDS_RE.test(src)) {
+                var owed = _r2(opening - credits + debits);
+                if (Math.abs(closing - owed) < EPS) {
+                    reconciliation.expected = owed;
+                    reconciliation.difference = _r2(closing - owed);
+                    reconciliation.ok = true;
+                    reconciliation.model = 'card';
+                }
+            }
         }
 
         /* ── DID WE ACTUALLY UNDERSTAND THIS? ────────────────────────────
