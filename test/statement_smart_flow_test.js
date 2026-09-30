@@ -45,7 +45,8 @@ describe('an emailed Smart Statement reaches the ledger', () => {
         const user = s.data.get('users/u');
         expect(user.cconetime.map(r => [r.date, r.amount])).toEqual([['2026-07-13', 1000], ['2026-07-21', 1500], ['2026-07-21', 1500]]);
         expect(user.ccPayments.map(r => [r.date, r.amount])).toEqual([['2026-07-16', 300]]);
-        expect(user.cconetime[0]).toMatchObject({ card_last4: '0276', bank: 'AMEX' });
+        // The bank is filed under its one canonical name whichever spelling the mail carried.
+        expect(user.cconetime[0]).toMatchObject({ card_last4: '0276', bank: 'American Express (AMEX)' });
         expect(s.data.get(s.sourcePath).status).toBe('filed');
         expect(s.data.get(`users/u/statementReview/${s.reviewId}`).status).toBe('resolved');
     });

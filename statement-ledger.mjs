@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isStrictCalendarDate } from './otp-recovery.mjs';
 import { isCreditCardRow } from './wealthflow-statement-router.js';
+import { canonicalBank } from './wealthflow-institutions.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -17,7 +18,7 @@ export function amountCents(value) {
 
 export function rowIdentity(row, { bank = '', last4 = '' } = {}) {
     return [row.date, amountCents(row.amount), norm(row.description || row.narration || row.desc || row.name),
-        norm(row.bank || row._bank || bank), String(row.card_last4 || row._ccLast4 || last4),
+        norm(canonicalBank(row.bank || row._bank || bank)), String(row.card_last4 || row._ccLast4 || last4),
         norm(row.ref), row.direction || ''];
 }
 
@@ -58,7 +59,7 @@ export function crossSourceMatches(records, row, context) {
 
 function makeRecord(row, decision, context, id, now) {
     const desc = String(row.description || row.narration).trim();
-    const provenance = { statementKey: context.sourcePath, statementRow: context.index, bank: context.bank || '', card_last4: context.last4 || '', ref: String(row.ref || ''), direction: row.direction };
+    const provenance = { statementKey: context.sourcePath, statementRow: context.index, bank: canonicalBank(context.bank || ''), card_last4: context.last4 || '', ref: String(row.ref || ''), direction: row.direction };
     const base = { id, ...provenance, amount: row.amount, date: row.date, source: 'statement', createdAt: new Date(now).toISOString(), _ut: now, notes: '' };
     const module = modules[decision.module];
     if (module === 'expenses') return { ...base, desc, cat: decision.category, month: row.date.slice(0, 7), recurring: false, recurringType: '0', completed: true };

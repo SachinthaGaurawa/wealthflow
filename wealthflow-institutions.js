@@ -178,7 +178,38 @@ export function institutionForSender({ domain = '', displayName = '' } = {}) {
     return best ? best.inst : null;
 }
 
-const API = { INSTITUTIONS, PICKER, BANK_DOMAINS, institutionFor, tokensFor, domainsFor, institutionForSender };
+/**
+ * ONE NAME PER BANK.
+ *
+ * American Express is spelled two ways — the long name and the short one
+ * ("AMEX") — and the app met both: the statement pipeline wrote one, an SMS
+ * the other, a hand-typed card the third. Every place that groups by bank
+ * (card filter chips, what a payment settles, the due total, the card registry
+ * check) then saw two banks, so one card showed as two, with the payments on
+ * one and the charges on the other never meeting.
+ *
+ * Only a name that is about American Express and nothing else is folded: the
+ * words may be just "american", "express", "amex" and "card". "Nations Trust
+ * Bank (NTB) — AMEX" is a different institution's product with its own fees
+ * and is left exactly as it is, as is any name this function does not
+ * recognise — an unknown bank comes back untouched, never guessed at.
+ */
+const AMEX_WORDS = new Set(['american', 'express', 'amex', 'card']);
+export function canonicalBank(name) {
+    const raw = s(name);
+    const words = norm(raw).replace(/\bamericanexpress\b/g, 'american express').split(' ').filter(Boolean);
+    if (!words.length || !words.every((w) => AMEX_WORDS.has(w))) return raw;
+    const text = words.join(' ');
+    return /\bamex\b|\bamerican express\b/.test(text) ? INSTITUTIONS.find((i) => i.id === 'amex').name : raw;
+}
+
+/** Do these two names mean the same bank? Empty never equals anything. */
+export function sameBank(a, b) {
+    const x = norm(canonicalBank(a)), y = norm(canonicalBank(b));
+    return !!x && x === y;
+}
+
+const API = { INSTITUTIONS, PICKER, BANK_DOMAINS, institutionFor, tokensFor, domainsFor, institutionForSender, canonicalBank, sameBank };
 
 if (typeof window !== 'undefined') window.WFInstitutions = API;
 
