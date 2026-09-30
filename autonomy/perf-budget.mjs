@@ -475,15 +475,11 @@ export const BUDGETS = {
     // and the runStatementSync()/sync() wiring that feeds it — the same
     // lastRetryReason surfacing the htmlBytes note above explains. Measured
     // 1,891,366.
-    // 2026-09-30: +3,355 so an emailed NTB / American Express Smart Statement
-    // can be read at all. Its rows are drawn by its own JavaScript, which the
-    // server has no browser to run — so the autonomous pipeline found zero rows
-    // and parked it in review forever, while the identical file uploaded by hand
-    // worked (the device renders it in a sandboxed frame). statement-reader.mjs
-    // and statement-sync.js now hand the decrypted document to the device and
-    // read back what it rendered, and wealthflow-statement-cloud.js drives it.
-    // Measured 1,894,721; no new module or request.
-    totalJsBytes: 1_894_721,
+    // 2026-09-28: main already measured 1,904,143 bytes across 72 modules after
+    // the uploaded quarantine/runtime module landed, while this ratchet still
+    // described the preceding 71-module tree.  The statement visibility fix
+    // adds no module; this moves the stale baseline once with ~1.1% headroom.
+    totalJsBytes: 1_925_000,
     largestModuleBytes: 214_000, // measured 213,691 (wealthflow-ai-v4.js)
     // Raised from 45 (measured 43). In #52 this ceiling was deliberately left
     // alone because it had not yet failed, on the principle that lifting a
@@ -561,7 +557,7 @@ export const BUDGETS = {
      * month-by-month accrual on a balance that changes, a term schedule with
      * more than one rate, payments allocated interest-first — and it is
      * exercised by its own test without a browser. */
-    moduleCount: 71,   // measured 71; authenticated cloud statement interface
+    moduleCount: 72,   // measured 72 on main; statement worker fix adds no module
     // Raised from 48 (measured 47). The Import Review Queue (#48) adds one
     // deferred module, and the ratchet fired on exactly the tag it added —
     // which was flagged as expected before the work started, not explained

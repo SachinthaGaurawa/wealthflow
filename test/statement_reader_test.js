@@ -210,8 +210,9 @@ describe('server statement reader', () => {
 
         // Reprocessing with the owner's own just-confirmed template: rows come
         // back despite the reconciliation mismatch, explicitly flagged as such.
+        const decoys = Array.from({ length: 6 }, (_, i) => ({ template: learned.template, _docId: `older-${i}` }));
         const confirmed = await readStatement({ bytes: html, filename: 'statement.html', bank: 'Sampath Bank',
-            layouts: [{ template: learned.template, _docId: docId }], confirmedTemplateId: docId });
+            layouts: [...decoys, { template: learned.template, _docId: docId }], confirmedTemplateId: docId });
         expect(confirmed.parsed.rows).toHaveLength(3);
         expect(confirmed.parsed.verdict).toBe('unverified');
         expect(confirmed.parsed.reconciliation.ok).toBe(false);

@@ -157,15 +157,16 @@ export function routeRow(row, ctx = {}) {
   } else { // debit
     if (targetHit)      { module = 'goal_alloc'; tabLabel = `Savings Target: ${targetHit.name}`; confidence = 0.6 + 0.35 * targetHit.score; allocation = targetHit; }
     else if (loanHit)   { module = 'loans'; tabLabel = 'Loan Repayment'; confidence = 0.6 + 0.35 * loanHit.score; allocation = loanHit; }
-    else if (RE.subscription.test(desc)) { module = 'subscriptions'; tabLabel = 'Subscriptions'; confidence = 0.9; category = expenseCategoryFor(row); }
     else if (onCard) {
       if (RE.installment.test(desc))      { module = 'ccinstall'; tabLabel = 'CC Installments'; confidence = 0.85; }
+      else if (RE.subscription.test(desc)){ module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'subscription'; confidence = 0.9; category = 'Subscriptions'; }
       else if (RE.cashAdvance.test(desc)) { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'cash_advance'; confidence = 0.85; }
       else if (RE.fuel.test(desc))        { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fuel'; confidence = 0.85; }
       else if (RE.fee.test(desc))         { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'fee'; confidence = 0.8; }
-      else                                { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'purchase'; confidence = 0.7; }
+      else                                { module = 'cconetime'; tabLabel = 'CC One-Time'; subtype = 'purchase'; confidence = 0.7; category = expenseCategoryFor(row); }
     } else {
-      module = 'expenses'; tabLabel = 'Monthly Expenses'; confidence = 0.7; category = expenseCategoryFor(row);
+      if (RE.subscription.test(desc)) { module = 'subscriptions'; tabLabel = 'Subscriptions'; confidence = 0.9; category = expenseCategoryFor(row); }
+      else { module = 'expenses'; tabLabel = 'Monthly Expenses'; confidence = 0.7; category = expenseCategoryFor(row); }
     }
   }
 

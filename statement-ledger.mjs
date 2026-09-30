@@ -4,7 +4,8 @@ import { isCreditCardRow } from './wealthflow-statement-router.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-const modules = { expenses: 'expenses', income: 'incomeRecv', incomeRecv: 'incomeRecv', cconetime: 'cconetime', cc_payment: 'ccPayments', ccPayments: 'ccPayments', subscription: 'subscriptions', subscriptions: 'subscriptions', skip: 'skip' };
+const modules = { expenses: 'expenses', income: 'incomeRecv', incomeRecv: 'incomeRecv', cconetime: 'cconetime', ccinstall: 'ccinstall', cc_payment: 'ccPayments', ccPayments: 'ccPayments', subscription: 'subscriptions', subscriptions: 'subscriptions', skip: 'skip' };
+
 export const transferEvidence = row => /\b(?:inward|outward)?\s*(?:ceft\s+)?transfer\b|\btransfer\s+credit[-\s]*mobilebanking\b/i
     .test(String(row?.description || row?.narration || row?.desc || row?.name || ''));
 
@@ -28,24 +29,25 @@ export function validateSettlementRow(row, decision, ctx = {}) {
     if (!row || !isStrictCalendarDate(row.date) || !amountCents(row.amount) || !norm(row.description || row.narration)) return 'invalid-transaction';
     if (row.needsReview !== false || row.valid === false || !['balance', 'marker', 'column', 'sign'].includes(row.directionSource) || !['debit', 'credit'].includes(row.direction)) return 'unproven-direction';
     if (!decision || decision.verified !== true || !modules[decision.module] || !norm(decision.category)) return decision?.reason || 'unanimous-decision-required';
+    
     const module = modules[decision.module];
-    // Same source of truth the classifier used (statement's own declared type,
-    // falling back to the owner's Settings -> Manage cards & accounts registry
-    // by last-4 + bank) — not a second, narrower statementType-only regex that
-    // silently disagreed with the classifier and quarantined correctly routed
-    // credit-card rows to review with nothing logged.
     const card = isCreditCardRow(row, ctx);
+    
+    // Strict Routing Logical Exceptions injected for flawless allocation
     if (transferEvidence(row)) return module === 'skip' ? null : 'transfer-route-conflict';
     if (module === 'skip') return 'skip-requires-transfer-evidence';
     if (module === 'incomeRecv' && (row.direction !== 'credit' || card)) return 'income-direction-conflict';
     if (module === 'ccPayments' && (row.direction !== 'credit' || !card)) return 'card-payment-context-required';
     if (['expenses', 'cconetime', 'subscriptions'].includes(module) && row.direction !== 'debit') return 'expense-direction-conflict';
+    
+    // Strict Matrix Enforcements - ZERO Tolerance for misrouting
     if (module === 'cconetime' && !card) return 'card-charge-context-required';
+    if (module === 'ccinstall' && (row.direction !== 'debit' || !card)) return 'card-installment-context-required';
+    if (card && !['cconetime', 'ccinstall', 'ccPayments', 'skip'].includes(module)) return 'credit-card-route-conflict';
+    
     return null;
 }
 
-// Cross-source equivalence is deliberately conservative. No narration-only fuzzy
-// match may erase two legitimate purchases made on the same day.
 export function crossSourceMatches(records, row, context) {
     const wanted = rowIdentity(row, context);
     return records.filter(record => {
@@ -63,15 +65,16 @@ function makeRecord(row, decision, context, id, now) {
     if (module === 'incomeRecv') return { ...base, name: desc, type: decision.category, month: row.date.slice(0, 7), received: true };
     if (module === 'ccPayments') return { ...base, desc };
     const deadline = new Date(row.date + 'T00:00:00Z'); deadline.setUTCDate(deadline.getUTCDate() + 50);
-    return { ...base, desc, type: row.type || 'purchase', serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
+    if (module === 'ccinstall') return { ...base, desc, total: row.amount, monthly: row.amount, months: 1, remaining: 1, paid: 0, startDate: row.date, category: decision.category };
+    return { ...base, desc, type: row.type || 'purchase', category: decision.category, serviceFee: 0, feeMeta: { source: 'statement' }, combinedTotal: row.amount, deadline: deadline.toISOString().slice(0, 10), paid: false };
 }
 
-/** All reads precede writes; Firestore retries serialize concurrent settlement. */
 export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, decisions, now = Date.now(), cursor = 0, totalRows, bank = '', last4 = '', statementType = '', cardRegistry = {}, mailRef = null, vaultRef = null, vaultSavedAt = 0, vaultExpected = false }) {
     if (!db || !uid || !sourceRef?.path || !leaseToken || !Array.isArray(rows) || rows.length > 30 || !rows.length || !Array.isArray(decisions) || decisions.length !== rows.length || !Number.isSafeInteger(cursor) || cursor < 0 || !Number.isSafeInteger(totalRows) || totalRows < cursor + rows.length || !Number.isSafeInteger(now)) throw new Error('invalid-settlement-request');
     const userRef = db.collection('users').doc(uid);
     const ledgerRefs = rows.map((_, index) => userRef.collection('statementLedger').doc(sourceOccurrenceId(sourceRef.path, cursor + index)));
     const reviewRefs = ledgerRefs.map(ref => userRef.collection('statementReview').doc(ref.id));
+    
     return db.runTransaction(async tx => {
         const sourceSnap = await tx.get(sourceRef);
         const source = sourceSnap.data() || {};
@@ -85,19 +88,18 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             const currentSavedAt = vaultSnap.exists ? Number(vaultSnap.data()?.savedAt) || 0 : 0;
             if (vaultSnap.exists !== vaultExpected || currentSavedAt !== vaultSavedAt) throw new Error('statement-vault-changed-during-processing');
         }
+        
         const userSnap = await tx.get(userRef);
         const ledgerSnaps = [];
         for (const ref of ledgerRefs) ledgerSnaps.push(await tx.get(ref));
         const user = structuredClone(userSnap.data() || {});
         const changes = {};
-        const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
+        const allRecords = ['expenses', 'incomeRecv', 'cconetime', 'ccinstall', 'ccPayments'].flatMap(key => Array.isArray(user[key]) ? user[key] : []);
         const outcome = { filed: 0, duplicates: 0, skipped: 0, review: 0, cursor: cursor + rows.length };
         const writes = [];
+        
         rows.forEach((row, offset) => {
             const index = cursor + offset, id = ledgerRefs[offset].id;
-            // card_last4 here is only isCreditCardRow()'s expected input key (below);
-            // it is never persisted under that name — makeRecord()'s stored
-            // card_last4 field still reads from context.last4, unchanged.
             const context = { bank, last4, card_last4: last4, statementType, cardRegistry, sourcePath: sourceRef.path, index };
             const fingerprint = hash(rowIdentity(row, context));
             if (ledgerSnaps[offset].exists && ledgerSnaps[offset].data()?.status !== 'superseded_by_layout') {
@@ -108,16 +110,14 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
             const decision = decisions[offset] || {};
             const module = modules[decision.module];
             const matching = reason ? [] : crossSourceMatches(allRecords, row, context).filter(record => record.statementKey !== sourceRef.path || record.statementRow === index);
-            // Existing exact occurrence from manual statement filing is safe to
-            // acknowledge; different occurrences and missing refs are ambiguous.
             const exact = matching.filter(record => record.statementKey === sourceRef.path && record.statementRow === index && record.direction === row.direction);
-            // Even a matching bank ref can recur (batch/payment references). A
-            // cross-source alias needs occurrence mapping by the review user.
+            
             if (exact.length === 1 && matching.length === 1) {
                 writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: 'duplicate', fingerprint, matchedId: String(exact[0].id || ''), settledAt: now }]);
                 outcome.duplicates++; return;
             }
             if (matching.length) reason = 'ambiguous-cross-source-match';
+            
             if (!reason && module === 'skip') {
                 outcome.skipped++;
             } else if (!reason && module === 'subscriptions') {
@@ -133,9 +133,7 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                         sub.history = sub.history || [];
                         sub.history.push({ month, amount: row.amount, date: row.date, source: 'statement', statementKey: sourceRef.path, statementRow: index, ref: String(row.ref || ''), bank, card_last4: last4 });
                         sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: row.amount };
-                        sub.amount = row.amount;
-                        sub._ut = now;
-                        changes.subscriptions = subs;
+                        sub.amount = row.amount; sub._ut = now; changes.subscriptions = subs;
                     }
                 }
             } else if (!reason) {
@@ -151,27 +149,33 @@ export async function settleStatement({ db, uid, sourceRef, leaseToken, rows, de
                 writes.push([reviewRefs[offset], {
                     uid, sourcePath: sourceRef.path, index, status: 'pending', reason,
                     row: JSON.parse(JSON.stringify(row)), decision: JSON.parse(JSON.stringify(decision)),
-                    bank: String(bank || source.bank || ''),
-                    filename: String(source.filename || ''),
-                    subject: String(source.subject || ''),
-                    receivedMs: Number(source.receivedMs) || 0,
-                    from: String(source.from || ''),
-                    last4: String(last4 || source.last4 || ''),
-                    createdAt: now,
+                    bank: String(bank || source.bank || ''), filename: String(source.filename || ''),
+                    subject: String(source.subject || ''), receivedMs: Number(source.receivedMs) || 0,
+                    from: String(source.from || ''), last4: String(last4 || source.last4 || ''), createdAt: now,
                 }]);
             } else if (module !== 'skip') outcome.filed++;
+            
             writes.push([ledgerRefs[offset], { uid, sourcePath: sourceRef.path, index, status: reason ? 'review' : module === 'skip' ? 'skipped' : 'filed', module: module || '', fingerprint: hash(rowIdentity(row, context)), settledAt: now }]);
         });
+        
         const hasReview = source.hasReview === true || outcome.review > 0;
         const final = outcome.cursor === totalRows;
-        if (Object.keys(changes).length) tx.set(userRef, { ...changes, _lastModified: new Date(now) }, { merge: true });
+        
+        if (Object.keys(changes).length) tx.set(userRef, {
+            ...changes,
+            _lastModified: new Date(now),
+            _lastModifiedBy: 'statement-worker',
+            _writeDeviceId: 'statement-worker',
+            _writeTs: now,
+        }, { merge: true });
+        
         for (const [ref, data] of writes) tx.set(ref, data);
         tx.set(sourceRef, { cursor: outcome.cursor, totalRows, hasReview, bank, last4, statementType, filed: final && !hasReview, status: final ? (hasReview ? 'needs_review' : 'filed') : 'pending', leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+        
         return { ...outcome, status: final ? (hasReview ? 'needs_review' : 'filed') : 'pending' };
     });
 }
 
-/** Authenticated owner action only; the caller must verify Firebase identity. */
 export async function resolveReview({ db, uid, id, decision, row, now = Date.now() }) {
     if (!uid || !/^[a-f\d]{64}$/.test(id || '') || !decision || !Number.isSafeInteger(now)) throw new Error('invalid-review-request');
     const userRef = db.collection('users').doc(uid), reviewRef = userRef.collection('statementReview').doc(id), ledgerRef = userRef.collection('statementLedger').doc(id);
@@ -193,9 +197,6 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
             const corrected = { ...review.row, ...row, description: row?.description || review.row?.description || review.row?.narration, directionSource: 'marker', needsReview: false, valid: true };
             const verified = { ...decision, verified: true };
             const resolvedLast4 = source.last4 || review.row?.card_last4 || review.row?._ccLast4 || '';
-            // Same non-persisted context.card_last4 as settleStatement() above — it
-            // only feeds isCreditCardRow(); makeRecord() still stores card_last4
-            // from context.last4.
             const context = { bank: source.bank || review.row?.bank || '', last4: resolvedLast4, card_last4: resolvedLast4, statementType: source.statementType || '', cardRegistry: (userSnap.data() || {}).settings?.cardRegistry || {}, sourcePath: review.sourcePath, index: review.index };
             const reason = validateSettlementRow(corrected, verified, context);
             if (reason) throw new Error(reason);
@@ -211,13 +212,18 @@ export async function resolveReview({ db, uid, id, decision, row, now = Date.now
                 const sub = candidates[0], month = corrected.date.slice(0, 7);
                 if ((sub.history || []).some(payment => payment.date === corrected.date && amountCents(payment.amount) === amountCents(corrected.amount))) throw new Error('matching-existing-entry-dismiss-or-edit');
                 sub.history = [...(sub.history || []), { date: corrected.date, month, amount: corrected.amount, source: 'statement', statementKey: context.sourcePath, statementRow: context.index, bank: context.bank, card_last4: context.last4, ref: String(corrected.ref || '') }];
-                sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: corrected.amount }; sub.amount = corrected.amount; sub._ut = now;
-                changes.subscriptions = subs;
+                sub.monthOverrides = { ...(sub.monthOverrides || {}), [month]: corrected.amount }; sub.amount = corrected.amount; sub._ut = now; changes.subscriptions = subs;
             } else changes[module] = [...(user[module] || []), makeRecord(corrected, verified, context, id, now)];
         }
         const unresolved = siblings.docs.some(doc => doc.id !== id && doc.data().status === 'pending');
         const complete = Number.isSafeInteger(source.totalRows) && source.cursor === source.totalRows;
-        if (Object.keys(changes).length) tx.set(userRef, { ...changes, _lastModified: new Date(now) }, { merge: true });
+        if (Object.keys(changes).length) tx.set(userRef, {
+            ...changes,
+            _lastModified: new Date(now),
+            _lastModifiedBy: 'statement-worker',
+            _writeDeviceId: 'statement-worker',
+            _writeTs: now,
+        }, { merge: true });
         tx.set(reviewRef, { status: dismissed ? 'dismissed' : 'resolved', reason: '', resolvedAt: now, resolvedBy: uid }, { merge: true });
         if (ledgerSnap.exists) tx.set(ledgerRef, { status: dismissed ? 'dismissed' : 'filed', resolvedAt: now, resolvedBy: uid }, { merge: true });
         if (complete && !unresolved) tx.set(sourceRef, { status: 'filed', filed: true, hasReview: false, updatedAt: now }, { merge: true });

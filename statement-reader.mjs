@@ -318,7 +318,9 @@ export async function readStatement({ bytes, filename = '', passwords = [], bank
     if (result.parsed.verdict === 'parsed' || result.parsed.htmlIncompleteRows || result.parsed.reason === 'Embedded transaction data requires completeness verification.' || !bank || !Array.isArray(layouts)) return result;
     // A template is a bounded date translation, never a replacement for the
     // common parser's financial reconciliation and direction checks.
-    for (const saved of layouts.slice(0, 6)) {
+    const confirmed = confirmedTemplateId && layouts.find(saved => saved?._docId === confirmedTemplateId);
+    const candidates = confirmed ? [confirmed, ...layouts.filter(saved => saved !== confirmed)] : layouts;
+    for (const saved of candidates.slice(0, 6)) {
         let template;
         try { template = validateCloudTemplate(saved, bank); } catch { continue; }
         // mapReviewLayout() stores each confirmed template under a hash of

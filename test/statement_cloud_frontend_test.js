@@ -254,14 +254,30 @@ describe('private statement cloud frontend transport', () => {
             window._teachStatementLayout = vi.fn();
             window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<table>drawn rows</table>', transactions: [{ date: '2026-09-14' }] })) };
             fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
-                .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, queued: true }));
+                .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, filed: 2, review: 0, replayStatus: 'filed' }));
             await review(entry);
             expect(bodyOf(0)).toEqual({ action: 'render-source', id: entry.id });
             expect(window.WFHtmlStatement.htmlToTransactionsAsync).toHaveBeenCalledWith(shell);
             expect(bodyOf(1)).toMatchObject({ action: 'rendered', id: entry.id });
             expect(gunzipSync(Buffer.from(bodyOf(1).htmlGz, 'base64')).toString()).toBe('<table>drawn rows</table>');
             expect(window._teachStatementLayout).not.toHaveBeenCalled();
-            expect(window.notify).toHaveBeenCalledWith('Statement read on your device and queued for background filing.', 'success');
+            expect(window.notify).toHaveBeenCalledWith('2 statement transactions read on your device and filed.', 'success');
+            await authChanged(null);
+        });
+        it('continues a long statement in batches and says plainly when the owner still has to confirm it', async () => {
+            window._teachStatementLayout = vi.fn();
+            window.WFHtmlStatement = { htmlToTransactionsAsync: vi.fn(async () => ({ rendered: true, renderedHtml: '<p>x</p>', transactions: [{ date: '2026-09-14' }] })) };
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, filed: 10, review: 0, replayStatus: 'pending' }))
+                .mockResolvedValueOnce(reply(true, { ok: true, filed: 4, review: 0, replayStatus: 'filed' }));
+            await review(entry);
+            expect(fetch.mock.calls.map((_, n) => bodyOf(n).action)).toEqual(['render-source', 'rendered', 'layout-continue']);
+            expect(window.notify).toHaveBeenCalledWith('14 statement transactions read on your device and filed.', 'success');
+            window.notify.mockClear(); fetch.mockClear();
+            fetch.mockResolvedValueOnce(reply(true, { ok: true, htmlGz: gz(shell) }))
+                .mockResolvedValueOnce(reply(true, { ok: true, mapped: true, filed: 0, review: 1, replayStatus: 'needs_review' }));
+            await review(entry);
+            expect(window.notify).toHaveBeenCalledWith(expect.stringContaining('need your confirmation'), 'warn');
             await authChanged(null);
         });
         it('falls back to the text layout teacher when the device draws no rows', async () => {
@@ -327,7 +343,7 @@ describe('private statement cloud frontend transport', () => {
                 expect(fetch).toHaveBeenCalledTimes(3);
                 expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ action: 'layout' });
                 expect(JSON.parse(fetch.mock.calls[2][1].body)).toMatchObject({ action: 'layout' });
-                expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
+                expect(window.notify).toHaveBeenCalledWith('Statement layout verified. Remaining rows are continuing in the background.', 'info');
             } finally { vi.useRealTimers(); await authChanged(null); }
         });
         it('retries a raw dropped-connection failure, not just a named timeout', async () => {
@@ -348,7 +364,7 @@ describe('private statement cloud frontend transport', () => {
                 await vi.runAllTimersAsync();
                 await pending;
                 expect(fetch).toHaveBeenCalledTimes(3);
-                expect(window.notify).toHaveBeenCalledWith('Statement layout verified, saved and queued for background processing.', 'success');
+                expect(window.notify).toHaveBeenCalledWith('Statement layout verified. Remaining rows are continuing in the background.', 'info');
             } finally { vi.useRealTimers(); await authChanged(null); }
         });
         it('never retries a permanent rejection like an unreproduced statement', async () => {
