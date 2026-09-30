@@ -362,6 +362,13 @@ async function mapLayout(entry) {
     }
 }
 
+// Why a WHOLE statement is waiting, in words (the row-level reasons are below).
+const WHOLE_TEXT = {
+    'statement-empty-needs-confirmation': 'This month looks like it had no transactions, but the statement does not say so clearly. Check the original and confirm.',
+    'statement-layout-or-reconciliation-needs-review': "The rows could not be proven to add up to this statement's balances, so nothing was filed from it.",
+    'statement-layout-identity-needs-review': 'WealthFlow could not confirm this document is a bank statement.',
+    'statement-cursor-or-content-changed': 'This statement read differently the second time, so nothing was filed from it. It is being read again.',
+};
 function reviewReasonText(reason) {
     return ({
         'invalid-transaction': 'The amount, date or description could not be read correctly. Check this row against your statement and correct it.',
@@ -449,7 +456,7 @@ function drawReview() {
         const closed = document.createElement('div'); closed.style.cssText = 'margin:0 0 12px;padding:12px;border:1px solid var(--border);border-radius:12px;';
         const head = document.createElement('strong'); head.textContent = 'Closed automatically — the bank\'s own figures show nothing moved'; closed.appendChild(head);
         for (const e of coverage.empties) {
-            const line = document.createElement('p'); line.style.cssText = 'margin:6px 0 0;font-size:13px;'; line.textContent = `${e.month || ''} · ${e.label} `;
+            const line = document.createElement('p'); line.style.cssText = 'margin:6px 0 0;font-size:13px;'; line.textContent = `${e.month || ''} · ${e.label}${e.how ? ' — ' + e.how : ''} `;
             const reopen = document.createElement('button'); reopen.className = 'btn btn-ghost btn-sm'; reopen.textContent = 'Reopen';
             reopen.onclick = async () => { reopen.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'reopen-empty', id: e.id }); coverage.empties = coverage.empties.filter(x => x.id !== e.id); say('Reopened — it will be read again and sent to review.', 'info'); drawReview(); await sync(); } catch { reopen.disabled = false; say('That statement could not be reopened.', 'error'); } };
             line.appendChild(reopen); closed.appendChild(line);
@@ -470,9 +477,14 @@ function drawReview() {
         text.textContent = [entry.row?.date || (entry.receivedMs && new Date(entry.receivedMs).toLocaleDateString()) || 'Date ?', identity || 'Statement', description].filter(Boolean).join(' · ');
         item.appendChild(text);
         const rowLevel = Boolean(entry.row) && entry.index >= 0;
-        const why = document.createElement('p'); why.textContent = rowLevel ? reviewReasonText(entry.reason) : String(entry.reason || 'Verification required'); item.appendChild(why);
+        const why = document.createElement('p'); why.textContent = rowLevel ? reviewReasonText(entry.reason) : (WHOLE_TEXT[entry.reason] || String(entry.reason || 'Verification required')); item.appendChild(why);
         const button = document.createElement('button'); button.className = 'btn btn-primary btn-sm'; button.textContent = !entry.row || entry.index < 0 ? 'Map statement layout' : 'Review'; button.onclick = async () => { button.disabled = true; try { await review(entry); } catch { say('This review could not be opened. It remains pending.', 'error'); } finally { button.disabled = false; } }; item.appendChild(button);
         const raw = document.createElement('button'); raw.className = 'btn btn-secondary btn-sm'; raw.textContent = 'Download original'; raw.style.marginLeft = '8px'; raw.onclick = () => download(entry); item.appendChild(raw); box.appendChild(item);
+        if (entry.index === -1 && entry.reason === 'statement-empty-needs-confirmation') {
+            const empty = document.createElement('button'); empty.className = 'btn btn-secondary btn-sm'; empty.textContent = 'Yes, nothing happened that month'; empty.style.marginLeft = '8px';
+            empty.onclick = async () => { empty.disabled = true; try { await request('/api/statement-sync', 'POST', { action: 'close-empty', id: entry.id }); say('Closed as an empty month. You can reopen it from the list of closed months.', 'info'); await sync(); } catch { empty.disabled = false; say('That month could not be closed.', 'error'); } };
+            item.appendChild(empty);
+        }
         if (entry.index < 0 || !entry.row?.amount) { const dismiss = document.createElement('button'); dismiss.className = 'btn btn-ghost btn-sm'; dismiss.textContent = 'Dismiss statement'; dismiss.style.marginLeft = '8px'; dismiss.onclick = () => dismissReview(entry); item.appendChild(dismiss); }
     }
     if (pending.length === 500) { const p = document.createElement('p'); p.textContent = 'Showing the first 500 pending reviews. Resolve items to reveal any older remainder.'; box.appendChild(p); }

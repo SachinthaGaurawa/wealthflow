@@ -8,6 +8,7 @@ import { policyFrom, matchSender, normalizeList, approvedClauses, relatedApprova
 import { coverageOf, gapQuery, domainsOf, monthOf, auditLogOf } from './statement-coverage.mjs';
 import { REJECT_TEXT, REJECT } from './wealthflow-mail-ingest.mjs';
 import { planMessage, filenameStem } from './wealthflow-mail-ingest.mjs';
+import { assessEmptiness, witnessEmpty, isPhantomRow, isMoneyless } from './statement-emptiness.mjs';
 import { cloudConfig, openCloud, VAULT_ROOT } from './statement-cloud-vault.mjs';
 import { readStatement, openHtmlStatement, readRenderedHtml, STATEMENT_LIMITS } from './statement-reader.mjs';
 import { settleStatement, resolveReview, transferEvidence, isZeroAmountLine } from './statement-ledger.mjs';
@@ -66,7 +67,7 @@ export function merchantNameFor(row) {
 }
 
 const permanentFailure = error => /^(?:PASSWORD_FAILED|NO_VAULT_KEYS|PDF_UNREADABLE|ATTACHMENT_TYPE_UNSUPPORTED|ATTACHMENT_SIZE_LIMIT|INVALID_ATTACHMENT|HTML_[A-Z_]+|STATEMENT_[A-Z_]+)$/.test(error?.message || '') || new Set([
-    'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-cursor-or-content-changed',
+    'statement-layout-identity-needs-review', 'statement-layout-or-reconciliation-needs-review', 'statement-empty-needs-confirmation', 'statement-cursor-or-content-changed',
     'statement-message-missing', 'statement-message-deleted', 'statement-sender-no-longer-approved',
     'statement-attachment-identity-mismatch', 'statement-attachment-invalid', 'statement-attachment-size',
     'statement-attachment-content-mismatch'
@@ -189,6 +190,18 @@ export async function checkpointRows(db, ref, uid, leaseToken, rows) {
     return rowSetHash;
 }
 
+// A statement the reader found no real transaction in. It is closed as empty only when every signal in
+// statement-emptiness.mjs agrees AND the AI board, asked independently, does not count transaction lines
+// the rules did not see. Anything else is one clear question for the owner (never a row that is not there),
+// and a statement whose balances moved, or whose text carries money, is never closed.
+async function decideEmptiness({ text, parsed, board }) {
+    const assessment = assessEmptiness({ text, parsed });
+    if (assessment.decision !== 'empty') return assessment;
+    const witness = await witnessEmpty({ text, board });
+    if (witness.available && !witness.agrees) return { decision: 'has-transactions', why: 'the-ai-board-counted-transaction-lines' };
+    return { decision: 'empty', evidence: { ...assessment.evidence, balances: assessment.evidence.balances, how: witness.available ? 'rules+ai' : 'rules', witness: witness.available ? 'agrees' : 'unavailable', strength: assessment.strength } };
+}
+
 // A statement whose own balances prove nothing moved has nothing to file, and
 // leaving it in review for the owner to dismiss by hand is a chore the system can
 // do itself. Closed exactly as a filed statement is, with the mark that says why
@@ -204,7 +217,8 @@ async function fileEmptyStatement(db, uid, ref, leaseToken, mailRef, evidence = 
         }
         const reviews = await tx.get(userRef.collection('statementReview').where('sourcePath', '==', ref.path));
         for (const doc of reviews.docs) if (doc.data().uid === uid && doc.data().status === 'pending') tx.set(doc.ref, { status: 'resolved', resolvedAt: now, replayStatus: 'filed', emptyStatement: true }, { merge: true });
-        tx.set(ref, { status: 'filed', filed: true, emptyStatement: true, emptyEvidence: { balances: String(evidence.balances || '').slice(0, 20), dataRows: Number(evidence.dataRows) || 0, pdf: String(evidence.pdf || 'absent').slice(0, 24), at: now }, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+        tx.set(ref, { status: 'filed', filed: true, emptyStatement: true, emptyEvidence: { balances: String(evidence.balances || '').slice(0, 20), dataRows: Number(evidence.dataRows) || 0, pdf: String(evidence.pdf || 'absent').slice(0, 24),
+            ...(evidence.how ? { how: String(evidence.how).slice(0, 16), witness: String(evidence.witness || '').slice(0, 16), zeroLines: Number(evidence.zeroLines) || 0, phantomRows: Number(evidence.phantomRows) || 0, noActivityStated: evidence.noActivityStated === true } : {}), at: now }, cursor: 0, totalRows: 0, hasReview: false, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
     });
     return { status: 'filed', filed: 0, review: 0, empty: 1 };
 }
@@ -445,6 +459,52 @@ export async function dismissZeroAmountReviews({ db, uid, limit = 100 }) {
     return dismissed;
 }
 
+// Reviews raised before the reader knew better: a "transaction" with a month-end date, no description and
+// no amount is a line that is not on the statement. They are not dismissed, and the statement is not assumed
+// empty — the statement is read again, and judged on its own text exactly as a new one is (the emptiness
+// gate), so a month that really had a transaction is found and a month that really had none is closed with
+// its evidence. Each statement is rechecked once per PHANTOM_CHECK_VERSION, and never after the owner has
+// reopened it.
+export const PHANTOM_CHECK_VERSION = 1;
+export async function recheckPhantomStatements({ db, uid, limit = 5 }) {
+    const userRef = db.collection('users').doc(uid), reviews = userRef.collection('statementReview');
+    const page = await reviews.where('status', '==', 'pending').limit(500).get();
+    const sources = new Set();
+    for (const doc of page.docs) {
+        const review = doc.data();
+        if (review.uid === uid && review.reason === 'invalid-transaction' && Number.isSafeInteger(review.index) && review.index >= 0 && isPhantomRow(review.row)
+            && /^wf-mail\/[a-z0-9_]+\/items\/[A-Za-z0-9._-]+$/.test(String(review.sourcePath || ''))) sources.add(review.sourcePath);
+    }
+    let requeued = 0, more = false;
+    const all = [...sources];
+    for (const sourcePath of all) {
+        // Ones that cannot be rechecked (already done, reopened by the owner, being processed) cost a read and no more.
+        if (requeued >= Math.max(1, limit)) { more = true; break; }
+        const ref = db.doc(sourcePath);
+        const done = await db.runTransaction(async tx => {
+            const snap = await tx.get(ref), source = snap.data();
+            if (!snap.exists || source.uid !== uid || source.emptyOverride === 'owner' || (Number(source.phantomCheck) || 0) >= PHANTOM_CHECK_VERSION
+                || source.status === 'processing' || (source.leaseUntil || 0) > Date.now()) return false;
+            const siblings = await tx.get(reviews.where('sourcePath', '==', sourcePath));
+            const ledger = await tx.get(userRef.collection('statementLedger').where('sourcePath', '==', sourcePath));
+            const now = Date.now(), phantom = new Set();
+            for (const doc of siblings.docs) {
+                const sibling = doc.data();
+                if (sibling.uid === uid && sibling.status === 'pending' && sibling.index >= 0 && sibling.reason === 'invalid-transaction' && isPhantomRow(sibling.row)) {
+                    phantom.add(doc.id);
+                    tx.set(doc.ref, { status: 'superseded_by_recheck', supersededAt: now }, { merge: true });
+                }
+            }
+            for (const doc of ledger.docs) if (phantom.has(doc.id) && doc.data().status === 'review') tx.set(doc.ref, { status: 'superseded_by_layout', supersededAt: now }, { merge: true });
+            const others = siblings.docs.some(doc => doc.data().uid === uid && doc.data().status === 'pending' && !phantom.has(doc.id));
+            tx.set(ref, { status: 'pending', filed: false, hasReview: others, cursor: 0, totalRows: null, rowSetHash: '', leaseToken: '', leaseUntil: 0, retryAt: 0, retryCount: 0, phantomCheck: PHANTOM_CHECK_VERSION, phantomCheckedAt: now, updatedAt: now }, { merge: true });
+            return true;
+        });
+        if (done) requeued += 1;
+    }
+    return { requeued, more };
+}
+
 export function repairCategoriesInUser(user) {
     const next = structuredClone(user || {});
     let expenses = 0, income = 0;
@@ -572,6 +632,17 @@ async function processOneStatement({ db, uid, mailRef, token, env, f, read, open
             // identified as a statement, and its own opening and closing balances
             // agree: a month with no transactions.
             outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef, result.emptyEvidence || { balances: 'agree', dataRows: 0, pdf: result.renderedOverride ? 'device-render' : 'absent' });
+        } else if (parsed.rows.every(isMoneyless)) {
+            // No line that moves money was read. That is either a month in which nothing happened or a statement the
+            // reader could not read; the two are told apart here, on the statement's own text, before anything is
+            // filed or asked. A month the owner reopened is never closed automatically a second time.
+            if (identity.verdict !== VERDICT.STATEMENT) throw new Error('statement-layout-identity-needs-review');
+            if (claimed.emptyOverride === 'owner') throw new Error('statement-layout-or-reconciliation-needs-review');
+            const verdict = await decideEmptiness({ text, parsed, board });
+            if (verdict.decision === 'empty') outcome = await fileEmptyStatement(db, uid, sourceRef, claimed.leaseToken, mailRef, { balances: verdict.evidence.balances, dataRows: 0, pdf: 'text', ...verdict.evidence });
+            // "Empty, please confirm" is only said of a statement the reader did read as having no lines that move
+            // money; one it could not read at all keeps the layout question it always had.
+            else throw new Error(verdict.decision === 'unsure' && (parsed.rows.length > 0 || parsed.verdict === 'empty') ? 'statement-empty-needs-confirmation' : 'statement-layout-or-reconciliation-needs-review');
         } else {
             if (identity.verdict !== VERDICT.STATEMENT && !parserProof) throw new Error('statement-layout-identity-needs-review');
             if (!parserProof) throw new Error('statement-layout-or-reconciliation-needs-review');
@@ -662,6 +733,25 @@ export async function takeRefusedMessage({ db, owner, messageId }) {
     return { ok: true, queued: true };
 }
 
+// The owner's own word, for the one question the system asks about an empty month: "it looks like nothing
+// happened but the statement does not say so clearly". Recorded as what it is — closed empty on the owner's
+// confirmation — and reversible with Reopen like any other empty month.
+export async function ownerCloseEmpty({ db, owner, id }) {
+    if (!/^[A-Za-z0-9._-]{1,400}$/.test(String(id || '')) || !owner?.uid) throw new Error('invalid-close-request');
+    const userRef = db.collection('users').doc(owner.uid), reviewRef = userRef.collection('statementReview').doc(id);
+    await db.runTransaction(async tx => {
+        const reviewSnap = await tx.get(reviewRef), review = reviewSnap.data();
+        if (!reviewSnap.exists || review.uid !== owner.uid || review.status !== 'pending' || review.index !== -1 || review.reason !== 'statement-empty-needs-confirmation') throw new Error('not-an-empty-month-question');
+        if (!String(review.sourcePath || '').startsWith('wf-mail/') || String(review.sourcePath).split('/').length !== 4) throw new Error('review-source-owner-mismatch');
+        const sourceRef = db.doc(review.sourcePath), sourceSnap = await tx.get(sourceRef), source = sourceSnap.data();
+        if (!sourceSnap.exists || source.uid !== owner.uid || source.filed === true || (source.leaseUntil || 0) > Date.now()) throw new Error('statement-not-closable');
+        const now = Date.now();
+        tx.set(reviewRef, { status: 'resolved', resolvedAt: now, replayStatus: 'filed', emptyStatement: true, resolvedBy: 'owner' }, { merge: true });
+        tx.set(sourceRef, { status: 'filed', filed: true, emptyStatement: true, emptyEvidence: { balances: 'absent', dataRows: 0, pdf: 'text', how: 'owner', witness: '', zeroLines: 0, phantomRows: 0, noActivityStated: false, at: now }, hasReview: false, cursor: 0, totalRows: 0, leaseToken: '', leaseUntil: 0, updatedAt: now }, { merge: true });
+    });
+    return { ok: true, closed: true };
+}
+
 // ── which statements did the mailbox never give us? ─────────────────────────
 // Each message is judged on its own, so a message that never arrived, or was
 // refused, leaves no trace. The SET of statements does: monthly statements with a
@@ -678,7 +768,7 @@ const addressOnly = from => { const m = /<([^<>]+@[^<>]+)>|([^\s<>"]+@[^\s<>"]+)
 
 async function storedItems(mailRef) {
     let query = mailRef.collection('items');
-    if (typeof query.select === 'function') query = query.select('bank', 'filename', 'receivedMs', 'storedMs', 'status', 'filed', 'from', 'messageId', 'emptyStatement', 'via', 'proof', 'reviewReason', 'retryCount', 'contentSha256');
+    if (typeof query.select === 'function') query = query.select('bank', 'filename', 'receivedMs', 'storedMs', 'status', 'filed', 'from', 'messageId', 'emptyStatement', 'via', 'proof', 'reviewReason', 'retryCount', 'contentSha256', 'emptyEvidence');
     if (typeof query.limit === 'function') query = query.limit(1000);
     return (await query.get()).docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
@@ -739,7 +829,10 @@ export async function refreshCoverage({ db, mailRef, mail, token, f, now = Date.
             return stage.size;
         });
     }
-    const empties = items.filter(i => i.emptyStatement === true && i.filename).slice(0, 24).map(i => ({ id: String(i.id), label: String(i.filename).slice(0, 80), month: monthOf(i) }));
+    // How a month came to be closed, in words the owner can check: what the statement said and who else agreed.
+    const howClosed = e => { const parts = []; if (e?.balances === 'agree') parts.push('opening and closing balance agree'); else if (e?.noActivityStated) parts.push('the statement says no activity'); else if (e?.zeroLines || e?.phantomRows) parts.push('only zero lines on it');
+        if (e?.witness === 'agrees') parts.push('the AI board counted no transactions'); else if (e?.witness === 'unavailable') parts.push('AI board not reachable'); if (e?.pdf === 'agrees') parts.push("the bank's own PDF agrees"); return parts.join(' · ').slice(0, 160); };
+    const empties = items.filter(i => i.emptyStatement === true && i.filename).slice(0, 24).map(i => ({ id: String(i.id), label: String(i.filename).slice(0, 80), month: monthOf(i), how: howClosed(i.emptyEvidence) }));
     if (!due) for (const series of coverage.series) {
         const prior = before.get(`${series.bank}|${series.label}`);
         if (prior?.gaps && JSON.stringify(prior.missing) === JSON.stringify(series.missing)) series.gaps = prior.gaps;
@@ -761,7 +854,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const mailSnap = await mailRef.get(), mail = mailSnap.data() || {};
     if (!mailSnap.exists || mail.uid !== uid || mail.email !== email || !mail.refresh_token || mail.autonomous !== true) throw new Error('autonomous-mailbox-not-enabled');
     const token = await accessTokenFrom(mail.refresh_token, env, f);
-    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, coverage = null;
+    let migrationMore = false, collectionMore = false, recovered = 0, wholeRecovered = 0, wholeMore = false, consensusRecovered = 0, consensusMore = false, revokedRecovered = 0, revokedMore = false, categoriesRepaired = 0, reviewMetadataRepaired = 0, zeroLinesDismissed = 0, phantomRequeued = 0, phantomMore = false, coverage = null;
     if (action !== 'drain') {
         const profileResponse = await f(`${GMAIL}/profile`, { headers: authed(token), signal: AbortSignal.timeout(8000) });
         if (!profileResponse.ok) throw new Error('gmail-profile-unavailable');
@@ -797,6 +890,8 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         revokedRecovered = revoked.recovered; revokedMore = revoked.more;
         reviewMetadataRepaired = await repairReviewMetadata({ db, uid, limit: 100 });
         zeroLinesDismissed = await dismissZeroAmountReviews({ db, uid, limit: 100 });
+        const phantom = await recheckPhantomStatements({ db, uid, limit: maxSteps === Infinity ? 10 : 3 });
+        phantomRequeued = phantom.requeued; phantomMore = phantom.more;
     }
     let processed = 0, attempted = 0, last = null;
     for (;;) {
@@ -820,7 +915,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
     const hasReadyPending = pendingTimes.some(at => at <= now);
     const earliestRetry = pendingTimes.filter(at => at > now).reduce((min, at) => Math.min(min, at), Infinity);
     const wakeAt = Math.min(earliestLease, earliestRetry);
-    const retryAfterMs = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || hasReadyPending
+    const retryAfterMs = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || phantomMore || hasReadyPending
         ? 750
         : Number.isFinite(wakeAt) ? Math.max(750, Math.min(180250, wakeAt - now + 250)) : 750;
     const morePending = collectionMore || migrationMore || wholeMore || consensusMore || revokedMore || pending.docs.length > 0 || processing.docs.length > 0;
@@ -829,7 +924,7 @@ export async function runStatementSync({ db, owner, action = 'collect', env = pr
         .filter(data => Number(data?.retryCount) > 0)
         .slice(0, 20)
         .map(data => ({ bank: data.bank || '', filename: data.filename || '', retryCount: data.retryCount || 0, lastRetryReason: data.lastRetryReason || '' }));
-    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, ...(coverage ? { coverage } : {}),
+    return { ok: true, processed, attempted, collectionMore, migrationMore, recovered, wholeRecovered, consensusRecovered, revokedRecovered, categoriesRepaired, reviewMetadataRepaired, zeroLinesDismissed, phantomRequeued, ...(coverage ? { coverage } : {}),
         pendingRemaining: pending.docs.length, processingRemaining: processing.docs.length, ...(last || {}), morePending, retrying,
         ...(morePending ? { retryAfterMs } : {}) };
 }
@@ -1033,7 +1128,7 @@ export default async function handler(req, res) {
     const scheduled = validScheduleSecret(req);
     let body;
     try { body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {}); } catch (_) { return json(res, 400, { ok: false, reason: 'invalid-body' }); }
-    if (scheduled && ['review', 'review-source', 'layout', 'layout-continue', 'render-source', 'rendered', 'reopen-empty', 'take-refused'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
+    if (scheduled && ['review', 'review-source', 'layout', 'layout-continue', 'render-source', 'rendered', 'reopen-empty', 'take-refused', 'close-empty'].includes(body.action)) return json(res, 403, { ok: false, reason: 'interactive-owner-required' });
     if (!scheduled) {
         const who = await identify(req, { verifyIdToken: token => admin.auth().verifyIdToken(token, true) });
         if (!who.ok) return json(res, who.status || 401, { ok: false, reason: who.reason });
@@ -1054,6 +1149,11 @@ export default async function handler(req, res) {
                 console.warn('statement-review-source-failed', { action: body.action, reason });
                 return json(res, 422, { ok: false, reason });
             }
+        }
+        if (body.action === 'close-empty') {
+            if (req.method !== 'POST') return json(res, 405, { ok: false, reason: 'post-required' });
+            try { return json(res, 200, await ownerCloseEmpty({ db, owner: await admin.auth().getUser(who.uid), id: body.id })); }
+            catch (_) { return json(res, 422, { ok: false, reason: 'close-rejected' }); }
         }
         if (body.action === 'take-refused') {
             if (req.method !== 'POST') return json(res, 405, { ok: false, reason: 'post-required' });
